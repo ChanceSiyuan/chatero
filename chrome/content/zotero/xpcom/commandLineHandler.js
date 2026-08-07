@@ -27,10 +27,6 @@
     ***** END LICENSE BLOCK *****
 */
 
-const { ZOTERO_CONFIG } = ChromeUtils.importESModule(
-	"resource://zotero/config.mjs"
-);
-
 Zotero.CommandLineIngester = {
 	normalizeExternalURI(uri) {
 		if (!uri?.schemeIs?.(ZOTERO_CONFIG.EXTERNAL_URL_SCHEME)) return uri;
