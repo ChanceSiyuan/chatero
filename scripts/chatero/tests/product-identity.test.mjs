@@ -1,10 +1,99 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { runInNewContext } from "node:vm";
 
 const read = (path) => readFile(new URL(`../../../${path}`, import.meta.url), "utf8");
 
+const parseINI = (text) => {
+  const result = {};
+  let section;
+
+  for (const line of text.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith(";")) continue;
+    const match = trimmed.match(/^\[([^\]]+)\]$/);
+    if (match) {
+      section = match[1];
+      result[section] = {};
+      continue;
+    }
+    const separator = trimmed.indexOf("=");
+    assert.ok(section && separator > 0, `invalid INI line: ${line}`);
+    result[section][trimmed.slice(0, separator)] = trimmed.slice(separator + 1);
+  }
+
+  return result;
+};
+
+const parseShellAssignments = (text) => Object.fromEntries(
+  [...text.matchAll(/^([A-Z_]+)="([^"]*)"$|^([A-Z_]+)=([^\s#]+)$/gm)].map((match) => [
+    match[1] ?? match[3],
+    match[2] ?? match[4]
+  ])
+);
+
+const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const entryValue = (text, key, separator = "=") => {
+  const match = text.match(new RegExp(`^${escapeRegExp(key)}\\s*${escapeRegExp(separator)}\\s*(.+)$`, "m"));
+  assert.ok(match, `missing ${key}`);
+  return match[1];
+};
+
+const parsePlist = (text) => {
+  const tokens = text
+    .replace(/<\?[\s\S]*?\?>|<!DOCTYPE[\s\S]*?>|<!--[\s\S]*?-->/g, "")
+    .match(/<[^>]+>|[^<]+/g)
+    ?.map((token) => token.trim())
+    .filter(Boolean) ?? [];
+  let index = 0;
+
+  const next = () => tokens[index++];
+  const value = () => {
+    const tag = next();
+    if (tag === "<dict>") {
+      const dict = {};
+      while (tokens[index] !== "</dict>") {
+        assert.equal(next(), "<key>");
+        const key = next();
+        assert.equal(next(), "</key>");
+        dict[key] = value();
+      }
+      next();
+      return dict;
+    }
+    if (tag === "<array>") {
+      const array = [];
+      while (tokens[index] !== "</array>") array.push(value());
+      next();
+      return array;
+    }
+    if (tag === "<string>") {
+      const string = tokens[index] === "</string>" ? "" : next();
+      assert.equal(next(), "</string>");
+      return string;
+    }
+    if (tag === "<true/>") return true;
+    if (tag === "<false/>") return false;
+    throw new Error(`unsupported plist value ${tag}`);
+  };
+
+  assert.match(next(), /^<plist\b/);
+  const plist = value();
+  assert.equal(next(), "</plist>");
+  assert.equal(index, tokens.length);
+  return plist;
+};
+
+const readPreferences = (text) => {
+  const preferences = new Map();
+  runInNewContext(text, { pref: (name, value) => preferences.set(name, value) });
+  return preferences;
+};
+
 test("Chatero identity is isolated while Zotero compatibility IDs remain stable", async () => {
+  // This catches any accidental divergence between the product manifest and a consuming surface.
   const product = JSON.parse(await read("app/chatero-product.json"));
   assert.deepEqual(product, {
     displayName: "Chatero",
@@ -20,22 +109,101 @@ test("Chatero identity is isolated while Zotero compatibility IDs remain stable"
     automaticUpdates: false
   });
 
-  const applicationINI = await read("app/assets/application.ini");
-  assert.match(applicationINI, /Name=Chatero/);
-  assert.match(applicationINI, /ID=zotero@zotero\.org/);
-  assert.doesNotMatch(applicationINI, /download\/client\/update/);
+  const shellConfig = parseShellAssignments(await read("app/config-custom.sh"));
+  assert.deepEqual(
+    Object.fromEntries(["APP_NAME", "APP_ID", "APP_BUNDLE_ID", "APP_URL_SCHEME", "SIGN"].map((key) => [key, shellConfig[key]])),
+    {
+      APP_NAME: product.displayName,
+      APP_ID: product.applicationID,
+      APP_BUNDLE_ID: product.bundleID,
+      APP_URL_SCHEME: product.externalURLScheme,
+      SIGN: "0"
+    }
+  );
 
-  const plist = await read("app/mac/Contents/Info.plist");
-  assert.match(plist, /<string>io\.github\.chancesiyuan\.chatero<\/string>/);
-  assert.match(plist, /<string>Chatero<\/string>/);
-  assert.match(plist, /<string>chatero<\/string>/);
-  assert.doesNotMatch(plist, /<string>zotero<\/string>\s*<\/array>\s*<\/dict>\s*<\/array>/);
+  const applicationINI = parseINI(await read("app/assets/application.ini"));
+  assert.deepEqual(
+    Object.fromEntries(["Vendor", "Name", "ID"].map((key) => [key, applicationINI.App[key]])),
+    {
+      Vendor: product.displayName,
+      Name: product.displayName,
+      ID: product.applicationID
+    }
+  );
+  assert.equal(applicationINI.AppUpdate, undefined);
 
-  const runtimeConfig = await read("resource/config.mjs");
-  assert.match(runtimeConfig, /GUID: 'zotero@zotero\.org'/);
-  assert.match(runtimeConfig, /ID: 'zotero'/);
-  assert.match(runtimeConfig, /CLIENT_NAME: 'Chatero'/);
-  assert.match(runtimeConfig, /PREF_BRANCH: 'extensions\.zotero\.'/);
-  assert.match(runtimeConfig, /EXTERNAL_URL_SCHEME: 'chatero'/);
-  assert.match(runtimeConfig, /HTTP_SERVER_FALLBACK_PORTS: \[23129\]/);
+  const plist = parsePlist(await read("app/mac/Contents/Info.plist"));
+  assert.equal(plist.CFBundleIdentifier, product.bundleID);
+  assert.equal(plist.CFBundleName, product.displayName);
+  assert.equal(plist.CFBundleGetInfoString, `${product.displayName} {{VERSION}}, © 2006-2018 Contributors`);
+  assert.equal(plist.CFBundleExecutable, product.internalID);
+  const registeredSchemes = plist.CFBundleURLTypes.flatMap(({ CFBundleURLSchemes }) => CFBundleURLSchemes);
+  assert.deepEqual(registeredSchemes, [product.externalURLScheme]);
+  assert.ok(!registeredSchemes.includes(product.internalID));
+
+  const { ZOTERO_CONFIG: runtimeConfig } = await import(new URL("../../../resource/config.mjs", import.meta.url));
+  assert.deepEqual(
+    Object.fromEntries([
+      "GUID",
+      "ID",
+      "CLIENT_NAME",
+      "EXTERNAL_URL_SCHEME",
+      "DATA_DIRECTORY_WITHIN_PROFILE_ROOT",
+      "DATA_DIRECTORY_NAME",
+      "HTTP_SERVER_FALLBACK_PORTS",
+      "PREF_BRANCH"
+    ].map((key) => [key, runtimeConfig[key]])),
+    {
+      GUID: product.applicationID,
+      ID: product.internalID,
+      CLIENT_NAME: product.displayName,
+      EXTERNAL_URL_SCHEME: product.externalURLScheme,
+      DATA_DIRECTORY_WITHIN_PROFILE_ROOT: true,
+      DATA_DIRECTORY_NAME: product.dataDirectoryName,
+      HTTP_SERVER_FALLBACK_PORTS: product.fallbackPorts,
+      PREF_BRANCH: product.preferenceBranch
+    }
+  );
+  assert.deepEqual(
+    Object.fromEntries([
+      "DOMAIN_NAME",
+      "REPOSITORY_URL",
+      "BASE_URI",
+      "WWW_BASE_URL",
+      "API_URL",
+      "STREAMING_URL",
+      "SERVICES_URL"
+    ].map((key) => [key, runtimeConfig[key]])),
+    {
+      DOMAIN_NAME: "zotero.org",
+      REPOSITORY_URL: "https://repo.zotero.org/repo/",
+      BASE_URI: "http://zotero.org/",
+      WWW_BASE_URL: "https://www.zotero.org/",
+      API_URL: "https://api.zotero.org/",
+      STREAMING_URL: "wss://stream.zotero.org/",
+      SERVICES_URL: "https://services.zotero.org/"
+    }
+  );
+
+  const preferences = readPreferences(await read("defaults/preferences/zotero.js"));
+  assert.equal(preferences.get("app.update.enabled"), product.automaticUpdates);
+  assert.equal(preferences.get(`${product.preferenceBranch}httpServer.port`), product.connectorPort);
+
+  const fluentBranding = await read("app/assets/branding/locale/brand.ftl");
+  for (const key of ["-brand-shorter-name", "-brand-short-name", "-brand-full-name", "-brand-product-name", "-vendor-short-name", "-app-name"]) {
+    assert.equal(entryValue(fluentBranding, key), product.displayName);
+  }
+  assert.equal(entryValue(fluentBranding, "-subscription-name"), `${product.displayName} Storage`);
+  assert.equal(entryValue(fluentBranding, "trademarkInfo"), "Zotero is a trademark of the Corporation for Digital Scholarship.");
+
+  const propertiesBranding = await read("app/assets/branding/locale/brand.properties");
+  for (const key of ["brandShorterName", "brandShortName", "brandFullName"]) {
+    assert.equal(entryValue(propertiesBranding, key), product.displayName);
+  }
+  const dtdBranding = await read("app/assets/branding/locale/brand.dtd");
+  assert.equal(dtdBranding.match(/<!ENTITY\s+brandShortName\s+"([^"]+)">/)?.[1], product.displayName);
+
+  const updaterINI = parseINI(await read("app/assets/updater.ini"));
+  assert.equal(updaterINI.Strings.Title, `${product.displayName} Update`);
+  assert.equal(updaterINI.Strings.Info, `${product.displayName} is installing your updates and will start in a few moments…`);
 });
