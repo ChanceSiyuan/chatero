@@ -686,6 +686,9 @@ var ZoteroPane = new function () {
 			let state = Zotero.Session.state.windows.find(x => x.type == 'pane');
 			if (state) {
 				Zotero_Tabs.restoreState(state.tabs);
+				if (state.qlabGroups && Zotero_Tabs.restoreQLabGroupsState) {
+					Zotero_Tabs.restoreQLabGroupsState(state.qlabGroups);
+				}
 			}
 		}
 		catch (e) {
@@ -7282,10 +7285,213 @@ var ZoteroPane = new function () {
 	
 	
 	this.getState = function () {
-		return {
+		let state = {
 			type: 'pane',
 			tabs: Zotero_Tabs.getState()
 		};
+		try {
+			let qlabGroups = Zotero_Tabs.getQLabGroupsState && Zotero_Tabs.getQLabGroupsState();
+			if (qlabGroups) {
+				state.qlabGroups = qlabGroups;
+			}
+		}
+		catch (e) {
+			Zotero.logError(e);
+		}
+		return state;
+	};
+	
+	this._qlabActiveAttachmentID = function () {
+		try {
+			let { tab } = Zotero_Tabs._getTab(Zotero_Tabs.selectedID);
+			if (tab && (tab.type === 'reader' || tab.type.startsWith('reader-')) && tab.data?.itemID) {
+				return tab.data.itemID;
+			}
+		}
+		catch (e) {}
+		let items = this.getSelectedItems();
+		for (let item of items) {
+			if (item.isPDFAttachment && item.isPDFAttachment()) {
+				return item.id;
+			}
+			if (item.isRegularItem && item.isRegularItem()) {
+				let attachments = item.getAttachments();
+				for (let id of attachments) {
+					let attachment = Zotero.Items.get(id);
+					if (attachment && attachment.isPDFAttachment && attachment.isPDFAttachment()) {
+						return id;
+					}
+				}
+			}
+		}
+		return null;
+	};
+	
+	this.qlabArrangePDFChat = async function () {
+		try {
+			if (!Zotero.QLab || !Zotero.QLab.Settings?.isEnabled()) {
+				Zotero.alert(null, 'QLab', 'QLab is disabled');
+				return;
+			}
+			let itemID = this._qlabActiveAttachmentID();
+			if (!itemID) {
+				Zotero.alert(null, 'QLab', 'Select or open a PDF first');
+				return;
+			}
+			await Zotero_Tabs.arrangePDFChat(itemID);
+		}
+		catch (e) {
+			Zotero.logError(e);
+			Zotero.alert(null, 'QLab', e.message || String(e));
+		}
+	};
+	
+	this.qlabArrangePDFEditor = async function () {
+		try {
+			if (!Zotero.QLab || !Zotero.QLab.Settings?.isEnabled()) {
+				Zotero.alert(null, 'QLab', 'QLab is disabled');
+				return;
+			}
+			let itemID = this._qlabActiveAttachmentID();
+			if (!itemID) {
+				Zotero.alert(null, 'QLab', 'Select or open a PDF first');
+				return;
+			}
+			await Zotero_Tabs.arrangePDFEditor(itemID);
+		}
+		catch (e) {
+			Zotero.logError(e);
+			Zotero.alert(null, 'QLab', e.message || String(e));
+		}
+	};
+	
+	this.qlabArrangeResearchDesk = async function () {
+		try {
+			if (!Zotero.QLab || !Zotero.QLab.Settings?.isEnabled()) {
+				Zotero.alert(null, 'QLab', 'QLab is disabled');
+				return;
+			}
+			let itemID = this._qlabActiveAttachmentID();
+			if (!itemID) {
+				Zotero.alert(null, 'QLab', 'Select or open a PDF first');
+				return;
+			}
+			await Zotero_Tabs.arrangeResearchDesk(itemID);
+		}
+		catch (e) {
+			Zotero.logError(e);
+			Zotero.alert(null, 'QLab', e.message || String(e));
+		}
+	};
+	
+	this.qlabChooseWorkspace = async function () {
+		try {
+			if (!Zotero.QLab || !Zotero.QLab.Settings) {
+				Zotero.alert(null, 'QLab', 'QLab module is unavailable');
+				return;
+			}
+			let fp = Cc['@mozilla.org/filepicker;1'].createInstance(Ci.nsIFilePicker);
+			fp.init(window.browsingContext, 'Choose QLab Workspace', Ci.nsIFilePicker.modeGetFolder);
+			let current = Zotero.QLab.Settings.getRoot();
+			if (current) {
+				try {
+					let file = Cc['@mozilla.org/file/local;1'].createInstance(Ci.nsIFile);
+					file.initWithPath(current);
+					if (file.exists()) {
+						fp.displayDirectory = file;
+					}
+				}
+				catch (e) {}
+			}
+			let rv = await new Promise(resolve => fp.open(resolve));
+			if (rv !== Ci.nsIFilePicker.returnOK && rv !== Ci.nsIFilePicker.returnReplace) {
+				return;
+			}
+			let host = Zotero.QLab.createGeckoQLabPathHost();
+			let root = await Zotero.QLab.Settings.setRoot(fp.file.path, host);
+			let state = await Zotero.QLab.qlabRepositoryState(root, host);
+			Zotero.alert(
+				null,
+				'QLab Workspace',
+				state === 'ready'
+					? `Workspace ready:\n${root}`
+					: `Workspace marked ${state}:\n${root}\n\nEmpty/partial workspaces can be initialized in Phase 3A.`
+			);
+			// Refresh any open shell tabs.
+			for (let tab of Zotero_Tabs._tabs) {
+				if (Zotero.QLab.SHELL_TAB_TYPES.includes(tab.type)) {
+					let container = document.getElementById(tab.id);
+					await Zotero.QLab.mountShellTab(container, tab.type);
+				}
+			}
+		}
+		catch (e) {
+			Zotero.logError(e);
+			Zotero.alert(null, 'QLab', e.message || String(e));
+		}
+	};
+	
+	this.qlabChooseAgentProvider = async function () {
+		try {
+			if (!Zotero.QLab || !Zotero.QLab.Settings) {
+				Zotero.alert(null, 'QLab', 'QLab module is unavailable');
+				return;
+			}
+			Zotero.QLab.startup && Zotero.QLab.startup();
+			let runtime = Zotero.QLab.getAgentRuntime && Zotero.QLab.getAgentRuntime();
+			let providers = (runtime && runtime.listProviders
+				? runtime.listProviders()
+				: [])
+				.filter(p => !p.optional);
+			if (!providers.length) {
+				providers = [
+					{ id: 'codex-cli', label: 'Local Codex CLI' },
+					{ id: 'openai-compat', label: 'OpenAI-compatible API' },
+					{ id: 'prove-harness', label: 'Prove harness' },
+				];
+			}
+			// confirmEx supports three labeled buttons — keep the core trio.
+			providers = providers.slice(0, 3);
+			while (providers.length < 3) {
+				providers.push(providers[providers.length - 1]);
+			}
+			let current = Zotero.QLab.Settings.getAgentProviderId();
+			let currentLabel = (providers.find(p => p.id === current) || {}).label || current;
+			let flags = (Services.prompt.BUTTON_POS_0 * Services.prompt.BUTTON_TITLE_IS_STRING)
+				+ (Services.prompt.BUTTON_POS_1 * Services.prompt.BUTTON_TITLE_IS_STRING)
+				+ (Services.prompt.BUTTON_POS_2 * Services.prompt.BUTTON_TITLE_IS_STRING)
+				+ Services.prompt.BUTTON_POS_0_DEFAULT;
+			let choice = Services.prompt.confirmEx(
+				window,
+				'QLab Agent Provider',
+				`Current: ${currentLabel}\n\nKeys stay outside the Chat UI.`,
+				flags,
+				providers[0].label || providers[0].id,
+				providers[1].label || providers[1].id,
+				providers[2].label || providers[2].id,
+				null,
+				{}
+			);
+			if (choice < 0 || choice > 2) {
+				return;
+			}
+			let chosen = providers[choice];
+			Zotero.QLab.Settings.setAgentProviderId(chosen.id);
+			if (runtime && runtime.setActiveProviderId) {
+				runtime.setActiveProviderId(chosen.id);
+			}
+			for (let tab of Zotero_Tabs._tabs) {
+				if (tab.type === 'qlabchat') {
+					let container = document.getElementById(tab.id);
+					await Zotero.QLab.mountShellTab(container, tab.type);
+				}
+			}
+			Zotero.alert(null, 'QLab', `Agent provider: ${chosen.label || chosen.id}`);
+		}
+		catch (e) {
+			Zotero.logError(e);
+			Zotero.alert(null, 'QLab', e.message || String(e));
+		}
 	};
 	
 	/**

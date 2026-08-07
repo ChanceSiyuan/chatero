@@ -53,8 +53,192 @@ var Zotero_Tabs = new function () {
 	});
 
 	Object.defineProperty(this, 'deck', {
-		get: () => document.getElementById('tabs-deck')
+		get: () => {
+			let el = document.getElementById('tabs-deck');
+			if (el && !el._qlabDeckShim) {
+				this._installDeckShim(el);
+			}
+			return el;
+		}
 	});
+	
+	/**
+	 * Keep callers that still read/write XUL deck.selectedIndex/Panel working after
+	 * replacing <deck> with a class-driven dual-pane host.
+	 */
+	this._installDeckShim = function (el) {
+		el._qlabDeckShim = true;
+		Object.defineProperty(el, 'selectedIndex', {
+			configurable: true,
+			get: () => {
+				let contents = this._tabContentNodes();
+				return contents.findIndex(node => node.id === this._selectedID);
+			},
+			set: (index) => {
+				let contents = this._tabContentNodes();
+				let node = contents[index];
+				if (node) {
+					this._setDeckSelection(node.id);
+				}
+			}
+		});
+		Object.defineProperty(el, 'selectedPanel', {
+			configurable: true,
+			get: () => document.getElementById(this._selectedID),
+			set: (node) => {
+				if (node && node.id) {
+					this._setDeckSelection(node.id);
+				}
+			}
+		});
+	};
+	
+	this._tabContentNodes = function () {
+		let deck = document.getElementById('tabs-deck');
+		if (!deck) {
+			return [];
+		}
+		return Array.from(deck.children).filter(node => node.localName === 'tab-content');
+	};
+	
+	this._setDeckSelection = function (id) {
+		// Selection identity stays on Zotero_Tabs; chrome visibility is class-driven.
+		if (id && id !== this._selectedID) {
+			// Avoid recursion through select(); only update chrome classes here when
+			// external code assigns deck.selectedIndex.
+			this._selectedID = id;
+		}
+		this._applySplitVisibility();
+	};
+	
+	// Ordered left to right; handle N sits between pane N and pane N+1.
+	const SPLIT_HANDLES = ['tabs-split-handle', 'tabs-split-handle-2'];
+	
+	this._applySplitVisibility = function () {
+		let deck = document.getElementById('tabs-deck');
+		if (!deck) {
+			return;
+		}
+		let snapshot = null;
+		try {
+			snapshot = this._qlab && this._qlab.groups
+				? this._qlab.groups.snapshot()
+				: null;
+		}
+		catch (e) {
+			Zotero.logError(e);
+		}
+		
+		let visibility = Zotero.QLab && Zotero.QLab.resolveSplitVisibility
+			? Zotero.QLab.resolveSplitVisibility(snapshot, this._selectedID)
+			: {
+				split: false,
+				paneCount: 1,
+				paneIDs: [this._selectedID],
+				leftID: this._selectedID,
+				centerID: null,
+				rightID: null,
+				focusedID: this._selectedID,
+				splitRatio: 0.5,
+				splitRatios: [0.5],
+				visibleIDs: [this._selectedID],
+			};
+		this._splitVisibility = visibility;
+		
+		let ratios = visibility.splitRatios || [visibility.splitRatio];
+		deck.classList.toggle('is-split', visibility.split);
+		deck.classList.toggle('is-split-3', visibility.paneCount >= 3);
+		deck.style.setProperty('--qlab-split-ratio', String(ratios[0]));
+		deck.style.setProperty('--qlab-split-a', String(ratios[0]));
+		deck.style.setProperty('--qlab-split-b', String(ratios[1] !== undefined ? ratios[1] : 1));
+		
+		for (let i = 0; i < SPLIT_HANDLES.length; i++) {
+			let handle = document.getElementById(SPLIT_HANDLES[i]);
+			if (handle) {
+				handle.hidden = visibility.paneCount < i + 2;
+			}
+		}
+		
+		for (let child of this._tabContentNodes()) {
+			child.classList.remove(
+				'deck-selected', 'qlab-visible-left', 'qlab-visible-center', 'qlab-visible-right'
+			);
+			let classes = Zotero.QLab && Zotero.QLab.paneClassForTab
+				? Zotero.QLab.paneClassForTab(child.id, visibility)
+				: (child.id === this._selectedID ? ['deck-selected'] : []);
+			for (let name of classes) {
+				child.classList.add(name);
+			}
+		}
+		
+		let focusedIndex = this._tabContentNodes().findIndex(node => node.id === this._selectedID);
+		if (focusedIndex >= 0) {
+			deck.setAttribute('selectedIndex', String(focusedIndex));
+		}
+	};
+	
+	this._initSplitHandle = function () {
+		let deck = document.getElementById('tabs-deck');
+		if (!deck) {
+			return;
+		}
+		for (let index = 0; index < SPLIT_HANDLES.length; index++) {
+			let handle = document.getElementById(SPLIT_HANDLES[index]);
+			if (handle && !handle._qlabSplitBound) {
+				this._bindSplitHandle(handle, deck, index);
+			}
+		}
+	};
+	
+	this._bindSplitHandle = function (handle, deck, index) {
+		handle._qlabSplitBound = true;
+		let dragging = false;
+		handle.addEventListener('mousedown', (event) => {
+			if (event.button !== 0 || !deck.classList.contains('is-split')) {
+				return;
+			}
+			dragging = true;
+			handle.classList.add('dragging');
+			event.preventDefault();
+			
+			let onMove = (moveEvent) => {
+				if (!dragging) {
+					return;
+				}
+				let rect = deck.getBoundingClientRect();
+				if (!rect.width) {
+					return;
+				}
+				// Ratios are divider positions across the whole deck, so the same
+				// formula applies to every handle.
+				let ratio = (moveEvent.clientX - rect.left) / rect.width;
+				try {
+					if (this._qlab && this._qlab.groups) {
+						// Clamping lives in the model; the change handler repaints.
+						this._qlab.groups.setSplitRatioAt(index, ratio);
+						return;
+					}
+				}
+				catch (e) {}
+				deck.style.setProperty(
+					index === 0 ? '--qlab-split-a' : '--qlab-split-b',
+					String(Math.min(0.85, Math.max(0.15, ratio)))
+				);
+			};
+			let onUp = () => {
+				dragging = false;
+				handle.classList.remove('dragging');
+				window.removeEventListener('mousemove', onMove, true);
+				window.removeEventListener('mouseup', onUp, true);
+				try {
+					Zotero.Session.debounceSave();
+				}
+				catch (e) {}
+			};
+			window.addEventListener('mousemove', onMove, true);
+			window.addEventListener('mouseup', onUp, true);
+		});
+	};
 
 	Object.defineProperty(this, 'numTabs', {
 		get: () => this._tabs.length
@@ -279,7 +463,37 @@ var Zotero_Tabs = new function () {
 				return {
 					itemID: null,
 				};
-			}
+			},
+			qlabchat: async (tab, tabIndex) => {
+				this.add({
+					type: 'qlabchat',
+					title: tab.title || 'Chat',
+					index: tabIndex,
+					data: tab.data || {},
+					select: tab.selected
+				});
+				return { itemID: null };
+			},
+			qlabqmd: async (tab, tabIndex) => {
+				this.add({
+					type: 'qlabqmd',
+					title: tab.title || 'QMD Editor',
+					index: tabIndex,
+					data: tab.data || {},
+					select: tab.selected
+				});
+				return { itemID: null };
+			},
+			qlabsite: async (tab, tabIndex) => {
+				this.add({
+					type: 'qlabsite',
+					title: tab.title || 'Knowledge Site',
+					index: tabIndex,
+					data: tab.data || {},
+					select: tab.selected
+				});
+				return { itemID: null };
+			},
 		},
 		getTitle: {
 			reader: async (tab) => {
@@ -296,7 +510,10 @@ var Zotero_Tabs = new function () {
 					return Zotero.getString("item-title-empty-note");
 				}
 				return title;
-			}
+			},
+			qlabchat: async () => 'Chat',
+			qlabqmd: async () => 'QMD Editor',
+			qlabsite: async () => 'Knowledge Site',
 		},
 		toggleAudio: {
 			reader: (tab) => {
@@ -304,6 +521,23 @@ var Zotero_Tabs = new function () {
 			}
 		},
 	};
+	
+	// Chatero QLab shell tabs -- mount placeholder hosts; never throw into core.
+	for (let shellType of ['qlabchat', 'qlabqmd', 'qlabsite']) {
+		this.tabHooks.load[shellType] = async (tab) => {
+			try {
+				let container = document.getElementById(tab.id);
+				if (Zotero.QLab && Zotero.QLab.mountShellTab) {
+					await Zotero.QLab.mountShellTab(container, shellType);
+				}
+			}
+			catch (e) {
+				Zotero.logError(e);
+			}
+		};
+		this.tabHooks.refocus[shellType] = async () => {};
+		this.tabHooks.focusFirst[shellType] = async () => {};
+	}
 
 	this._getHook = function (type, action) {
 		if (this.tabHooks[action] && this.tabHooks[action][type]) {
@@ -547,6 +781,62 @@ var Zotero_Tabs = new function () {
 		);
 
 		this._loadSidebarState();
+		
+		try {
+			if (Zotero.QLab && Zotero.QLab.createWindowController) {
+				this._qlab = Zotero.QLab.createWindowController(this);
+				Zotero.QLab.startup && Zotero.QLab.startup();
+			}
+		}
+		catch (e) {
+			Zotero.logError(e);
+			this._qlab = null;
+		}
+		
+		this._initSplitHandle();
+		this._applySplitVisibility();
+	};
+	
+	this._onQLabGroupsChanged = function (_snapshot) {
+		try {
+			this._applySplitVisibility();
+			Zotero.Session.debounceSave();
+		}
+		catch (e) {}
+	};
+	
+	this.arrangePDFChat = async function (itemID, title) {
+		if (!this._qlab) {
+			throw new Error('QLab module is unavailable');
+		}
+		return this._qlab.arrangePDFChat(itemID, title);
+	};
+	
+	this.arrangePDFEditor = async function (itemID, title) {
+		if (!this._qlab) {
+			throw new Error('QLab module is unavailable');
+		}
+		return this._qlab.arrangePDFEditor(itemID, title);
+	};
+	
+	this.arrangeResearchDesk = async function (itemID, title) {
+		if (!this._qlab) {
+			throw new Error('QLab module is unavailable');
+		}
+		return this._qlab.arrangeResearchDesk(itemID, title);
+	};
+	
+	/**
+	 * True when a tab is currently rendered in one of the visible panes.
+	 */
+	this.isTabVisible = function (tabID) {
+		if (!tabID) {
+			return false;
+		}
+		if (!this._splitVisibility) {
+			return tabID === this._selectedID;
+		}
+		return (this._splitVisibility.visibleIDs || []).includes(tabID);
 	};
 
 	this.destroy = function () {
@@ -600,6 +890,21 @@ var Zotero_Tabs = new function () {
 			}
 			return o;
 		});
+	};
+	
+	this.getQLabGroupsState = function () {
+		if (!this._qlab) {
+			return null;
+		}
+		return this._qlab.getGroupsState();
+	};
+	
+	this.restoreQLabGroupsState = function (data) {
+		if (!this._qlab || !data) {
+			return;
+		}
+		this._qlab.restoreGroupsState(data);
+		this._applySplitVisibility();
 	};
 
 	this.restoreState = async function (tabs) {
@@ -668,6 +973,12 @@ var Zotero_Tabs = new function () {
 			// Not awaited as the id and container should be returned synchronously
 			this.rename(tab.id);
 		}
+		if (Zotero.QLab && Zotero.QLab.SHELL_TAB_TYPES
+				&& Zotero.QLab.SHELL_TAB_TYPES.includes(type)
+				&& Zotero.QLab.mountShellTab) {
+			Zotero.QLab.mountShellTab(container, type).catch(e => Zotero.logError(e));
+		}
+		this._applySplitVisibility();
 		return { id, container };
 	};
 
@@ -770,18 +1081,25 @@ var Zotero_Tabs = new function () {
 			historyEntry.push({ index: tmpTabs.indexOf(tab), data: tab.data, type: tab.type });
 			closedIDs.push(id);
 
+			let closedTabID = id;
+			let closedDomID = tab.id;
 			setTimeout(() => {
-				document.getElementById(tab.id).remove();
-				// For unknown reason fx102, unlike 60, sometimes doesn't automatically update selected index
-				let selectedIndex = Array.from(this.deck.children).findIndex(x => x.id == this._selectedID);
-				if (this.deck.selectedIndex !== selectedIndex) {
-					this.deck.selectedIndex = selectedIndex;
+				document.getElementById(closedDomID)?.remove();
+				try {
+					if (this._qlab && this._qlab.groups && this._qlab.groups.tab(closedTabID)) {
+						this._qlab.groups.closeTab(closedTabID);
+					}
 				}
+				catch (e) {
+					Zotero.logError(e);
+				}
+				this._applySplitVisibility();
 			});
 		}
 		this._history.push(historyEntry);
 		Zotero.Notifier.trigger('close', 'tab', [closedIDs], true);
 		this._update();
+		this._applySplitVisibility();
 	};
 
 	/**
@@ -939,7 +1257,17 @@ var Zotero_Tabs = new function () {
 
 		this._prevSelectedID = reopening ? this._selectedID : null;
 		this._selectedID = id;
-		this.deck.selectedIndex = Array.from(this.deck.children).findIndex(x => x.id == id);
+		try {
+			if (this._qlab && this._qlab.groups) {
+				if (this._qlab.groups.groupOf(id)) {
+					this._qlab.groups.activateTab(id);
+				}
+			}
+		}
+		catch (e) {
+			Zotero.logError(e);
+		}
+		this._applySplitVisibility();
 		this._update();
 		Zotero.Notifier.trigger('select', 'tab', [tab.id], { [tab.id]: { type: tab.type } }, true);
 

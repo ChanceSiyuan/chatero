@@ -38,6 +38,17 @@ general-add = Add
 general-remind-me-later = Remind Me Later
 general-dont-ask-again = Don’t Ask Again
 general-choose-file = Choose File…
+
+menu-qlab-pdf-chat =
+    .label = Arrange PDF | Chat
+menu-qlab-pdf-editor =
+    .label = Arrange PDF | Editor
+menu-qlab-research-desk =
+    .label = Arrange Research Desk (PDF | QMD | Chat)
+menu-qlab-choose-workspace =
+    .label = Choose QLab Workspace…
+menu-qlab-choose-provider =
+    .label = Choose Agent Provider…
 general-open-settings = Open Settings
 general-settings = Settings…
 general-help = Help

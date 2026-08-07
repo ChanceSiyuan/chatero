@@ -250,6 +250,10 @@ const { CommandLineOptions } = ChromeUtils.importESModule("chrome://zotero/conte
 		// Browser
 		Zotero.browser = "g";
 		
+		// Reject an official Zotero profile before any preference reads/writes so a rejected
+		// startup cannot mutate prefs.js under ~/Library/Application Support/Zotero.
+		await Zotero.DataDirectory.assertSafeProfileDirectory();
+		
 		// TEMP: Disable automatic safe mode until we can figure out why some shutdowns are
 		// counting as crashes
 		var branch = Services.prefs.getBranch("toolkit.startup.");
@@ -260,7 +264,6 @@ const { CommandLineOptions } = ChromeUtils.importESModule("chrome://zotero/conte
 		Zotero.Intl.init();
 		if (this.restarting) return;
 		
-		await Zotero.DataDirectory.assertSafeProfileDirectory();
 		await Zotero.Prefs.init();
 		Zotero.Debug.init(options && options.forceDebugLog);
 		

@@ -491,6 +491,17 @@ test("bundle verifier rejects non-ad-hoc metadata, active UpdateURL, wrong execu
   }
 });
 
+test("package script refuses dirty trees including untracked source before provenance", async () => {
+  const source = await readFile(packageScript, "utf8");
+  assert.match(source, /git status --porcelain --untracked-files=all/);
+  assert.doesNotMatch(source, /--untracked-files=no/);
+  assert.match(source, /generate-product\.mjs --build-provenance --require-clean-tree/);
+  assert.match(
+    source,
+    /Refusing to package a bundle from a dirty tree \(tracked changes or untracked source would not match provenance\)/
+  );
+});
+
 test("bundle verifier parses update sections and enforces packaged preferences, schemes, and provenance", async (t) => {
   const controls = [
     {

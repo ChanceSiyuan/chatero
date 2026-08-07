@@ -1,0 +1,107 @@
+#tabs-deck,
+.tabs-content-area {
+	min-width: $min-width-tabs-deck;
+	flex-grow: 1;
+	flex-shrink: 1;
+	position: relative;
+	min-height: 0;
+}
+
+#tabs-deck > tab-content {
+	min-width: 0;
+	min-height: 0;
+}
+
+#tabs-deck:not(.is-split) > tab-content:not(.deck-selected),
+#tabs-deck.is-split > tab-content:not(.deck-selected) {
+	// Hide inactive hosts without display:none to avoid Reader reflow/reload.
+	-moz-subtree-hidden-only-visually: 1;
+	position: absolute !important;
+	inset: 0;
+	pointer-events: none;
+	z-index: 0;
+}
+
+#tabs-deck:not(.is-split) > tab-content.deck-selected {
+	flex: 1 1 auto;
+	width: 100%;
+	height: 100%;
+	position: relative;
+	z-index: 1;
+	pointer-events: auto;
+}
+
+// --qlab-split-a / --qlab-split-b are divider positions across the whole deck,
+// so pane widths are the gaps between them.
+#tabs-deck.is-split {
+	display: grid !important;
+	grid-template-columns:
+		minmax(160px, calc(var(--qlab-split-a, 0.5) * 100%))
+		5px
+		minmax(160px, 1fr);
+	align-items: stretch;
+}
+
+#tabs-deck.is-split.is-split-3 {
+	grid-template-columns:
+		minmax(140px, calc(var(--qlab-split-a, 0.34) * 100%))
+		5px
+		minmax(140px, calc((var(--qlab-split-b, 0.67) - var(--qlab-split-a, 0.34)) * 100%))
+		5px
+		minmax(140px, 1fr);
+}
+
+#tabs-deck.is-split > tab-content.qlab-visible-left,
+#tabs-deck.is-split > tab-content.qlab-visible-center,
+#tabs-deck.is-split > tab-content.qlab-visible-right {
+	grid-row: 1;
+	position: relative !important;
+	inset: auto;
+	pointer-events: auto;
+	z-index: 1;
+	-moz-subtree-hidden-only-visually: 0;
+}
+
+#tabs-deck.is-split > tab-content.qlab-visible-left {
+	grid-column: 1;
+}
+
+#tabs-deck.is-split:not(.is-split-3) > tab-content.qlab-visible-right {
+	grid-column: 3;
+}
+
+#tabs-deck.is-split-3 > tab-content.qlab-visible-center {
+	grid-column: 3;
+}
+
+#tabs-deck.is-split-3 > tab-content.qlab-visible-right {
+	grid-column: 5;
+}
+
+#tabs-deck > .tabs-split-handle {
+	display: none;
+	width: 5px;
+	margin: 0;
+	padding: 0;
+	cursor: col-resize;
+	background: var(--fill-quinary);
+	-moz-window-dragging: no-drag;
+	z-index: 2;
+}
+
+#tabs-deck.is-split > #tabs-split-handle {
+	display: block;
+	grid-column: 2;
+	grid-row: 1;
+}
+
+#tabs-deck.is-split-3 > #tabs-split-handle-2 {
+	display: block;
+	grid-column: 4;
+	grid-row: 1;
+}
+
+#tabs-deck.is-split > .tabs-split-handle:hover,
+#tabs-deck.is-split > .tabs-split-handle.dragging {
+	background: var(--accent-blue, #0a84ff);
+}

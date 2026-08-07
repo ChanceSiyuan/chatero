@@ -30,3 +30,6 @@
 
 Phase 1 intentionally contains no QLab tabs or split groups. Those begin only
 after this complete-Zotero baseline is accepted.
+
+**Phase 1 is frozen.** See [phase-1-freeze.md](./phase-1-freeze.md).
+Further work follows [implementation-plan.md](./implementation-plan.md).

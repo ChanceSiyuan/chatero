@@ -268,3 +268,8 @@ pref("dom.fetch.allow_force_allowed_dtd", true);
 // Translators are evaluated in the parent process with the system principal
 pref("security.allow_eval_with_system_principal", true);
 pref("security.allow_eval_in_parent_process", true);
+
+// Chatero QLab module (workspace path is user-selected; never ships personal data)
+pref("extensions.zotero.qlab.enabled", true);
+pref("extensions.zotero.qlab.root", "");
+pref("extensions.zotero.qlab.agentProvider", "codex-cli");

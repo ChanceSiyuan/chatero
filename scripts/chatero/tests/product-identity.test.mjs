@@ -322,6 +322,44 @@ test("the manifest deterministically supplies generated build and runtime identi
   assert.match(packageJSON.scripts["test:chatero:staged"], /verify_chatero_bundle/);
 });
 
+test("build provenance can require a clean tree including untracked source", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "chatero-clean-tree-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+
+  const product = JSON.parse(await read("app/chatero-product.json"));
+  await mkdir(join(root, "app"), { recursive: true });
+  await mkdir(join(root, "resource"), { recursive: true });
+  await writeFile(join(root, "app", "chatero-product.json"), `${JSON.stringify(product, null, 2)}\n`);
+  await writeFile(join(root, "tracked.js"), "export {}\n");
+
+  await execFile("git", ["-C", root, "init"]);
+  await execFile("git", ["-C", root, "config", "user.email", "chatero@example.com"]);
+  await execFile("git", ["-C", root, "config", "user.name", "Chatero Test"]);
+  await execFile("git", ["-C", root, "add", "app/chatero-product.json", "tracked.js"]);
+  await execFile("git", ["-C", root, "commit", "-m", "init"]);
+
+  const { generateProduct } = await import(new URL("../generate-product.mjs", import.meta.url));
+  const sourceCommit = (await execFile("git", ["-C", root, "rev-parse", "HEAD"])).stdout.trim();
+
+  await generateProduct({
+    root,
+    buildProvenance: true,
+    requireCleanTree: true,
+    sourceCommit
+  });
+
+  await writeFile(join(root, "untracked-source.js"), "export const leak = true;\n");
+  await assert.rejects(
+    generateProduct({
+      root,
+      buildProvenance: true,
+      requireCleanTree: true,
+      sourceCommit
+    }),
+    /dirty tree/
+  );
+});
+
 test("shell config regenerates manifest identity before consuming it", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "chatero-shell-config-"));
   t.after(() => rm(root, { recursive: true, force: true }));

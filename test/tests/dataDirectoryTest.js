@@ -309,6 +309,54 @@ describe("Zotero.DataDirectory", function () {
 				safe
 			);
 		});
+
+		it("should reject an alternate data-directory symlink before caching it", async function () {
+			let defaultDir = OS.Path.join(tmpDir, "Chatero", "Data");
+			let alternate = defaultDir + " secondary";
+			await OS.File.makeDir(defaultDir, { from: tmpDir });
+			await OS.File.unixSymLink(officialRoot, alternate);
+			await Zotero.File.putContentsAsync(
+				OS.Path.join(alternate, Zotero.DataDirectory.getDatabaseFilename()),
+				""
+			);
+
+			let oldUseDataDir = Zotero.Prefs.get("useDataDir");
+			let oldDataDir = Zotero.Prefs.get("dataDir");
+			let originalForceDataDir = Zotero.forceDataDir;
+			let originalProfileDir = Zotero.Profile.dir;
+			let defaultStub = sinon.stub(Zotero.DataDirectory, "defaultDir").get(() => defaultDir);
+			let rootsStub = sinon.stub(Zotero.DataDirectory, "_getOfficialZoteroRoots")
+				.returns([officialRoot]);
+			let profilesStub = sinon.stub(Zotero.Profile, "findOtherProfilesUsingDataDirectory")
+				.resolves([{ name: "other" }]);
+			stubs.setDataDir.resetHistory();
+			try {
+				Zotero.forceDataDir = false;
+				Zotero.Profile.dir = OS.Path.join(tmpDir, "Profiles", "abc.secondary");
+				if (oldUseDataDir !== undefined) Zotero.Prefs.clear("useDataDir");
+				if (oldDataDir !== undefined) Zotero.Prefs.clear("dataDir");
+				Zotero.DataDirectory._cache(false);
+				let error = await getRejection(Zotero.DataDirectory.init());
+				assert.equal(error.name, "NotAllowedError");
+				assert.isFalse(
+					stubs.setDataDir.called,
+					"rejected alternate must not persist dataDir prefs"
+				);
+			}
+			finally {
+				Zotero.forceDataDir = originalForceDataDir;
+				Zotero.Profile.dir = originalProfileDir;
+				if (oldUseDataDir === undefined) Zotero.Prefs.clear("useDataDir");
+				else Zotero.Prefs.set("useDataDir", oldUseDataDir);
+				if (oldDataDir === undefined) Zotero.Prefs.clear("dataDir");
+				else Zotero.Prefs.set("dataDir", oldDataDir);
+				profilesStub.restore();
+				rootsStub.restore();
+				defaultStub.restore();
+				await OS.File.remove(alternate, { ignoreAbsent: true });
+				await removeDir(OS.Path.join(tmpDir, "Chatero"));
+			}
+		});
 	});
 	
 	

@@ -113,12 +113,38 @@ test("shared XPCOM startup scripts have unique top-level lexical bindings", asyn
 test("profile isolation runs before preferences and data-directory startup", async () => {
   const source = await readFile(join(xpcomRoot, "zotero.js"), "utf8");
   const isolation = source.indexOf("await Zotero.DataDirectory.assertSafeProfileDirectory");
+  const recentCrashes = source.indexOf("recent_crashes");
+  const intlInit = source.indexOf("Zotero.Intl.init()");
   const preferences = source.indexOf("await Zotero.Prefs.init()");
   const dataDirectory = source.indexOf("await Zotero.DataDirectory.init()");
 
   assert.notEqual(isolation, -1, "startup must enforce profile isolation");
+  assert.ok(isolation < recentCrashes, "profile isolation must precede recent_crashes pref mutation");
+  assert.ok(isolation < intlInit, "profile isolation must precede Intl.init pref mutation");
   assert.ok(isolation < preferences, "profile isolation must precede preference access");
   assert.ok(isolation < dataDirectory, "profile isolation must precede data-directory access");
+});
+
+test("alternate data-directory selection is isolated before persistence", async () => {
+  const source = await readFile(join(xpcomRoot, "dataDirectory.js"), "utf8");
+  const blockStart = source.indexOf("let newDataDir = this.defaultDir + ' ' + profileName;");
+  const blockEnd = source.indexOf("// Check for ~/Zotero/zotero.sqlite", blockStart);
+  assert.notEqual(blockStart, -1, "alternate data-directory selection must remain present");
+  assert.notEqual(blockEnd, -1, "early-return database check must remain present");
+
+  const block = source.slice(blockStart, blockEnd);
+  const isolation = block.indexOf("await this.assertSafeDataDirectory(newDataDir)");
+  const assignment = block.indexOf("dataDir = newDataDir");
+  assert.notEqual(isolation, -1, "alternate data directory must be isolated");
+  assert.ok(isolation < assignment, "alternate data directory must be isolated before assignment");
+
+  const earlyReturnStart = source.indexOf("let dbFile = OS.Path.join(dataDir, dbFilename);", blockEnd);
+  const earlyReturnEnd = source.indexOf("return dataDir;", earlyReturnStart);
+  const earlyReturn = source.slice(earlyReturnStart, earlyReturnEnd);
+  const earlyIsolation = earlyReturn.indexOf("await this.assertSafeDataDirectory(dataDir)");
+  const earlySet = earlyReturn.indexOf("this.set(dataDir)");
+  assert.notEqual(earlyIsolation, -1, "early-return path must isolate before caching");
+  assert.ok(earlyIsolation < earlySet, "early-return path must isolate before persisting prefs");
 });
 
 test("every interactive data-directory selection is isolated before it is saved", async () => {

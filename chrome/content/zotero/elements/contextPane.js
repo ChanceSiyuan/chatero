@@ -175,7 +175,9 @@
 			for (let id of ids) {
 				this._removeItemContext(id);
 			}
-			if (Zotero_Tabs.deck.children.length == 1) {
+			if (Zotero_Tabs._tabContentNodes
+					? Zotero_Tabs._tabContentNodes().length == 1
+					: Zotero_Tabs.deck.children.length == 1) {
 				Array.from(this._notesPaneDeck.children).forEach(x => x.notesList.expanded = false);
 			}
 			// Close tab specific notes if tab id no longer exists, but

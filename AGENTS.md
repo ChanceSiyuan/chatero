@@ -19,6 +19,18 @@ test-first commits. Never rewrite upstream history.
 - Public URL scheme: `chatero://`
 - Profile/data root: `~/Library/Application Support/Chatero`
 
+## QMD write authority
+
+Two separate paths reach a Draft, and neither may bypass the other:
+
+- **Human edits** (Apply from Chat or the Reader, Preview block edits, Source
+  typing) land in the shell buffer and still go through `QmdDraftIO.writeSource`
+  revision checks. `Zotero.QLab.insertIntoQmd` is UI-triggered only and must
+  never be exposed as an agent tool.
+- **Agent edits** go to a private working copy under
+  `work/qlab-zotero/draft-changes/`. `QmdDraftIO.keepChange` remains the only
+  promotion into `drafts/`.
+
 ## Personal data
 
 The Chatero source repository must never contain personal Zotero profiles,
@@ -30,3 +42,9 @@ QLab workspaces are external user-selected directories.
 Use the upstream Zotero harness for core behavior and the Chatero Node tests
 for product/build invariants. A QLab failure must never prevent Zotero core
 from starting.
+
+## Phase status
+
+- Phase 1 is frozen: `docs/chatero/phase-1-freeze.md`
+- Active plan: `docs/chatero/implementation-plan.md`
+- XPI parity checklist: `docs/chatero/parity-checklist.md`

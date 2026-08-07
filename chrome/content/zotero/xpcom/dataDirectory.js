@@ -188,10 +188,10 @@ Zotero.DataDirectory = {
 					Zotero.debug(msg, 1);
 					throw new DOMException(msg, 'NotFoundError');
 				}
-				// This removes lastDataDir
-				this.set(nsIFile.path);
 				dataDir = nsIFile.path;
 				await this.assertSafeDataDirectory(dataDir);
+				// This removes lastDataDir
+				this.set(dataDir);
 			}
 			else {
 				await this.assertSafeDataDirectory(prefVal);
@@ -278,17 +278,24 @@ Zotero.DataDirectory = {
 					let newDataDir = this.defaultDir + ' ' + profileName;
 					if (!((await OS.File.exists(newDataDir)))
 							|| ((await OS.File.exists(OS.Path.join(newDataDir, dbFilename))))) {
+						// Alternate dirs may be symlink aliases into official Zotero roots;
+						// isolate before the early-return path that caches and persists them.
+						await this.assertSafeDataDirectory(newDataDir);
 						dataDir = newDataDir;
 					}
 				}
 			}
 			catch (e) {
+				if (e.name == 'NotAllowedError') {
+					throw e;
+				}
 				Zotero.logError(e);
 			}
 			
 			// Check for ~/Zotero/zotero.sqlite
 			let dbFile = OS.Path.join(dataDir, dbFilename);
 			if (await OS.File.exists(dbFile)) {
+				await this.assertSafeDataDirectory(dataDir);
 				Zotero.debug("Using data directory " + dataDir);
 				this._cache(dataDir);
 				

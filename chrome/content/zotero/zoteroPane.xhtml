@@ -778,6 +778,22 @@
 											data-l10n-id="menu-normalize-attachment-titles"/>
 								</menupopup>
 							</menu>
+							<menuseparator id="menu-qlab-separator"/>
+							<menuitem id="menu-qlab-pdf-chat"
+									data-l10n-id="menu-qlab-pdf-chat"
+									oncommand="ZoteroPane.qlabArrangePDFChat()"/>
+							<menuitem id="menu-qlab-pdf-editor"
+									data-l10n-id="menu-qlab-pdf-editor"
+									oncommand="ZoteroPane.qlabArrangePDFEditor()"/>
+							<menuitem id="menu-qlab-research-desk"
+									data-l10n-id="menu-qlab-research-desk"
+									oncommand="ZoteroPane.qlabArrangeResearchDesk()"/>
+							<menuitem id="menu-qlab-choose-workspace"
+									data-l10n-id="menu-qlab-choose-workspace"
+									oncommand="ZoteroPane.qlabChooseWorkspace()"/>
+							<menuitem id="menu-qlab-choose-provider"
+									data-l10n-id="menu-qlab-choose-provider"
+									oncommand="ZoteroPane.qlabChooseAgentProvider()"/>
 						</menupopup>
 					</menu>
 				
@@ -1086,8 +1102,19 @@
 					<div id="zotero-tab-cover" class="hidden" xmlns="http://www.w3.org/1999/xhtml">
 						<label>&zotero.general.loading;</label>
 					</div>
-					<deck id="tabs-deck">
-						<tab-content id="zotero-pane"
+					<!-- Chatero: hbox (not XUL deck) so up to three tab-content hosts can be
+					     visible together (PDF · Notes · Chat). Tab hosts are never reparented;
+					     visibility is class-driven. -->
+					<hbox id="tabs-deck" class="tabs-content-area" flex="1">
+						<box id="tabs-split-handle"
+								class="tabs-split-handle"
+								hidden="true"
+								tooltiptext="Resize split"/>
+						<box id="tabs-split-handle-2"
+								class="tabs-split-handle"
+								hidden="true"
+								tooltiptext="Resize split"/>
+						<tab-content id="zotero-pane" class="deck-selected"
 							onkeydown="ZoteroPane_Local.handleKeyDown(event, this.id)"
 							onkeyup="ZoteroPane_Local.handleKeyUp(event, this.id)"
 							onkeypress="ZoteroPane_Local.handleKeyPress(event)">
@@ -1374,7 +1401,7 @@
 								</box>
 							</hbox>
 						</tab-content>
-					</deck>
+					</hbox>
 		
 					<splitter id="zotero-context-splitter"
 							  hidden="true"
