@@ -1,11 +1,13 @@
+import { CHATERO_PRODUCT } from './chatero-product.mjs';
+
 export var ZOTERO_CONFIG = {
-	GUID: 'zotero@zotero.org',
-	ID: 'zotero', // used for db filename, etc.
-	CLIENT_NAME: 'Chatero',
-	EXTERNAL_URL_SCHEME: 'chatero',
-	DATA_DIRECTORY_WITHIN_PROFILE_ROOT: true,
-	DATA_DIRECTORY_NAME: 'Data',
-	HTTP_SERVER_FALLBACK_PORTS: [23129],
+	GUID: CHATERO_PRODUCT.applicationID,
+	ID: CHATERO_PRODUCT.internalID, // used for db filename, etc.
+	CLIENT_NAME: CHATERO_PRODUCT.displayName,
+	EXTERNAL_URL_SCHEME: CHATERO_PRODUCT.externalURLScheme,
+	DATA_DIRECTORY_WITHIN_PROFILE_ROOT: Boolean(CHATERO_PRODUCT.profileRootName),
+	DATA_DIRECTORY_NAME: CHATERO_PRODUCT.dataDirectoryName,
+	HTTP_SERVER_FALLBACK_PORTS: CHATERO_PRODUCT.fallbackPorts,
 	DOMAIN_NAME: 'zotero.org',
 	PRODUCER: 'Digital Scholar',
 	PRODUCER_URL: 'https://digitalscholar.org',
@@ -18,7 +20,7 @@ export var ZOTERO_CONFIG = {
 	SERVICES_URL: 'https://services.zotero.org/',
 	API_VERSION: 3,
 	CONNECTOR_MIN_VERSION: '5.0.39', // show upgrade prompt for requests from below this version
-	PREF_BRANCH: 'extensions.zotero.',
+	PREF_BRANCH: CHATERO_PRODUCT.preferenceBranch,
 	BOOKMARKLET_ORIGIN: 'https://www.zotero.org',
 	BOOKMARKLET_URL: 'https://www.zotero.org/bookmarklet/',
 	START_URL: "https://www.zotero.org/start",

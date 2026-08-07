@@ -1,9 +1,15 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { execFile as execFileCallback } from "node:child_process";
+import { promisify } from "node:util";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import test from "node:test";
 import { runInNewContext } from "node:vm";
 
 const read = (path) => readFile(new URL(`../../../${path}`, import.meta.url), "utf8");
+const execFile = promisify(execFileCallback);
 
 const parseINI = (text) => {
   const result = {};
@@ -109,7 +115,19 @@ test("Chatero identity is isolated while Zotero compatibility IDs remain stable"
     automaticUpdates: false
   });
 
-  const shellConfig = parseShellAssignments(await read("app/config-custom.sh"));
+  const { stdout: shellConfigOutput } = await execFile("bash", [
+    "-c",
+    'DIR="$1"; . "$DIR/config-custom.sh"; printf "%s\\n" "$APP_NAME" "$APP_ID" "$APP_BUNDLE_ID" "$APP_URL_SCHEME" "$SIGN"',
+    "bash",
+    fileURLToPath(new URL("../../../app/", import.meta.url))
+  ]);
+  const shellConfig = Object.fromEntries([
+    "APP_NAME",
+    "APP_ID",
+    "APP_BUNDLE_ID",
+    "APP_URL_SCHEME",
+    "SIGN"
+  ].map((key, index) => [key, shellConfigOutput.trim().split("\n")[index]]));
   assert.deepEqual(
     Object.fromEntries(["APP_NAME", "APP_ID", "APP_BUNDLE_ID", "APP_URL_SCHEME", "SIGN"].map((key) => [key, shellConfig[key]])),
     {
@@ -206,4 +224,80 @@ test("Chatero identity is isolated while Zotero compatibility IDs remain stable"
   const updaterINI = parseINI(await read("app/assets/updater.ini"));
   assert.equal(updaterINI.Strings.Title, `${product.displayName} Update`);
   assert.equal(updaterINI.Strings.Info, `${product.displayName} is installing your updates and will start in a few moments…`);
+});
+
+test("the manifest deterministically supplies generated build and runtime identity", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "chatero-product-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+
+  const product = {
+    ...JSON.parse(await read("app/chatero-product.json")),
+    displayName: "Chatero Test",
+    bundleID: "io.github.chancesiyuan.chatero.test",
+    externalURLScheme: "chatero-test",
+    dataDirectoryName: "Test Data",
+    fallbackPorts: [24129]
+  };
+  await mkdir(join(root, "app"), { recursive: true });
+  await mkdir(join(root, "resource"), { recursive: true });
+  await writeFile(join(root, "app", "chatero-product.json"), `${JSON.stringify(product, null, 2)}\n`);
+  await writeFile(join(root, "app", "config-custom.sh"), await read("app/config-custom.sh"));
+  await writeFile(join(root, "resource", "config.mjs"), await read("resource/config.mjs"));
+
+  const { generateProduct } = await import(new URL("../generate-product.mjs", import.meta.url));
+  await generateProduct({ root });
+
+  const generatedRuntimePath = join(root, "resource", "chatero-product.mjs");
+  const generatedRuntime = await import(`${pathToFileURL(generatedRuntimePath).href}?generated`);
+  assert.deepEqual(generatedRuntime.CHATERO_PRODUCT, product);
+
+  const generatedShell = parseShellAssignments(await readFile(join(root, "app", "chatero-product.sh"), "utf8"));
+  assert.deepEqual(
+    Object.fromEntries(["APP_NAME", "APP_ID", "APP_BUNDLE_ID", "APP_URL_SCHEME", "SIGN"].map((key) => [key, generatedShell[key]])),
+    {
+      APP_NAME: product.displayName,
+      APP_ID: product.applicationID,
+      APP_BUNDLE_ID: product.bundleID,
+      APP_URL_SCHEME: product.externalURLScheme,
+      SIGN: "0"
+    }
+  );
+
+  const { stdout } = await execFile("bash", [
+    "-c",
+    'DIR="$1/app"; . "$DIR/config-custom.sh"; printf "%s\\n" "$APP_NAME" "$APP_ID" "$APP_BUNDLE_ID" "$APP_URL_SCHEME" "$SIGN"',
+    "bash",
+    root
+  ]);
+  assert.deepEqual(stdout.trim().split("\n"), [
+    product.displayName,
+    product.applicationID,
+    product.bundleID,
+    product.externalURLScheme,
+    "0"
+  ]);
+
+  const { ZOTERO_CONFIG: generatedRuntimeConfig } = await import(`${pathToFileURL(join(root, "resource", "config.mjs")).href}?runtime`);
+  assert.deepEqual(
+    Object.fromEntries(["GUID", "ID", "CLIENT_NAME", "EXTERNAL_URL_SCHEME", "DATA_DIRECTORY_WITHIN_PROFILE_ROOT", "DATA_DIRECTORY_NAME", "HTTP_SERVER_FALLBACK_PORTS"].map((key) => [key, generatedRuntimeConfig[key]])),
+    {
+      GUID: product.applicationID,
+      ID: product.internalID,
+      CLIENT_NAME: product.displayName,
+      EXTERNAL_URL_SCHEME: product.externalURLScheme,
+      DATA_DIRECTORY_WITHIN_PROFILE_ROOT: Boolean(product.profileRootName),
+      DATA_DIRECTORY_NAME: product.dataDirectoryName,
+      HTTP_SERVER_FALLBACK_PORTS: product.fallbackPorts
+    }
+  );
+
+  const originalRuntimeArtifact = await readFile(generatedRuntimePath, "utf8");
+  await generateProduct({ root, check: true });
+  await writeFile(generatedRuntimePath, "// stale\n");
+  await assert.rejects(generateProduct({ root, check: true }), /stale generated artifact/);
+  await generateProduct({ root });
+  assert.equal(await readFile(generatedRuntimePath, "utf8"), originalRuntimeArtifact);
+
+  const packageJSON = JSON.parse(await read("package.json"));
+  assert.match(packageJSON.scripts.build, /scripts\/chatero\/generate-product\.mjs/);
 });
