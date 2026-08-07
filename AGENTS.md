@@ -1,12 +1,12 @@
 # Chatero Agent Instructions
 
-Chatero is a thin fork of \`zotero/zotero\`. Preserve Zotero's complete library,
+Chatero is a thin fork of `zotero/zotero`. Preserve Zotero's complete library,
 sync, citation, note, Reader, and plugin behavior.
 
 ## Remotes
 
-- \`origin\`: \`git@github.com:ChanceSiyuan/chatero.git\`
-- \`upstream\`: \`https://github.com/zotero/zotero.git\`
+- `origin`: `git@github.com:ChanceSiyuan/chatero.git`
+- `upstream`: `https://github.com/zotero/zotero.git`
 
 Merge upstream through a dedicated branch and keep Chatero changes in small,
 test-first commits. Never rewrite upstream history.
@@ -14,10 +14,10 @@ test-first commits. Never rewrite upstream history.
 ## Product identity
 
 - Display name: Chatero
-- Bundle ID: \`io.github.chancesiyuan.chatero\`
-- Mozilla application ID: \`zotero@zotero.org\` (must remain unchanged)
-- Public URL scheme: \`chatero://\`
-- Profile/data root: \`~/Library/Application Support/Chatero\`
+- Bundle ID: `io.github.chancesiyuan.chatero`
+- Mozilla application ID: `zotero@zotero.org` (must remain unchanged)
+- Public URL scheme: `chatero://`
+- Profile/data root: `~/Library/Application Support/Chatero`
 
 ## Personal data
 
