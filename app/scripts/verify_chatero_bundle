@@ -7,41 +7,141 @@ if [ -z "$APP_BUNDLE" ] || [ ! -d "$APP_BUNDLE" ]; then
 	exit 2
 fi
 APP_BUNDLE="$(cd "$APP_BUNDLE" && pwd -P)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"
+NODE=$(command -v node)
 
 if [ "${CHATER0_VERIFY_TEST_MODE:-0}" = "1" ]; then
 	PLIST_BUDDY="${CHATER0_VERIFY_TEST_PLISTBUDDY:?test PlistBuddy is required}"
+	PLUTIL="${CHATER0_VERIFY_TEST_PLUTIL:?test plutil is required}"
 	CODESIGN="${CHATER0_VERIFY_TEST_CODESIGN:?test codesign is required}"
+	DEFAULT_PREFS="${CHATER0_VERIFY_TEST_DEFAULT_PREFS:?test packaged preferences are required}"
+	BUILD_PROVENANCE="${CHATER0_VERIFY_TEST_BUILD_PROVENANCE:?test build provenance is required}"
+	EXPECTED_SOURCE_COMMIT="${CHATER0_VERIFY_TEST_SOURCE_COMMIT:?test source commit is required}"
+	EXPECTED_UPSTREAM_BASE="${CHATER0_VERIFY_TEST_UPSTREAM_BASE:?test upstream base is required}"
 else
 	PLIST_BUDDY="/usr/libexec/PlistBuddy"
+	PLUTIL="/usr/bin/plutil"
 	CODESIGN="/usr/bin/codesign"
+	OMNI_JA="$APP_BUNDLE/Contents/Resources/app/omni.ja"
+	[ -f "$OMNI_JA" ]
+	EXPECTED_SOURCE_COMMIT=$(/usr/bin/git -C "$ROOT_DIR" rev-parse HEAD)
+	EXPECTED_UPSTREAM_BASE=$("$NODE" -e \
+		'const fs = require("fs"); console.log(JSON.parse(fs.readFileSync(process.argv[1], "utf8")).upstreamBase);' \
+		"$ROOT_DIR/app/chatero-product.json")
 fi
 
 PLIST="$APP_BUNDLE/Contents/Info.plist"
 APPLICATION_INI="$APP_BUNDLE/Contents/Resources/app/application.ini"
 WORD_DYLIB="$APP_BUNDLE/Contents/Resources/integration/word-for-mac/libZoteroWordIntegration.dylib"
-ENTITLEMENTS=$(mktemp)
+TEMP_DIR=$(mktemp -d)
+ENTITLEMENTS="$TEMP_DIR/entitlements.plist"
 cleanup() {
 	cleanup_status=$?
-	rm -f "$ENTITLEMENTS"
+	rm -rf "$TEMP_DIR"
 	exit "$cleanup_status"
 }
 trap cleanup EXIT
+
+if [ "${CHATER0_VERIFY_TEST_MODE:-0}" != "1" ]; then
+	DEFAULT_PREFS="$TEMP_DIR/zotero.js"
+	BUILD_PROVENANCE="$TEMP_DIR/chatero-build.mjs"
+	/usr/bin/unzip -p "$OMNI_JA" defaults/preferences/zotero.js > "$DEFAULT_PREFS"
+	/usr/bin/unzip -p "$OMNI_JA" resource/chatero-build.mjs > "$BUILD_PROVENANCE"
+fi
 
 [ -f "$PLIST" ]
 [ -f "$APPLICATION_INI" ]
 [ -x "$APP_BUNDLE/Contents/MacOS/zotero" ]
 [ -f "$WORD_DYLIB" ]
+[ -f "$DEFAULT_PREFS" ]
+[ -f "$BUILD_PROVENANCE" ]
 
 test "$("$PLIST_BUDDY" -c 'Print :CFBundleName' "$PLIST")" = "Chatero"
 test "$("$PLIST_BUDDY" -c 'Print :CFBundleIdentifier' "$PLIST")" \
 	= "io.github.chancesiyuan.chatero"
 test "$("$PLIST_BUDDY" -c 'Print :CFBundleExecutable' "$PLIST")" = "zotero"
-test "$("$PLIST_BUDDY" -c 'Print :CFBundleURLTypes:0:CFBundleURLSchemes:0' "$PLIST")" \
-	= "chatero"
-/usr/bin/grep -qx 'Name=Chatero' "$APPLICATION_INI"
-/usr/bin/grep -qx 'ID=zotero@zotero.org' "$APPLICATION_INI"
-if /usr/bin/grep -Eq '^[[:space:]]*UpdateURL[[:space:]]*=' "$APPLICATION_INI"; then
-	echo "Active updater URL must not be present" >&2
+
+url_types_json=$("$PLUTIL" -extract CFBundleURLTypes json -o - "$PLIST")
+registered_schemes=$(printf '%s' "$url_types_json" | "$NODE" -e '
+let input = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", chunk => input += chunk);
+process.stdin.on("end", () => {
+  const types = JSON.parse(input);
+  process.stdout.write(JSON.stringify(types.flatMap(type => type.CFBundleURLSchemes || [])));
+});
+')
+if [ "$registered_schemes" != '["chatero"]' ]; then
+	echo "Bundle must register exactly the public chatero URL scheme" >&2
+	exit 1
+fi
+
+ini_value() {
+	/usr/bin/awk -v wanted_section="$1" -v wanted_key="$2" '
+		{
+			line = $0
+			sub(/^[[:space:]]+/, "", line)
+			sub(/[[:space:]]+$/, "", line)
+			if (line == "" || line ~ /^[;#]/) next
+			if (line ~ /^\[[^]]+\]$/) {
+				section = substr(line, 2, length(line) - 2)
+				next
+			}
+			if (section == wanted_section && index(line, "=") > 1) {
+				key = substr(line, 1, index(line, "=") - 1)
+				value = substr(line, index(line, "=") + 1)
+				sub(/[[:space:]]+$/, "", key)
+				sub(/^[[:space:]]+/, "", value)
+				if (key == wanted_key) print value
+			}
+		}
+	' "$APPLICATION_INI"
+}
+test "$(ini_value App Name)" = "Chatero"
+test "$(ini_value App ID)" = "zotero@zotero.org"
+if /usr/bin/awk '
+	{
+		line = $0
+		sub(/^[[:space:]]+/, "", line)
+		sub(/[[:space:]]+$/, "", line)
+		if (line == "" || line ~ /^[;#]/) next
+		if (tolower(line) == "[appupdate]") found = 1
+		if (index(line, "=") > 1) {
+			key = substr(line, 1, index(line, "=") - 1)
+			sub(/[[:space:]]+$/, "", key)
+			if (tolower(key) == "updateurl") found = 1
+		}
+	}
+	END { exit(found ? 0 : 1) }
+' "$APPLICATION_INI"; then
+	echo "Active AppUpdate section or UpdateURL must not be present" >&2
+	exit 1
+fi
+
+update_pref_count=$(/usr/bin/grep -Ec '^[[:space:]]*pref[[:space:]]*\([[:space:]]*"app\.update\.enabled"[[:space:]]*,' "$DEFAULT_PREFS" || true)
+disabled_pref_count=$(/usr/bin/grep -Ec '^[[:space:]]*pref[[:space:]]*\([[:space:]]*"app\.update\.enabled"[[:space:]]*,[[:space:]]*false[[:space:]]*\)[[:space:]]*;[[:space:]]*$' "$DEFAULT_PREFS" || true)
+if [ "$update_pref_count" != "1" ] || [ "$disabled_pref_count" != "1" ]; then
+	echo "Packaged app.update.enabled preference must occur exactly once and be false" >&2
+	exit 1
+fi
+
+provenance_values=$("$NODE" -e '
+const fs = require("fs");
+const source = fs.readFileSync(process.argv[1], "utf8");
+const match = source.match(/Object\.freeze\((\{[\s\S]*\})\);/);
+if (!match) process.exit(1);
+const value = JSON.parse(match[1]);
+if (!/^[0-9a-f]{40}$/.test(value.sourceCommit) || !/^[0-9a-f]{40}$/.test(value.upstreamBase)) process.exit(1);
+process.stdout.write(`${value.sourceCommit}\t${value.upstreamBase}`);
+' "$BUILD_PROVENANCE")
+IFS=$'\t' read -r packaged_source_commit packaged_upstream_base <<< "$provenance_values"
+if [ "$packaged_source_commit" != "$EXPECTED_SOURCE_COMMIT" ]; then
+	echo "Packaged source commit does not match repository HEAD" >&2
+	exit 1
+fi
+if [ "$packaged_upstream_base" != "$EXPECTED_UPSTREAM_BASE" ]; then
+	echo "Packaged upstream base does not match the product manifest" >&2
 	exit 1
 fi
 

@@ -6,3 +6,4 @@ tmp
 app/win/codesign
 app/dist/
 app/staging/
+resource/chatero-build.mjs

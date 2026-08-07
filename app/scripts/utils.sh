@@ -106,7 +106,7 @@ function generate_app_hash {
 		if [ -f config-custom.sh ]; then
 			paths+=(config-custom.sh)
 		fi
-		for path in chatero-product.json chatero-product.sh ../resource/chatero-product.mjs ../scripts/chatero/generate-product.mjs; do
+		for path in chatero-product.json chatero-product.sh ../resource/chatero-product.mjs ../resource/chatero-build.mjs ../scripts/chatero/generate-product.mjs; do
 			if [ -f "$path" ]; then
 				paths+=("$path")
 			fi

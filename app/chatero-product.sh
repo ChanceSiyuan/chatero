@@ -3,4 +3,5 @@ APP_NAME="Chatero"
 APP_ID="zotero@zotero.org"
 APP_BUNDLE_ID="io.github.chancesiyuan.chatero"
 APP_URL_SCHEME="chatero"
+UPSTREAM_BASE="8f6dc583b8d01eac8540040d9e7d3d78ca012b97"
 SIGN=0

@@ -112,7 +112,8 @@ test("Chatero identity is isolated while Zotero compatibility IDs remain stable"
     dataDirectoryName: "Data",
     connectorPort: 23119,
     fallbackPorts: [23129],
-    automaticUpdates: false
+    automaticUpdates: false,
+    upstreamBase: "8f6dc583b8d01eac8540040d9e7d3d78ca012b97"
   });
 
   const { stdout: shellConfigOutput } = await execFile("bash", [
@@ -224,6 +225,11 @@ test("Chatero identity is isolated while Zotero compatibility IDs remain stable"
   const updaterINI = parseINI(await read("app/assets/updater.ini"));
   assert.equal(updaterINI.Strings.Title, `${product.displayName} Update`);
   assert.equal(updaterINI.Strings.Info, `${product.displayName} is installing your updates and will start in a few moments…`);
+
+  const about = await read("chrome/content/zotero/about.xhtml");
+  assert.match(about, /resource:\/\/zotero\/chatero-build\.mjs/);
+  assert.match(about, /CHATERO_BUILD\.sourceCommit/);
+  assert.match(about, /CHATERO_BUILD\.upstreamBase/);
 });
 
 test("the manifest deterministically supplies generated build and runtime identity", async (t) => {
@@ -255,12 +261,13 @@ test("the manifest deterministically supplies generated build and runtime identi
 
   const generatedShell = parseShellAssignments(await readFile(join(root, "app", "chatero-product.sh"), "utf8"));
   assert.deepEqual(
-    Object.fromEntries(["APP_NAME", "APP_ID", "APP_BUNDLE_ID", "APP_URL_SCHEME", "SIGN"].map((key) => [key, generatedShell[key]])),
+    Object.fromEntries(["APP_NAME", "APP_ID", "APP_BUNDLE_ID", "APP_URL_SCHEME", "UPSTREAM_BASE", "SIGN"].map((key) => [key, generatedShell[key]])),
     {
       APP_NAME: product.displayName,
       APP_ID: product.applicationID,
       APP_BUNDLE_ID: product.bundleID,
       APP_URL_SCHEME: product.externalURLScheme,
+      UPSTREAM_BASE: product.upstreamBase,
       SIGN: "0"
     }
   );
@@ -278,6 +285,14 @@ test("the manifest deterministically supplies generated build and runtime identi
     product.externalURLScheme,
     "0"
   ]);
+
+  const sourceCommit = "cccccccccccccccccccccccccccccccccccccccc";
+  await generateProduct({ root, buildProvenance: true, sourceCommit });
+  const generatedBuild = await import(`${pathToFileURL(join(root, "resource", "chatero-build.mjs")).href}?build`);
+  assert.deepEqual(generatedBuild.CHATERO_BUILD, {
+    sourceCommit,
+    upstreamBase: product.upstreamBase
+  });
 
   const { ZOTERO_CONFIG: generatedRuntimeConfig } = await import(`${pathToFileURL(join(root, "resource", "config.mjs")).href}?runtime`);
   assert.deepEqual(
@@ -302,6 +317,9 @@ test("the manifest deterministically supplies generated build and runtime identi
 
   const packageJSON = JSON.parse(await read("package.json"));
   assert.match(packageJSON.scripts.build, /scripts\/chatero\/generate-product\.mjs/);
+  assert.match(packageJSON.scripts.build, /--build-provenance/);
+  assert.ok(!packageJSON.scripts["test:chatero"].includes("app/staging"));
+  assert.match(packageJSON.scripts["test:chatero:staged"], /verify_chatero_bundle/);
 });
 
 test("shell config regenerates manifest identity before consuming it", async (t) => {
@@ -360,6 +378,7 @@ test("application hash invalidates manifest-derived packaging inputs", async (t)
     await writeFile(join(appDir, path), `${path}\n`);
   }
   await writeFile(join(root, "resource", "chatero-product.mjs"), "runtime\n");
+  await writeFile(join(root, "resource", "chatero-build.mjs"), "build provenance\n");
   await writeFile(join(root, "scripts", "chatero", "generate-product.mjs"), "generator\n");
 
   const applicationHash = async () => (await execFile("bash", [
@@ -373,6 +392,7 @@ test("application hash invalidates manifest-derived packaging inputs", async (t)
     join(appDir, "chatero-product.json"),
     join(appDir, "chatero-product.sh"),
     join(root, "resource", "chatero-product.mjs"),
+    join(root, "resource", "chatero-build.mjs"),
     join(root, "scripts", "chatero", "generate-product.mjs")
   ]) {
     await writeFile(path, `${await readFile(path, "utf8")}changed\n`);

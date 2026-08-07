@@ -396,12 +396,16 @@ test("package fixture retains recovery paths and emits a fatal diagnostic when r
   await assertExactRecoveryLayout(fixture.dist);
 });
 
-async function verifierFixture(t, ini = "Name=Chatero\nID=zotero@zotero.org\n") {
+async function verifierFixture(t, ini = "[App]\nName=Chatero\nID=zotero@zotero.org\n") {
   const dir = await mkdtemp(join(tmpdir(), "chatero-verifier-"));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const app = join(dir, "Chatero.app");
   const bin = join(dir, "bin");
   const entitlements = join(dir, "entitlements.plist");
+  const preferences = join(dir, "zotero.js");
+  const provenance = join(dir, "chatero-build.mjs");
+  const sourceCommit = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  const upstreamBase = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
   await mkdir(join(app, "Contents", "MacOS"), { recursive: true });
   await mkdir(join(app, "Contents", "Resources", "app"), { recursive: true });
   await mkdir(join(app, "Contents", "Resources", "integration", "word-for-mac"), { recursive: true });
@@ -411,6 +415,8 @@ async function verifierFixture(t, ini = "Name=Chatero\nID=zotero@zotero.org\n") 
   await writeExecutable(join(app, "Contents", "MacOS", "zotero"), "#!/bin/bash\n");
   await writeFile(join(app, "Contents", "Resources", "integration", "word-for-mac", "libZoteroWordIntegration.dylib"), "fixture");
   await writeFile(entitlements, "fixture");
+  await writeFile(preferences, 'pref("app.update.enabled", false);\n');
+  await writeFile(provenance, `export const CHATERO_BUILD = Object.freeze({\n  "sourceCommit": "${sourceCommit}",\n  "upstreamBase": "${upstreamBase}"\n});\n`);
   await writeExecutable(join(bin, "PlistBuddy"), `#!/bin/bash
 case "$2" in
   *CFBundleName*) printf '%s\\n' "\${TEST_BUNDLE_NAME:-Chatero}" ;;
@@ -419,6 +425,13 @@ case "$2" in
   *CFBundleExecutable*) printf '%s\\n' "\${TEST_EXECUTABLE:-zotero}" ;;
   *automation.apple-events*) printf '%s\\n' "\${TEST_ENTITLEMENT:-true}" ;;
 esac
+`);
+  await writeExecutable(join(bin, "plutil"), `#!/bin/bash
+if [ -n "\${TEST_URL_TYPES_JSON:-}" ]; then
+  printf '%s\n' "$TEST_URL_TYPES_JSON"
+else
+  printf '%s\n' '[{"CFBundleURLSchemes":["chatero"]}]'
+fi
 `);
   await writeExecutable(join(bin, "codesign"), `#!/bin/bash
 set -euo pipefail
@@ -443,20 +456,22 @@ exit 1
       ...process.env,
       CHATER0_VERIFY_TEST_MODE: "1",
       CHATER0_VERIFY_TEST_PLISTBUDDY: join(bin, "PlistBuddy"),
+      CHATER0_VERIFY_TEST_PLUTIL: join(bin, "plutil"),
       CHATER0_VERIFY_TEST_CODESIGN: join(bin, "codesign"),
+      CHATER0_VERIFY_TEST_DEFAULT_PREFS: preferences,
+      CHATER0_VERIFY_TEST_BUILD_PROVENANCE: provenance,
+      CHATER0_VERIFY_TEST_SOURCE_COMMIT: sourceCommit,
+      CHATER0_VERIFY_TEST_UPSTREAM_BASE: upstreamBase,
       TEST_ENTITLEMENTS: entitlements,
       ...extra,
     },
   });
-  return { run };
+  return { provenance, preferences, run, sourceCommit, upstreamBase };
 }
 
-test("bundle verifier accepts the staged Chatero app", () => {
-  const result = spawnSync(verifierScript, [join(root, "app/staging/Chatero.app")], {
-    encoding: "utf8",
-    timeout: 10_000,
-    killSignal: "SIGKILL",
-  });
+test("bundle verifier accepts a complete isolated fixture", async (t) => {
+  const fixture = await verifierFixture(t);
+  const result = fixture.run();
   assertFinished(result);
   assert.equal(result.status, 0, result.stderr || result.stdout);
 });
@@ -465,7 +480,7 @@ test("bundle verifier rejects non-ad-hoc metadata, active UpdateURL, wrong execu
   for (const [ini, env] of [
     [undefined, { TEST_SIGNATURE: "Developer ID Application" }],
     [undefined, { TEST_TEAM: "ABC123" }],
-    ["Name=Chatero\nID=zotero@zotero.org\nUpdateURL=https://updates.example/\n", {}],
+    ["[App]\nName=Chatero\nID=zotero@zotero.org\nUpdateURL=https://updates.example/\n", {}],
     [undefined, { TEST_EXECUTABLE: "other" }],
     [undefined, { TEST_ENTITLEMENT: "false" }],
   ]) {
@@ -473,5 +488,37 @@ test("bundle verifier rejects non-ad-hoc metadata, active UpdateURL, wrong execu
     const result = fixture.run(env);
     assertFinished(result);
     assert.notEqual(result.status, 0);
+  }
+});
+
+test("bundle verifier parses update sections and enforces packaged preferences, schemes, and provenance", async (t) => {
+  const controls = [
+    {
+      name: "active AppUpdate URL",
+      ini: "[App]\nName=Chatero\nID=zotero@zotero.org\n[AppUpdate]\nURL=https://updates.example/\n"
+    },
+    { name: "extra public URL scheme", env: { TEST_URL_TYPES_JSON: '[{"CFBundleURLSchemes":["chatero","zotero"]}]' } },
+    { name: "missing public URL scheme", env: { TEST_URL_TYPES_JSON: '[{"CFBundleURLSchemes":["zotero"]}]' } },
+    { name: "enabled packaged updater", preferences: 'pref("app.update.enabled", true);\n' },
+    { name: "missing packaged updater preference", preferences: 'pref("extensions.zotero.test", true);\n' },
+    {
+      name: "wrong source commit provenance",
+      provenance: 'export const CHATERO_BUILD = Object.freeze({"sourceCommit":"cccccccccccccccccccccccccccccccccccccccc","upstreamBase":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"});\n'
+    },
+    {
+      name: "wrong upstream base provenance",
+      provenance: 'export const CHATERO_BUILD = Object.freeze({"sourceCommit":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","upstreamBase":"cccccccccccccccccccccccccccccccccccccccc"});\n'
+    }
+  ];
+
+  for (const control of controls) {
+    await t.test(control.name, async () => {
+      const fixture = await verifierFixture(t, control.ini);
+      if (control.preferences) await writeFile(fixture.preferences, control.preferences);
+      if (control.provenance) await writeFile(fixture.provenance, control.provenance);
+      const result = fixture.run(control.env);
+      assertFinished(result);
+      assert.notEqual(result.status, 0, `${control.name} unexpectedly verified`);
+    });
   }
 });

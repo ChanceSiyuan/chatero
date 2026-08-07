@@ -37,13 +37,18 @@
 		</script>
 		<vbox>
 			<div id="about-text" xmlns="http://www.w3.org/1999/xhtml">
+				<p id="chatero-build-provenance"></p>
 				<p id="created-by"></p>
 				<p id="third-party-software"></p>
 				<p id="get-involved"></p>
 				<script><![CDATA[
 					const { ZOTERO_CONFIG } = ChromeUtils.importESModule('resource://zotero/config.mjs');
+					const { CHATERO_BUILD } = ChromeUtils.importESModule('resource://zotero/chatero-build.mjs');
 					
 					document.getElementById('changelog').href = ZOTERO_CONFIG.CHANGELOG_URL;
+					document.getElementById('chatero-build-provenance').textContent
+						= `Source commit: ${CHATERO_BUILD.sourceCommit}; `
+							+ `Upstream base: ${CHATERO_BUILD.upstreamBase}`;
 					
 					// Replace [links] in localized strings with spans with onclick handlers
 					//

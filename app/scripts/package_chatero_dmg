@@ -33,6 +33,13 @@ fi
 
 if [ "$TEST_MODE" != "1" ] || [ "${CHATER0_PACKAGE_TEST_SKIP_BUILD:-0}" != "1" ]; then
 	cd "$ROOT_DIR"
+	if [ "$TEST_MODE" != "1" ]; then
+		if [ -n "$(git status --short --untracked-files=no)" ]; then
+			echo "Refusing to package a bundle from uncommitted tracked source changes" >&2
+			exit 1
+		fi
+		node scripts/chatero/generate-product.mjs --build-provenance
+	fi
 	NODE_OPTIONS=--openssl-legacy-provider node js-build/build.js
 	"$SCRIPT_DIR/dir_build" -f -p m
 fi

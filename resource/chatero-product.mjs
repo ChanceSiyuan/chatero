@@ -12,5 +12,6 @@ export const CHATERO_PRODUCT = Object.freeze({
   "fallbackPorts": [
     23129
   ],
-  "automaticUpdates": false
+  "automaticUpdates": false,
+  "upstreamBase": "8f6dc583b8d01eac8540040d9e7d3d78ca012b97"
 });
