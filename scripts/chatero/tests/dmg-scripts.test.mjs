@@ -30,6 +30,8 @@ async function packageFixture(t, version = "1.0.SOURCE") {
   const bin = join(dir, "bin");
   const versionFile = join(dir, "version");
   const moveCount = join(dir, "move-count");
+  const copyCount = join(dir, "copy-count");
+  const removeCount = join(dir, "remove-count");
   const shasumCount = join(dir, "shasum-count");
   const packageArgs = join(dir, "pkg-dmg-args");
   const verifierLog = join(dir, "verifier.log");
@@ -73,6 +75,24 @@ printf '%s\\n' "$count" > "$MOVE_COUNT"
 case ",\${FAIL_MV_AT:-0}," in *,"$count",*) exit 44;; esac
 exec /bin/mv "$@"
 `);
+  await writeExecutable(join(bin, "cp"), `#!/bin/bash
+set -euo pipefail
+count=0
+[ -f "$COPY_COUNT" ] && count=$(cat "$COPY_COUNT")
+count=$((count + 1))
+printf '%s\\n' "$count" > "$COPY_COUNT"
+case ",\${FAIL_COPY_AT:-0}," in *,"$count",*) exit 45;; esac
+exec /bin/cp "$@"
+`);
+  await writeExecutable(join(bin, "rm"), `#!/bin/bash
+set -euo pipefail
+count=0
+[ -f "$REMOVE_COUNT" ] && count=$(cat "$REMOVE_COUNT")
+count=$((count + 1))
+printf '%s\\n' "$count" > "$REMOVE_COUNT"
+case ",\${FAIL_REMOVE_AT:-0}," in *,"$count",*) exit 46;; esac
+exec /bin/rm "$@"
+`);
   await writeExecutable(join(bin, "verify"), `#!/bin/bash
 set -euo pipefail
 printf '%s\\n' "$1" >> "$VERIFIER_LOG"
@@ -94,8 +114,12 @@ printf '%s\\n' "$1" >> "$VERIFIER_LOG"
       CHATER0_PACKAGE_TEST_HDIUTIL: join(bin, "hdiutil"),
       CHATER0_PACKAGE_TEST_SHASUM: join(bin, "shasum"),
       CHATER0_PACKAGE_TEST_MV: join(bin, "mv"),
+      CHATER0_PACKAGE_TEST_COPY: join(bin, "cp"),
+      CHATER0_PACKAGE_TEST_REMOVE: join(bin, "rm"),
       CHATER0_PACKAGE_TEST_VERIFY: join(bin, "verify"),
       MOVE_COUNT: moveCount,
+      COPY_COUNT: copyCount,
+      REMOVE_COUNT: removeCount,
       SHASUM_COUNT: shasumCount,
       PKG_ARGS: packageArgs,
       VERIFIER_LOG: verifierLog,
@@ -110,6 +134,26 @@ async function writePriorPair(dist, version, value = "old-dmg") {
   await writeFile(join(dist, name), value);
   await writeFile(join(dist, `${name}.sha256`), checksum(name, value));
   return name;
+}
+
+async function assertBoundPair(dist, dmgName, checksumName = `${dmgName}.sha256`, value) {
+  const artifact = await readFile(join(dist, dmgName), "utf8");
+  const line = await readFile(join(dist, checksumName), "utf8");
+  assert.equal(line, checksum(dmgName, value ?? artifact));
+}
+
+async function assertHasBoundRecoveryPair(dist) {
+  const entries = await readdir(dist);
+  const dmgs = entries.filter((entry) => entry.includes(".dmg") && !entry.includes(".sha256"));
+  for (const dmg of dmgs) {
+    const checksumName = dmg.includes(".dmg.")
+      ? dmg.replace(".dmg.", ".dmg.sha256.")
+      : `${dmg}.sha256`;
+    if (!entries.includes(checksumName)) continue;
+    const artifact = await readFile(join(dist, dmg), "utf8");
+    if (await readFile(join(dist, checksumName), "utf8") === checksum(dmg, artifact)) return;
+  }
+  assert.fail(`no exact checksum-bound recovery pair among: ${entries.join(", ")}`);
 }
 
 test("package fixture publishes a final checksum bound to exactly the DMG basename", async (t) => {
@@ -148,6 +192,16 @@ test("package fixture rotates an existing verified pair with checksum bound to i
   assert.ok(previousChecksum);
   assert.equal(await readFile(join(fixture.dist, previousChecksum), "utf8"), checksum(previousDmg, "old-dmg"));
   assert.equal(await readFile(join(fixture.dist, `${name}.sha256`), "utf8"), checksum(name, "new-dmg"));
+});
+
+test("copy-on-write backup failure leaves the existing final pair untouched", async (t) => {
+  const fixture = await packageFixture(t);
+  const name = await writePriorPair(fixture.dist, "1.0.SOURCE");
+  const result = fixture.run({ FAIL_COPY_AT: "1" });
+  assertFinished(result);
+  assert.notEqual(result.status, 0);
+  await assertBoundPair(fixture.dist, name, `${name}.sha256`, "old-dmg");
+  assert.deepEqual((await readdir(fixture.dist)).filter((entry) => entry.includes(".previous")), []);
 });
 
 test("package fixture rejects malformed versions before creating artifacts", async (t) => {
@@ -196,10 +250,44 @@ test("package fixture restores a complete prior pair after checksum publication 
   const result = fixture.run({ FAIL_MV_AT: "5" });
   assertFinished(result);
   assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /restoring previous artifacts/);
+  assert.match(result.stderr, /restoring final from verified backup/);
   assert.equal(await readFile(join(fixture.dist, name), "utf8"), "old-dmg");
   assert.equal(await readFile(join(fixture.dist, `${name}.sha256`), "utf8"), checksum(name, "old-dmg"));
   assert.deepEqual((await readdir(fixture.dist)).filter((entry) => entry.startsWith(".chatero-dmg")), []);
+});
+
+test("ordinary rollback leaves only complete checksum-bound pairs", async (t) => {
+  const fixture = await packageFixture(t);
+  const name = await writePriorPair(fixture.dist, "1.0.SOURCE");
+  const result = fixture.run({ FAIL_MV_AT: "5" });
+  assertFinished(result);
+  assert.notEqual(result.status, 0);
+  const entries = await readdir(fixture.dist);
+  for (const entry of entries.filter((item) => item.includes(".previous") && item.includes(".sha256"))) {
+    const artifact = entry.replace(".sha256.", ".");
+    await assertBoundPair(fixture.dist, artifact, entry);
+  }
+  await assertBoundPair(fixture.dist, name, `${name}.sha256`, "old-dmg");
+});
+
+test("early backup copy/checksum cleanup failures retain an exact recovery pair", async (t) => {
+  const fixture = await packageFixture(t);
+  const name = await writePriorPair(fixture.dist, "1.0.SOURCE");
+  const result = fixture.run({ FAIL_COPY_AT: "1,2", FAIL_REMOVE_AT: "1,2,3" });
+  assertFinished(result);
+  assert.notEqual(result.status, 0);
+  await assertBoundPair(fixture.dist, name, `${name}.sha256`, "old-dmg");
+});
+
+test("copy-on-write backup survives injected checksum-move and remove failures", async (t) => {
+  for (const env of [{ FAIL_MV_AT: "1" }, { FAIL_MV_AT: "2" }, { FAIL_MV_AT: "5", FAIL_REMOVE_AT: "1" }]) {
+    const fixture = await packageFixture(t);
+    await writePriorPair(fixture.dist, "1.0.SOURCE");
+    const result = fixture.run(env);
+    assertFinished(result);
+    assert.notEqual(result.status, 0);
+    await assertHasBoundRecoveryPair(fixture.dist);
+  }
 });
 
 test("package fixture removes fresh partial publication after checksum or final-validation failure", async (t) => {
@@ -234,7 +322,7 @@ test("package fixture retains recovery paths and emits a fatal diagnostic when r
   const result = fixture.run({ FAIL_MV_AT: "5,6" });
   assertFinished(result);
   assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /FATAL: rollback could not restore/);
+  assert.match(result.stderr, /FATAL: final restoration move failed; valid recovery pair remains/);
   assert.ok((await readdir(fixture.dist)).some((entry) => entry.startsWith(".chatero-dmg")));
   assert.ok((await readdir(fixture.dist)).some((entry) => entry.includes(".previous")));
 });

@@ -15,6 +15,8 @@ if [ "$TEST_MODE" = "1" ]; then
 	HDIUTIL="${CHATER0_PACKAGE_TEST_HDIUTIL:?test hdiutil is required}"
 	SHASUM="${CHATER0_PACKAGE_TEST_SHASUM:?test shasum is required}"
 	MOVE="${CHATER0_PACKAGE_TEST_MV:?test mv is required}"
+	COPY="${CHATER0_PACKAGE_TEST_COPY:?test cp is required}"
+	REMOVE="${CHATER0_PACKAGE_TEST_REMOVE:?test rm is required}"
 	VERIFY="${CHATER0_PACKAGE_TEST_VERIFY:?test verifier is required}"
 else
 	APP_BUNDLE="$APP_ROOT_DIR/staging/$APP_NAME.app"
@@ -24,6 +26,8 @@ else
 	HDIUTIL="/usr/bin/hdiutil"
 	SHASUM="/usr/bin/shasum"
 	MOVE="/bin/mv"
+	COPY="/bin/cp"
+	REMOVE="/bin/rm"
 	VERIFY="$SCRIPT_DIR/verify_chatero_bundle"
 fi
 
@@ -47,21 +51,13 @@ CHECKSUM="$DMG.sha256"
 TEMP_DIR=$(mktemp -d "$DIST_DIR/.chatero-dmg.XXXXXX")
 TEMP_DMG="$TEMP_DIR/$(basename "$DMG")"
 TEMP_CHECKSUM="$TEMP_DIR/$(basename "$CHECKSUM")"
-ROTATED=0
-NEW_DMG_PUBLISHED=0
-NEW_CHECKSUM_PUBLISHED=0
+BACKUP_READY=0
+PUBLICATION_STARTED=0
 PUBLISHED=0
 KEEP_TEMP=0
 
-recoverability_failure() {
-	KEEP_TEMP=1
-	echo "FATAL: rollback could not restore the prior artifact pair; recoverable backups retained at ${PREVIOUS_DMG:-none}, ${PREVIOUS_CHECKSUM:-none}, and $TEMP_DIR" >&2
-}
-
 write_rebound_checksum() {
-	local source_checksum="$1"
-	local artifact="$2"
-	local destination="$3"
+	local source_checksum="$1" artifact="$2" destination="$3"
 	local line digest
 	line=$(<"$source_checksum")
 	digest="${line%% *}"
@@ -70,8 +66,7 @@ write_rebound_checksum() {
 }
 
 validate_checksum_pair() {
-	local artifact="$1"
-	local checksum_path="$2"
+	local artifact="$1" checksum_path="$2"
 	local line digest filename
 	[ -f "$artifact" ] && [ -f "$checksum_path" ] || return 1
 	line=$(<"$checksum_path")
@@ -83,51 +78,22 @@ validate_checksum_pair() {
 		&& (cd "$DIST_DIR" && "$SHASUM" -a 256 -c "$(basename "$checksum_path")")
 }
 
-quarantine_new_outputs() {
-	if [ "$NEW_CHECKSUM_PUBLISHED" = "1" ] && [ -e "$CHECKSUM" ] && ! "$MOVE" "$CHECKSUM" "$TEMP_DIR/failed-new-checksum"; then
-		recoverability_failure
-		return 1
-	fi
-	if [ "$NEW_DMG_PUBLISHED" = "1" ] && [ -e "$DMG" ] && ! "$MOVE" "$DMG" "$TEMP_DIR/failed-new-dmg"; then
-		recoverability_failure
-		return 1
-	fi
+discard_path() {
+	local path="$1"
+	[ ! -e "$path" ] || "$REMOVE" -f "$path" || /bin/rm -f "$path"
 }
 
-restore_previous_artifacts() {
-	local restored_checksum="$TEMP_DIR/restored-checksum"
-	[ "$ROTATED" = "1" ] || return 0
-	write_rebound_checksum "$PREVIOUS_CHECKSUM" "$DMG" "$restored_checksum" || { recoverability_failure; return 1; }
-	"$MOVE" "$PREVIOUS_DMG" "$DMG" || { recoverability_failure; return 1; }
-	if ! "$MOVE" "$restored_checksum" "$CHECKSUM"; then
-		"$MOVE" "$DMG" "$PREVIOUS_DMG" || recoverability_failure
-		return 1
-	fi
-	if validate_checksum_pair "$DMG" "$CHECKSUM"; then
-		return 0
-	fi
-	"$MOVE" "$CHECKSUM" "$TEMP_DIR/failed-restored-checksum" || { recoverability_failure; return 1; }
-	"$MOVE" "$DMG" "$PREVIOUS_DMG" || { recoverability_failure; return 1; }
-	return 1
+cleanup_incomplete_backup() {
+	if [ -n "${PREVIOUS_CHECKSUM:-}" ]; then discard_path "$PREVIOUS_CHECKSUM" || true; fi
+	if [ -n "${PREVIOUS_DMG:-}" ]; then discard_path "$PREVIOUS_DMG" || true; fi
 }
 
-cleanup() {
-	cleanup_status=$?
-	trap - EXIT
-	if [ "$PUBLISHED" != "1" ]; then
-		quarantine_new_outputs || cleanup_status=1
-		if [ "$KEEP_TEMP" = "0" ]; then
-			restore_previous_artifacts || cleanup_status=1
-		fi
-	fi
-	if [ "$KEEP_TEMP" = "0" ]; then
-		/bin/rm -rf "$TEMP_DIR"
-	fi
-	exit "$cleanup_status"
+backup_failure() {
+	cleanup_incomplete_backup
+	echo "Backup creation failed; existing final pair remains recoverable at $DMG and $CHECKSUM" >&2
 }
-trap cleanup EXIT
 
-rotate_existing_artifacts() {
+create_verified_backup() {
 	if [ ! -e "$DMG" ] && [ ! -e "$CHECKSUM" ]; then
 		return 0
 	fi
@@ -146,27 +112,65 @@ rotate_existing_artifacts() {
 		index=$((index + 1))
 	done
 
-	"$MOVE" "$DMG" "$PREVIOUS_DMG"
-	if ! "$MOVE" "$CHECKSUM" "$PREVIOUS_CHECKSUM"; then
-		"$MOVE" "$PREVIOUS_DMG" "$DMG" || recoverability_failure
-		return 1
-	fi
-	local original_checksum="$TEMP_DIR/original-checksum"
-	local rebound_checksum="$TEMP_DIR/previous-checksum"
-	/bin/cp "$PREVIOUS_CHECKSUM" "$original_checksum"
-	write_rebound_checksum "$PREVIOUS_CHECKSUM" "$PREVIOUS_DMG" "$rebound_checksum"
-	if ! "$MOVE" "$rebound_checksum" "$PREVIOUS_CHECKSUM"; then
-		"$MOVE" "$PREVIOUS_DMG" "$DMG" || recoverability_failure
-		"$MOVE" "$original_checksum" "$CHECKSUM" || recoverability_failure
-		return 1
-	fi
-	if ! validate_checksum_pair "$PREVIOUS_DMG" "$PREVIOUS_CHECKSUM"; then
-		"$MOVE" "$PREVIOUS_DMG" "$DMG" || recoverability_failure
-		"$MOVE" "$original_checksum" "$CHECKSUM" || recoverability_failure
-		return 1
-	fi
-	ROTATED=1
+	if ! "$COPY" "$DMG" "$PREVIOUS_DMG"; then backup_failure; return 1; fi
+	local backup_checksum="$TEMP_DIR/previous-checksum"
+	if ! write_rebound_checksum "$CHECKSUM" "$PREVIOUS_DMG" "$backup_checksum"; then backup_failure; return 1; fi
+	if ! "$MOVE" "$backup_checksum" "$PREVIOUS_CHECKSUM"; then backup_failure; return 1; fi
+	if ! validate_checksum_pair "$PREVIOUS_DMG" "$PREVIOUS_CHECKSUM"; then backup_failure; return 1; fi
+	BACKUP_READY=1
 }
+
+evacuate_final_outputs() {
+	if [ -e "$CHECKSUM" ] && ! "$MOVE" "$CHECKSUM" "$TEMP_DIR/replaced-final-checksum"; then return 1; fi
+	if [ -e "$DMG" ] && ! "$MOVE" "$DMG" "$TEMP_DIR/replaced-final-dmg"; then return 1; fi
+}
+
+restore_final_from_backup() {
+	[ "$BACKUP_READY" = "1" ] || return 0
+	local restored_dmg="$TEMP_DIR/restored-final-dmg"
+	local restored_checksum="$TEMP_DIR/restored-final-checksum"
+	if ! "$COPY" "$PREVIOUS_DMG" "$restored_dmg"; then
+		KEEP_TEMP=1
+		echo "FATAL: final restoration failed; valid recovery pair remains at $PREVIOUS_DMG and $PREVIOUS_CHECKSUM" >&2
+		return 1
+	fi
+	if ! write_rebound_checksum "$PREVIOUS_CHECKSUM" "$DMG" "$restored_checksum"; then
+		KEEP_TEMP=1
+		echo "FATAL: final restoration checksum failed; valid recovery pair remains at $PREVIOUS_DMG and $PREVIOUS_CHECKSUM" >&2
+		return 1
+	fi
+	if ! "$MOVE" "$restored_dmg" "$DMG" || ! "$MOVE" "$restored_checksum" "$CHECKSUM"; then
+		KEEP_TEMP=1
+		echo "FATAL: final restoration move failed; valid recovery pair remains at $PREVIOUS_DMG and $PREVIOUS_CHECKSUM" >&2
+		return 1
+	fi
+	if ! validate_checksum_pair "$DMG" "$CHECKSUM"; then
+		KEEP_TEMP=1
+		echo "FATAL: restored final pair did not verify; valid recovery pair remains at $PREVIOUS_DMG and $PREVIOUS_CHECKSUM" >&2
+		return 1
+	fi
+}
+
+cleanup() {
+	local cleanup_status=$?
+	trap - EXIT
+	if [ "$PUBLISHED" != "1" ]; then
+		if [ "$PUBLICATION_STARTED" = "1" ]; then
+			discard_path "$CHECKSUM" || cleanup_status=1
+			discard_path "$DMG" || cleanup_status=1
+			if [ "$BACKUP_READY" = "1" ]; then
+				restore_final_from_backup || cleanup_status=1
+			fi
+		else
+			cleanup_incomplete_backup
+		fi
+	fi
+	if [ "$KEEP_TEMP" = "0" ]; then
+		/bin/rm -rf "$TEMP_DIR"
+	fi
+	exit "$cleanup_status"
+}
+trap cleanup EXIT
 
 "$PKG_DMG" \
 	--source "$APP_BUNDLE" \
@@ -179,14 +183,17 @@ rotate_existing_artifacts() {
 "$HDIUTIL" verify "$TEMP_DMG"
 "$SHASUM" -a 256 "$TEMP_DMG" | /usr/bin/awk -v name="$(basename "$DMG")" '{ print $1 "  " name }' > "$TEMP_CHECKSUM"
 
-rotate_existing_artifacts
-"$MOVE" "$TEMP_DMG" "$DMG"
-NEW_DMG_PUBLISHED=1
-if ! "$MOVE" "$TEMP_CHECKSUM" "$CHECKSUM"; then
-	echo "Unable to publish DMG checksum; restoring previous artifacts" >&2
+create_verified_backup
+PUBLICATION_STARTED=1
+evacuate_final_outputs
+if ! "$MOVE" "$TEMP_DMG" "$DMG"; then
+	echo "Unable to publish DMG; restoring final from verified backup" >&2
 	exit 1
 fi
-NEW_CHECKSUM_PUBLISHED=1
+if ! "$MOVE" "$TEMP_CHECKSUM" "$CHECKSUM"; then
+	echo "Unable to publish DMG checksum; restoring final from verified backup" >&2
+	exit 1
+fi
 if ! validate_checksum_pair "$DMG" "$CHECKSUM"; then
 	echo "Published DMG/checksum pair failed final verification" >&2
 	exit 1
