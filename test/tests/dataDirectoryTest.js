@@ -156,6 +156,26 @@ describe("Zotero.DataDirectory", function () {
 	};
 
 	describe("#_getDefaultDir()", function () {
+		it("should keep test data in the Chatero test profile parent", function () {
+			let dir = Zotero.DataDirectory._getDefaultDir({
+				profileDir: "/tmp/chatero-test/Profiles/abc.default",
+				homeDir: "/Users/test",
+				isMac: true,
+				isTest: true
+			});
+			assert.equal(dir, "/tmp/chatero-test/Profiles/Chatero");
+		});
+
+		it("should keep non-macOS data in the Chatero home directory", function () {
+			let dir = Zotero.DataDirectory._getDefaultDir({
+				profileDir: "/home/test/.chatero/abc.default",
+				homeDir: "/home/test",
+				isMac: false,
+				isTest: false
+			});
+			assert.equal(dir, "/home/test/Chatero");
+		});
+
 		it("should keep Chatero data under the macOS Chatero application root", function () {
 			let dir = Zotero.DataDirectory._getDefaultDir({
 				profileDir: "/Users/test/Library/Application Support/Chatero/Profiles/abc.default",
@@ -175,6 +195,119 @@ describe("Zotero.DataDirectory", function () {
 			});
 			assert.notEqual(dir, "/Users/test/Zotero");
 			assert.notInclude(dir, "/Application Support/Zotero/");
+		});
+	});
+
+
+	describe("official Zotero directory isolation", function () {
+		let officialRoot;
+		let alias;
+
+		beforeEach(async function () {
+			officialRoot = OS.Path.join(tmpDir, "official", "Zotero");
+			alias = OS.Path.join(tmpDir, "official-alias");
+			await OS.File.makeDir(officialRoot, { from: tmpDir });
+			await OS.File.unixSymLink(officialRoot, alias);
+		});
+
+		afterEach(async function () {
+			await OS.File.remove(alias, { ignoreAbsent: true });
+			await removeDir(OS.Path.join(tmpDir, "official"));
+		});
+
+		async function getRejection(promise) {
+			try {
+				await promise;
+			}
+			catch (error) {
+				return error;
+			}
+			assert.fail("Expected operation to reject");
+		}
+
+		it("should reject canonical roots, descendants, and symlink aliases", async function () {
+			for (let path of [
+				officialRoot,
+				OS.Path.join(officialRoot, "storage"),
+				alias,
+				OS.Path.join(alias, "storage")
+			]) {
+				let error = await getRejection(
+					Zotero.DataDirectory.assertSafeDataDirectory(path, {
+						officialRoots: [officialRoot]
+					})
+				);
+				assert.equal(error.name, "NotAllowedError");
+				assert.include(error.message, "official Zotero");
+			}
+		});
+
+		it("should reject a symlink alias supplied through -datadir", async function () {
+			let originalForceDataDir = Zotero.forceDataDir;
+			let rootsStub = sinon.stub(Zotero.DataDirectory, "_getOfficialZoteroRoots")
+				.returns([officialRoot]);
+			try {
+				Zotero.forceDataDir = alias;
+				Zotero.DataDirectory._cache(false);
+				let error = await getRejection(Zotero.DataDirectory.init());
+				assert.equal(error.name, "NotAllowedError");
+			}
+			finally {
+				Zotero.forceDataDir = originalForceDataDir;
+				rootsStub.restore();
+			}
+		});
+
+		it("should reject a symlink alias loaded from the saved preference", async function () {
+			let oldUseDataDir = Zotero.Prefs.get("useDataDir");
+			let oldDataDir = Zotero.Prefs.get("dataDir");
+			let rootsStub = sinon.stub(Zotero.DataDirectory, "_getOfficialZoteroRoots")
+				.returns([officialRoot]);
+			try {
+				Zotero.Prefs.set("useDataDir", true);
+				Zotero.Prefs.set("dataDir", alias);
+				Zotero.DataDirectory._cache(false);
+				let error = await getRejection(Zotero.DataDirectory.init());
+				assert.equal(error.name, "NotAllowedError");
+			}
+			finally {
+				if (oldUseDataDir === undefined) Zotero.Prefs.clear("useDataDir");
+				else Zotero.Prefs.set("useDataDir", oldUseDataDir);
+				if (oldDataDir === undefined) Zotero.Prefs.clear("dataDir");
+				else Zotero.Prefs.set("dataDir", oldDataDir);
+				rootsStub.restore();
+			}
+		});
+
+		it("should reject profile aliases and migration aliases", async function () {
+			let profileError = await getRejection(
+				Zotero.DataDirectory.assertSafeProfileDirectory(alias, {
+					officialRoots: [officialRoot]
+				})
+			);
+			assert.equal(profileError.name, "NotAllowedError");
+
+			let rootsStub = sinon.stub(Zotero.DataDirectory, "_getOfficialZoteroRoots")
+				.returns([officialRoot]);
+			try {
+				let migrationError = await getRejection(
+					Zotero.DataDirectory.checkForMigration(alias, newDir)
+				);
+				assert.equal(migrationError.name, "NotAllowedError");
+			}
+			finally {
+				rootsStub.restore();
+			}
+		});
+
+		it("should allow a directory outside official Zotero roots", async function () {
+			let safe = OS.Path.join(tmpDir, "Chatero");
+			assert.equal(
+				await Zotero.DataDirectory.assertSafeDataDirectory(safe, {
+					officialRoots: [officialRoot]
+				}),
+				safe
+			);
 		});
 	});
 	

@@ -109,3 +109,33 @@ test("shared XPCOM startup scripts have unique top-level lexical bindings", asyn
     .sort((a, b) => a.binding.localeCompare(b.binding));
   assert.deepEqual(collisions, [], "shared-context lexical declarations must not collide");
 });
+
+test("profile isolation runs before preferences and data-directory startup", async () => {
+  const source = await readFile(join(xpcomRoot, "zotero.js"), "utf8");
+  const isolation = source.indexOf("await Zotero.DataDirectory.assertSafeProfileDirectory");
+  const preferences = source.indexOf("await Zotero.Prefs.init()");
+  const dataDirectory = source.indexOf("await Zotero.DataDirectory.init()");
+
+  assert.notEqual(isolation, -1, "startup must enforce profile isolation");
+  assert.ok(isolation < preferences, "profile isolation must precede preference access");
+  assert.ok(isolation < dataDirectory, "profile isolation must precede data-directory access");
+});
+
+test("every interactive data-directory selection is isolated before it is saved", async () => {
+  const source = await readFile(join(xpcomRoot, "dataDirectory.js"), "utf8");
+  const chooseStart = source.indexOf("choose: async function");
+  const forceChangeStart = source.indexOf("forceChange: async function");
+  const unsafeLocationStart = source.indexOf("checkForUnsafeLocation: async function");
+  const chooseSource = source.slice(chooseStart, forceChangeStart);
+  const forceChangeSource = source.slice(forceChangeStart, unsafeLocationStart);
+
+  for (const [name, methodSource] of [
+    ["choose", chooseSource],
+    ["forceChange", forceChangeSource]
+  ]) {
+    const isolation = methodSource.indexOf("await this.assertSafeDataDirectory(file.path)");
+    const saved = methodSource.indexOf("this.set(file.path)");
+    assert.notEqual(isolation, -1, `${name} must enforce official-root isolation`);
+    assert.ok(isolation < saved, `${name} must enforce isolation before saving the selection`);
+  }
+});

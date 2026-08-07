@@ -260,6 +260,7 @@ const { CommandLineOptions } = ChromeUtils.importESModule("chrome://zotero/conte
 		Zotero.Intl.init();
 		if (this.restarting) return;
 		
+		await Zotero.DataDirectory.assertSafeProfileDirectory();
 		await Zotero.Prefs.init();
 		Zotero.Debug.init(options && options.forceDebugLog);
 		

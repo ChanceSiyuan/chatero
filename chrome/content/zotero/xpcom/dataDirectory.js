@@ -58,6 +58,77 @@ Zotero.DataDirectory = {
 	get defaultDir() {
 		return this._getDefaultDir();
 	},
+
+	_getOfficialZoteroRoots({
+		homeDir = OS.Constants.Path.homeDir,
+		isMac = Zotero.isMac
+	} = {}) {
+		if (!isMac) {
+			return [];
+		}
+		return [
+			OS.Path.join(homeDir, "Library", "Application Support", "Zotero"),
+			OS.Path.join(homeDir, "Zotero")
+		];
+	},
+
+	_canonicalizePath: async function (path) {
+		let current = OS.Path.normalize(path);
+		let missing = [];
+		while (true) {
+			if (await IOUtils.exists(current)) {
+				let file = Zotero.File.pathToFile(current);
+				file.normalize();
+				let resolved = file.path;
+				return OS.Path.normalize(OS.Path.join(resolved, ...missing.reverse()));
+			}
+			let parent = PathUtils.parent(current);
+			if (parent == current) {
+				throw new DOMException(`Cannot resolve path: ${path}`, "NotFoundError");
+			}
+			missing.push(PathUtils.filename(current));
+			current = parent;
+		}
+	},
+
+	_assertOutsideOfficialZoteroRoots: async function (path, kind, {
+		officialRoots = this._getOfficialZoteroRoots()
+	} = {}) {
+		let canonicalPath;
+		let canonicalRoots;
+		try {
+			canonicalPath = await this._canonicalizePath(path);
+			canonicalRoots = await Promise.all(
+				officialRoots.map(root => this._canonicalizePath(root))
+			);
+		}
+		catch (error) {
+			let message = `Unable to verify that the Chatero ${kind} is isolated: ${path}`;
+			throw new DOMException(message, "NotAllowedError");
+		}
+
+		let comparablePath = (Zotero.isMac || Zotero.isWin)
+			? canonicalPath.toLowerCase()
+			: canonicalPath;
+		for (let root of canonicalRoots) {
+			let comparableRoot = (Zotero.isMac || Zotero.isWin) ? root.toLowerCase() : root;
+			let separator = comparableRoot.includes("\\") ? "\\" : "/";
+			if (comparablePath == comparableRoot
+					|| comparablePath.startsWith(comparableRoot + separator)) {
+				let message = `Chatero ${kind} cannot use an official Zotero directory: ${path}`;
+				throw new DOMException(message, "NotAllowedError");
+			}
+		}
+		return path;
+	},
+
+	assertSafeDataDirectory: function (path, options) {
+		return this._assertOutsideOfficialZoteroRoots(path, "data directory", options);
+	},
+
+	assertSafeProfileDirectory: function (path = Zotero.Profile.dir, options) {
+		return this._assertOutsideOfficialZoteroRoots(path, "profile directory", options);
+	},
 	
 	get legacyDirName() {
 		return ZOTERO_CONFIG.ID;
@@ -93,6 +164,7 @@ Zotero.DataDirectory = {
 				
 				dataDir = dir;
 			}
+			await this.assertSafeDataDirectory(dataDir);
 		}
 		else if (Zotero.Prefs.get('useDataDir') && Zotero.Prefs.get('dataDir')) {
 			let prefVal = Zotero.Prefs.get('dataDir');
@@ -119,8 +191,10 @@ Zotero.DataDirectory = {
 				// This removes lastDataDir
 				this.set(nsIFile.path);
 				dataDir = nsIFile.path;
+				await this.assertSafeDataDirectory(dataDir);
 			}
 			else {
+				await this.assertSafeDataDirectory(prefVal);
 				// If there's a migration marker in this directory and no database, migration was
 				// interrupted before the database could be moved (or moving failed), so use the source
 				// directory specified in the marker file.
@@ -139,6 +213,7 @@ Zotero.DataDirectory = {
 						Zotero.debug(msg, 1);
 						throw new DOMException(msg, 'NotFoundError');
 					}
+					await this.assertSafeDataDirectory(dataDir);
 				}
 				else {
 					try {
@@ -192,6 +267,7 @@ Zotero.DataDirectory = {
 		// could be
 		else {
 			dataDir = this.defaultDir;
+			await this.assertSafeDataDirectory(dataDir);
 			
 			// If there's already a profile pointing to the default location, use a different
 			// data directory named after the profile, as long as one either doesn't exist yet or
@@ -225,6 +301,7 @@ Zotero.DataDirectory = {
 			// Check for <profile dir>/zotero/zotero.sqlite (Zotero Standalone <5.0)
 			try {
 				let dir = OS.Path.join(Zotero.Profile.dir, this.legacyDirName);
+				await this.assertSafeDataDirectory(dir);
 				let dbFile = OS.Path.join(dir, dbFilename);
 				let mtime = new Date(((await IOUtils.stat(dbFile))).lastModified);
 				Zotero.debug(`Database found at ${dbFile}, last modified ${mtime}`);
@@ -239,6 +316,7 @@ Zotero.DataDirectory = {
 			this.set(dataDir);
 		}
 		
+		await this.assertSafeDataDirectory(dataDir);
 		Zotero.debug("Using data directory " + dataDir);
 		try {
 			await Zotero.File.createDirectoryIfMissingAsync(dataDir);
@@ -344,6 +422,7 @@ Zotero.DataDirectory = {
 		var newPath;
 		
 		if (useHomeDir) {
+			await this.assertSafeDataDirectory(this.defaultDir);
 			let changed = this.set(this.defaultDir);
 			if (!changed) {
 				return false;
@@ -377,6 +456,8 @@ Zotero.DataDirectory = {
 						}
 						file = Zotero.File.pathToFile(parentPath)
 					}
+
+					await this.assertSafeDataDirectory(file.path);
 					
 					if (file.path == (Zotero.Prefs.get('lastDataDir') || Zotero.Prefs.get('dataDir'))) {
 						Zotero.debug("Data directory hasn't changed");
@@ -489,6 +570,7 @@ Zotero.DataDirectory = {
 			fp.appendFilters(fp.filterAll);
 			if ((await fp.show()) == fp.returnOK) {
 				let file = Zotero.File.pathToFile(fp.file);
+				await this.assertSafeDataDirectory(file.path);
 				
 				if (file.directoryEntries.hasMoreElements()) {
 					ps.alert(null,
@@ -661,6 +743,8 @@ Zotero.DataDirectory = {
 	 *     the default data directory
 	 */
 	checkForMigration: async function (dataDir, newDir) {
+		await this.assertSafeDataDirectory(dataDir);
+		await this.assertSafeDataDirectory(newDir);
 		if (!this.canMigrate(dataDir)) {
 			return false;
 		}
@@ -889,6 +973,8 @@ Zotero.DataDirectory = {
 	 * @return {Error[]}
 	 */
 	migrate: async function (oldDir, newDir, partial) {
+		await this.assertSafeDataDirectory(oldDir);
+		await this.assertSafeDataDirectory(newDir);
 		var dbName = this.getDatabaseFilename();
 		var errors = [];
 		
