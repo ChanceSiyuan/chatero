@@ -30,6 +30,9 @@ async function packageFixture(t, version = "1.0.SOURCE") {
   const bin = join(dir, "bin");
   const versionFile = join(dir, "version");
   const moveCount = join(dir, "move-count");
+  const shasumCount = join(dir, "shasum-count");
+  const packageArgs = join(dir, "pkg-dmg-args");
+  const verifierLog = join(dir, "verifier.log");
   await mkdir(app, { recursive: true });
   await mkdir(dist, { recursive: true });
   await mkdir(bin, { recursive: true });
@@ -37,6 +40,8 @@ async function packageFixture(t, version = "1.0.SOURCE") {
   await writeExecutable(join(bin, "pkg-dmg"), `#!/bin/bash
 set -euo pipefail
 [ "\${PKG_FAIL:-0}" = 0 ] || exit 41
+[ "\${REQUIRE_VERIFIER:-0}" = 0 ] || [ -s "$VERIFIER_LOG" ]
+printf '%s\\n' "$@" > "$PKG_ARGS"
 while [ "$#" -gt 0 ]; do
   if [ "$1" = --target ]; then target="$2"; break; fi
   shift
@@ -52,6 +57,11 @@ set -euo pipefail
   await writeExecutable(join(bin, "shasum"), `#!/bin/bash
 set -euo pipefail
 [ "\${SHASUM_FAIL:-0}" = 0 ] || exit 43
+count=0
+[ -f "$SHASUM_COUNT" ] && count=$(cat "$SHASUM_COUNT")
+count=$((count + 1))
+printf '%s\\n' "$count" > "$SHASUM_COUNT"
+case ",\${SHASUM_FAIL_AT:-0}," in *,"$count",*) exit 43;; esac
 exec /usr/bin/shasum "$@"
 `);
   await writeExecutable(join(bin, "mv"), `#!/bin/bash
@@ -62,6 +72,10 @@ count=$((count + 1))
 printf '%s\\n' "$count" > "$MOVE_COUNT"
 case ",\${FAIL_MV_AT:-0}," in *,"$count",*) exit 44;; esac
 exec /bin/mv "$@"
+`);
+  await writeExecutable(join(bin, "verify"), `#!/bin/bash
+set -euo pipefail
+printf '%s\\n' "$1" >> "$VERIFIER_LOG"
 `);
   const run = (extra = {}) => spawnSync(packageScript, [], {
     cwd: root,
@@ -80,11 +94,15 @@ exec /bin/mv "$@"
       CHATER0_PACKAGE_TEST_HDIUTIL: join(bin, "hdiutil"),
       CHATER0_PACKAGE_TEST_SHASUM: join(bin, "shasum"),
       CHATER0_PACKAGE_TEST_MV: join(bin, "mv"),
+      CHATER0_PACKAGE_TEST_VERIFY: join(bin, "verify"),
       MOVE_COUNT: moveCount,
+      SHASUM_COUNT: shasumCount,
+      PKG_ARGS: packageArgs,
+      VERIFIER_LOG: verifierLog,
       ...extra,
     },
   });
-  return { app, dir, dist, run, versionFile };
+  return { app, dir, dist, run, versionFile, packageArgs, verifierLog };
 }
 
 async function writePriorPair(dist, version, value = "old-dmg") {
@@ -105,6 +123,18 @@ test("package fixture publishes a final checksum bound to exactly the DMG basena
   assert.deepEqual((await readdir(fixture.dist)).filter((entry) => entry.startsWith(".chatero-dmg")), []);
 });
 
+test("package fixture invokes its verifier first and passes the personal non-notarizing pkg-dmg contract", async (t) => {
+  const fixture = await packageFixture(t);
+  const result = fixture.run({ CHATER0_PACKAGE_TEST_SKIP_BUNDLE_VERIFY: "0", REQUIRE_VERIFIER: "1" });
+  assertFinished(result);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.equal(await readFile(fixture.verifierLog, "utf8"), `${fixture.app}\n`);
+  const args = (await readFile(fixture.packageArgs, "utf8")).trim().split("\n");
+  assert.deepEqual(args.slice(0, 6), ["--source", fixture.app, "--target", args[3], "--sourcefile", "--volname"]);
+  assert.equal(args[6], "Chatero");
+  assert.ok(!args.some((arg) => /notariz/i.test(arg)));
+});
+
 test("package fixture rotates an existing verified pair with checksum bound to its previous DMG", async (t) => {
   const fixture = await packageFixture(t);
   const name = await writePriorPair(fixture.dist, "1.0.SOURCE");
@@ -112,7 +142,7 @@ test("package fixture rotates an existing verified pair with checksum bound to i
   assertFinished(result);
   assert.equal(result.status, 0, result.stderr || result.stdout);
   const entries = await readdir(fixture.dist);
-  const previousDmg = entries.find((entry) => entry.startsWith(`${name}.`) && entry.includes(".previous"));
+  const previousDmg = entries.find((entry) => entry.startsWith(`${name}.`) && entry.includes(".previous") && !entry.includes(".sha256"));
   const previousChecksum = entries.find((entry) => entry.startsWith(`${name}.sha256.`) && entry.includes(".previous"));
   assert.ok(previousDmg);
   assert.ok(previousChecksum);
@@ -128,6 +158,15 @@ test("package fixture rejects malformed versions before creating artifacts", asy
     assert.notEqual(result.status, 0, `${JSON.stringify(version)} unexpectedly packaged`);
     assert.deepEqual(await readdir(fixture.dist), []);
   }
+});
+
+test("package fixture rejects a version containing a NUL byte without producing artifacts", async (t) => {
+  const fixture = await packageFixture(t);
+  await writeFile(fixture.versionFile, Buffer.from("1.0\0beta\n"));
+  const result = fixture.run();
+  assertFinished(result);
+  assert.notEqual(result.status, 0);
+  assert.deepEqual(await readdir(fixture.dist), []);
 });
 
 test("package fixture refuses a prior checksum that names a different artifact", async (t) => {
@@ -161,6 +200,32 @@ test("package fixture restores a complete prior pair after checksum publication 
   assert.equal(await readFile(join(fixture.dist, name), "utf8"), "old-dmg");
   assert.equal(await readFile(join(fixture.dist, `${name}.sha256`), "utf8"), checksum(name, "old-dmg"));
   assert.deepEqual((await readdir(fixture.dist)).filter((entry) => entry.startsWith(".chatero-dmg")), []);
+});
+
+test("package fixture removes fresh partial publication after checksum or final-validation failure", async (t) => {
+  for (const env of [{ FAIL_MV_AT: "2" }, { SHASUM_FAIL_AT: "2" }]) {
+    const fixture = await packageFixture(t);
+    const result = fixture.run(env);
+    assertFinished(result);
+    assert.notEqual(result.status, 0);
+    assert.deepEqual(await readdir(fixture.dist), []);
+  }
+});
+
+test("package fixture preserves a bound previous pair through restoration move and validation failures", async (t) => {
+  for (const env of [{ FAIL_MV_AT: "5,7" }, { FAIL_MV_AT: "5,8" }, { SHASUM_FAIL_AT: "4,5" }]) {
+    const fixture = await packageFixture(t);
+    const name = await writePriorPair(fixture.dist, "1.0.SOURCE");
+    const result = fixture.run(env);
+    assertFinished(result);
+    assert.notEqual(result.status, 0);
+    const entries = await readdir(fixture.dist);
+    const previousDmg = entries.find((entry) => entry.startsWith(`${name}.`) && entry.includes(".previous") && !entry.includes(".sha256"));
+    const previousChecksum = entries.find((entry) => entry.startsWith(`${name}.sha256.`) && entry.includes(".previous"));
+    assert.ok(previousDmg, `${JSON.stringify(env)}: ${entries.join(", ")}\n${result.stderr}`);
+    assert.ok(previousChecksum, `${JSON.stringify(env)}: ${entries.join(", ")}\n${result.stderr}`);
+    assert.equal(await readFile(join(fixture.dist, previousChecksum), "utf8"), checksum(previousDmg, "old-dmg"));
+  }
 });
 
 test("package fixture retains recovery paths and emits a fatal diagnostic when rollback itself fails", async (t) => {

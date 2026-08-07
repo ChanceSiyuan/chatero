@@ -15,6 +15,7 @@ if [ "$TEST_MODE" = "1" ]; then
 	HDIUTIL="${CHATER0_PACKAGE_TEST_HDIUTIL:?test hdiutil is required}"
 	SHASUM="${CHATER0_PACKAGE_TEST_SHASUM:?test shasum is required}"
 	MOVE="${CHATER0_PACKAGE_TEST_MV:?test mv is required}"
+	VERIFY="${CHATER0_PACKAGE_TEST_VERIFY:?test verifier is required}"
 else
 	APP_BUNDLE="$APP_ROOT_DIR/staging/$APP_NAME.app"
 	DIST_DIR="$APP_ROOT_DIR/dist"
@@ -23,6 +24,7 @@ else
 	HDIUTIL="/usr/bin/hdiutil"
 	SHASUM="/usr/bin/shasum"
 	MOVE="/bin/mv"
+	VERIFY="$SCRIPT_DIR/verify_chatero_bundle"
 fi
 
 if [ "$TEST_MODE" != "1" ] || [ "${CHATER0_PACKAGE_TEST_SKIP_BUILD:-0}" != "1" ]; then
@@ -31,21 +33,11 @@ if [ "$TEST_MODE" != "1" ] || [ "${CHATER0_PACKAGE_TEST_SKIP_BUILD:-0}" != "1" ]
 	"$SCRIPT_DIR/dir_build" -f -p m
 fi
 if [ "$TEST_MODE" != "1" ] || [ "${CHATER0_PACKAGE_TEST_SKIP_BUNDLE_VERIFY:-0}" != "1" ]; then
-	"$SCRIPT_DIR/verify_chatero_bundle" "$APP_BUNDLE"
+	"$VERIFY" "$APP_BUNDLE"
 fi
 
-if [ ! -f "$VERSION_FILE" ] || /usr/bin/grep -q $'\r' "$VERSION_FILE"; then
-	echo "Version file must contain one LF-terminated safe version: $VERSION_FILE" >&2
-	exit 1
-fi
-if [ "$(/usr/bin/awk 'END { print NR }' "$VERSION_FILE")" -ne 1 ]; then
-	echo "Version file must contain exactly one line: $VERSION_FILE" >&2
-	exit 1
-fi
-VERSION=""
-IFS= read -r VERSION < "$VERSION_FILE" || true
-if [[ ! "$VERSION" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]]; then
-	echo "Unsafe or empty version: $VERSION" >&2
+if ! VERSION=$(/usr/bin/perl -0777 -ne 'if (/\A([A-Za-z0-9][A-Za-z0-9._+-]*)(?:\n)?\z/) { print $1 } else { exit 1 }' "$VERSION_FILE"); then
+	echo "Version file must be one safe token with at most one trailing LF: $VERSION_FILE" >&2
 	exit 1
 fi
 
@@ -66,19 +58,15 @@ recoverability_failure() {
 	echo "FATAL: rollback could not restore the prior artifact pair; recoverable backups retained at ${PREVIOUS_DMG:-none}, ${PREVIOUS_CHECKSUM:-none}, and $TEMP_DIR" >&2
 }
 
-rewrite_checksum_binding() {
-	local artifact="$1"
-	local checksum_path="$2"
-	local line digest rewritten
-	line=$(<"$checksum_path")
+write_rebound_checksum() {
+	local source_checksum="$1"
+	local artifact="$2"
+	local destination="$3"
+	local line digest
+	line=$(<"$source_checksum")
 	digest="${line%% *}"
-	if [[ ! "$digest" =~ ^[0-9A-Fa-f]{64}$ ]]; then
-		echo "Invalid checksum digest in $checksum_path" >&2
-		return 1
-	fi
-	rewritten="$TEMP_DIR/$(basename "$checksum_path").rewrite.$RANDOM"
-	printf '%s  %s\n' "$digest" "$(basename "$artifact")" > "$rewritten"
-	"$MOVE" "$rewritten" "$checksum_path"
+	[[ "$digest" =~ ^[0-9A-Fa-f]{64}$ ]] || return 1
+	printf '%s  %s\n' "$digest" "$(basename "$artifact")" > "$destination"
 }
 
 validate_checksum_pair() {
@@ -95,32 +83,42 @@ validate_checksum_pair() {
 		&& (cd "$DIST_DIR" && "$SHASUM" -a 256 -c "$(basename "$checksum_path")")
 }
 
+quarantine_new_outputs() {
+	if [ "$NEW_CHECKSUM_PUBLISHED" = "1" ] && [ -e "$CHECKSUM" ] && ! "$MOVE" "$CHECKSUM" "$TEMP_DIR/failed-new-checksum"; then
+		recoverability_failure
+		return 1
+	fi
+	if [ "$NEW_DMG_PUBLISHED" = "1" ] && [ -e "$DMG" ] && ! "$MOVE" "$DMG" "$TEMP_DIR/failed-new-dmg"; then
+		recoverability_failure
+		return 1
+	fi
+}
+
 restore_previous_artifacts() {
-	set +e
-	if [ "$NEW_CHECKSUM_PUBLISHED" = "1" ] && [ -e "$CHECKSUM" ]; then
-		"$MOVE" "$CHECKSUM" "$TEMP_DIR/failed-new-checksum" || { recoverability_failure; return 1; }
+	local restored_checksum="$TEMP_DIR/restored-checksum"
+	[ "$ROTATED" = "1" ] || return 0
+	write_rebound_checksum "$PREVIOUS_CHECKSUM" "$DMG" "$restored_checksum" || { recoverability_failure; return 1; }
+	"$MOVE" "$PREVIOUS_DMG" "$DMG" || { recoverability_failure; return 1; }
+	if ! "$MOVE" "$restored_checksum" "$CHECKSUM"; then
+		"$MOVE" "$DMG" "$PREVIOUS_DMG" || recoverability_failure
+		return 1
 	fi
-	if [ "$NEW_DMG_PUBLISHED" = "1" ] && [ -e "$DMG" ]; then
-		"$MOVE" "$DMG" "$TEMP_DIR/failed-new-dmg" || { recoverability_failure; return 1; }
+	if validate_checksum_pair "$DMG" "$CHECKSUM"; then
+		return 0
 	fi
-	if [ "$ROTATED" = "1" ]; then
-		rewrite_checksum_binding "$DMG" "$PREVIOUS_CHECKSUM" || { recoverability_failure; return 1; }
-		"$MOVE" "$PREVIOUS_DMG" "$DMG" || { recoverability_failure; return 1; }
-		if ! "$MOVE" "$PREVIOUS_CHECKSUM" "$CHECKSUM"; then
-			"$MOVE" "$DMG" "$PREVIOUS_DMG" || true
-			recoverability_failure
-			return 1
-		fi
-		validate_checksum_pair "$DMG" "$CHECKSUM" || { recoverability_failure; return 1; }
-	fi
-	return 0
+	"$MOVE" "$CHECKSUM" "$TEMP_DIR/failed-restored-checksum" || { recoverability_failure; return 1; }
+	"$MOVE" "$DMG" "$PREVIOUS_DMG" || { recoverability_failure; return 1; }
+	return 1
 }
 
 cleanup() {
 	cleanup_status=$?
 	trap - EXIT
-	if [ "$PUBLISHED" != "1" ] && [ "$ROTATED" = "1" ]; then
-		restore_previous_artifacts || cleanup_status=1
+	if [ "$PUBLISHED" != "1" ]; then
+		quarantine_new_outputs || cleanup_status=1
+		if [ "$KEEP_TEMP" = "0" ]; then
+			restore_previous_artifacts || cleanup_status=1
+		fi
 	fi
 	if [ "$KEEP_TEMP" = "0" ]; then
 		/bin/rm -rf "$TEMP_DIR"
@@ -153,9 +151,21 @@ rotate_existing_artifacts() {
 		"$MOVE" "$PREVIOUS_DMG" "$DMG" || recoverability_failure
 		return 1
 	fi
+	local original_checksum="$TEMP_DIR/original-checksum"
+	local rebound_checksum="$TEMP_DIR/previous-checksum"
+	/bin/cp "$PREVIOUS_CHECKSUM" "$original_checksum"
+	write_rebound_checksum "$PREVIOUS_CHECKSUM" "$PREVIOUS_DMG" "$rebound_checksum"
+	if ! "$MOVE" "$rebound_checksum" "$PREVIOUS_CHECKSUM"; then
+		"$MOVE" "$PREVIOUS_DMG" "$DMG" || recoverability_failure
+		"$MOVE" "$original_checksum" "$CHECKSUM" || recoverability_failure
+		return 1
+	fi
+	if ! validate_checksum_pair "$PREVIOUS_DMG" "$PREVIOUS_CHECKSUM"; then
+		"$MOVE" "$PREVIOUS_DMG" "$DMG" || recoverability_failure
+		"$MOVE" "$original_checksum" "$CHECKSUM" || recoverability_failure
+		return 1
+	fi
 	ROTATED=1
-	rewrite_checksum_binding "$PREVIOUS_DMG" "$PREVIOUS_CHECKSUM"
-	validate_checksum_pair "$PREVIOUS_DMG" "$PREVIOUS_CHECKSUM"
 }
 
 "$PKG_DMG" \
