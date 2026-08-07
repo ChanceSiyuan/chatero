@@ -11,8 +11,37 @@ describe("Zotero.Server", function () {
 
 	it("should fall back when Zotero already owns the connector port", async function () {
 		let attempted = [];
+		let servers = [];
 		let fakeServer = await Zotero.Server._startOnFirstAvailable(
 			[23119, 23129],
+			() => {
+				let candidate = {
+				identity: { primaryPort: null },
+				registerPrefixHandler() {
+					this.registered = true;
+				},
+				start(port) {
+					assert.isTrue(this.registered);
+					attempted.push(port);
+					if (port === 23119) throw new Error("address in use");
+					this.identity.primaryPort = port;
+				}
+				};
+				servers.push(candidate);
+				return candidate;
+			}
+		);
+		assert.deepEqual(attempted, [23119, 23129]);
+		assert.lengthOf(servers, 2);
+		assert.notStrictEqual(servers[0], servers[1]);
+		assert.strictEqual(fakeServer, servers[1]);
+		assert.equal(fakeServer.identity.primaryPort, 23129);
+	});
+
+	it("should try each connector port only once", async function () {
+		let attempted = [];
+		let fakeServer = await Zotero.Server._startOnFirstAvailable(
+			[23119, 23119, 23129, 23129],
 			() => ({
 				identity: { primaryPort: null },
 				registerPrefixHandler() {},
@@ -25,6 +54,29 @@ describe("Zotero.Server", function () {
 		);
 		assert.deepEqual(attempted, [23119, 23129]);
 		assert.equal(fakeServer.identity.primaryPort, 23129);
+	});
+
+	it("should report the last error when all connector ports fail", async function () {
+		let errors = [new Error("preferred failed"), new Error("fallback failed")];
+		let attempted = [];
+		let thrown;
+		try {
+			await Zotero.Server._startOnFirstAvailable(
+				[23119, 23129],
+				() => ({
+					registerPrefixHandler() {},
+					start(port) {
+						attempted.push(port);
+						throw errors[attempted.length - 1];
+					}
+				})
+			);
+		}
+		catch (error) {
+			thrown = error;
+		}
+		assert.strictEqual(thrown, errors[1]);
+		assert.deepEqual(attempted, [23119, 23129]);
 	});
 	
 	describe('DataListener', function () {

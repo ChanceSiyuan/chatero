@@ -59,7 +59,8 @@ Zotero.Server = new function () {
 		createServer = () => new HttpServer()
 	) {
 		let lastError;
-		for (let candidate of ports) {
+		let candidates = ports.filter((value, index, all) => all.indexOf(value) === index);
+		for (let candidate of candidates) {
 			try {
 				let candidateServer = createServer();
 				candidateServer.registerPrefixHandler('/', this.handleRequest);
