@@ -4,5 +4,5 @@
 -brand-product-name = Chatero
 -vendor-short-name = Chatero
 -app-name = Chatero
--subscription-name = Chatero Storage
+-subscription-name = Zotero Storage
 trademarkInfo = Zotero is a trademark of the Corporation for Digital Scholarship.

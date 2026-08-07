@@ -211,7 +211,7 @@ test("Chatero identity is isolated while Zotero compatibility IDs remain stable"
   for (const key of ["-brand-shorter-name", "-brand-short-name", "-brand-full-name", "-brand-product-name", "-vendor-short-name", "-app-name"]) {
     assert.equal(entryValue(fluentBranding, key), product.displayName);
   }
-  assert.equal(entryValue(fluentBranding, "-subscription-name"), `${product.displayName} Storage`);
+  assert.equal(entryValue(fluentBranding, "-subscription-name"), "Zotero Storage");
   assert.equal(entryValue(fluentBranding, "trademarkInfo"), "Zotero is a trademark of the Corporation for Digital Scholarship.");
 
   const propertiesBranding = await read("app/assets/branding/locale/brand.properties");
