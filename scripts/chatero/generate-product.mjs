@@ -1,6 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { basename, dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -53,7 +53,7 @@ const run = async () => {
   await generateProduct({ root, check });
 };
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (process.argv[1] && basename(process.argv[1]) === "generate-product.mjs") {
   run().catch((error) => {
     console.error(error.message);
     process.exitCode = 1;

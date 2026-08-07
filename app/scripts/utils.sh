@@ -106,6 +106,11 @@ function generate_app_hash {
 		if [ -f config-custom.sh ]; then
 			paths+=(config-custom.sh)
 		fi
+		for path in chatero-product.json chatero-product.sh ../resource/chatero-product.mjs ../scripts/chatero/generate-product.mjs; do
+			if [ -f "$path" ]; then
+				paths+=("$path")
+			fi
+		done
 		{
 			if [[ "$OSTYPE" == "darwin"* ]]; then
 				find -L "${paths[@]}" -name '.*' -prune -o -type f -print0 | xargs -0 stat -L -f '%N|%z|%m'

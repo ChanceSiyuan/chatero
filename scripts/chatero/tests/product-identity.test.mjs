@@ -240,9 +240,11 @@ test("the manifest deterministically supplies generated build and runtime identi
   };
   await mkdir(join(root, "app"), { recursive: true });
   await mkdir(join(root, "resource"), { recursive: true });
+  await mkdir(join(root, "scripts", "chatero"), { recursive: true });
   await writeFile(join(root, "app", "chatero-product.json"), `${JSON.stringify(product, null, 2)}\n`);
   await writeFile(join(root, "app", "config-custom.sh"), await read("app/config-custom.sh"));
   await writeFile(join(root, "resource", "config.mjs"), await read("resource/config.mjs"));
+  await writeFile(join(root, "scripts", "chatero", "generate-product.mjs"), await read("scripts/chatero/generate-product.mjs"));
 
   const { generateProduct } = await import(new URL("../generate-product.mjs", import.meta.url));
   await generateProduct({ root });
@@ -300,4 +302,82 @@ test("the manifest deterministically supplies generated build and runtime identi
 
   const packageJSON = JSON.parse(await read("package.json"));
   assert.match(packageJSON.scripts.build, /scripts\/chatero\/generate-product\.mjs/);
+});
+
+test("shell config regenerates manifest identity before consuming it", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "chatero-shell-config-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+
+  const product = {
+    ...JSON.parse(await read("app/chatero-product.json")),
+    displayName: "Chatero Shell Test",
+    bundleID: "io.github.chancesiyuan.chatero.shell-test",
+    externalURLScheme: "chatero-shell-test"
+  };
+  await mkdir(join(root, "app"), { recursive: true });
+  await mkdir(join(root, "resource"), { recursive: true });
+  await mkdir(join(root, "scripts", "chatero"), { recursive: true });
+  await writeFile(join(root, "app", "chatero-product.json"), `${JSON.stringify(product, null, 2)}\n`);
+  await writeFile(join(root, "app", "config.sh"), await read("app/config.sh"));
+  await writeFile(join(root, "app", "config-custom.sh"), await read("app/config-custom.sh"));
+  await writeFile(join(root, "resource", "config.mjs"), await read("resource/config.mjs"));
+  await writeFile(join(root, "scripts", "chatero", "generate-product.mjs"), await read("scripts/chatero/generate-product.mjs"));
+  await writeFile(join(root, "app", "chatero-product.sh"), 'APP_NAME="Stale"\nAPP_ID="stale"\nAPP_BUNDLE_ID="stale"\nAPP_URL_SCHEME="stale"\nSIGN=0\n');
+  await writeFile(join(root, "resource", "chatero-product.mjs"), 'export const CHATERO_PRODUCT = Object.freeze({ displayName: "Stale" });\n');
+
+  const { stdout } = await execFile("bash", [
+    "-c",
+    '. "$1/app/config.sh"; printf "%s\\n" "$APP_NAME" "$APP_BUNDLE_ID" "$APP_URL_SCHEME"',
+    "bash",
+    root
+  ]);
+  assert.deepEqual(stdout.trim().split("\n"), [product.displayName, product.bundleID, product.externalURLScheme]);
+  const regeneratedShell = parseShellAssignments(await readFile(join(root, "app", "chatero-product.sh"), "utf8"));
+  assert.deepEqual(
+    Object.fromEntries(["APP_NAME", "APP_BUNDLE_ID", "APP_URL_SCHEME"].map((key) => [key, regeneratedShell[key]])),
+    {
+      APP_NAME: product.displayName,
+      APP_BUNDLE_ID: product.bundleID,
+      APP_URL_SCHEME: product.externalURLScheme
+    }
+  );
+  const regeneratedRuntime = await import(`${pathToFileURL(join(root, "resource", "chatero-product.mjs")).href}?shell-config`);
+  assert.deepEqual(regeneratedRuntime.CHATERO_PRODUCT, product);
+});
+
+test("application hash invalidates manifest-derived packaging inputs", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "chatero-app-hash-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+
+  const appDir = join(root, "app");
+  await Promise.all([
+    ...["assets", "scripts", "mac", "win", "linux", "modules", "update-packaging"].map((path) => mkdir(join(appDir, path), { recursive: true })),
+    mkdir(join(root, "resource"), { recursive: true }),
+    mkdir(join(root, "scripts", "chatero"), { recursive: true })
+  ]);
+  await writeFile(join(appDir, "scripts", "utils.sh"), await read("app/scripts/utils.sh"));
+  for (const path of ["build.sh", "config.sh", "config-custom.sh", "chatero-product.json", "chatero-product.sh"]) {
+    await writeFile(join(appDir, path), `${path}\n`);
+  }
+  await writeFile(join(root, "resource", "chatero-product.mjs"), "runtime\n");
+  await writeFile(join(root, "scripts", "chatero", "generate-product.mjs"), "generator\n");
+
+  const applicationHash = async () => (await execFile("bash", [
+    "-c",
+    '. "$1/app/scripts/utils.sh"; generate_app_hash "$1/app"',
+    "bash",
+    root
+  ])).stdout.trim();
+  let previousHash = await applicationHash();
+  for (const path of [
+    join(appDir, "chatero-product.json"),
+    join(appDir, "chatero-product.sh"),
+    join(root, "resource", "chatero-product.mjs"),
+    join(root, "scripts", "chatero", "generate-product.mjs")
+  ]) {
+    await writeFile(path, `${await readFile(path, "utf8")}changed\n`);
+    const nextHash = await applicationHash();
+    assert.notEqual(nextHash, previousHash, `${path} must invalidate the application hash`);
+    previousHash = nextHash;
+  }
 });
