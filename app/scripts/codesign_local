@@ -3,8 +3,8 @@ set -euo pipefail
 
 # Perform ad-hoc code signing of the local macOS app for development usage
 #
-# Sign the Word integration dylib first, then the complete app bundle so that the
-# staged build launches under macOS's code-signing checks.
+# Sign Mach-O leaves and nested bundles inside-out, preserving the Word
+# integration entitlement, then sign the outer app without destructive --deep.
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
@@ -16,27 +16,76 @@ if [ -z "${1:-}" ]; then
 fi
 
 APPDIR="$1"
-DEVELOPER_ID="-"
-
 entitlements_file="$ROOT_DIR/mac/entitlements.xml"
-#/usr/bin/codesign --force --options runtime --entitlements "$entitlements_file" --sign "$DEVELOPER_ID" \
-#	"$APPDIR/Contents/MacOS/XUL" \
-#	"$APPDIR/Contents/MacOS/updater.app/Contents/MacOS/org.mozilla.updater"
-#find "$APPDIR/Contents" -name '*.dylib' -exec /usr/bin/codesign --force --options runtime --entitlements "$entitlements_file" --sign "$DEVELOPER_ID" {} \;
-#find "$APPDIR/Contents" -name '*.app' -exec /usr/bin/codesign --force --options runtime --entitlements "$entitlements_file" --sign "$DEVELOPER_ID" {} \;
-#/usr/bin/codesign --force --options runtime --entitlements "$entitlements_file" --sign "$DEVELOPER_ID" "$APPDIR/Contents/MacOS/zotero"
-
-# Skip signing of Safari extension, since it's not present for local builds
-
-# Sign final app package
-#echo
-#/usr/bin/codesign --force --options runtime --entitlements "$entitlements_file" --sign "$DEVELOPER_ID" "$APPDIR"
-
-# Verify app
-#/usr/bin/codesign --verify -vvvv "$APPDIR"
-
-find "$APPDIR/Contents" -name 'libZoteroWordIntegration.dylib' -exec /usr/bin/codesign --force --options runtime --entitlements "$entitlements_file" --sign "$DEVELOPER_ID" {} \;
+word_dylib="$APPDIR/Contents/Resources/integration/word-for-mac/libZoteroWordIntegration.dylib"
+outer_executable="$APPDIR/Contents/MacOS/zotero"
+bundle_executables=("$outer_executable")
+while IFS= read -r -d '' bundle_path; do
+	info_plist="$bundle_path/Contents/Info.plist"
+	if [ -f "$info_plist" ] \
+		&& bundle_executable_name=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$info_plist" 2>/dev/null); then
+		bundle_executables+=("$bundle_path/Contents/MacOS/$bundle_executable_name")
+	fi
+done < <(/usr/bin/find "$APPDIR/Contents" -type d \( -name '*.app' -o -name '*.appex' \) -print0)
+entitlements_check=$(mktemp)
+cleanup() {
+	cleanup_status=$?
+	rm -f "$entitlements_check"
+	exit $cleanup_status
+}
+trap cleanup EXIT
 
 /usr/bin/xattr -cr "$APPDIR"
-/usr/bin/codesign --force --deep --sign - "$APPDIR"
+
+# Sign executable Mach-O leaves first. The Word integration dylib is excluded
+# here so that its required Apple Events entitlement can be applied explicitly.
+while IFS= read -r -d '' code_path; do
+	if [[ "$code_path" == "$word_dylib" ]]; then
+		continue
+	fi
+	for bundle_executable in "${bundle_executables[@]}"; do
+		if [[ "$code_path" == "$bundle_executable" ]]; then
+			continue 2
+		fi
+	done
+	if /usr/bin/file -b "$code_path" | /usr/bin/grep -q 'Mach-O'; then
+		/usr/bin/codesign --force --sign - "$code_path"
+	fi
+done < <(/usr/bin/find "$APPDIR/Contents" -type f \( -perm -111 -o -name '*.dylib' -o -name '*.so' -o -name '*.jnilib' \) -print0)
+
+if [ ! -f "$word_dylib" ]; then
+	echo "Word integration dylib not found at $word_dylib" >&2
+	exit 1
+fi
+if ! /usr/bin/codesign --force --force-library-entitlements --options runtime --entitlements "$entitlements_file" --sign - "$word_dylib"; then
+	# macOS versions before 15 do not recognize --force-library-entitlements,
+	# but they embed library entitlements by default.
+	/usr/bin/codesign --force --options runtime --entitlements "$entitlements_file" --sign - "$word_dylib"
+fi
+
+# Sign nested code bundles deepest-first. Updater and framework bundles match
+# the upstream no-entitlements path; helper apps use the application
+# entitlements, as in the Developer ID signing path.
+while IFS= read -r -d '' bundle_path; do
+	case "$bundle_path" in
+		"$APPDIR/Contents/MacOS/updater.app"|*.framework|*.xpc|*.bundle|*.plugin)
+			/usr/bin/codesign --force --sign - "$bundle_path"
+			;;
+		*.app|*.appex)
+			/usr/bin/codesign --force --entitlements "$entitlements_file" --sign - "$bundle_path"
+			;;
+	esac
+done < <(/usr/bin/find "$APPDIR/Contents" -depth -type d \( -name '*.app' -o -name '*.appex' -o -name '*.framework' -o -name '*.xpc' -o -name '*.bundle' -o -name '*.plugin' \) -print0)
+
+/usr/bin/codesign --force --entitlements "$entitlements_file" --sign - "$APPDIR"
+
+# Verify the final Word signature still carries the entitlement required to
+# control Word via Apple Events.
+/usr/bin/codesign -d --entitlements "$entitlements_check" --xml "$word_dylib" 2>/dev/null
+word_automation=$(/usr/libexec/PlistBuddy -c "Print :com.apple.security.automation.apple-events" "$entitlements_check")
+if [ "$word_automation" != "true" ]; then
+	echo "Word integration Apple Events entitlement missing after signing" >&2
+	exit 1
+fi
+
 /usr/bin/codesign --verify --deep --strict --verbose=2 "$APPDIR"

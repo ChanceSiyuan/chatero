@@ -883,13 +883,16 @@ if [ $BUILD_MAC == 1 ]; then
 	if [ $PACKAGE == 1 ]; then
 		if [ $MAC_NATIVE == 1 ]; then
 			echo "Creating Mac installer"
+			if [[ $SIGN == 0 ]] && [[ "${APP_BUNDLE_ID:-}" == "io.github.chancesiyuan.chatero" ]]; then
+				"$CALLDIR/scripts/codesign_local" "$APPDIR"
+			fi
 			dmg="$DIST_DIR/$APP_NAME-$VERSION.dmg"
 			"$CALLDIR/mac/pkg-dmg" --source "$STAGE_DIR/$APP_NAME.app" \
 				--target "$dmg" \
 				--sourcefile --volname "$APP_NAME" --copy "$CALLDIR/mac/DSStore:/.DS_Store" \
 				--symlink /Applications:"/Drag Here to Install" > /dev/null
 			
-			if [ "$UPDATE_CHANNEL" != "test" ]; then
+			if [[ $SIGN == 1 ]] && [[ "$UPDATE_CHANNEL" != "test" ]]; then
 				# Upload disk image to Apple
 				"$CALLDIR/scripts/notarize_mac_app" "$dmg"
 				echo
@@ -898,8 +901,10 @@ if [ $BUILD_MAC == 1 ]; then
 				"$CALLDIR/scripts/notarization_stapler" "$dmg"
 				
 				echo "Notarization complete"
-			else
+			elif [[ $SIGN == 1 ]]; then
 				echo "Test build -- skipping notarization"
+			else
+				echo "Local ad-hoc-signed build -- skipping notarization"
 			fi
 			echo
 		else

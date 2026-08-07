@@ -37,6 +37,7 @@ win_path="$STAGE_DIR/Zotero_win-x64"
 linux_path="$STAGE_DIR/Zotero_linux-x86_64"
 
 added=0
+mac_updated=0
 build_id=$(date +%Y%m%d%H%M%S)
 for path in "$mac_path" "$win_path" "$linux_path"; do
 	if [ -d "$path" ]; then
@@ -46,10 +47,17 @@ for path in "$mac_path" "$win_path" "$linux_path"; do
 		# Bump BuildID so that startup caches are invalidated
 		perl -pi -e "s/^BuildID=.*/BuildID=$build_id/" "$path/app/application.ini"
 		added=1
+		if [ "$path" = "$mac_path" ]; then
+			mac_updated=1
+		fi
 	fi
 done
 
 if [ $added -eq 0 ]; then
 	echo "No directories found in staging!"
 	exit 1
+fi
+
+if [ $mac_updated -eq 1 ]; then
+	"$SCRIPT_DIR/codesign_local" "$STAGE_DIR/$APP_NAME.app"
 fi
