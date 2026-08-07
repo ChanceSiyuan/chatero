@@ -141,6 +141,8 @@ restore_final_from_backup() {
 	fi
 	if ! "$MOVE" "$restored_dmg" "$DMG" || ! "$MOVE" "$restored_checksum" "$CHECKSUM"; then
 		KEEP_TEMP=1
+		discard_path "$CHECKSUM" || true
+		discard_path "$DMG" || true
 		echo "FATAL: final restoration move failed; valid recovery pair remains at $PREVIOUS_DMG and $PREVIOUS_CHECKSUM" >&2
 		return 1
 	fi
