@@ -8,6 +8,14 @@ if [ -z "$APP_BUNDLE" ] || [ ! -d "$APP_BUNDLE" ]; then
 fi
 APP_BUNDLE="$(cd "$APP_BUNDLE" && pwd -P)"
 
+if [ "${CHATER0_VERIFY_TEST_MODE:-0}" = "1" ]; then
+	PLIST_BUDDY="${CHATER0_VERIFY_TEST_PLISTBUDDY:?test PlistBuddy is required}"
+	CODESIGN="${CHATER0_VERIFY_TEST_CODESIGN:?test codesign is required}"
+else
+	PLIST_BUDDY="/usr/libexec/PlistBuddy"
+	CODESIGN="/usr/bin/codesign"
+fi
+
 PLIST="$APP_BUNDLE/Contents/Info.plist"
 APPLICATION_INI="$APP_BUNDLE/Contents/Resources/app/application.ini"
 WORD_DYLIB="$APP_BUNDLE/Contents/Resources/integration/word-for-mac/libZoteroWordIntegration.dylib"
@@ -24,21 +32,28 @@ trap cleanup EXIT
 [ -x "$APP_BUNDLE/Contents/MacOS/zotero" ]
 [ -f "$WORD_DYLIB" ]
 
-test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleName' "$PLIST")" = "Chatero"
-test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$PLIST")" \
+test "$("$PLIST_BUDDY" -c 'Print :CFBundleName' "$PLIST")" = "Chatero"
+test "$("$PLIST_BUDDY" -c 'Print :CFBundleIdentifier' "$PLIST")" \
 	= "io.github.chancesiyuan.chatero"
-test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleURLTypes:0:CFBundleURLSchemes:0' "$PLIST")" \
+test "$("$PLIST_BUDDY" -c 'Print :CFBundleExecutable' "$PLIST")" = "zotero"
+test "$("$PLIST_BUDDY" -c 'Print :CFBundleURLTypes:0:CFBundleURLSchemes:0' "$PLIST")" \
 	= "chatero"
 /usr/bin/grep -qx 'Name=Chatero' "$APPLICATION_INI"
 /usr/bin/grep -qx 'ID=zotero@zotero.org' "$APPLICATION_INI"
-if /usr/bin/grep -q 'download/client/update' "$APPLICATION_INI"; then
-	echo "Official Zotero updater URL must not be present" >&2
+if /usr/bin/grep -Eq '^[[:space:]]*UpdateURL[[:space:]]*=' "$APPLICATION_INI"; then
+	echo "Active updater URL must not be present" >&2
 	exit 1
 fi
 
-/usr/bin/codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE"
-/usr/bin/codesign -d --entitlements "$ENTITLEMENTS" --xml "$WORD_DYLIB" 2>/dev/null
-word_automation=$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.automation.apple-events' "$ENTITLEMENTS" 2>/dev/null || true)
+"$CODESIGN" --verify --deep --strict --verbose=2 "$APP_BUNDLE"
+signing_metadata=$("$CODESIGN" -dvvv "$APP_BUNDLE" 2>&1)
+if ! /usr/bin/grep -qx 'Signature=adhoc' <<< "$signing_metadata" \
+	|| ! /usr/bin/grep -qx 'TeamIdentifier=not set' <<< "$signing_metadata"; then
+	echo "Chatero bundle must carry an ad-hoc signature with no TeamIdentifier" >&2
+	exit 1
+fi
+"$CODESIGN" -d --entitlements "$ENTITLEMENTS" --xml "$WORD_DYLIB" 2>/dev/null
+word_automation=$("$PLIST_BUDDY" -c 'Print :com.apple.security.automation.apple-events' "$ENTITLEMENTS" 2>/dev/null || true)
 if [ "$word_automation" != "true" ]; then
 	echo "Word integration Apple Events entitlement missing after signing" >&2
 	exit 1

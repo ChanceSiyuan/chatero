@@ -6,69 +6,159 @@ APP_ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 ROOT_DIR="$(dirname "$APP_ROOT_DIR")"
 . "$APP_ROOT_DIR/config.sh"
 
-cd "$ROOT_DIR"
-NODE_OPTIONS=--openssl-legacy-provider node js-build/build.js
-"$SCRIPT_DIR/dir_build" -f -p m
+TEST_MODE="${CHATER0_PACKAGE_TEST_MODE:-0}"
+if [ "$TEST_MODE" = "1" ]; then
+	APP_BUNDLE="${CHATER0_PACKAGE_TEST_APP_BUNDLE:?test app bundle is required}"
+	DIST_DIR="${CHATER0_PACKAGE_TEST_DIST_DIR:?test dist directory is required}"
+	VERSION_FILE="${CHATER0_PACKAGE_TEST_VERSION_FILE:?test version file is required}"
+	PKG_DMG="${CHATER0_PACKAGE_TEST_PKG_DMG:?test pkg-dmg is required}"
+	HDIUTIL="${CHATER0_PACKAGE_TEST_HDIUTIL:?test hdiutil is required}"
+	SHASUM="${CHATER0_PACKAGE_TEST_SHASUM:?test shasum is required}"
+	MOVE="${CHATER0_PACKAGE_TEST_MV:?test mv is required}"
+else
+	APP_BUNDLE="$APP_ROOT_DIR/staging/$APP_NAME.app"
+	DIST_DIR="$APP_ROOT_DIR/dist"
+	VERSION_FILE="$ROOT_DIR/version"
+	PKG_DMG="$APP_ROOT_DIR/mac/pkg-dmg"
+	HDIUTIL="/usr/bin/hdiutil"
+	SHASUM="/usr/bin/shasum"
+	MOVE="/bin/mv"
+fi
 
-APP_BUNDLE="$APP_ROOT_DIR/staging/$APP_NAME.app"
-"$SCRIPT_DIR/verify_chatero_bundle" "$APP_BUNDLE"
+if [ "$TEST_MODE" != "1" ] || [ "${CHATER0_PACKAGE_TEST_SKIP_BUILD:-0}" != "1" ]; then
+	cd "$ROOT_DIR"
+	NODE_OPTIONS=--openssl-legacy-provider node js-build/build.js
+	"$SCRIPT_DIR/dir_build" -f -p m
+fi
+if [ "$TEST_MODE" != "1" ] || [ "${CHATER0_PACKAGE_TEST_SKIP_BUNDLE_VERIFY:-0}" != "1" ]; then
+	"$SCRIPT_DIR/verify_chatero_bundle" "$APP_BUNDLE"
+fi
 
-VERSION="$(tr -d '\\r\\n' < "$ROOT_DIR/version")"
-DIST_DIR="$APP_ROOT_DIR/dist"
+if [ ! -f "$VERSION_FILE" ] || /usr/bin/grep -q $'\r' "$VERSION_FILE"; then
+	echo "Version file must contain one LF-terminated safe version: $VERSION_FILE" >&2
+	exit 1
+fi
+if [ "$(/usr/bin/awk 'END { print NR }' "$VERSION_FILE")" -ne 1 ]; then
+	echo "Version file must contain exactly one line: $VERSION_FILE" >&2
+	exit 1
+fi
+VERSION=""
+IFS= read -r VERSION < "$VERSION_FILE" || true
+if [[ ! "$VERSION" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]]; then
+	echo "Unsafe or empty version: $VERSION" >&2
+	exit 1
+fi
+
 mkdir -p "$DIST_DIR"
 DMG="$DIST_DIR/Chatero-${VERSION}.dmg"
 CHECKSUM="$DMG.sha256"
 TEMP_DIR=$(mktemp -d "$DIST_DIR/.chatero-dmg.XXXXXX")
-TEMP_DMG="$TEMP_DIR/Chatero-${VERSION}.dmg"
-TEMP_CHECKSUM="$TEMP_DIR/Chatero-${VERSION}.dmg.sha256"
+TEMP_DMG="$TEMP_DIR/$(basename "$DMG")"
+TEMP_CHECKSUM="$TEMP_DIR/$(basename "$CHECKSUM")"
+ROTATED=0
+NEW_DMG_PUBLISHED=0
+NEW_CHECKSUM_PUBLISHED=0
+PUBLISHED=0
+KEEP_TEMP=0
+
+recoverability_failure() {
+	KEEP_TEMP=1
+	echo "FATAL: rollback could not restore the prior artifact pair; recoverable backups retained at ${PREVIOUS_DMG:-none}, ${PREVIOUS_CHECKSUM:-none}, and $TEMP_DIR" >&2
+}
+
+rewrite_checksum_binding() {
+	local artifact="$1"
+	local checksum_path="$2"
+	local line digest rewritten
+	line=$(<"$checksum_path")
+	digest="${line%% *}"
+	if [[ ! "$digest" =~ ^[0-9A-Fa-f]{64}$ ]]; then
+		echo "Invalid checksum digest in $checksum_path" >&2
+		return 1
+	fi
+	rewritten="$TEMP_DIR/$(basename "$checksum_path").rewrite.$RANDOM"
+	printf '%s  %s\n' "$digest" "$(basename "$artifact")" > "$rewritten"
+	"$MOVE" "$rewritten" "$checksum_path"
+}
+
+validate_checksum_pair() {
+	local artifact="$1"
+	local checksum_path="$2"
+	local line digest filename
+	[ -f "$artifact" ] && [ -f "$checksum_path" ] || return 1
+	line=$(<"$checksum_path")
+	digest="${line%% *}"
+	filename="${line#"$digest"  }"
+	[[ "$digest" =~ ^[0-9A-Fa-f]{64}$ ]] \
+		&& [ "$line" = "$digest  $filename" ] \
+		&& [ "$filename" = "$(basename "$artifact")" ] \
+		&& (cd "$DIST_DIR" && "$SHASUM" -a 256 -c "$(basename "$checksum_path")")
+}
+
+restore_previous_artifacts() {
+	set +e
+	if [ "$NEW_CHECKSUM_PUBLISHED" = "1" ] && [ -e "$CHECKSUM" ]; then
+		"$MOVE" "$CHECKSUM" "$TEMP_DIR/failed-new-checksum" || { recoverability_failure; return 1; }
+	fi
+	if [ "$NEW_DMG_PUBLISHED" = "1" ] && [ -e "$DMG" ]; then
+		"$MOVE" "$DMG" "$TEMP_DIR/failed-new-dmg" || { recoverability_failure; return 1; }
+	fi
+	if [ "$ROTATED" = "1" ]; then
+		rewrite_checksum_binding "$DMG" "$PREVIOUS_CHECKSUM" || { recoverability_failure; return 1; }
+		"$MOVE" "$PREVIOUS_DMG" "$DMG" || { recoverability_failure; return 1; }
+		if ! "$MOVE" "$PREVIOUS_CHECKSUM" "$CHECKSUM"; then
+			"$MOVE" "$DMG" "$PREVIOUS_DMG" || true
+			recoverability_failure
+			return 1
+		fi
+		validate_checksum_pair "$DMG" "$CHECKSUM" || { recoverability_failure; return 1; }
+	fi
+	return 0
+}
+
 cleanup() {
 	cleanup_status=$?
-	rm -rf "$TEMP_DIR"
+	trap - EXIT
+	if [ "$PUBLISHED" != "1" ] && [ "$ROTATED" = "1" ]; then
+		restore_previous_artifacts || cleanup_status=1
+	fi
+	if [ "$KEEP_TEMP" = "0" ]; then
+		/bin/rm -rf "$TEMP_DIR"
+	fi
 	exit "$cleanup_status"
 }
 trap cleanup EXIT
 
 rotate_existing_artifacts() {
 	if [ ! -e "$DMG" ] && [ ! -e "$CHECKSUM" ]; then
-		return
+		return 0
 	fi
-	if [ ! -f "$DMG" ] || [ ! -f "$CHECKSUM" ]; then
-		echo "Existing DMG and checksum must be a complete pair: $DMG" >&2
-		exit 1
-	fi
-	if ! (cd "$DIST_DIR" && shasum -a 256 -c "$(basename "$CHECKSUM")"); then
-		echo "Existing DMG checksum is invalid; refusing to replace it" >&2
-		exit 1
+	if ! validate_checksum_pair "$DMG" "$CHECKSUM"; then
+		echo "Existing DMG/checksum pair is incomplete, invalid, or not bound to $DMG" >&2
+		return 1
 	fi
 
 	local suffix="$(date -u +%Y%m%dT%H%M%SZ).previous"
-	local previous_dmg="$DMG.$suffix"
-	local previous_checksum="$CHECKSUM.$suffix"
+	PREVIOUS_DMG="$DMG.$suffix"
+	PREVIOUS_CHECKSUM="$CHECKSUM.$suffix"
 	local index=1
-	while [ -e "$previous_dmg" ] || [ -e "$previous_checksum" ]; do
-		previous_dmg="$DMG.$suffix.$index"
-		previous_checksum="$CHECKSUM.$suffix.$index"
+	while [ -e "$PREVIOUS_DMG" ] || [ -e "$PREVIOUS_CHECKSUM" ]; do
+		PREVIOUS_DMG="$DMG.$suffix.$index"
+		PREVIOUS_CHECKSUM="$CHECKSUM.$suffix.$index"
 		index=$((index + 1))
 	done
 
-	mv "$DMG" "$previous_dmg"
-	if ! mv "$CHECKSUM" "$previous_checksum"; then
-		mv "$previous_dmg" "$DMG"
-		echo "Unable to rotate existing DMG checksum" >&2
-		exit 1
+	"$MOVE" "$DMG" "$PREVIOUS_DMG"
+	if ! "$MOVE" "$CHECKSUM" "$PREVIOUS_CHECKSUM"; then
+		"$MOVE" "$PREVIOUS_DMG" "$DMG" || recoverability_failure
+		return 1
 	fi
-	PREVIOUS_DMG="$previous_dmg"
-	PREVIOUS_CHECKSUM="$previous_checksum"
+	ROTATED=1
+	rewrite_checksum_binding "$PREVIOUS_DMG" "$PREVIOUS_CHECKSUM"
+	validate_checksum_pair "$PREVIOUS_DMG" "$PREVIOUS_CHECKSUM"
 }
 
-restore_previous_artifacts() {
-	if [ -n "${PREVIOUS_DMG:-}" ]; then
-		mv "$PREVIOUS_DMG" "$DMG"
-		mv "$PREVIOUS_CHECKSUM" "$CHECKSUM"
-	fi
-}
-
-"$APP_ROOT_DIR/mac/pkg-dmg" \
+"$PKG_DMG" \
 	--source "$APP_BUNDLE" \
 	--target "$TEMP_DMG" \
 	--sourcefile \
@@ -76,16 +166,20 @@ restore_previous_artifacts() {
 	--copy "$APP_ROOT_DIR/mac/DSStore:/.DS_Store" \
 	--symlink /Applications:"/Drag Here to Install"
 
-hdiutil verify "$TEMP_DMG"
-# Write the eventual filename so `shasum -c Chatero-*.dmg.sha256` works after publishing.
-shasum -a 256 "$TEMP_DMG" | /usr/bin/awk -v dmg="$DMG" '{ print $1 "  " dmg }' > "$TEMP_CHECKSUM"
+"$HDIUTIL" verify "$TEMP_DMG"
+"$SHASUM" -a 256 "$TEMP_DMG" | /usr/bin/awk -v name="$(basename "$DMG")" '{ print $1 "  " name }' > "$TEMP_CHECKSUM"
 
 rotate_existing_artifacts
-mv "$TEMP_DMG" "$DMG"
-if ! mv "$TEMP_CHECKSUM" "$CHECKSUM"; then
-	mv "$DMG" "$TEMP_DMG"
-	restore_previous_artifacts
-	echo "Unable to publish DMG checksum; previous artifacts restored" >&2
+"$MOVE" "$TEMP_DMG" "$DMG"
+NEW_DMG_PUBLISHED=1
+if ! "$MOVE" "$TEMP_CHECKSUM" "$CHECKSUM"; then
+	echo "Unable to publish DMG checksum; restoring previous artifacts" >&2
 	exit 1
 fi
-printf '%s\\n' "$DMG"
+NEW_CHECKSUM_PUBLISHED=1
+if ! validate_checksum_pair "$DMG" "$CHECKSUM"; then
+	echo "Published DMG/checksum pair failed final verification" >&2
+	exit 1
+fi
+PUBLISHED=1
+printf '%s\n' "$DMG"
