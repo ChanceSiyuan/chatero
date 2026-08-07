@@ -1,7 +1,11 @@
 export var ZOTERO_CONFIG = {
 	GUID: 'zotero@zotero.org',
 	ID: 'zotero', // used for db filename, etc.
-	CLIENT_NAME: 'Zotero',
+	CLIENT_NAME: 'Chatero',
+	EXTERNAL_URL_SCHEME: 'chatero',
+	DATA_DIRECTORY_WITHIN_PROFILE_ROOT: true,
+	DATA_DIRECTORY_NAME: 'Data',
+	HTTP_SERVER_FALLBACK_PORTS: [23129],
 	DOMAIN_NAME: 'zotero.org',
 	PRODUCER: 'Digital Scholar',
 	PRODUCER_URL: 'https://digitalscholar.org',

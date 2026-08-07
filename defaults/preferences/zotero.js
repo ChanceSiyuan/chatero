@@ -3,6 +3,7 @@
 // Add new user-adjustable hidden preferences to
 // http://www.zotero.org/documentation/hidden_prefs
 
+pref("app.update.enabled", false);
 pref("extensions.zotero.firstRun2", true);
 pref("extensions.zotero.undoHistory.steps", 100);
 

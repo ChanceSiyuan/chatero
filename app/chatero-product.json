@@ -1,0 +1,13 @@
+{
+  "displayName": "Chatero",
+  "bundleID": "io.github.chancesiyuan.chatero",
+  "applicationID": "zotero@zotero.org",
+  "internalID": "zotero",
+  "preferenceBranch": "extensions.zotero.",
+  "externalURLScheme": "chatero",
+  "profileRootName": "Chatero",
+  "dataDirectoryName": "Data",
+  "connectorPort": 23119,
+  "fallbackPorts": [23129],
+  "automaticUpdates": false
+}

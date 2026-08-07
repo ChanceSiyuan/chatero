@@ -13,7 +13,8 @@
     "ftl-to-json": "node ./js-build/ftl-to-json.mjs",
     "localize-ftl": "node ./js-build/localize-ftl.mjs",
     "clean-build": "node ./js-build/clean.js && node ./js-build/build.js",
-    "clean-start": "node ./js-build/clean.js && node ./js-build/build.js && node ./js-build/watch.js"
+    "clean-start": "node ./js-build/clean.js && node ./js-build/build.js && node ./js-build/watch.js",
+    "test:chatero": "node --test scripts/chatero/tests/*.test.mjs"
   },
   "license": "",
   "dependencies": {
