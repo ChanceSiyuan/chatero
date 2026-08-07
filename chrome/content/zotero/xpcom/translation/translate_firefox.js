@@ -855,4 +855,42 @@ Zotero.Translate.IO.Write.prototype = {
 		
 		this._rawStream.close();
 	}
-}
+};
+
+// Chatero keeps zotero:// as its internal protocol for compatibility. Note translators generate
+// those internal links, so normalize both string-backed (clipboard/drag) and file-backed export
+// streams at the final application boundary.
+(function () {
+	let stringPrototype = Zotero.Translate.IO.String.prototype;
+	let originalStringWrite = stringPrototype.write;
+	stringPrototype.setDataProcessor = function (processor) {
+		this._processor = processor;
+	};
+	stringPrototype.write = function (data) {
+		if (this._processor) {
+			data = this._processor(data);
+		}
+		return originalStringWrite.call(this, data);
+	};
+
+	let noteTranslatorIDs = new Set([
+		'1412e9e2-51e1-42ec-aa35-e036a895534b',
+		'897a81c2-9f60-4bec-ae6b-85a5030b8be5'
+	]);
+	let originalPrepareTranslation = Zotero.Translate.Export.prototype._prepareTranslation;
+	Zotero.Translate.Export.prototype._prepareTranslation = function () {
+		let promise = originalPrepareTranslation.apply(this, arguments);
+		let configureEgress = () => {
+			if (noteTranslatorIDs.has(this.translator[0].translatorID)) {
+				this._io.setDataProcessor(data => Zotero.toExternalURI(data));
+			}
+		};
+		if (this._io) {
+			configureEgress();
+		}
+		else {
+			return promise.then(configureEgress);
+		}
+		return promise;
+	};
+})();

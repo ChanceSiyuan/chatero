@@ -1211,6 +1211,53 @@ describe("Zotero.Translate", function () {
 	
 	
 	describe("Translators", function () {
+		async function exportNoteWithAppLink(translatorID, location) {
+			let annotation = encodeURIComponent(JSON.stringify({
+				attachmentURI: "http://zotero.org/users/1/items/ABCD1234",
+				annotationKey: "EFGH5678",
+				position: { pageIndex: 6 }
+			}));
+			let note = await createDataObject("item", {
+				itemType: "note",
+				note: `<div data-schema-version="9"><p><span class="highlight" data-annotation="${annotation}">Highlighted</span></p></div>`
+			});
+			let translation = new Zotero.Translate.Export();
+			translation.setItems([note]);
+			if (location) {
+				translation.setLocation(Zotero.File.pathToFile(location));
+			}
+			translation.setTranslator(translatorID);
+			translation.setDisplayOptions({ includeAppLinks: true });
+			await translation.translate();
+			return location ? Zotero.File.getContents(location) : translation.string;
+		}
+
+		it("should emit public Chatero links from in-memory Note Markdown export", async function () {
+			let output = await exportNoteWithAppLink(
+				Zotero.Translators.TRANSLATOR_ID_NOTE_MARKDOWN
+			);
+			assert.include(output, "chatero://open-pdf/library/items/ABCD1234?page=7&annotation=EFGH5678");
+			assert.notInclude(output, "zotero://open-pdf/");
+		});
+
+		it("should emit public Chatero links from in-memory Note HTML export", async function () {
+			let output = await exportNoteWithAppLink(
+				Zotero.Translators.TRANSLATOR_ID_NOTE_HTML
+			);
+			assert.include(output, "chatero://open-pdf/library/items/ABCD1234?page=7&amp;annotation=EFGH5678");
+			assert.notInclude(output, "zotero://open-pdf/");
+		});
+
+		it("should emit public Chatero links from file-based Note Markdown export", async function () {
+			let path = OS.Path.join(await getTempDirectory(), "note.md");
+			let output = await exportNoteWithAppLink(
+				Zotero.Translators.TRANSLATOR_ID_NOTE_MARKDOWN,
+				path
+			);
+			assert.include(output, "chatero://open-pdf/library/items/ABCD1234?page=7&annotation=EFGH5678");
+			assert.notInclude(output, "zotero://open-pdf/");
+		});
+
 		it("should round-trip child attachment via BibTeX", async function () {
 			var item = await createDataObject('item');
 			await importFileAttachment('test.png', { parentItemID: item.id });

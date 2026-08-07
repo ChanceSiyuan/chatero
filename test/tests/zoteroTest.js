@@ -1,6 +1,20 @@
 "use strict";
 
 describe("Zotero", function() {
+	describe("#toExternalURI()", function () {
+		it("should expose internal Zotero deep links as public Chatero links", function () {
+			assert.equal(
+				Zotero.toExternalURI("zotero://select/library/items/ABCD1234"),
+				"chatero://select/library/items/ABCD1234"
+			);
+		});
+
+		it("should leave null and non-Zotero URIs unchanged", function () {
+			assert.isNull(Zotero.toExternalURI(null));
+			assert.equal(Zotero.toExternalURI("https://www.zotero.org/"), "https://www.zotero.org/");
+		});
+	});
+
 	describe("#restoreZoteroPaneProgressMeter()", function () {
 		// A token captures the current display state, so taking one and immediately
 		// restoring it reads the state without changing it

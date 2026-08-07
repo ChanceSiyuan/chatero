@@ -1995,13 +1995,28 @@ const { CommandLineOptions } = ChromeUtils.importESModule("chrome://zotero/conte
 	
 	
 	/**
+	 * Convert internal application deep links to the public URL scheme.
+	 *
+	 * The internal zotero:// protocol remains registered for compatibility, but
+	 * strings leaving the application must identify the Chatero handler.
+	 */
+	this.toExternalURI = function (value) {
+		if (typeof value != 'string'
+				|| ZOTERO_CONFIG.EXTERNAL_URL_SCHEME == ZOTERO_CONFIG.ID) {
+			return value;
+		}
+		return value.split(ZOTERO_CONFIG.ID + '://')
+			.join(ZOTERO_CONFIG.EXTERNAL_URL_SCHEME + '://');
+	};
+
+	/**
 	 * Brings Zotero Standalone to the foreground
 	 */
 	this.activateStandalone = function () {
-		var uri = Services.io.newURI('zotero://select', null, null);
+		var uri = Services.io.newURI(this.toExternalURI('zotero://select'), null, null);
 		var handler = Components.classes['@mozilla.org/uriloader/external-protocol-service;1']
 					.getService(Components.interfaces.nsIExternalProtocolService)
-					.getProtocolHandlerInfo('zotero');
+					.getProtocolHandlerInfo(ZOTERO_CONFIG.EXTERNAL_URL_SCHEME);
 		handler.preferredAction = Components.interfaces.nsIHandlerInfo.useSystemDefault;
 		handler.launchWithURI(uri, null);
 	}

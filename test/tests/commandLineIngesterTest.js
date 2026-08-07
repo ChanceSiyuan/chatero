@@ -17,5 +17,11 @@ describe("Zotero.CommandLineIngester", function () {
 			let input = Services.io.newURI("file:///tmp/paper.pdf");
 			assert.strictEqual(Zotero.CommandLineIngester.normalizeExternalURI(input), input);
 		});
+
+		it("should leave null and internal Zotero URIs unchanged", function () {
+			assert.isNull(Zotero.CommandLineIngester.normalizeExternalURI(null));
+			let internal = Services.io.newURI("zotero://select/library/items/ABCD1234");
+			assert.strictEqual(Zotero.CommandLineIngester.normalizeExternalURI(internal), internal);
+		});
 	});
 });
