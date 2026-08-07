@@ -37,12 +37,26 @@ Zotero.DataDirectory = {
 		return this._dir;
 	},
 	
-	get defaultDir() {
-		// Use special data directory for tests
-		if (CommandLineOptions.test) {
-			return OS.Path.join(PathUtils.parent(OS.Constants.Path.profileDir), "Zotero");
+	_getDefaultDir({
+		profileDir = OS.Constants.Path.profileDir,
+		homeDir = OS.Constants.Path.homeDir,
+		isMac = Zotero.isMac,
+		isTest = CommandLineOptions.test
+	} = {}) {
+		if (isTest) {
+			return OS.Path.join(PathUtils.parent(profileDir), ZOTERO_CONFIG.CLIENT_NAME);
 		}
-		return OS.Path.join(OS.Constants.Path.homeDir, ZOTERO_CONFIG.CLIENT_NAME);
+		if (isMac && ZOTERO_CONFIG.DATA_DIRECTORY_WITHIN_PROFILE_ROOT) {
+			return OS.Path.join(
+				PathUtils.parent(PathUtils.parent(profileDir)),
+				ZOTERO_CONFIG.DATA_DIRECTORY_NAME
+			);
+		}
+		return OS.Path.join(homeDir, ZOTERO_CONFIG.CLIENT_NAME);
+	},
+
+	get defaultDir() {
+		return this._getDefaultDir();
 	},
 	
 	get legacyDirName() {

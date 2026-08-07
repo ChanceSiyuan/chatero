@@ -154,6 +154,29 @@ describe("Zotero.DataDirectory", function () {
 			assert.ok(stubs.setDataDir.calledWith(newDir));
 		}
 	};
+
+	describe("#_getDefaultDir()", function () {
+		it("should keep Chatero data under the macOS Chatero application root", function () {
+			let dir = Zotero.DataDirectory._getDefaultDir({
+				profileDir: "/Users/test/Library/Application Support/Chatero/Profiles/abc.default",
+				homeDir: "/Users/test",
+				isMac: true,
+				isTest: false
+			});
+			assert.equal(dir, "/Users/test/Library/Application Support/Chatero/Data");
+		});
+
+		it("should never fall back to the official Zotero data directory", function () {
+			let dir = Zotero.DataDirectory._getDefaultDir({
+				profileDir: "/Users/test/Library/Application Support/Chatero/Profiles/abc.default",
+				homeDir: "/Users/test",
+				isMac: true,
+				isTest: false
+			});
+			assert.notEqual(dir, "/Users/test/Zotero");
+			assert.notInclude(dir, "/Application Support/Zotero/");
+		});
+	});
 	
 	
 	describe("#checkForMigration()", function () {
