@@ -8,6 +8,24 @@ describe("Zotero.Server", function () {
 	before(function* () {
 		serverPath = 'http://127.0.0.1:' + Zotero.Server.port;
 	});
+
+	it("should fall back when Zotero already owns the connector port", async function () {
+		let attempted = [];
+		let fakeServer = await Zotero.Server._startOnFirstAvailable(
+			[23119, 23129],
+			() => ({
+				identity: { primaryPort: null },
+				registerPrefixHandler() {},
+				start(port) {
+					attempted.push(port);
+					if (port === 23119) throw new Error("address in use");
+					this.identity.primaryPort = port;
+				}
+			})
+		);
+		assert.deepEqual(attempted, [23119, 23129]);
+		assert.equal(fakeServer.identity.primaryPort, 23129);
+	});
 	
 	describe('DataListener', function () {
 		describe("_processEndpoint()", function () {

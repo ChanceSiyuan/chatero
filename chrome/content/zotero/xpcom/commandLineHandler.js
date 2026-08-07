@@ -27,7 +27,21 @@
     ***** END LICENSE BLOCK *****
 */
 
+const { ZOTERO_CONFIG } = ChromeUtils.importESModule(
+	"resource://zotero/config.mjs"
+);
+
 Zotero.CommandLineIngester = {
+	normalizeExternalURI(uri) {
+		if (!uri?.schemeIs?.(ZOTERO_CONFIG.EXTERNAL_URL_SCHEME)) return uri;
+		return Services.io.newURI(
+			uri.spec.replace(
+				new RegExp(`^${ZOTERO_CONFIG.EXTERNAL_URL_SCHEME}:`),
+				"zotero:"
+			)
+		);
+	},
+
 	ingest: async function () {
 		const { CommandLineOptions } = ChromeUtils.importESModule("chrome://zotero/content/modules/commandLineOptions.mjs");
 
@@ -35,6 +49,7 @@ Zotero.CommandLineIngester = {
 		var fileToOpen;
 		// Handle zotero:// and file URIs
 		var uri = CommandLineOptions.url;
+		uri = this.normalizeExternalURI(uri);
 		if (uri) {
 			if (uri.schemeIs("zotero")) {
 				// Check for existing window and focus it

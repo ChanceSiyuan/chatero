@@ -25,6 +25,9 @@
 
 var { HttpServer } = ChromeUtils.importESModule("chrome://remote/content/server/httpd.sys.mjs");
 var { NetUtil } = ChromeUtils.importESModule("resource://gre/modules/NetUtil.sys.mjs");
+const { ZOTERO_CONFIG } = ChromeUtils.importESModule(
+	"resource://zotero/config.mjs"
+);
 
 Zotero.Server = new function () {
 	var _onlineObserverRegistered, serv;
@@ -53,6 +56,26 @@ Zotero.Server = new function () {
 			return serv.identity.primaryPort;
 		}
 	});
+
+	this._startOnFirstAvailable = async function (
+		ports,
+		createServer = () => new HttpServer()
+	) {
+		let lastError;
+		for (let candidate of ports) {
+			try {
+				let candidateServer = createServer();
+				candidateServer.registerPrefixHandler('/', this.handleRequest);
+				candidateServer.start(candidate);
+				return candidateServer;
+			}
+			catch (error) {
+				lastError = error;
+				Zotero.debug(`HTTP port ${candidate} unavailable`, 2);
+			}
+		}
+		throw lastError || new Error("No HTTP server port configured");
+	};
 	
 	/**
 	 * initializes a very rudimentary web server
@@ -66,11 +89,11 @@ Zotero.Server = new function () {
 		// Do any necessary pre-listen initialization first
 		await Zotero.Server.LocalAPI.init();
 
-		port = port || Zotero.Prefs.get('httpServer.port');
 		try {
-			serv = new HttpServer();
-			serv.registerPrefixHandler('/', this.handleRequest)
-			serv.start(port);
+			const preferred = port || Zotero.Prefs.get('httpServer.port');
+			const ports = [preferred, ...ZOTERO_CONFIG.HTTP_SERVER_FALLBACK_PORTS]
+				.filter((value, index, all) => all.indexOf(value) === index);
+			serv = await this._startOnFirstAvailable(ports);
 			
 			Zotero.debug(`HTTP server listening on 127.0.0.1:${serv.identity.primaryPort}`);
 				
