@@ -1,6 +1,7 @@
 #!/bin/bash
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 ROOT_DIR="$( cd "$( dirname "$SCRIPT_DIR" )" && pwd )"
+. "$ROOT_DIR/app/config.sh"
 
 case "$OSTYPE" in
   msys*|mingw*|cygwin*) IS_CYGWIN=1 ;;
@@ -17,7 +18,7 @@ function makePath {
 
 if [ -z "$Z_EXECUTABLE" ]; then
 	if [ "`uname`" == "Darwin" ]; then
-		Z_EXECUTABLE="$ROOT_DIR/app/staging/Zotero.app/Contents/MacOS/zotero"
+		Z_EXECUTABLE="$ROOT_DIR/app/staging/$APP_NAME.app/Contents/MacOS/zotero"
 	else
 		arch=""
 		if [ "$(uname -m)" = "aarch64" ]; then

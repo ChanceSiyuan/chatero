@@ -109,6 +109,9 @@ if [[ $force_full -eq 0 ]]; then
 	incr_status=$?
 	set -e
 	if [ $incr_status -ne 2 ]; then
+		if [[ $incr_status -eq 0 ]] && [[ $platform = "m" ]] && [[ "$(uname -s)" = "Darwin" ]]; then
+			"$SCRIPT_DIR/codesign_local" "$STAGE_DIR/$APP_NAME.app"
+		fi
 		exit $incr_status
 	fi
 fi
@@ -158,11 +161,10 @@ if [ -n "$manifest_tmp" ]; then
 	} > "$STAGE_DIR/.build-manifest"
 fi
 
-# Ad-hoc-sign the Word dylib so it works on Apple Silicon. This only needs to
-# happen when the staged build is fully rebuilt -- incremental updates don't
-# touch the dylib.
+# Ad-hoc-sign the Word dylib and complete app after a full macOS build. The
+# successful incremental path above also re-signs the complete staged bundle.
 if [[ $platform = "m" ]] && [[ "$(uname -s)" = "Darwin" ]]; then
-	"$SCRIPT_DIR/codesign_local" "$STAGE_DIR/Zotero.app"
+	"$SCRIPT_DIR/codesign_local" "$STAGE_DIR/$APP_NAME.app"
 fi
 
 echo Done

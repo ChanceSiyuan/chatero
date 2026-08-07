@@ -664,10 +664,10 @@ find "$BUILD_DIR" -name .DS_Store -exec rm -f {} \;
 
 # Mac
 if [ $BUILD_MAC == 1 ]; then
-	echo 'Building Zotero.app'
+	echo "Building $APP_NAME.app"
 		
 	# Set up directory structure
-	APPDIR="$STAGE_DIR/Zotero.app"
+	APPDIR="$STAGE_DIR/$APP_NAME.app"
 	rm -rf "$APPDIR"
 	mkdir "$APPDIR"
 	chmod 755 "$APPDIR"
@@ -704,16 +704,21 @@ if [ $BUILD_MAC == 1 ]; then
 	# Modify Info.plist
 	perl -pi -e "s/\{\{VERSION\}\}/$VERSION/" "$CONTENTSDIR/Info.plist"
 	perl -pi -e "s/\{\{VERSION_NUMERIC\}\}/$VERSION_NUMERIC/" "$CONTENTSDIR/Info.plist"
-	if [ $UPDATE_CHANNEL == "beta" ] || [ $UPDATE_CHANNEL == "dev" ] || [ $UPDATE_CHANNEL == "source" ]; then
-		perl -pi -e "s/org\.zotero\.zotero/org.zotero.zotero-$UPDATE_CHANNEL/" "$CONTENTSDIR/Info.plist"
+	bundle_identifier="${APP_BUNDLE_ID:-org.zotero.zotero}"
+	if [[ "$bundle_identifier" == "org.zotero.zotero" ]] \
+		&& { [ "$UPDATE_CHANNEL" == "beta" ] || [ "$UPDATE_CHANNEL" == "dev" ] || [ "$UPDATE_CHANNEL" == "source" ]; }; then
+		bundle_identifier="$bundle_identifier-$UPDATE_CHANNEL"
 	fi
+	BUNDLE_IDENTIFIER_VALUE="$bundle_identifier" perl -0pi -e \
+		's/(<key>CFBundleIdentifier<\/key>\s*<string>)[^<]*(<\/string>)/$1 . $ENV{BUNDLE_IDENTIFIER_VALUE} . $2/e' \
+		"$CONTENTSDIR/Info.plist"
 	perl -pi -e "s/\{\{VERSION\}\}/$VERSION/" "$CONTENTSDIR/Info.plist"
 	# Needed for "monkeypatch" Windows builds: 
 	# http://www.nntp.perl.org/group/perl.perl5.porters/2010/08/msg162834.html
 	rm -f "$CONTENTSDIR/Info.plist.bak"
 	
 	echo
-	grep -B 1 org.zotero.zotero "$CONTENTSDIR/Info.plist"
+	echo "$bundle_identifier"
 	echo
 	grep -A 1 CFBundleShortVersionString "$CONTENTSDIR/Info.plist"
 	echo
@@ -878,10 +883,10 @@ if [ $BUILD_MAC == 1 ]; then
 	if [ $PACKAGE == 1 ]; then
 		if [ $MAC_NATIVE == 1 ]; then
 			echo "Creating Mac installer"
-			dmg="$DIST_DIR/Zotero-$VERSION.dmg"
-			"$CALLDIR/mac/pkg-dmg" --source "$STAGE_DIR/Zotero.app" \
+			dmg="$DIST_DIR/$APP_NAME-$VERSION.dmg"
+			"$CALLDIR/mac/pkg-dmg" --source "$STAGE_DIR/$APP_NAME.app" \
 				--target "$dmg" \
-				--sourcefile --volname Zotero --copy "$CALLDIR/mac/DSStore:/.DS_Store" \
+				--sourcefile --volname "$APP_NAME" --copy "$CALLDIR/mac/DSStore:/.DS_Store" \
 				--symlink /Applications:"/Drag Here to Install" > /dev/null
 			
 			if [ "$UPDATE_CHANNEL" != "test" ]; then
@@ -899,8 +904,8 @@ if [ $BUILD_MAC == 1 ]; then
 			echo
 		else
 			echo 'Not building on Mac; creating Mac distribution as a zip file'
-			rm -f "$DIST_DIR/Zotero_mac.zip"
-			cd "$STAGE_DIR" && zip -rqX "$DIST_DIR/Zotero-${VERSION}_mac.zip" Zotero.app
+			rm -f "$DIST_DIR/$APP_NAME-${VERSION}_mac.zip"
+			cd "$STAGE_DIR" && zip -rqX "$DIST_DIR/$APP_NAME-${VERSION}_mac.zip" "$APP_NAME.app"
 		fi
 	fi
 fi

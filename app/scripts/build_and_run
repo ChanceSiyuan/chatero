@@ -3,6 +3,7 @@
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 APP_ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 ROOT_DIR="$(dirname $APP_ROOT_DIR)"
+. "$APP_ROOT_DIR/config.sh"
 
 # Set ZOTERO_PROFILE environment variable to choose profile
 profile_args=()
@@ -80,7 +81,7 @@ else
 fi
 
 if [ "`uname`" = "Darwin" ]; then
-	command="Zotero.app/Contents/MacOS/zotero"
+	command="$APP_NAME.app/Contents/MacOS/zotero"
 elif [ "`uname`" = "Linux" ]; then
 	if [[ "`uname -m`" = "aarch64" ]]; then
 		command="Zotero_linux-arm64/zotero"
