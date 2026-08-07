@@ -12,6 +12,10 @@ const packageScript = join(root, "app/scripts/package_chatero_dmg");
 const verifierScript = join(root, "app/scripts/verify_chatero_bundle");
 const digest = (value) => createHash("sha256").update(value).digest("hex");
 const checksum = (name, value) => `${digest(value)}  ${name}\n`;
+const assertFinished = (result) => {
+  assert.equal(result.error, undefined, result.error?.message);
+  assert.equal(result.signal, null, "fixture subprocess timed out or was killed");
+};
 
 async function writeExecutable(path, body) {
   await writeFile(path, body);
@@ -62,6 +66,8 @@ exec /bin/mv "$@"
   const run = (extra = {}) => spawnSync(packageScript, [], {
     cwd: root,
     encoding: "utf8",
+    timeout: 10_000,
+    killSignal: "SIGKILL",
     env: {
       ...process.env,
       CHATER0_PACKAGE_TEST_MODE: "1",
@@ -91,6 +97,7 @@ async function writePriorPair(dist, version, value = "old-dmg") {
 test("package fixture publishes a final checksum bound to exactly the DMG basename", async (t) => {
   const fixture = await packageFixture(t);
   const result = fixture.run();
+  assertFinished(result);
   assert.equal(result.status, 0, result.stderr || result.stdout);
   const name = "Chatero-1.0.SOURCE.dmg";
   assert.equal(await readFile(join(fixture.dist, name), "utf8"), "new-dmg");
@@ -102,6 +109,7 @@ test("package fixture rotates an existing verified pair with checksum bound to i
   const fixture = await packageFixture(t);
   const name = await writePriorPair(fixture.dist, "1.0.SOURCE");
   const result = fixture.run();
+  assertFinished(result);
   assert.equal(result.status, 0, result.stderr || result.stdout);
   const entries = await readdir(fixture.dist);
   const previousDmg = entries.find((entry) => entry.startsWith(`${name}.`) && entry.includes(".previous"));
@@ -116,6 +124,7 @@ test("package fixture rejects malformed versions before creating artifacts", asy
   for (const version of ["", "bad/name", "bad\r\n", "two\nlines", "space value"]) {
     const fixture = await packageFixture(t, version);
     const result = fixture.run();
+    assertFinished(result);
     assert.notEqual(result.status, 0, `${JSON.stringify(version)} unexpectedly packaged`);
     assert.deepEqual(await readdir(fixture.dist), []);
   }
@@ -126,6 +135,7 @@ test("package fixture refuses a prior checksum that names a different artifact",
   const name = await writePriorPair(fixture.dist, "1.0.SOURCE");
   await writeFile(join(fixture.dist, `${name}.sha256`), checksum("other.dmg", "old-dmg"));
   const result = fixture.run();
+  assertFinished(result);
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /not bound/);
   assert.equal(await readFile(join(fixture.dist, name), "utf8"), "old-dmg");
@@ -135,6 +145,7 @@ test("package fixture cleans temporary output after pkg-dmg, hdiutil, and checks
   for (const env of [{ PKG_FAIL: "1" }, { HDIUTIL_FAIL: "1" }, { SHASUM_FAIL: "1" }]) {
     const fixture = await packageFixture(t);
     const result = fixture.run(env);
+    assertFinished(result);
     assert.notEqual(result.status, 0);
     assert.deepEqual(await readdir(fixture.dist), []);
   }
@@ -144,6 +155,7 @@ test("package fixture restores a complete prior pair after checksum publication 
   const fixture = await packageFixture(t);
   const name = await writePriorPair(fixture.dist, "1.0.SOURCE");
   const result = fixture.run({ FAIL_MV_AT: "5" });
+  assertFinished(result);
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /restoring previous artifacts/);
   assert.equal(await readFile(join(fixture.dist, name), "utf8"), "old-dmg");
@@ -155,6 +167,7 @@ test("package fixture retains recovery paths and emits a fatal diagnostic when r
   const fixture = await packageFixture(t);
   await writePriorPair(fixture.dist, "1.0.SOURCE");
   const result = fixture.run({ FAIL_MV_AT: "5,6" });
+  assertFinished(result);
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /FATAL: rollback could not restore/);
   assert.ok((await readdir(fixture.dist)).some((entry) => entry.startsWith(".chatero-dmg")));
@@ -202,6 +215,8 @@ exit 1
 `);
   const run = (extra = {}) => spawnSync(verifierScript, [app], {
     encoding: "utf8",
+    timeout: 10_000,
+    killSignal: "SIGKILL",
     env: {
       ...process.env,
       CHATER0_VERIFY_TEST_MODE: "1",
@@ -215,7 +230,12 @@ exit 1
 }
 
 test("bundle verifier accepts the staged Chatero app", () => {
-  const result = spawnSync(verifierScript, [join(root, "app/staging/Chatero.app")], { encoding: "utf8" });
+  const result = spawnSync(verifierScript, [join(root, "app/staging/Chatero.app")], {
+    encoding: "utf8",
+    timeout: 10_000,
+    killSignal: "SIGKILL",
+  });
+  assertFinished(result);
   assert.equal(result.status, 0, result.stderr || result.stdout);
 });
 
@@ -229,6 +249,7 @@ test("bundle verifier rejects non-ad-hoc metadata, active UpdateURL, wrong execu
   ]) {
     const fixture = await verifierFixture(t, ini);
     const result = fixture.run(env);
+    assertFinished(result);
     assert.notEqual(result.status, 0);
   }
 });
