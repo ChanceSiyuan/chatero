@@ -212,7 +212,7 @@ Zotero.QLab = Zotero.QLab || {};
 		if (persistence === 'proposal') {
 			return { text: message || 'AI proposal ready for review', tone: 'proposal' };
 		}
-		if (!preview || ['idle', 'stale'].includes(preview.status)) {
+		if (!preview || !preview.status || ['idle', 'stale'].includes(preview.status)) {
 			return { text: message || 'Saved', tone: 'saved' };
 		}
 		if (preview.status === 'rendering' && preview.url) {

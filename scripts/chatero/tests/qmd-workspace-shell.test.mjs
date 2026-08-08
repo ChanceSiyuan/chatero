@@ -165,6 +165,10 @@ test("preview presentation distinguishes quick, exact, and last-good content", a
 
 test("workspace status gives persistence failures priority without hiding Preview progress", async () => {
 	const QLab = await loadQLab();
+	assert.deepEqual(JSON.parse(JSON.stringify(QLab.qmdWorkspaceStatus({
+		persistence: "saved",
+		preview: {},
+	}))), { text: "Saved", tone: "saved" });
 	let rendering = {
 		status: "rendering",
 		fallback: "<main>quick</main>",
