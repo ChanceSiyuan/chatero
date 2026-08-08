@@ -93,6 +93,44 @@ Zotero.QLab = Zotero.QLab || {};
 			.join('');
 	}
 	
+	function shellIcon(name) {
+		let paths = {
+			'new': ['M12 5v14', 'M5 12h14'],
+			'regenerate': ['M20 6v5h-5', 'M4 18v-5h5', 'M18.2 9a7 7 0 0 0-11.7-2.5L4 11', 'M5.8 15a7 7 0 0 0 11.7 2.5L20 13'],
+			'send': ['M12 19V5', 'M6 11l6-6 6 6'],
+			'stop': ['M8 8h8v8H8z'],
+			'folder': ['M3.5 7.5h6l2-2h9v13h-17z'],
+			'reload': ['M20 6v5h-5', 'M18.2 9a7 7 0 1 0 .2 5.7'],
+			'save': ['M5 4h12l2 2v14H5z', 'M8 4v6h8V4', 'M8 16h8'],
+			'edit': ['M4 20l4.5-1 10-10-3.5-3.5-10 10z', 'M13.5 7l3.5 3.5'],
+			'keep': ['M12 4v12', 'M7 11l5 5 5-5', 'M5 20h14'],
+			'website': ['M4 5h16v14H4z', 'M4 9h16', 'M8 7h.01'],
+			'write': ['M4 18h16', 'M7 15 16 6l2 2-9 9H7z'],
+		};
+		let body = (paths[name] || []).map(path => `<path d="${path}"></path>`).join('');
+		return `<svg class="qlab-control-icon" viewBox="0 0 24 24" aria-hidden="true" `
+			+ `fill="none" stroke="currentColor" stroke-width="1.8" `
+			+ `stroke-linecap="round" stroke-linejoin="round">${body}</svg>`;
+	}
+	
+	function iconButtonHTML({ name, label, attribute, className = '' }) {
+		return `<button type="button" class="qlab-icon-button ${escapeHTML(className)}" `
+			+ `${attribute} title="${escapeHTML(label)}" aria-label="${escapeHTML(label)}">`
+			+ `${shellIcon(name)}<span class="qlab-control-label">${escapeHTML(label)}</span></button>`;
+	}
+	
+	function draftRowsHTML(drafts, selected = '') {
+		if (!drafts.length) {
+			return `<div class="qlab-qmd-files-empty">No Drafts found</div>`;
+		}
+		return drafts.map((path) => {
+			let label = path.replace(/^drafts\//, '');
+			return `<button type="button" class="qlab-qmd-file-row${path === selected ? ' is-active' : ''}" `
+				+ `data-qlab-draft-row="${escapeHTML(path)}" title="${escapeHTML(path)}">`
+				+ `${shellIcon('edit')}<span>${escapeHTML(label)}</span></button>`;
+		}).join('');
+	}
+	
 	const MODEL_CHOICES = [
 		{ id: '', label: 'Default model' },
 		{ id: 'gpt-5', label: 'gpt-5' },
@@ -184,39 +222,65 @@ Zotero.QLab = Zotero.QLab || {};
 			catch (e) {}
 			return [
 				`<div class="qlab-shell" data-qlab-kind="qlabchat">`,
-				`<header class="qlab-shell-header">`,
-				`<h1>${escapeHTML(copy.title)}</h1>`,
-				`<div class="qlab-shell-header-actions">`,
-				`<button type="button" data-qlab-new-chat title="Clear transcript">New chat</button>`,
-				`<button type="button" data-qlab-regenerate title="Resend last user message">Regenerate</button>`,
+				`<header class="qlab-shell-header qlab-chat-topbar">`,
+				`<div class="qlab-shell-identity">`,
+				`<span class="qlab-identity-mark" aria-hidden="true">C</span>`,
+				`<div><h1>Chatero</h1><span>Research assistant</span></div>`,
+				`</div>`,
+				`<div class="qlab-shell-header-actions" role="toolbar" aria-label="Chat actions">`,
+				iconButtonHTML({
+					name: 'new',
+					label: 'New chat',
+					attribute: 'data-qlab-new-chat',
+				}),
+				iconButtonHTML({
+					name: 'regenerate',
+					label: 'Regenerate',
+					attribute: 'data-qlab-regenerate',
+				}),
 				`</div>`,
 				`</header>`,
-				`<p class="qlab-shell-status">${escapeHTML(copy.body)}</p>`,
+				`<div class="qlab-workspace-strip">`,
+				`<span class="qlab-workspace-dot" data-state="${escapeHTML(workspaceState)}"></span>`,
+				`<span class="qlab-shell-status">${escapeHTML(copy.body)}</span>`,
+				`</div>`,
+				`<div class="qlab-shell-output" data-qlab-output role="log"></div>`,
+				`<div class="qlab-shell-composer">`,
+				`<div class="qlab-shell-actions" aria-label="Research suggestions">${actionButtons}</div>`,
+				tagsHTML,
+				`<div class="qlab-composer-at-wrap">`,
+				`<textarea data-qlab-prompt rows="2" `
+				+ `placeholder="Ask…  @ for context · ⌘L pins PDF / QMD · ⌘↵ send"></textarea>`,
+				atPickerHTML,
+				`</div>`,
+				`<div class="qlab-shell-composer-footer">`,
 				`<div class="qlab-shell-toolbar">`,
-				`<label class="qlab-shell-field">Provider `
-				+ `<select data-qlab-provider>${providerOptionsHTML(providerId)}</select></label>`,
-				`<label class="qlab-shell-field">Model `
-				+ `<select data-qlab-model>${modelOptionsHTML(modelId)}</select></label>`,
-				`<label class="qlab-shell-field">Mode `
-				+ `<select data-qlab-chat-mode>`
+				`<label class="qlab-shell-field"><span>Provider</span>`
+				+ `<select data-qlab-provider aria-label="Provider">${providerOptionsHTML(providerId)}</select></label>`,
+				`<label class="qlab-shell-field"><span>Model</span>`
+				+ `<select data-qlab-model aria-label="Model">${modelOptionsHTML(modelId)}</select></label>`,
+				`<label class="qlab-shell-field"><span>Mode</span>`
+				+ `<select data-qlab-chat-mode aria-label="Mode">`
 				+ `<option value="ask"${chatMode === 'ask' ? ' selected' : ''}>Ask</option>`
 				+ `<option value="agent"${chatMode === 'agent' ? ' selected' : ''}>Agent</option>`
 				+ `</select></label>`,
 				`</div>`,
-				`<div class="qlab-shell-actions">${actionButtons}</div>`,
-				`<div class="qlab-shell-composer">`,
-				tagsHTML,
-				`<div class="qlab-composer-at-wrap">`,
-				`<textarea data-qlab-prompt rows="3" `
-				+ `placeholder="Ask…  @ for context · ⌘L pins PDF / QMD · ⌘↵ send"></textarea>`,
-				atPickerHTML,
-				`</div>`,
 				`<div class="qlab-shell-composer-row">`,
-				`<button type="button" data-qlab-send>Send</button>`,
-				`<button type="button" data-qlab-stop hidden>Stop</button>`,
+				iconButtonHTML({
+					name: 'stop',
+					label: 'Stop',
+					attribute: 'data-qlab-stop hidden',
+					className: 'qlab-stop-button',
+				}),
+				iconButtonHTML({
+					name: 'send',
+					label: 'Send',
+					attribute: 'data-qlab-send',
+					className: 'qlab-send-button',
+				}),
 				`</div>`,
 				`</div>`,
-				`<div class="qlab-shell-output" data-qlab-output role="log"></div>`,
+				`</div>`,
 				`</div>`,
 			].join('');
 		}
@@ -231,18 +295,26 @@ Zotero.QLab = Zotero.QLab || {};
 				: '';
 			return [
 				`<div class="qlab-shell qlab-shell-qmd" data-qlab-kind="qlabqmd">`,
-				`<header class="qlab-shell-header"><h1>${escapeHTML(copy.title)}</h1></header>`,
-				`<p class="qlab-shell-status">${escapeHTML(copy.body)}</p>`,
-				`<label class="qlab-shell-field">Draft `
-				+ `<select data-qlab-draft><option value="">Select…</option>${options}</select></label>`,
+				`<header class="qlab-qmd-toolbar">`,
+				`<button type="button" class="qlab-qmd-files-toggle" data-qlab-files-toggle `
+				+ `title="Toggle Draft files" aria-label="Toggle Draft files">${shellIcon('folder')}</button>`,
+				`<div class="qlab-qmd-path-wrap">`,
+				`<span class="qlab-qmd-tree-badge">Draft</span>`,
+				`<strong class="qlab-qmd-path" data-qlab-draft-path>No Draft selected</strong>`,
+				`</div>`,
 				modeToggle,
-				`<div class="qlab-shell-actions">`,
-				`<button type="button" data-qlab-draft-reload>Reload</button>`,
-				`<button type="button" data-qlab-draft-save>Save</button>`,
-				`<button type="button" data-qlab-draft-ai>Edit with AI</button>`,
-				`<button type="button" data-qlab-draft-keep>Keep</button>`,
-				`<button type="button" data-qlab-website-quarto title="Start Quarto live website">Quarto</button>`,
-				`<button type="button" data-qlab-inline-toggle title="Write at the anchor (⌘K)">⌘K Write</button>`,
+				`<div class="qlab-qmd-toolbar-actions" role="toolbar" aria-label="QMD actions">`,
+				iconButtonHTML({ name: 'reload', label: 'Reload', attribute: 'data-qlab-draft-reload' }),
+				iconButtonHTML({ name: 'save', label: 'Save', attribute: 'data-qlab-draft-save' }),
+				iconButtonHTML({ name: 'edit', label: 'Edit with AI', attribute: 'data-qlab-draft-ai' }),
+				iconButtonHTML({ name: 'keep', label: 'Keep', attribute: 'data-qlab-draft-keep' }),
+				iconButtonHTML({ name: 'website', label: 'Quarto', attribute: 'data-qlab-website-quarto' }),
+				iconButtonHTML({ name: 'write', label: '⌘K', attribute: 'data-qlab-inline-toggle' }),
+				`</div>`,
+				`</header>`,
+				`<div class="qlab-qmd-statusbar">`,
+				`<span class="qlab-shell-status">${escapeHTML(copy.body)}</span>`,
+				`<span class="qlab-qmd-authority">Human: Save · AI: Keep</span>`,
 				`</div>`,
 				`<div class="qlab-qmd-inline" data-qlab-inline hidden>`,
 				`<input type="text" data-qlab-inline-prompt `
@@ -252,6 +324,13 @@ Zotero.QLab = Zotero.QLab || {};
 				`<button type="button" data-qlab-inline-cancel>Cancel</button>`,
 				`</div>`,
 				`<div class="qlab-qmd-pending" data-qlab-pending hidden></div>`,
+				`<div class="qlab-qmd-body">`,
+				`<aside class="qlab-qmd-file-column" data-qlab-file-column aria-label="Draft files">`,
+				`<div class="qlab-qmd-file-heading">Drafts</div>`,
+				`<div class="qlab-qmd-file-list" data-qlab-draft-list>${draftRowsHTML(drafts)}</div>`,
+				`<label class="qlab-qmd-select-fallback">Draft `
+				+ `<select data-qlab-draft><option value="">Select…</option>${options}</select></label>`,
+				`</aside>`,
 				`<div class="qlab-qmd-surfaces">`,
 				`<div class="qlab-qmd-surface" data-qlab-surface="visual" role="tabpanel"></div>`,
 				`<div class="qlab-qmd-surface" data-qlab-surface="website" role="tabpanel" hidden>`,
@@ -264,8 +343,7 @@ Zotero.QLab = Zotero.QLab || {};
 				+ `placeholder="QMD source…"></textarea>`,
 				`</div>`,
 				`</div>`,
-				`<p class="qlab-shell-note">Preview · Website · Source share one buffer. `
-				+ `Save writes the Draft; Edit with AI uses a private working copy; Keep is the only promotion.</p>`,
+				`</div>`,
 				`</div>`,
 			].join('');
 		}
@@ -306,6 +384,10 @@ Zotero.QLab = Zotero.QLab || {};
 				))
 			);
 			Zotero.QLab.setHTML(draftSelect, options.join(''));
+			let fileList = host.querySelector('[data-qlab-draft-list]');
+			if (fileList) {
+				Zotero.QLab.setHTML(fileList, draftRowsHTML(drafts, current));
+			}
 		}
 		if (kind === 'qlabchat') {
 			Zotero.QLab.refreshComposerTags && Zotero.QLab.refreshComposerTags(host);
@@ -650,6 +732,26 @@ Zotero.QLab = Zotero.QLab || {};
 				void Zotero.QLab.regenerateLastChatTurn(host, mountRoot, mountState);
 				return;
 			}
+			if (event.target.closest('[data-qlab-files-toggle]')) {
+				let shell = host.querySelector('.qlab-shell-qmd');
+				if (shell) {
+					shell.classList.toggle('is-files-collapsed');
+				}
+				return;
+			}
+			let draftRow = event.target.closest('[data-qlab-draft-row]');
+			if (draftRow) {
+				let path = draftRow.dataset.qlabDraftRow;
+				let select = host.querySelector('[data-qlab-draft]');
+				if (select) {
+					select.value = path;
+				}
+				for (let row of host.querySelectorAll('[data-qlab-draft-row]')) {
+					row.classList.toggle('is-active', row === draftRow);
+				}
+				void Zotero.QLab.loadDraftIntoShell(host, mountRoot, path);
+				return;
+			}
 			let atPick = event.target.closest('[data-qlab-at-pick]');
 			if (atPick) {
 				void Zotero.QLab.handleComposerAtPick(host, atPick.dataset.qlabAtPick);
@@ -840,6 +942,22 @@ Zotero.QLab = Zotero.QLab || {};
 			host._qlabPendingInserts = [];
 			Zotero.QLab.renderQmdPendingBar && Zotero.QLab.renderQmdPendingBar(host);
 			Zotero.QLab.setQmdShellBuffer(host, doc.text, { dirty: false });
+			let select = host.querySelector('[data-qlab-draft]');
+			if (select) {
+				select.value = relativePath;
+			}
+			let pathLabel = host.querySelector('[data-qlab-draft-path]');
+			if (pathLabel) {
+				pathLabel.textContent = relativePath;
+				pathLabel.title = relativePath;
+			}
+			let shell = host.querySelector('.qlab-shell-qmd');
+			if (shell) {
+				shell.classList.remove('is-working-copy');
+			}
+			for (let row of host.querySelectorAll('[data-qlab-draft-row]')) {
+				row.classList.toggle('is-active', row.dataset.qlabDraftRow === relativePath);
+			}
 			let mode = host._qlabSurfaceMode || 'visual';
 			if (Zotero.QLab.applyQmdSurfaceMode) {
 				Zotero.QLab.applyQmdSurfaceMode(host, mode, { silent: true, root });
@@ -925,6 +1043,15 @@ Zotero.QLab = Zotero.QLab || {};
 				revision: prepared.revision,
 				viewingWorking: true,
 			};
+			let shell = host.querySelector('.qlab-shell-qmd');
+			if (shell) {
+				shell.classList.add('is-working-copy');
+			}
+			let pathLabel = host.querySelector('[data-qlab-draft-path]');
+			if (pathLabel) {
+				pathLabel.textContent = `${prepared.originalPath} · AI working copy`;
+				pathLabel.title = prepared.workingPath;
+			}
 			Zotero.QLab.setQmdShellBuffer(host, prepared.text, { dirty: false });
 			if (Zotero.QLab.applyQmdSurfaceMode) {
 				Zotero.QLab.applyQmdSurfaceMode(
@@ -1112,6 +1239,24 @@ Zotero.QLab = Zotero.QLab || {};
 			return;
 		}
 		let messages = host._qlabMessages || [];
+		if (!messages.length) {
+			let actions = Zotero.QLab.researchActionsForObject
+				? Zotero.QLab.researchActionsForObject('pdf').slice(0, 4)
+				: [];
+			let suggestions = actions.map(action => (
+				`<button type="button" data-qlab-action="${escapeHTML(action.id)}" `
+				+ `title="${escapeHTML(action.description)}">${escapeHTML(action.label)}</button>`
+			)).join('');
+			Zotero.QLab.setHTML(output,
+				`<section class="qlab-chat-empty">`
+				+ `<span class="qlab-chat-empty-mark" aria-hidden="true">C</span>`
+				+ `<h2>What would you like to research?</h2>`
+				+ `<p>Ask about the open paper, synthesize evidence, or shape a Draft with your pinned context.</p>`
+				+ `<div class="qlab-chat-empty-suggestions">${suggestions}</div>`
+				+ `</section>`
+			);
+			return;
+		}
 		Zotero.QLab.setHTML(output, messages.map((message) => {
 			let actions = message.role === 'assistant' && message.text.trim()
 				? `<div class="qlab-chat-message-actions">`
@@ -1124,11 +1269,17 @@ Zotero.QLab = Zotero.QLab || {};
 				? `${message.role} · cancelled`
 				: message.role;
 			let cancelled = message.status === 'cancelled' ? ' is-cancelled' : '';
+			let avatar = message.role === 'assistant'
+				? `<span class="qlab-chat-avatar" aria-hidden="true">C</span>`
+				: '';
 			return `<article class="qlab-chat-message is-${escapeHTML(message.role)}${cancelled}" `
 				+ `data-qlab-message-id="${escapeHTML(message.id)}">`
+				+ avatar
+				+ `<div class="qlab-chat-message-content">`
 				+ `<header class="qlab-chat-message-role">${escapeHTML(roleLabel)}</header>`
 				+ `<pre class="qlab-chat-message-body">${escapeHTML(message.text)}</pre>`
 				+ actions
+				+ `</div>`
 				+ `</article>`;
 		}).join(''));
 		output.scrollTop = output.scrollHeight;

@@ -889,7 +889,9 @@ if [ $BUILD_MAC == 1 ]; then
 			dmg="$DIST_DIR/$APP_NAME-$VERSION.dmg"
 			"$CALLDIR/mac/pkg-dmg" --source "$STAGE_DIR/$APP_NAME.app" \
 				--target "$dmg" \
-				--sourcefile --volname "$APP_NAME" --copy "$CALLDIR/mac/DSStore:/.DS_Store" \
+				--sourcefile --volname "$APP_NAME" \
+				--icon "$CALLDIR/mac/Contents/Resources/AppIcon.icns" \
+				--copy "$CALLDIR/mac/DSStore:/.DS_Store" \
 				--symlink /Applications:"/Drag Here to Install" > /dev/null
 			
 			if [[ $SIGN == 1 ]] && [[ "$UPDATE_CHANNEL" != "test" ]]; then

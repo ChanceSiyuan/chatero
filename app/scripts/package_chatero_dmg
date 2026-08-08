@@ -186,6 +186,7 @@ trap cleanup EXIT
 	--target "$TEMP_DMG" \
 	--sourcefile \
 	--volname "Chatero" \
+	--icon "$APP_ROOT_DIR/mac/Contents/Resources/AppIcon.icns" \
 	--copy "$APP_ROOT_DIR/mac/DSStore:/.DS_Store" \
 	--symlink /Applications:"/Drag Here to Install"
 
