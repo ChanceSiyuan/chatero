@@ -188,6 +188,7 @@ const xpcomFilesLocal = [
 	'qlab/qmdSourceModel',
 	'qlab/qmdLanguage',
 	'qlab/qmdExplorer',
+	'qlab/qmdMonacoBridge',
 	'qlab/qmdMathRender',
 	'qlab/qmdMarkdownLite',
 	'qlab/qmdSurface',

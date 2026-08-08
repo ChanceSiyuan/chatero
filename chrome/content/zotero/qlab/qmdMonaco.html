@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>QLab QMD Editor</title>
+	<style>
+		:root {
+			color-scheme: dark;
+			background: #181818;
+		}
+		html, body, #qmd-monaco, #qmd-normal, #qmd-diff {
+			width: 100%;
+			height: 100%;
+			margin: 0;
+			overflow: hidden;
+		}
+		body {
+			background: #181818;
+		}
+		#qmd-monaco {
+			position: relative;
+		}
+		#qmd-normal, #qmd-diff {
+			position: absolute;
+			inset: 0;
+		}
+		#qmd-diff {
+			display: none;
+		}
+		.qmd-block-theorem,
+		.qmd-block-lemma,
+		.qmd-block-definition,
+		.qmd-block-proof {
+			background: rgba(66, 133, 244, 0.055);
+			border-left: 2px solid rgba(105, 155, 255, 0.65);
+		}
+		.qmd-block-math {
+			background: rgba(166, 106, 255, 0.07);
+		}
+		.qmd-block-frontmatter {
+			background: rgba(255, 255, 255, 0.025);
+		}
+	</style>
+</head>
+<body>
+	<div id="qmd-monaco">
+		<div id="qmd-normal"></div>
+		<div id="qmd-diff"></div>
+	</div>
+	<script src="resource://zotero/vs/loader.js"></script>
+	<script>
+		let qmdMonaco;
+		let qmdEditor;
+		let qmdDiffEditor;
+		let qmdLoadPromise;
+		let qmdNormalModel;
+		let qmdCompletionProvider;
+		let qmdDecorations = [];
+		let qmdCompletions = [];
+		let qmdSuppressChanges = false;
+		let qmdMode = 'normal';
+		let qmdListeners = new Set();
+		let qmdDisposables = [];
+
+		function emitQmdMonaco(event) {
+			for (let listener of qmdListeners) {
+				try {
+					listener(event);
+				}
+				catch (error) {
+					console.error(error);
+				}
+			}
+		}
+
+		function subscribeQmdMonaco(listener) {
+			qmdListeners.add(listener);
+			return () => qmdListeners.delete(listener);
+		}
+
+		function qmdWorkerURL() {
+			return URL.createObjectURL(new Blob([`
+				self.MonacoEnvironment = { baseUrl: 'resource://zotero/' };
+				importScripts('resource://zotero/vs/base/worker/workerMain.js');
+			`], { type: 'text/javascript' }));
+		}
+
+		function loadQmdMonaco() {
+			if (qmdLoadPromise) return qmdLoadPromise;
+			require.config({ paths: { vs: 'resource://zotero/vs' } });
+			let workerURL = qmdWorkerURL();
+			window.MonacoEnvironment = { getWorkerUrl: () => workerURL };
+			qmdLoadPromise = new Promise(resolve => {
+				require(['vs/editor/editor.main'], () => {
+					qmdMonaco = monaco;
+					qmdEditor = monaco.editor.create(document.getElementById('qmd-normal'), {
+						language: 'markdown',
+						theme: 'vs-dark',
+						automaticLayout: true,
+						wordWrap: 'on',
+						minimap: { enabled: false },
+						scrollBeyondLastLine: false,
+						padding: { top: 12, bottom: 28 },
+					});
+					qmdDisposables.push(qmdEditor.onDidChangeModelContent(() => {
+						if (!qmdSuppressChanges && qmdMode === 'normal') {
+							emitQmdMonaco({ type: 'change', text: qmdEditor.getValue() });
+						}
+					}));
+					qmdDisposables.push(qmdEditor.onDidChangeCursorPosition(event => {
+						emitQmdMonaco({
+							type: 'cursor',
+							lineNumber: event.position.lineNumber,
+							column: event.position.column,
+						});
+					}));
+					qmdEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
+						emitQmdMonaco({ type: 'command', command: 'save' });
+					});
+					qmdEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyK, () => {
+						emitQmdMonaco({
+							type: 'command',
+							command: 'ai',
+							selection: qmdEditor.getModel()
+								? qmdEditor.getModel().getValueInRange(qmdEditor.getSelection())
+								: '',
+						});
+					});
+					qmdCompletionProvider = monaco.languages.registerCompletionItemProvider('markdown', {
+						triggerCharacters: ['@', ':'],
+						provideCompletionItems(model, position) {
+							let word = model.getWordUntilPosition(position);
+							let range = {
+								startLineNumber: position.lineNumber,
+								endLineNumber: position.lineNumber,
+								startColumn: word.startColumn,
+								endColumn: word.endColumn,
+							};
+							return {
+								suggestions: qmdCompletions.map(item => ({
+									label: item.label,
+									detail: item.detail || '',
+									insertText: item.insertText,
+									insertTextRules: item.kind === 'snippet'
+										? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet
+										: undefined,
+									kind: item.kind === 'reference'
+										? monaco.languages.CompletionItemKind.Reference
+										: monaco.languages.CompletionItemKind.Snippet,
+									range,
+								})),
+							};
+						},
+					});
+					window.addEventListener('resize', () => {
+						qmdEditor?.layout();
+						qmdDiffEditor?.layout();
+					});
+					emitQmdMonaco({ type: 'ready' });
+					resolve({ monaco, editor: qmdEditor });
+				});
+			});
+			return qmdLoadPromise;
+		}
+
+		function modelFor(uri, text) {
+			let modelURI = qmdMonaco.Uri.parse(uri);
+			let model = qmdMonaco.editor.getModel(modelURI);
+			if (!model) {
+				model = qmdMonaco.editor.createModel(text, 'markdown', modelURI);
+			}
+			else if (model.getValue() !== text) {
+				model.setValue(text);
+			}
+			model.setEOL(qmdMonaco.editor.EndOfLineSequence.LF);
+			return model;
+		}
+
+		async function setQmdModel(payload = {}) {
+			await loadQmdMonaco();
+			qmdMode = 'normal';
+			qmdSuppressChanges = true;
+			try {
+				qmdDiffEditor?.setModel(null);
+				qmdDiffEditor?.dispose();
+				qmdDiffEditor = null;
+				document.getElementById('qmd-diff').style.display = 'none';
+				document.getElementById('qmd-normal').style.display = '';
+				qmdNormalModel = modelFor(payload.uri, String(payload.text || ''));
+				qmdEditor.updateOptions(payload.options || {});
+				qmdEditor.setModel(qmdNormalModel);
+				qmdCompletions = Array.isArray(payload.completions) ? payload.completions : [];
+				setQmdDecorations(payload.decorations || []);
+				setQmdDiagnostics(payload.diagnostics || []);
+			}
+			finally {
+				qmdSuppressChanges = false;
+			}
+			qmdEditor.focus();
+		}
+
+		async function setQmdDiff(payload = {}) {
+			await loadQmdMonaco();
+			qmdMode = 'diff';
+			document.getElementById('qmd-normal').style.display = 'none';
+			document.getElementById('qmd-diff').style.display = '';
+			if (!qmdDiffEditor) {
+				qmdDiffEditor = qmdMonaco.editor.createDiffEditor(document.getElementById('qmd-diff'), {
+					...payload.options,
+					automaticLayout: true,
+					originalEditable: false,
+					readOnly: true,
+					renderSideBySide: true,
+				});
+			}
+			qmdDiffEditor.setModel({
+				original: modelFor(payload.original.uri, String(payload.original.text || '')),
+				modified: modelFor(payload.modified.uri, String(payload.modified.text || '')),
+			});
+		}
+
+		function offsetRange(model, item) {
+			let start = model.getPositionAt(Math.max(0, Number(item.start) || 0));
+			let end = model.getPositionAt(Math.max(Number(item.start) || 0, Number(item.end) || 0));
+			return new qmdMonaco.Range(start.lineNumber, start.column, end.lineNumber, end.column);
+		}
+
+		function setQmdDecorations(decorations = []) {
+			if (!qmdEditor || !qmdNormalModel) return;
+			qmdDecorations = qmdEditor.deltaDecorations(qmdDecorations, decorations.map(item => ({
+				range: offsetRange(qmdNormalModel, item),
+				options: { isWholeLine: item.kind !== 'math', className: `qmd-block-${item.kind}` },
+			})));
+		}
+
+		async function setQmdDiagnostics(diagnostics = []) {
+			await loadQmdMonaco();
+			if (!qmdNormalModel) return;
+			qmdMonaco.editor.setModelMarkers(qmdNormalModel, 'qlab-qmd', diagnostics.map(item => {
+				let range = offsetRange(qmdNormalModel, item);
+				return {
+					...range,
+					severity: item.severity === 'warning'
+						? qmdMonaco.MarkerSeverity.Warning
+						: qmdMonaco.MarkerSeverity.Error,
+					message: item.message || 'Invalid QMD source',
+					code: item.code,
+				};
+			}));
+		}
+
+		async function revealQmdRange(range = {}) {
+			await loadQmdMonaco();
+			if (!qmdNormalModel) return;
+			let monacoRange = range.startLineNumber
+				? range
+				: offsetRange(qmdNormalModel, range);
+			qmdEditor.revealRangeInCenter(monacoRange);
+			qmdEditor.setSelection(monacoRange);
+			qmdEditor.focus();
+		}
+
+		function snapshotQmdView() {
+			return {
+				mode: qmdMode,
+				uri: qmdNormalModel ? qmdNormalModel.uri.toString() : '',
+				text: qmdMode === 'normal' && qmdEditor ? qmdEditor.getValue() : '',
+				position: qmdMode === 'normal' && qmdEditor ? qmdEditor.getPosition() : null,
+			};
+		}
+
+		function disposeQmdMonaco() {
+			for (let disposable of qmdDisposables.splice(0)) disposable.dispose();
+			qmdCompletionProvider?.dispose();
+			qmdDiffEditor?.dispose();
+			qmdEditor?.dispose();
+			for (let model of qmdMonaco?.editor.getModels() || []) {
+				if (model.uri.toString().startsWith('inmemory://qlab/')) model.dispose();
+			}
+			qmdListeners.clear();
+		}
+	</script>
+</body>
+</html>
