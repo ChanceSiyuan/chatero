@@ -1079,6 +1079,22 @@
 	background: #fff;
 }
 
+.qlab-qmd-card-body {
+	padding: 10px 12px 12px;
+	border-left: 5px solid #1473e6;
+	background: #fff;
+}
+
+.qlab-qmd-card-body p,
+.qlab-qmd-card-body ul,
+.qlab-qmd-card-body blockquote {
+	margin: 0 0 0.65rem;
+}
+
+.qlab-qmd-card-body p:last-child {
+	margin-bottom: 0;
+}
+
 .qlab-qmd-visual-block.is-theorem .qlab-qmd-card {
 	border-color: #ecd2d7;
 }

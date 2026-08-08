@@ -9,7 +9,7 @@
 */
 
 /**
- * Lightweight Markdown → HTML for Visual Preview cards and soft Website fallback.
+ * Lightweight Markdown → HTML for Visual Preview cards.
  * Math uses KaTeX when available; unknown constructs stay escaped as preformatted text.
  */
 Zotero.QLab = Zotero.QLab || {};
@@ -35,6 +35,40 @@ Zotero.QLab = Zotero.QLab || {};
 		return escaped;
 	}
 	
+	function extractFenceBody(source) {
+		let lines = String(source || '').replace(/\r\n?/g, '\n').split('\n');
+		if (lines.length >= 2 && /^\s*:{3,}/.test(lines[0] || '')) {
+			lines = lines.slice(1);
+			while (lines.length && /^\s*:{3,}\s*$/.test(lines[lines.length - 1] || '')) {
+				lines.pop();
+			}
+		}
+		while (lines.length && !lines[0].trim()) {
+			lines.shift();
+		}
+		if (/^#{1,6}\s+/.test(lines[0] || '')) {
+			lines.shift();
+		}
+		while (lines.length && !lines[0].trim()) {
+			lines.shift();
+		}
+		return lines.join('\n');
+	}
+	
+	function renderFenceBodyHTML(source) {
+		let body = extractFenceBody(source);
+		if (!body.trim()) {
+			return '';
+		}
+		if (Zotero.QLab.visualQmdBlocks) {
+			let innerBlocks = Zotero.QLab.visualQmdBlocks(body);
+			if (innerBlocks.length) {
+				return innerBlocks.map(b => Zotero.QLab.renderQmdBlockHTML(b)).join('');
+			}
+		}
+		return `<p class="qlab-qmd-paragraph">${inlineFormat(body)}</p>`;
+	}
+	
 	/**
 	 * Convert a single visual block's source into safe HTML.
 	 */
@@ -44,6 +78,11 @@ Zotero.QLab = Zotero.QLab || {};
 		}
 		let kind = block.kind;
 		let source = String(block.source || '');
+		// #region agent log
+		if (kind === 'display-math' || kind === 'callout' || kind === 'theorem' || kind === 'paragraph') {
+			fetch('http://127.0.0.1:7350/ingest/ba635be9-3f49-40ce-9509-feafde36c36e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'be0fa9'},body:JSON.stringify({sessionId:'be0fa9',location:'qmdMarkdownLite.js:renderQmdBlockHTML',message:'block render',data:{kind,sourcePreview:source.slice(0,80),hasDollar:source.includes('$')},timestamp:Date.now(),hypothesisId:kind==='callout'||kind==='theorem'?'B':'D'})}).catch(()=>{});
+		}
+		// #endregion
 		
 		if (kind === 'frontmatter') {
 			return `<pre class="qlab-qmd-frontmatter">${escapeHTML(source)}</pre>`;
@@ -57,11 +96,14 @@ Zotero.QLab = Zotero.QLab || {};
 			}
 			return `<pre class="qlab-qmd-math">${escapeHTML(source)}</pre>`;
 		}
-		if (kind === 'raw' || kind === 'callout' || kind === 'theorem') {
+		if (kind === 'callout' || kind === 'theorem') {
 			let title = block.title || block.semantic || kind;
 			return `<div class="qlab-qmd-card is-${escapeHTML(kind)}">`
 				+ `<div class="qlab-qmd-card-label">${escapeHTML(title)}</div>`
-				+ `<pre>${escapeHTML(source)}</pre></div>`;
+				+ `<div class="qlab-qmd-card-body">${renderFenceBodyHTML(source)}</div></div>`;
+		}
+		if (kind === 'raw') {
+			return `<pre class="qlab-qmd-raw">${escapeHTML(source)}</pre>`;
 		}
 		if (kind === 'heading') {
 			let level = Math.min(6, Math.max(1, block.level || 1));
@@ -83,7 +125,7 @@ Zotero.QLab = Zotero.QLab || {};
 	};
 	
 	/**
-	 * Soft full-document HTML (Website fallback when Quarto is unavailable).
+	 * Soft full-document HTML (tests only; Website surface uses Quarto live preview).
 	 */
 	Zotero.QLab.renderQmdDocumentHTML = function (source, { title = 'Draft preview' } = {}) {
 		let blocks = Zotero.QLab.visualQmdBlocks

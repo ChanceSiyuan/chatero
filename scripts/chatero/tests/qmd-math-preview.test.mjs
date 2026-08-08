@@ -16,6 +16,22 @@ test("renderDisplayMathHTML renders display math blocks", async () => {
 	assert.match(html, /katex/);
 	assert.match(html, /qlab-qmd-math-display/);
 	assert.match(html, /qlab-qmd-math-block/);
+	assert.ok(!html.includes("katex-mathml"));
+});
+
+test("callout blocks render inline math in card body", async () => {
+	const QLab = await loadQLab();
+	const block = {
+		kind: "callout",
+		source: "::: {#def .callout-note}\n\nDefine $f(u, G, x)$.\n\n:::",
+		start: 0,
+		end: 50,
+	};
+	const html = QLab.renderQmdBlockHTML(block);
+	assert.match(html, /qlab-qmd-card-body/);
+	assert.match(html, /katex/);
+	assert.ok(!html.includes("<pre>"));
+	assert.ok(!html.includes("$f(u, G, x)$"));
 });
 
 test("renderQmdBlockHTML uses KaTeX for display-math blocks", async () => {

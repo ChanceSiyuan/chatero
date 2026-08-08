@@ -72,7 +72,6 @@ test("qmd shell HTML exposes three surfaces and mode toggle", async () => {
 	assert.match(html, /data-qlab-surface="source"/);
 	assert.match(html, /data-qlab-website-frame/);
 	assert.match(html, /data-qlab-editor/);
-	assert.match(html, /data-qlab-website-quarto/);
 });
 
 test("shared buffer survives mode metadata and soft website HTML", async () => {

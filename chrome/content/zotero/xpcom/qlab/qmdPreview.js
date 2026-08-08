@@ -9,8 +9,7 @@
 */
 
 /**
- * Optional Quarto live website preview for the Website surface.
- * Soft HTML preview remains available when Quarto is missing.
+ * Quarto live website preview for the Website surface.
  */
 Zotero.QLab = Zotero.QLab || {};
 

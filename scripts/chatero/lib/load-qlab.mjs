@@ -53,6 +53,9 @@ export async function loadQLab(extraZotero = {}) {
 		...extraZotero,
 	};
 	const sandbox = { Zotero, console };
+	sandbox.fetch = typeof globalThis.fetch === "function"
+		? (...args) => globalThis.fetch(...args)
+		: () => Promise.resolve({ ok: true });
 	for (const name of QLAB_SCRIPTS) {
 		const source = await readFile(join(qlabRoot, name), "utf8");
 		runInNewContext(source, sandbox, { filename: name });

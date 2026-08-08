@@ -27,6 +27,9 @@ Zotero.QLab = Zotero.QLab || {};
 		}
 		let head = doc.head || doc.querySelector('head');
 		if (!head || head.querySelector('[data-qlab-katex-css]')) {
+			// #region agent log
+			fetch('http://127.0.0.1:7350/ingest/ba635be9-3f49-40ce-9509-feafde36c36e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'be0fa9'},body:JSON.stringify({sessionId:'be0fa9',location:'qlabModule.js:ensureKatexStyles',message:'katex css skip',data:{hasHead:!!head,alreadyLinked:!!(head&&head.querySelector('[data-qlab-katex-css]'))},timestamp:Date.now(),hypothesisId:'E'})}).catch(()=>{});
+			// #endregion
 			return;
 		}
 		let link = doc.createElementNS('http://www.w3.org/1999/xhtml', 'link');
@@ -34,6 +37,9 @@ Zotero.QLab = Zotero.QLab || {};
 		link.href = Zotero.QLab.katexStylesheetHref();
 		link.setAttribute('data-qlab-katex-css', 'true');
 		head.appendChild(link);
+		// #region agent log
+		fetch('http://127.0.0.1:7350/ingest/ba635be9-3f49-40ce-9509-feafde36c36e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'be0fa9'},body:JSON.stringify({sessionId:'be0fa9',location:'qlabModule.js:ensureKatexStyles',message:'katex css linked',data:{href:link.href},timestamp:Date.now(),hypothesisId:'E'})}).catch(()=>{});
+		// #endregion
 	}
 	
 	/**
@@ -358,7 +364,6 @@ Zotero.QLab = Zotero.QLab || {};
 				iconButtonHTML({ name: 'save', label: 'Save', attribute: 'data-qlab-draft-save' }),
 				iconButtonHTML({ name: 'edit', label: 'Edit with AI', attribute: 'data-qlab-draft-ai' }),
 				iconButtonHTML({ name: 'keep', label: 'Keep', attribute: 'data-qlab-draft-keep' }),
-				iconButtonHTML({ name: 'website', label: 'Quarto', attribute: 'data-qlab-website-quarto' }),
 				iconButtonHTML({ name: 'write', label: '⌘K', attribute: 'data-qlab-inline-toggle' }),
 				`</div>`,
 				`</header>`,
@@ -898,18 +903,6 @@ Zotero.QLab = Zotero.QLab || {};
 				});
 				return;
 			}
-			if (event.target.closest('[data-qlab-website-quarto]')) {
-				void Zotero.QLab.refreshQmdWebsitePane(host, {
-					root: mountRoot,
-					forceQuarto: true,
-				});
-				if (host._qlabSurfaceMode !== 'website' && Zotero.QLab.applyQmdSurfaceMode) {
-					Zotero.QLab.applyQmdSurfaceMode(host, 'website', {
-						root: mountRoot,
-						silent: true,
-					});
-				}
-			}
 		};
 		
 		let editor = host.querySelector('[data-qlab-editor]');
@@ -1128,7 +1121,7 @@ Zotero.QLab = Zotero.QLab || {};
 				status.textContent = `Saved ${path}`;
 			}
 			if (host._qlabSurfaceMode === 'website' && Zotero.QLab.refreshQmdWebsitePane) {
-				void Zotero.QLab.refreshQmdWebsitePane(host, { root, tryQuarto: true });
+				void Zotero.QLab.refreshQmdWebsitePane(host, { root });
 			}
 		}
 		catch (e) {

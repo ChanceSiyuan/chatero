@@ -255,7 +255,7 @@ Zotero.QLab = Zotero.QLab || {};
 			}
 		}
 		else if (next === 'website') {
-			void Zotero.QLab.refreshQmdWebsitePane(host, { ...options, tryQuarto: true });
+			void Zotero.QLab.refreshQmdWebsitePane(host, { ...options });
 			if (status && !options.silent) {
 				status.textContent = 'Website · Quarto HTML when available, else soft HTML preview';
 			}
@@ -454,8 +454,11 @@ Zotero.QLab = Zotero.QLab || {};
 		let title = (state && state.originalPath) || 'Draft';
 		
 		let liveUrl = host._qlabWebsiteUrl || '';
-		let shouldTryQuarto = options.forceQuarto || options.tryQuarto;
-		if (shouldTryQuarto && Zotero.QLab.startQmdQuartoPreview && state) {
+		let quartoError = '';
+		// #region agent log
+		fetch('http://127.0.0.1:7350/ingest/ba635be9-3f49-40ce-9509-feafde36c36e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'be0fa9'},body:JSON.stringify({sessionId:'be0fa9',location:'qmdSurface.js:refreshQmdWebsitePane',message:'website refresh start',data:{existingUrl:liveUrl,hasState:!!state},timestamp:Date.now(),hypothesisId:'C'})}).catch(()=>{});
+		// #endregion
+		if (Zotero.QLab.startQmdQuartoPreview && state) {
 			try {
 				let root = options.root || (Zotero.QLab.Settings && Zotero.QLab.Settings.getRoot()) || '';
 				let path = state.viewingWorking && state.workingPath
@@ -463,14 +466,18 @@ Zotero.QLab = Zotero.QLab || {};
 					: state.originalPath;
 				liveUrl = await Zotero.QLab.startQmdQuartoPreview(root, path);
 				host._qlabWebsiteUrl = liveUrl;
+				// #region agent log
+				fetch('http://127.0.0.1:7350/ingest/ba635be9-3f49-40ce-9509-feafde36c36e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'be0fa9'},body:JSON.stringify({sessionId:'be0fa9',location:'qmdSurface.js:refreshQmdWebsitePane',message:'quarto preview ok',data:{liveUrl,path,root},timestamp:Date.now(),hypothesisId:'C'})}).catch(()=>{});
+				// #endregion
 			}
 			catch (e) {
 				Zotero.logError && Zotero.logError(e);
 				host._qlabWebsiteUrl = '';
-				if (meta && options.forceQuarto) {
-					meta.textContent = e.message || String(e);
-				}
+				quartoError = e.message || String(e);
 				liveUrl = '';
+				// #region agent log
+				fetch('http://127.0.0.1:7350/ingest/ba635be9-3f49-40ce-9509-feafde36c36e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'be0fa9'},body:JSON.stringify({sessionId:'be0fa9',location:'qmdSurface.js:refreshQmdWebsitePane',message:'quarto preview failed',data:{error:quartoError},timestamp:Date.now(),hypothesisId:'C'})}).catch(()=>{});
+				// #endregion
 			}
 		}
 		
@@ -480,16 +487,22 @@ Zotero.QLab = Zotero.QLab || {};
 			if (meta) {
 				meta.textContent = `Quarto website · ${liveUrl}`;
 			}
+			// #region agent log
+			fetch('http://127.0.0.1:7350/ingest/ba635be9-3f49-40ce-9509-feafde36c36e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'be0fa9'},body:JSON.stringify({sessionId:'be0fa9',location:'qmdSurface.js:refreshQmdWebsitePane',message:'using quarto iframe',data:{liveUrl},timestamp:Date.now(),hypothesisId:'C'})}).catch(()=>{});
+			// #endregion
 			return;
 		}
 		
-		let html = Zotero.QLab.renderQmdDocumentHTML(source, { title });
 		if (frame) {
 			frame.removeAttribute('src');
-			frame.setAttribute('srcdoc', html);
+			frame.removeAttribute('srcdoc');
 		}
 		if (meta) {
-			meta.textContent = 'Soft HTML preview · click “Quarto” to start a live website when Quarto is installed';
+			meta.textContent = quartoError
+				|| 'Quarto preview unavailable — install Quarto and ensure drafts/_quarto.yml exists.';
 		}
+		// #region agent log
+		fetch('http://127.0.0.1:7350/ingest/ba635be9-3f49-40ce-9509-feafde36c36e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'be0fa9'},body:JSON.stringify({sessionId:'be0fa9',location:'qmdSurface.js:refreshQmdWebsitePane',message:'quarto unavailable',data:{quartoError},timestamp:Date.now(),hypothesisId:'C'})}).catch(()=>{});
+		// #endregion
 	};
 })();

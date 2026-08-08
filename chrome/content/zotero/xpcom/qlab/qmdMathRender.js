@@ -131,6 +131,9 @@ Zotero.QLab = Zotero.QLab || {};
 	function renderMathHTML(expression, displayMode, opening = '$') {
 		let katex = getKatex();
 		let closing = opening === '\\[' ? '\\]' : opening === '\\(' ? '\\)' : opening;
+		// #region agent log
+		fetch('http://127.0.0.1:7350/ingest/ba635be9-3f49-40ce-9509-feafde36c36e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'be0fa9'},body:JSON.stringify({sessionId:'be0fa9',location:'qmdMathRender.js:renderMathHTML',message:'renderMathHTML called',data:{displayMode,exprLen:expression.length,hasKatex:!!katex,opening},timestamp:Date.now(),hypothesisId:'A'})}).catch(()=>{});
+		// #endregion
 		if (!katex) {
 			return `<span class="qlab-qmd-math-error">${escapeHTML(`${opening}${expression}${closing}`)}</span>`;
 		}
@@ -142,13 +145,19 @@ Zotero.QLab = Zotero.QLab || {};
 				trust: false,
 				maxExpand: 1000,
 				maxSize: 20,
-				output: 'htmlAndMathml',
+				output: 'html',
 			});
 			html = hardenKatexHTML(html);
+			// #region agent log
+			fetch('http://127.0.0.1:7350/ingest/ba635be9-3f49-40ce-9509-feafde36c36e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'be0fa9'},body:JSON.stringify({sessionId:'be0fa9',location:'qmdMathRender.js:renderMathHTML:ok',message:'katex render ok',data:{hasMathml:html.includes('katex-mathml'),hasHtml:html.includes('katex-html'),htmlLen:html.length},timestamp:Date.now(),hypothesisId:'A'})}).catch(()=>{});
+			// #endregion
 			let className = displayMode ? 'qlab-qmd-math-display' : 'qlab-qmd-math-inline';
 			return `<span class="${className}" data-latex="${escapeHTML(expression)}">${html}</span>`;
 		}
 		catch (e) {
+			// #region agent log
+			fetch('http://127.0.0.1:7350/ingest/ba635be9-3f49-40ce-9509-feafde36c36e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'be0fa9'},body:JSON.stringify({sessionId:'be0fa9',location:'qmdMathRender.js:renderMathHTML:err',message:'katex render failed',data:{error:String(e&&e.message||e)},timestamp:Date.now(),hypothesisId:'A'})}).catch(()=>{});
+			// #endregion
 			return `<span class="qlab-qmd-math-error">${escapeHTML(`${opening}${expression}${closing}`)}</span>`;
 		}
 	}
