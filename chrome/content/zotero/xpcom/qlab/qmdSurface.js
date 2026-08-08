@@ -246,6 +246,14 @@ Zotero.QLab = Zotero.QLab || {};
 			return;
 		}
 		let next = Zotero.QLab.normalizeQmdSurfaceMode(mode);
+		// Once the native workspace is mounted, it owns all three resident
+		// surfaces. Legacy XPI callers may still request a mode during chrome
+		// refresh; delegate instead of replacing the native Visual Editor DOM.
+		if (host._qlabQmdWorkspace
+				&& typeof host._qlabQmdWorkspace.showSurface === 'function') {
+			void host._qlabQmdWorkspace.showSurface(next);
+			return;
+		}
 		// Flush source textarea into buffer before leaving Source.
 		let editor = host.querySelector('[data-qlab-editor]');
 		if (editor) {

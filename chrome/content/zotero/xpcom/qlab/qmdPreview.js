@@ -126,6 +126,7 @@ Zotero.QLab = Zotero.QLab || {};
 	};
 	
 	Zotero.QLab._qmdPreviewSessions = Zotero.QLab._qmdPreviewSessions || Object.create(null);
+	Zotero.QLab._qmdPreviewStarts = Zotero.QLab._qmdPreviewStarts || Object.create(null);
 	
 	/**
 	 * Start `quarto preview` for one file. Returns http URL or throws.
@@ -135,9 +136,55 @@ Zotero.QLab = Zotero.QLab || {};
 		let rel = String(relativePath || '');
 		let target = Zotero.QLab.resolveQuartoPreviewTarget(root, rel);
 		let key = `${target.cwd}:${target.file}`;
+		let owner = options.owner || null;
+		if (owner && owner.released) {
+			throw new Error('Quarto preview lease was already released');
+		}
 		let existing = Zotero.QLab._qmdPreviewSessions[key];
 		if (existing && existing.url) {
-			return existing.url;
+			if (owner) {
+				existing.clients = existing.clients || new Set();
+				existing.clients.add(owner);
+			}
+			return existing.readyPromise || existing.url;
+		}
+		if (!options._insideStartLock) {
+			let pending = Zotero.QLab._qmdPreviewStarts[key];
+			if (pending) {
+				if (owner) pending.owners.add(owner);
+				else pending.hasUnownedCaller = true;
+				return pending.promise;
+			}
+			pending = {
+				owners: new Set(owner ? [owner] : []),
+				hasUnownedCaller: !owner,
+				cancelled: false,
+				promise: null,
+			};
+			Zotero.QLab._qmdPreviewStarts[key] = pending;
+			let innerOptions = { ...options, owner: null, _insideStartLock: true };
+			pending.promise = Promise.resolve()
+				.then(() => Zotero.QLab.startQmdQuartoPreview(root, rel, innerOptions))
+				.then(url => {
+					let live = Zotero.QLab._qmdPreviewSessions[key];
+					if (live) {
+						live.clients = live.clients || new Set();
+						for (let client of pending.owners) {
+							if (!client.released) live.clients.add(client);
+						}
+						if (pending.cancelled
+								|| (!pending.hasUnownedCaller && live.clients.size === 0)) {
+							Zotero.QLab.stopQmdQuartoPreview(root, rel);
+						}
+					}
+					return url;
+				})
+				.finally(() => {
+					if (Zotero.QLab._qmdPreviewStarts[key] === pending) {
+						delete Zotero.QLab._qmdPreviewStarts[key];
+					}
+				});
+			return pending.promise;
 		}
 		
 		let port = options.port || Zotero.QLab.nextQmdPreviewPort(hash(key));
@@ -177,6 +224,9 @@ Zotero.QLab = Zotero.QLab || {};
 		
 		let killProcess = null;
 		let abort = false;
+		let ready = false;
+		let session;
+		let processError = null;
 		let resolveProcessFailure;
 		let processFailure = new Promise(resolve => {
 			resolveProcessFailure = resolve;
@@ -187,15 +237,24 @@ Zotero.QLab = Zotero.QLab || {};
 			output.push(String(event.data));
 			if (output.length > 24) output.shift();
 		}
+		function clearSession() {
+			if (Zotero.QLab._qmdPreviewSessions[key] === session) {
+				delete Zotero.QLab._qmdPreviewSessions[key];
+			}
+		}
 		function reportProcessFailure(error) {
 			if (abort) return;
-			delete Zotero.QLab._qmdPreviewSessions[key];
+			processError = error;
+			clearSession();
 			resolveProcessFailure({ error });
 		}
 
-		Zotero.QLab._qmdPreviewSessions[key] = {
+		session = {
 			url,
 			port,
+			ready: false,
+			readyPromise: null,
+			clients: new Set(owner ? [owner] : []),
 			stop: () => {
 				abort = true;
 				if (killProcess) {
@@ -206,13 +265,21 @@ Zotero.QLab = Zotero.QLab || {};
 				}
 			},
 		};
+		Zotero.QLab._qmdPreviewSessions[key] = session;
 
 		(async () => {
 			try {
+				let sawExit = false;
 				for await (let event of runner.run(command, args, {
 					cwd: target.cwd,
 					registerKill: (kill) => {
 						killProcess = kill;
+						if (abort && killProcess) {
+							try {
+								killProcess();
+							}
+							catch (error) {}
+						}
 					},
 				})) {
 					if (abort) {
@@ -220,7 +287,8 @@ Zotero.QLab = Zotero.QLab || {};
 					}
 					recordOutput(event);
 					if (event.type === 'exit') {
-						delete Zotero.QLab._qmdPreviewSessions[key];
+						sawExit = true;
+						clearSession();
 						if (Number(event.exitCode) !== 0) {
 							let detail = output.join('\n').trim();
 							reportProcessFailure(new Error(
@@ -228,7 +296,16 @@ Zotero.QLab = Zotero.QLab || {};
 								+ (detail ? `: ${detail}` : '')
 							));
 						}
+						else if (!ready) {
+							reportProcessFailure(new Error(
+								'Quarto preview process ended before becoming ready'
+							));
+						}
 					}
+				}
+				if (!abort && !sawExit) {
+					clearSession();
+					resolveProcessFailure({ error: new Error('Quarto preview process ended unexpectedly') });
 				}
 			}
 			catch (error) {
@@ -238,39 +315,79 @@ Zotero.QLab = Zotero.QLab || {};
 		})();
 		
 		let fetchImpl = options.fetch || (typeof fetch === 'function' ? fetch.bind(globalThis) : null);
-		if (!fetchImpl) {
-			// Still return the URL; the iframe will load when Quarto is ready.
-			return url;
-		}
-		
-		let deadline = Date.now() + (options.timeoutMs || 20000);
-		let pollIntervalMs = options.pollIntervalMs || 400;
-		let delay = options.delay || (ms => new Promise(resolve => setTimeout(resolve, ms)));
-		while (Date.now() < deadline) {
-			let probe = Promise.resolve()
-				.then(() => fetchImpl(url, { cache: 'no-store' }))
-				.then(response => response && response.ok ? { ready: true } : null)
-				.catch(() => null);
-			let outcome = await Promise.race([
-				probe,
-				processFailure,
-				delay(pollIntervalMs).then(() => null),
-			]);
-			if (outcome && outcome.error) {
-				Zotero.QLab.stopQmdQuartoPreview(root, relativePath);
-				throw outcome.error;
+		session.readyPromise = (async () => {
+			if (!fetchImpl) {
+				// Still return the URL; the browser will load when Quarto is ready.
+				ready = true;
+				session.ready = true;
+				return url;
 			}
-			if (outcome && outcome.ready) return url;
-		}
-		Zotero.QLab.stopQmdQuartoPreview(root, relativePath);
-		throw new Error('Quarto preview did not become ready in time');
+			let deadline = Date.now() + (options.timeoutMs || 20000);
+			let pollIntervalMs = options.pollIntervalMs || 400;
+			let delay = options.delay || (ms => new Promise(resolve => setTimeout(resolve, ms)));
+			while (Date.now() < deadline) {
+				if (processError) {
+					Zotero.QLab.stopQmdQuartoPreview(root, relativePath);
+					throw processError;
+				}
+				let probe = Promise.resolve()
+					.then(() => fetchImpl(url, { cache: 'no-store' }))
+					.then(response => response && response.ok ? { ready: true } : null)
+					.catch(() => null);
+				let outcome = await Promise.race([
+					probe,
+					processFailure,
+					delay(pollIntervalMs).then(() => null),
+				]);
+				if (outcome && outcome.error) {
+					Zotero.QLab.stopQmdQuartoPreview(root, relativePath);
+					throw outcome.error;
+				}
+				if (outcome && outcome.ready) {
+					ready = true;
+					session.ready = true;
+					return url;
+				}
+			}
+			// Give an already queued runner completion one microtask to publish its
+			// precise error before falling back to the generic readiness timeout.
+			await Promise.resolve();
+			if (processError) {
+				Zotero.QLab.stopQmdQuartoPreview(root, relativePath);
+				throw processError;
+			}
+			Zotero.QLab.stopQmdQuartoPreview(root, relativePath);
+			throw new Error('Quarto preview did not become ready in time');
+		})();
+		return session.readyPromise;
 	};
 	
-	Zotero.QLab.stopQmdQuartoPreview = function (root, relativePath) {
+	Zotero.QLab.stopQmdQuartoPreview = function (root, relativePath, options = {}) {
 		let rel = String(relativePath || '');
 		let target = Zotero.QLab.resolveQuartoPreviewTarget(root, rel);
 		let key = `${target.cwd}:${target.file}`;
+		let owner = options.owner || null;
+		let pending = Zotero.QLab._qmdPreviewStarts[key];
+		if (pending) {
+			if (owner) {
+				pending.owners.delete(owner);
+				if (!pending.hasUnownedCaller && pending.owners.size === 0) {
+					pending.cancelled = true;
+				}
+			}
+			else pending.cancelled = true;
+		}
 		let session = Zotero.QLab._qmdPreviewSessions[key];
+		if (session && pending && pending.cancelled) {
+			session.stop && session.stop();
+			delete Zotero.QLab._qmdPreviewSessions[key];
+			return;
+		}
+		if (session && owner) {
+			if (!session.clients || !session.clients.has(owner)) return;
+			session.clients.delete(owner);
+			if (session.clients.size) return;
+		}
 		if (session && session.stop) {
 			session.stop();
 		}

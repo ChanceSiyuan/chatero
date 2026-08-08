@@ -44,6 +44,12 @@ Zotero.QLab = Zotero.QLab || {};
 			description: 'Route verified material into the existing QMD Draft workflow.',
 			objects: ALL_OBJECTS,
 		},
+		{
+			id: 'review-draft',
+			label: 'Review Draft',
+			description: 'Check a Draft for Knowledge readiness without changing or promoting it.',
+			objects: Object.freeze(['draft']),
+		},
 	]);
 	
 	const READ_ONLY_MODES = Object.freeze({
@@ -51,6 +57,7 @@ Zotero.QLab = Zotero.QLab || {};
 		'evidence-qa': 'evidence-qa',
 		'compare-papers': 'compare',
 		'analyze-figure': 'figure',
+		'review-draft': 'review-only',
 	});
 	
 	const OBJECT_LABELS = Object.freeze({
@@ -73,6 +80,13 @@ Zotero.QLab = Zotero.QLab || {};
 			throw new Error(`${actionLabel} is not available for ${OBJECT_LABELS[kind]}`);
 		}
 		
+		if (actionID === 'review-draft') {
+			return {
+				name: 'review-draft',
+				path: 'skills/review-draft/SKILL.md',
+				mode: 'review-only',
+			};
+		}
 		if (actionID === 'write-draft') {
 			if (kind === 'pdf') {
 				return {
@@ -142,14 +156,23 @@ Zotero.QLab = Zotero.QLab || {};
 			qlabRoot: normalizeRepositoryRoot(context.qlabRoot),
 		};
 		let envelope = escapeObjectEnvelope(JSON.stringify(object, null, 2));
-		return [
+		let prompt = [
 			`Research Loop Action: ${actionID}`,
 			`Mode: ${binding.mode}`,
 			`Authority: Follow $${binding.name} at ${binding.path}.`,
 			'<research_object>',
 			envelope,
 			'</research_object>',
-		].join('\n');
+		];
+		if (actionID === 'review-draft') {
+			prompt.push(
+				'Perform a read-only review of the complete current Draft.',
+				'Do not write to Knowledge, Drafts, or Literature, and do not modify any repository file.',
+				'Do not promote the Draft or apply any proposed change.',
+				'Return the check results and a suggested Knowledge destination for later human review.',
+			);
+		}
+		return prompt.join('\n');
 	};
 	
 	Zotero.QLab.isReadOnlyResearchAction = function (actionID) {

@@ -77,6 +77,7 @@ Zotero.QLab = Zotero.QLab || {};
 		};
 		let ownsSession = false;
 		let generation = 0;
+		let sessionOwner = { released: false };
 
 		function snapshot() {
 			return clone(state);
@@ -112,7 +113,9 @@ Zotero.QLab = Zotero.QLab || {};
 			state.pendingRefresh = false;
 			publish();
 			try {
-				let url = await startPreview(root, path);
+				let pendingPreview = startPreview(root, path, { owner: sessionOwner });
+				ownsSession = true;
+				let url = await pendingPreview;
 				if (state.disposed || currentGeneration !== generation) return snapshot();
 				state.url = String(url || '');
 				state.status = 'ready';
@@ -168,8 +171,9 @@ Zotero.QLab = Zotero.QLab || {};
 				if (state.disposed) return;
 				state.disposed = true;
 				generation++;
+				sessionOwner.released = true;
 				if (ownsSession && typeof stopPreview === 'function') {
-					stopPreview(root, path);
+					stopPreview(root, path, { owner: sessionOwner });
 				}
 				ownsSession = false;
 				publish();

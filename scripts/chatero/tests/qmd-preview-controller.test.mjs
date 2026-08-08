@@ -144,3 +144,23 @@ test("disposing a preview controller stops its owned session once", async () => 
 	assert.equal(stops, 1);
 	assert.equal(controller.snapshot().disposed, true);
 });
+
+test("disposing during a pending launch cancels the stale generation after a rapid file switch", async () => {
+	const QLab = await loadQLab();
+	let release;
+	let started = new Promise(resolve => { release = resolve; });
+	let stops = 0;
+	let controller = QLab.createQmdPreviewController({
+		root: "/repo",
+		path: "drafts/first.qmd",
+		startPreview: () => started,
+		stopPreview: () => stops++,
+	});
+	let launch = controller.start();
+	controller.dispose();
+	release("http://127.0.0.1:43001/first.html");
+	await launch;
+	assert.equal(stops, 1);
+	assert.equal(controller.snapshot().status, "rendering");
+	assert.equal(controller.snapshot().url, "");
+});

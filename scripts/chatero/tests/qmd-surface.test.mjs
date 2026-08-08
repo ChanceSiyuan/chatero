@@ -60,6 +60,27 @@ test("surface modes normalize, migrate, label, and cycle Visual/Website/Source",
 	assert.equal(QLab.nextQmdSurfaceMode("source"), "visual");
 });
 
+test("legacy surface requests delegate to the resident native workspace without repainting it", async () => {
+	const QLab = await loadQLab();
+	let requested = [];
+	const host = {
+		_qlabQmdWorkspace: {
+			showSurface(mode) {
+				requested.push(mode);
+				return Promise.resolve(true);
+			},
+		},
+		querySelector() {
+			throw new Error("legacy surface code must not query the native workspace DOM");
+		},
+		querySelectorAll() {
+			throw new Error("legacy surface code must not repaint resident panes");
+		},
+	};
+	QLab.applyQmdSurfaceMode(host, "preview");
+	assert.deepEqual(requested, ["website"]);
+});
+
 test("qmd shell HTML keeps Visual Edit, Website Preview, and Monaco resident", async () => {
 	const QLab = await loadQLab();
 	const html = QLab.renderShellHTML({

@@ -35,19 +35,19 @@ Zotero.QLab = Zotero.QLab || {};
 		return lines;
 	}
 	
-	function blockId(kind, source) {
+	function blockId(kind, source, start, end) {
 		let h = 2166136261;
 		let value = `${kind}\0${source}`;
 		for (let i = 0; i < value.length; i++) {
 			h ^= value.charCodeAt(i);
 			h = Math.imul(h, 16777619);
 		}
-		return (h >>> 0).toString(16);
+		return `${(h >>> 0).toString(16)}-${start}-${end}`;
 	}
 	
 	function visualBlock(kind, source, start, end, extra = {}) {
 		return {
-			id: blockId(kind, `${kind}\0${source}`),
+			id: blockId(kind, source, start, end),
 			kind,
 			source,
 			start,
@@ -118,7 +118,7 @@ Zotero.QLab = Zotero.QLab || {};
 	 * Split QMD into non-overlapping visual regions.
 	 */
 	Zotero.QLab.visualQmdBlocks = function (source) {
-		let text = String(source ?? '').replace(/\r\n?/g, '\n');
+		let text = String(source ?? '');
 		let lines = sourceLines(text);
 		let result = [];
 		let index = 0;
@@ -211,7 +211,7 @@ Zotero.QLab = Zotero.QLab || {};
 			
 			let heading = /^(#{1,6})\s+/.exec(trimmed);
 			if (heading) {
-				result.push(visualBlock('heading', line.text, line.start, line.end, {
+				result.push(visualBlock('heading', text.slice(line.start, line.end), line.start, line.end, {
 					level: heading[1].length,
 				}));
 				index += 1;
@@ -251,7 +251,7 @@ Zotero.QLab = Zotero.QLab || {};
 			}
 			
 			if (/^(?:<|\||:::+|\{[^}]*\}\s*$)/.test(trimmed)) {
-				result.push(visualBlock('raw', line.text, line.start, line.end));
+				result.push(visualBlock('raw', text.slice(line.start, line.end), line.start, line.end));
 				index += 1;
 				continue;
 			}
@@ -293,7 +293,17 @@ Zotero.QLab = Zotero.QLab || {};
 			}
 			end = start + selected.source.length;
 		}
-		let next = String(replacement ?? '').replace(/\r\n?/g, '\n');
+		let reference = String(selected.source ?? '');
+		let eol = reference.includes('\r\n') || (!reference.includes('\n') && text.includes('\r\n'))
+			? '\r\n'
+			: reference.includes('\r') || (!reference.includes('\n') && text.includes('\r')) ? '\r' : '\n';
+		let next = String(replacement ?? '').replace(/\r\n|\r|\n/g, '\n');
+		if (eol !== '\n') {
+			next = next.replace(/\n/g, eol);
+		}
+		if (/(?:\r\n|\r|\n)$/.test(reference) && !/(?:\r\n|\r|\n)$/.test(next)) {
+			next += eol;
+		}
 		if (next === selected.source) {
 			return { source: text, changed: false };
 		}
@@ -301,5 +311,107 @@ Zotero.QLab = Zotero.QLab || {};
 			source: `${text.slice(0, start)}${next}${text.slice(end)}`,
 			changed: true,
 		};
+	};
+
+	/**
+	 * Find the exact LaTeX bodies inside one source-backed visual block.
+	 * Ranges address the body only, so Visual Edit can preserve delimiters and
+	 * every byte outside the selected formula.
+	 */
+	Zotero.QLab.qmdMathSpans = function (source) {
+		let text = String(source ?? '');
+		let spans = [];
+		let protectedRanges = [];
+		let lines = sourceLines(text);
+		let activeFence = null;
+		for (let line of lines) {
+			if (!activeFence) {
+				let opening = /^\s*(`{3,}|~{3,})/.exec(line.text);
+				if (opening) {
+					activeFence = {
+						character: opening[1][0],
+						length: opening[1].length,
+						start: line.start,
+					};
+				}
+				continue;
+			}
+			let closing = new RegExp(
+				`^\\s*${activeFence.character}{${activeFence.length},}\\s*$`);
+			if (closing.test(line.text)) {
+				protectedRanges.push([activeFence.start, line.end]);
+				activeFence = null;
+			}
+		}
+		if (activeFence) {
+			protectedRanges.push([activeFence.start, text.length]);
+		}
+		function isEscaped(index) {
+			let slashes = 0;
+			for (let cursor = index - 1; cursor >= 0 && text[cursor] === '\\'; cursor--) {
+				slashes += 1;
+			}
+			return slashes % 2 === 1;
+		}
+
+		function addSpan(start, end, latexStart, latexEnd, display, opening) {
+			if (protectedRanges.some(([left, right]) => start < right && end > left)) {
+				return false;
+			}
+			if (occupied.some(([left, right]) => start < right && end > left)) {
+				return false;
+			}
+			occupied.push([start, end]);
+			spans.push({
+				source: text.slice(start, end),
+				latex: text.slice(latexStart, latexEnd),
+				start: latexStart,
+				end: latexEnd,
+				display,
+				opening,
+			});
+			return true;
+		}
+
+		let patterns = [
+			{ re: /\$\$([\s\S]+?)\$\$/g, display: true, opening: '$$', trim: 2 },
+			{ re: /\\\[([\s\S]+?)\\\]/g, display: true, opening: '\\[', trim: 2 },
+		];
+		let occupied = [];
+		for (let pattern of patterns) {
+			for (let match of text.matchAll(pattern.re)) {
+				let start = match.index ?? -1;
+				if (start < 0) {
+					continue;
+				}
+				let end = start + match[0].length;
+				let latexStart = start + pattern.trim;
+				addSpan(start, end, latexStart, latexStart + (match[1] || '').length,
+					pattern.display, pattern.opening);
+			}
+		}
+		for (let index = 0; index < text.length; index++) {
+			if (text.startsWith('\\(', index) && !isEscaped(index)) {
+				for (let end = index + 2; end < text.length - 1; end++) {
+					if (text[end] !== '\\' || text[end + 1] !== ')' || isEscaped(end)) continue;
+					addSpan(index, end + 2, index + 2, end, false, '\\(');
+					index = end + 1;
+					break;
+				}
+				continue;
+			}
+			if (text[index] !== '$' || isEscaped(index) || text[index + 1] === '$'
+					|| /\s/.test(text[index + 1] || '')) {
+				continue;
+			}
+			for (let end = index + 1; end < text.length; end++) {
+				if (text[end] !== '$' || isEscaped(end) || text[end + 1] === '$') continue;
+				if (/\s/.test(text[end - 1] || '') || /\d/.test(text[end + 1] || '')) continue;
+				addSpan(index, end + 1, index + 1, end, false, '$');
+				index = end;
+				break;
+			}
+		}
+		return spans.sort((left, right) => left.start - right.start);
 	};
 })();

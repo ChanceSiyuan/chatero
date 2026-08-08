@@ -102,6 +102,37 @@ Zotero.QLab = Zotero.QLab || {};
 			.replace(/>/g, '&gt;')
 			.replace(/"/g, '&quot;');
 	}
+
+	const SAFE_LINK_SCHEMES = new Set([
+		'http',
+		'https',
+		'zotero',
+		'chatero',
+		'mailto',
+	]);
+
+	Zotero.QLab.isSafeQmdLinkHref = function (value) {
+		let href = String(value || '').trim();
+		if (!href || /[\u0000-\u0020\u007f]/.test(href) || href.includes('\\')) {
+			return false;
+		}
+		// A scheme-relative URL silently leaves the trusted local workspace and
+		// therefore is not a relative QMD link.
+		if (href.startsWith('//')) {
+			return false;
+		}
+		let scheme = /^([A-Za-z][A-Za-z0-9+.-]*):/.exec(href);
+		if (scheme) {
+			return SAFE_LINK_SCHEMES.has(scheme[1].toLowerCase());
+		}
+		return true;
+	};
+
+	function safeLinkHTML(label, href) {
+		return Zotero.QLab.isSafeQmdLinkHref(href)
+			? `<a href="${href}">${label}</a>`
+			: label;
+	}
 	
 	function hardenKatexHTML(html) {
 		// KaTeX output is trusted math markup; strip only active content hooks.
@@ -189,7 +220,8 @@ Zotero.QLab = Zotero.QLab || {};
 			escaped = escaped.replace(/`([^`]+)`/g, '<code>$1</code>');
 			escaped = escaped.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
 			escaped = escaped.replace(/(^|[^*])\*([^*]+)\*(?!\*)/g, '$1<em>$2</em>');
-			escaped = escaped.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
+			escaped = escaped.replace(/\[([^\]]+)\]\(([^)]+)\)/g,
+				(_match, label, href) => safeLinkHTML(label, href));
 			parts.push(escaped);
 			plain = '';
 		}

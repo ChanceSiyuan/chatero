@@ -31,7 +31,13 @@ Zotero.QLab = Zotero.QLab || {};
 		escaped = escaped.replace(/`([^`]+)`/g, '<code>$1</code>');
 		escaped = escaped.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
 		escaped = escaped.replace(/(^|[^*])\*([^*]+)\*(?!\*)/g, '$1<em>$2</em>');
-		escaped = escaped.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
+		escaped = escaped.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_match, label, href) => {
+			let safe = Zotero.QLab.isSafeQmdLinkHref
+				? Zotero.QLab.isSafeQmdLinkHref(href)
+				: !/^[A-Za-z][A-Za-z0-9+.-]*:/.test(href) && !href.startsWith('//')
+					&& !href.includes('\\');
+			return safe ? `<a href="${href}">${label}</a>` : label;
+		});
 		return escaped;
 	}
 	

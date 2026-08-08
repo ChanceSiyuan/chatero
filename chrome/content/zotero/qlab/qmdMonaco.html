@@ -62,6 +62,10 @@
 		let qmdMode = 'normal';
 		let qmdListeners = new Set();
 		let qmdDisposables = [];
+		let qmdDisposed = false;
+		let qmdLoadResolve = null;
+		let qmdWorkerObjectURL = '';
+		let qmdResizeListener = null;
 
 		function emitQmdMonaco(event) {
 			for (let listener of qmdListeners) {
@@ -86,13 +90,25 @@
 			`], { type: 'text/javascript' }));
 		}
 
+		function releaseQmdWorkerURL() {
+			if (!qmdWorkerObjectURL) return;
+			URL.revokeObjectURL(qmdWorkerObjectURL);
+			qmdWorkerObjectURL = '';
+		}
+
 		function loadQmdMonaco() {
+			if (qmdDisposed) return Promise.resolve({ disposed: true });
 			if (qmdLoadPromise) return qmdLoadPromise;
 			require.config({ paths: { vs: 'resource://zotero/vs' } });
-			let workerURL = qmdWorkerURL();
-			window.MonacoEnvironment = { getWorkerUrl: () => workerURL };
-			qmdLoadPromise = new Promise(resolve => {
+			qmdWorkerObjectURL = qmdWorkerURL();
+			window.MonacoEnvironment = { getWorkerUrl: () => qmdWorkerObjectURL };
+			qmdLoadPromise = new Promise((resolve, reject) => {
+				qmdLoadResolve = resolve;
 				require(['vs/editor/editor.main'], () => {
+					if (qmdDisposed) {
+						releaseQmdWorkerURL();
+						return;
+					}
 					qmdMonaco = monaco;
 					qmdEditor = monaco.editor.create(document.getElementById('qmd-normal'), {
 						language: 'markdown',
@@ -157,12 +173,18 @@
 							};
 						},
 					});
-					window.addEventListener('resize', () => {
+					qmdResizeListener = () => {
 						qmdEditor?.layout();
 						qmdDiffEditor?.layout();
-					});
+					};
+					window.addEventListener('resize', qmdResizeListener);
+					qmdLoadResolve = null;
 					emitQmdMonaco({ type: 'ready' });
 					resolve({ monaco, editor: qmdEditor });
+				}, error => {
+					qmdLoadResolve = null;
+					releaseQmdWorkerURL();
+					reject(error || new Error('Unable to load QMD Monaco'));
 				});
 			});
 			return qmdLoadPromise;
@@ -177,12 +199,16 @@
 			else if (model.getValue() !== text) {
 				model.setValue(text);
 			}
-			model.setEOL(qmdMonaco.editor.EndOfLineSequence.LF);
+			let eol = text.includes('\r\n')
+				? qmdMonaco.editor.EndOfLineSequence.CRLF
+				: qmdMonaco.editor.EndOfLineSequence.LF;
+			model.setEOL(eol);
 			return model;
 		}
 
 		async function setQmdModel(payload = {}) {
 			await loadQmdMonaco();
+			if (qmdDisposed) return false;
 			qmdMode = 'normal';
 			qmdSuppressChanges = true;
 			try {
@@ -202,10 +228,12 @@
 				qmdSuppressChanges = false;
 			}
 			qmdEditor.focus();
+			return true;
 		}
 
 		async function setQmdDiff(payload = {}) {
 			await loadQmdMonaco();
+			if (qmdDisposed) return false;
 			qmdMode = 'diff';
 			document.getElementById('qmd-normal').style.display = 'none';
 			document.getElementById('qmd-diff').style.display = '';
@@ -222,6 +250,7 @@
 				original: modelFor(payload.original.uri, String(payload.original.text || '')),
 				modified: modelFor(payload.modified.uri, String(payload.modified.text || '')),
 			});
+			return true;
 		}
 
 		function offsetRange(model, item) {
@@ -240,6 +269,7 @@
 
 		async function setQmdDiagnostics(diagnostics = []) {
 			await loadQmdMonaco();
+			if (qmdDisposed) return false;
 			if (!qmdNormalModel) return;
 			qmdMonaco.editor.setModelMarkers(qmdNormalModel, 'qlab-qmd', diagnostics.map(item => {
 				let range = offsetRange(qmdNormalModel, item);
@@ -252,10 +282,12 @@
 					code: item.code,
 				};
 			}));
+			return true;
 		}
 
 		async function revealQmdRange(range = {}) {
 			await loadQmdMonaco();
+			if (qmdDisposed) return false;
 			if (!qmdNormalModel) return;
 			let monacoRange = range.startLineNumber
 				? range
@@ -263,6 +295,7 @@
 			qmdEditor.revealRangeInCenter(monacoRange);
 			qmdEditor.setSelection(monacoRange);
 			qmdEditor.focus();
+			return true;
 		}
 
 		function snapshotQmdView() {
@@ -275,6 +308,17 @@
 		}
 
 		function disposeQmdMonaco() {
+			if (qmdDisposed) return;
+			qmdDisposed = true;
+			if (qmdLoadResolve) {
+				qmdLoadResolve({ disposed: true });
+				qmdLoadResolve = null;
+			}
+			if (qmdResizeListener) {
+				window.removeEventListener('resize', qmdResizeListener);
+				qmdResizeListener = null;
+			}
+			releaseQmdWorkerURL();
 			for (let disposable of qmdDisposables.splice(0)) disposable.dispose();
 			qmdCompletionProvider?.dispose();
 			qmdDiffEditor?.dispose();
@@ -283,6 +327,10 @@
 				if (model.uri.toString().startsWith('inmemory://qlab/')) model.dispose();
 			}
 			qmdListeners.clear();
+			qmdCompletionProvider = null;
+			qmdDiffEditor = null;
+			qmdEditor = null;
+			qmdNormalModel = null;
 		}
 	</script>
 </body>

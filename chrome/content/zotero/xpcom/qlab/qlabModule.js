@@ -512,9 +512,10 @@ Zotero.QLab = Zotero.QLab || {};
 	 * Same-kind remounts hydrate chrome only -- transcript, buffer, pending
 	 * inserts, draft state, and surface mode are preserved.
 	 */
-	Zotero.QLab.mountShellTab = async function (container, kind) {
-		if (!container) {
-			return;
+	Zotero.QLab._mountShellTabImpl = async function (container, kind, mountGuard = null) {
+		let mountIsCurrent = () => !mountGuard || mountGuard.isCurrent();
+		if (!container || !mountIsCurrent()) {
+			return null;
 		}
 		let root = '';
 		let workspaceState = 'missing';
@@ -526,6 +527,7 @@ Zotero.QLab = Zotero.QLab || {};
 			if (root && Zotero.QLab.qlabRepositoryState && Zotero.QLab.createGeckoQLabPathHost) {
 				let pathHost = Zotero.QLab.createGeckoQLabPathHost();
 				workspaceState = await Zotero.QLab.qlabRepositoryState(root, pathHost);
+				if (!mountIsCurrent()) return null;
 				if (kind === 'qlabqmd' && workspaceState === 'ready' && Zotero.QLab.QmdDraftIO) {
 					drafts = await Zotero.QLab.QmdDraftIO.listDrafts(
 						root,
@@ -538,6 +540,7 @@ Zotero.QLab = Zotero.QLab || {};
 			Zotero.logError && Zotero.logError(e);
 			workspaceState = 'missing';
 		}
+		if (!mountIsCurrent()) return null;
 		
 		let contextSummary = '';
 		try {
@@ -546,6 +549,7 @@ Zotero.QLab = Zotero.QLab || {};
 			}
 		}
 		catch (e) {}
+		if (!mountIsCurrent()) return null;
 		
 		let host = container.querySelector('.qlab-shell-host');
 		if (!host) {
@@ -640,7 +644,12 @@ Zotero.QLab = Zotero.QLab || {};
 				root,
 				initialPath: tab && tab.data && tab.data.draftPath,
 				layout: tab && tab.data && tab.data.qmdWorkspace,
+				isCurrent: mountIsCurrent,
 			});
+			if (!mountIsCurrent()) {
+				host._qlabQmdWorkspace?.dispose();
+				return null;
+			}
 		}
 		else if (kind === 'qlabqmd' && Zotero.QLab.applyQmdSurfaceMode) {
 			let mode = host._qlabSurfaceMode || 'visual';
@@ -656,6 +665,7 @@ Zotero.QLab = Zotero.QLab || {};
 		if (kind === 'qlabchat') {
 			if (!preserve && root && workspaceState === 'ready' && Zotero.QLab.loadLatestChatThread) {
 				void Zotero.QLab.loadLatestChatThread(host, root).then(() => {
+					if (!mountIsCurrent()) return;
 					Zotero.QLab.renderChatMessages(host);
 					Zotero.QLab.refreshComposerTags(host);
 					Zotero.QLab.updateChatContextMeter(host);
@@ -663,6 +673,7 @@ Zotero.QLab = Zotero.QLab || {};
 			}
 			if (root && Zotero.QLab.loadApprovalPolicy) {
 				void Zotero.QLab.loadApprovalPolicy(root).then((policy) => {
+					if (!mountIsCurrent()) return;
 					host._qlabApprovalPolicy = policy;
 				});
 			}
@@ -1053,6 +1064,48 @@ Zotero.QLab = Zotero.QLab || {};
 		}
 	};
 	
+	Zotero.QLab.runQLabMountSingleton = function (container, kind, operation) {
+		if (!container || typeof operation !== 'function') {
+			return Promise.resolve(null);
+		}
+		let current = container._qlabMountOperation;
+		if (current && current.kind === kind) return current.promise;
+		let predecessor = current ? current.promise.catch(() => null) : Promise.resolve();
+		let record = { kind, promise: null };
+		record.promise = predecessor
+			.then(() => operation())
+			.finally(() => {
+				if (container._qlabMountOperation === record) {
+					container._qlabMountOperation = null;
+				}
+			});
+		container._qlabMountOperation = record;
+		return record.promise;
+	};
+
+	Zotero.QLab.cancelShellTabMount = function (container) {
+		if (!container) return;
+		container._qlabMountClosed = true;
+		container._qlabMountGeneration = (container._qlabMountGeneration || 0) + 1;
+	};
+
+	Zotero.QLab.mountShellTab = function (container, kind) {
+		return Zotero.QLab.runQLabMountSingleton(
+			container,
+			kind,
+			() => {
+				if (container._qlabMountClosed) return null;
+				let generation = (container._qlabMountGeneration || 0) + 1;
+				container._qlabMountGeneration = generation;
+				let mountGuard = {
+					isCurrent: () => !container._qlabMountClosed
+						&& container._qlabMountGeneration === generation,
+				};
+				return Zotero.QLab._mountShellTabImpl(container, kind, mountGuard);
+			}
+		);
+	};
+
 	Zotero.QLab.loadDraftIntoShell = async function (host, root, relativePath) {
 		if (host && host._qlabQmdWorkspace) {
 			return host._qlabQmdWorkspace.openDraft(relativePath);
@@ -1125,14 +1178,25 @@ Zotero.QLab = Zotero.QLab || {};
 				? state.workingPath
 				: state.originalPath;
 			let ioHost = Zotero.QLab.QmdDraftIO.createGeckoHost();
-			let saved = await Zotero.QLab.QmdDraftIO.writeSource(
-				root,
-				path,
-				text,
-				state.viewingWorking ? null : state.revision,
-				ioHost
-			);
-			if (!state.viewingWorking) {
+			let saved = state.viewingWorking
+				? await Zotero.QLab.QmdDraftIO.writeProposal(
+					root,
+					state,
+					text,
+					state.proposalRevision,
+					ioHost
+				)
+				: await Zotero.QLab.QmdDraftIO.writeSource(
+					root,
+					path,
+					text,
+					state.revision,
+					ioHost
+				);
+			if (state.viewingWorking) {
+				state.proposalRevision = saved.revision;
+			}
+			else {
 				state.revision = saved.revision;
 			}
 			host._qlabLastSaved = text;
@@ -1159,6 +1223,8 @@ Zotero.QLab = Zotero.QLab || {};
 	Zotero.QLab.editDraftWithAI = async function (host, root, workspaceState) {
 		let status = host.querySelector('.qlab-shell-status');
 		let state = host._qlabDraftState;
+		let action = null;
+		let ioHost = null;
 		try {
 			if (!state) {
 				throw new Error('Open a Draft first');
@@ -1166,7 +1232,7 @@ Zotero.QLab = Zotero.QLab || {};
 			if (workspaceState !== 'ready') {
 				throw new Error('Workspace is not ready');
 			}
-			let ioHost = Zotero.QLab.QmdDraftIO.createGeckoHost();
+			ioHost = Zotero.QLab.QmdDraftIO.createGeckoHost();
 			let prepared = await Zotero.QLab.QmdDraftIO.prepareChange(
 				root,
 				state.originalPath,
@@ -1177,7 +1243,9 @@ Zotero.QLab = Zotero.QLab || {};
 				originalPath: prepared.originalPath,
 				workingPath: prepared.workingPath,
 				basePath: prepared.basePath,
+				generation: prepared.generation,
 				revision: prepared.revision,
+				proposalRevision: prepared.proposalRevision,
 				viewingWorking: !modernWorkspace,
 			};
 			let shell = host.querySelector('.qlab-shell-qmd');
@@ -1200,14 +1268,16 @@ Zotero.QLab = Zotero.QLab || {};
 				);
 			}
 			
+			action = await prepareQmdAgentAction(root, prepared, ioHost);
 			let runtime = Zotero.QLab.getAgentRuntime();
 			let providerId = Zotero.QLab.Settings.getAgentProviderId();
 			let prompt = [
-				'Edit the QMD working copy only.',
+				'Edit the isolated QMD action copy only.',
 				`Working copy: ${prepared.workingPath}`,
 				`Original Draft: ${prepared.originalPath}`,
+				'Execution directory is an isolated private action directory; edit only ./draft.qmd.',
 				'Do not write knowledge/. Keep authority remains with the user.',
-				`Current source:\n${prepared.text.slice(0, 8000)}`,
+				`Current source:\n${action.source.slice(0, 8000)}`,
 			].join('\n');
 			if (status) {
 				status.textContent = 'Agent editing private working copy…';
@@ -1215,7 +1285,7 @@ Zotero.QLab = Zotero.QLab || {};
 			let chunks = [];
 			for await (let event of runtime.startTurn({
 				mode: 'agent',
-				workspaceRoot: root,
+				workspaceRoot: action.workspaceRoot,
 				prompt,
 				providerId,
 			})) {
@@ -1223,8 +1293,31 @@ Zotero.QLab = Zotero.QLab || {};
 					chunks.push(event.text || '');
 				}
 				else if (event.type === 'error') {
-					chunks.push(`[error] ${event.message}`);
+					throw new Error(event.message || 'Agent error');
 				}
+				else if (event.type === 'done' && event.status === 'cancelled') {
+					throw new Error('Draft AI edit was cancelled');
+				}
+			}
+			let originalNow = await Zotero.QLab.QmdDraftIO.readSource(
+				root,
+				prepared.originalPath,
+				ioHost
+			);
+			if (originalNow.revision !== action.originalRevision) {
+				throw new Error('Draft changed while AI was working; the newer human version was preserved');
+			}
+			let proposedText = await ioHost.read(action.draftPath);
+			let saved = await Zotero.QLab.QmdDraftIO.writeProposal(
+				root,
+				prepared,
+				proposedText,
+				action.proposalRevision,
+				ioHost
+			);
+			if (host._qlabDraftState
+					&& host._qlabDraftState.workingPath === prepared.workingPath) {
+				host._qlabDraftState.proposalRevision = saved.revision;
 			}
 			// Reload working copy if the agent wrote it; otherwise leave editor as-is.
 			try {
@@ -1233,8 +1326,15 @@ Zotero.QLab = Zotero.QLab || {};
 					prepared.workingPath,
 					ioHost
 				);
+				if (working.revision !== saved.revision) {
+					throw new Error('AI proposal changed before it could be displayed; reload the Draft');
+				}
 				if (modernWorkspace) {
-					await modernWorkspace.attachProposal(prepared, working.text, prepared.text);
+					await modernWorkspace.attachProposal(
+						prepared,
+						working.text,
+						prepared.baseText || prepared.text
+					);
 				}
 				else {
 					Zotero.QLab.setQmdShellBuffer(host, working.text, { dirty: false });
@@ -1258,6 +1358,9 @@ Zotero.QLab = Zotero.QLab || {};
 				status.textContent = e.message || String(e);
 			}
 		}
+		finally {
+			await clearQmdAgentAction(action, ioHost);
+		}
 	};
 	
 	Zotero.QLab.keepDraftFromShell = async function (host, root) {
@@ -1276,13 +1379,14 @@ Zotero.QLab = Zotero.QLab || {};
 			if (editor && host._qlabSurfaceMode === 'source') {
 				Zotero.QLab.setQmdShellBuffer(host, editor.value, { dirty: true });
 			}
-			await Zotero.QLab.QmdDraftIO.writeSource(
+			let proposalSaved = await Zotero.QLab.QmdDraftIO.writeProposal(
 				root,
-				state.workingPath,
+				state,
 				Zotero.QLab.getQmdShellBuffer(host),
-				null,
+				state.proposalRevision,
 				ioHost
 			);
+			state.proposalRevision = proposalSaved.revision;
 			let result = await Zotero.QLab.QmdDraftIO.keepChange(root, state, ioHost);
 			host._qlabDraftState = {
 				originalPath: result.path,
@@ -1598,6 +1702,67 @@ Zotero.QLab = Zotero.QLab || {};
 	 * ⌘K: write or rewrite at the current anchor. Runs in `ask` mode and lands
 	 * as a pending region, so it never touches the Draft file or Keep.
 	 */
+	function qmdInlineSelectedText(source, anchor) {
+		let text = String(source || '');
+		if (anchor && anchor.mode === 'replace-range'
+				&& Number.isInteger(anchor.start)
+				&& Number.isInteger(anchor.end)) {
+			return text.slice(anchor.start, anchor.end);
+		}
+		if (anchor && anchor.mode === 'replace-block'
+				&& Number.isInteger(anchor.blockIndex)) {
+			let blocks = Zotero.QLab.visualQmdBlocks
+				? Zotero.QLab.visualQmdBlocks(text)
+				: [];
+			let block = blocks[anchor.blockIndex];
+			return block ? block.source : '';
+		}
+		return '';
+	}
+
+	function qmdInlineAnchorForProposal(humanSource, proposalSource, anchor) {
+		let human = String(humanSource || '');
+		let proposal = String(proposalSource || '');
+		if (!anchor || human === proposal) {
+			return anchor;
+		}
+		if (anchor.mode === 'replace-block' && Number.isInteger(anchor.blockIndex)) {
+			let humanBlocks = Zotero.QLab.visualQmdBlocks
+				? Zotero.QLab.visualQmdBlocks(human)
+				: [];
+			let proposalBlocks = Zotero.QLab.visualQmdBlocks
+				? Zotero.QLab.visualQmdBlocks(proposal)
+				: [];
+			let selected = humanBlocks[anchor.blockIndex];
+			if (!selected) return anchor;
+			if (proposalBlocks[anchor.blockIndex]
+					&& proposalBlocks[anchor.blockIndex].source === selected.source) {
+				return anchor;
+			}
+			let matches = proposalBlocks
+				.map((block, index) => block.source === selected.source ? index : -1)
+				.filter(index => index >= 0);
+			if (matches.length !== 1) {
+				throw new Error('The selected Draft block no longer maps uniquely to the current AI proposal');
+			}
+			return { mode: 'replace-block', blockIndex: matches[0] };
+		}
+		if (anchor.mode !== 'replace-range') return anchor;
+		let selected = human.slice(anchor.start, anchor.end);
+		if (!selected || proposal.slice(anchor.start, anchor.end) === selected) {
+			return anchor;
+		}
+		let start = proposal.indexOf(selected);
+		if (start < 0 || proposal.indexOf(selected, start + selected.length) >= 0) {
+			throw new Error('The selected Draft text no longer maps uniquely to the current AI proposal');
+		}
+		return {
+			mode: 'replace-range',
+			start,
+			end: start + selected.length,
+		};
+	}
+
 	Zotero.QLab.requestQmdInlineWrite = async function ({
 		host,
 		instruction,
@@ -1616,14 +1781,43 @@ Zotero.QLab = Zotero.QLab || {};
 			if (!task) {
 				throw new Error('Describe what to write');
 			}
-			let anchor = Zotero.QLab.resolveQmdAnchor(host, { forInlineWrite: true });
-			let replace = anchor.mode === 'replace-block' || anchor.mode === 'replace-range';
-			let selectedText = replace
-				? Zotero.QLab.qmdAnchorSelectedText(host, anchor)
-				: '';
-			let buffer = Zotero.QLab.getQmdShellBuffer(host);
-			let context = Zotero.QLab.qmdAnchorContext(buffer, anchor);
 			let state = host._qlabDraftState;
+			let modernWorkspace = host._qlabQmdWorkspace;
+			let ioHost = null;
+			let prepared = null;
+			let proposalAtStart = null;
+			let originalAtStart = null;
+			let humanBufferAtStart = '';
+			if (modernWorkspace && state && state.originalPath) {
+				await modernWorkspace.saveNow();
+				state = host._qlabDraftState;
+				if (!state || !state.originalPath) {
+					throw new Error('The active Draft changed before inline AI could start');
+				}
+				humanBufferAtStart = Zotero.QLab.getQmdShellBuffer(host);
+				ioHost = Zotero.QLab.QmdDraftIO.createGeckoHost();
+				prepared = await Zotero.QLab.QmdDraftIO.prepareChange(
+					root,
+					state.originalPath,
+					ioHost
+				);
+				[proposalAtStart, originalAtStart] = await Promise.all([
+					Zotero.QLab.QmdDraftIO.readSource(root, prepared.workingPath, ioHost),
+					Zotero.QLab.QmdDraftIO.readSource(root, prepared.originalPath, ioHost),
+				]);
+			}
+			let anchor = Zotero.QLab.resolveQmdAnchor(host, { forInlineWrite: true });
+			if (proposalAtStart) {
+				anchor = qmdInlineAnchorForProposal(humanBufferAtStart, proposalAtStart.text, anchor);
+			}
+			let replace = anchor.mode === 'replace-block' || anchor.mode === 'replace-range';
+			let buffer = proposalAtStart
+				? proposalAtStart.text
+				: Zotero.QLab.getQmdShellBuffer(host);
+			let selectedText = replace
+				? qmdInlineSelectedText(buffer, anchor)
+				: '';
+			let context = Zotero.QLab.qmdAnchorContext(buffer, anchor);
 			let prompt = Zotero.QLab.buildQmdInlineWritePrompt({
 				instruction: task,
 				composerContext: composerContextBlock(),
@@ -1687,27 +1881,43 @@ Zotero.QLab = Zotero.QLab || {};
 				}
 				throw new Error('The provider returned nothing to insert');
 			}
-			if (host._qlabQmdWorkspace && state && state.originalPath) {
-				await host._qlabQmdWorkspace.saveNow();
+			if (modernWorkspace && prepared && proposalAtStart && originalAtStart) {
+				let currentState = host._qlabDraftState;
+				if (!currentState || currentState.originalPath !== prepared.originalPath
+						|| Zotero.QLab.getQmdShellBuffer(host) !== humanBufferAtStart) {
+					throw new Error('Draft context changed while inline AI was working; the newer version was preserved');
+				}
+				let [proposalNow, originalNow] = await Promise.all([
+					Zotero.QLab.QmdDraftIO.readSource(root, prepared.workingPath, ioHost),
+					Zotero.QLab.QmdDraftIO.readSource(root, prepared.originalPath, ioHost),
+				]);
+				if (originalNow.revision !== originalAtStart.revision) {
+					throw new Error('Draft context changed while inline AI was working; the newer version was preserved');
+				}
+				if (proposalNow.revision !== proposalAtStart.revision) {
+					throw new Error('AI proposal changed while inline AI was working; reload before retrying');
+				}
 				let composed = Zotero.QLab.composeQmdInsertion(buffer, anchor, written);
 				if (!composed.changed) throw new Error('Nothing changed');
-				let ioHost = Zotero.QLab.QmdDraftIO.createGeckoHost();
-				let prepared = await Zotero.QLab.QmdDraftIO.prepareChange(
+				let saved = await Zotero.QLab.QmdDraftIO.writeProposal(
 					root,
-					state.originalPath,
-					ioHost
-				);
-				await Zotero.QLab.QmdDraftIO.writeSource(
-					root,
-					prepared.workingPath,
-					composed.source,
-					null,
-					ioHost
-				);
-				await host._qlabQmdWorkspace.attachProposal(
 					prepared,
 					composed.source,
-					prepared.text
+					proposalAtStart.revision,
+					ioHost
+				);
+				let proposalAfterWrite = await Zotero.QLab.QmdDraftIO.readSource(
+					root,
+					prepared.workingPath,
+					ioHost
+				);
+				if (proposalAfterWrite.revision !== saved.revision) {
+					throw new Error('AI proposal changed before it could be displayed; reload the Draft');
+				}
+				await modernWorkspace.attachProposal(
+					prepared,
+					composed.source,
+					prepared.baseText || originalAtStart.text
 				);
 			}
 			else {
@@ -1724,7 +1934,7 @@ Zotero.QLab = Zotero.QLab || {};
 				}
 			}
 			if (status) {
-				status.textContent = host._qlabQmdWorkspace
+				status.textContent = modernWorkspace
 					? 'AI proposal ready — compare, then Keep or Reject'
 					: (cancelled
 						? 'Partial write kept in the buffer — review, then Save'
@@ -1834,7 +2044,9 @@ Zotero.QLab = Zotero.QLab || {};
 		}
 	};
 
-	async function processAgentStream(host, turn, reply, chunks, status) {
+	async function processAgentStream(host, turn, reply, chunks, status, {
+		failClosed = false,
+	} = {}) {
 		let cancelled = false;
 		for await (let event of turn) {
 			if (event.type === 'text-delta') {
@@ -1842,8 +2054,10 @@ Zotero.QLab = Zotero.QLab || {};
 				Zotero.QLab.updateChatMessage(host, reply.id, chunks.join(''));
 			}
 			else if (event.type === 'error') {
-				chunks.push(`\n[error] ${event.message}`);
+				let message = event.message || 'Agent stream failed';
+				chunks.push(`\n[error] ${message}`);
 				Zotero.QLab.updateChatMessage(host, reply.id, chunks.join(''));
+				if (failClosed) throw new Error(message);
 			}
 			else if (event.type === 'approval-needed') {
 				let policy = host._qlabApprovalPolicy;
@@ -1858,17 +2072,21 @@ Zotero.QLab = Zotero.QLab || {};
 				}
 				if (decision === 'deny') {
 					chunks.push(`\n[denied] ${event.reason}\n`);
+					Zotero.QLab.updateChatMessage(host, reply.id, chunks.join(''));
 					if (turn.cancel) {
 						turn.cancel();
 					}
+					if (failClosed) throw new Error('Agent approval was denied during Draft review');
 					break;
 				}
 				let approved = await Zotero.QLab.waitForChatApproval(host, event);
 				if (!approved) {
 					chunks.push(`\n[denied] ${event.reason}\n`);
+					Zotero.QLab.updateChatMessage(host, reply.id, chunks.join(''));
 					if (turn.cancel) {
 						turn.cancel();
 					}
+					if (failClosed) throw new Error('Agent approval was denied during Draft review');
 					break;
 				}
 				chunks.push(`\n[approved] ${event.reason}\n`);
@@ -2130,6 +2348,485 @@ Zotero.QLab = Zotero.QLab || {};
 		}
 		await Zotero.QLab.runShellFreeform(host, root, workspaceState);
 	};
+
+	function qmdActionWindow(host, windowRef) {
+		if (windowRef) return windowRef;
+		if (host && host.ownerDocument && host.ownerDocument.defaultView) {
+			return host.ownerDocument.defaultView;
+		}
+		return Zotero.getMainWindow ? Zotero.getMainWindow() : null;
+	}
+
+	function chatHostForWindow(windowRef, chatTabID) {
+		if (!windowRef || !windowRef.document || !chatTabID) return null;
+		let container = windowRef.document.getElementById(chatTabID);
+		return container && container.querySelector('.qlab-shell-host');
+	}
+
+	async function waitForChatHost(windowRef, chatTabID) {
+		let host = chatHostForWindow(windowRef, chatTabID);
+		for (let attempt = 0; !host && attempt < 8; attempt++) {
+			await new Promise(resolve => {
+				let schedule = windowRef && typeof windowRef.setTimeout === 'function'
+					? windowRef.setTimeout.bind(windowRef)
+					: setTimeout;
+				schedule(resolve, 0);
+			});
+			host = chatHostForWindow(windowRef, chatTabID);
+		}
+		return host;
+	}
+
+	function assertDraftActionPath(relativePath) {
+		let path = String(relativePath || '').replace(/\\/g, '/');
+		if (!Zotero.QLab.isSafeWorkspaceRelativePath(path, { under: 'drafts' })
+				|| !/\.qmd$/i.test(path)) {
+			throw new Error('Choose a safe QMD Draft before running this action');
+		}
+		return path;
+	}
+
+	/**
+	 * Run a Draft review in the shared Chat transcript. QMD callers pass their
+	 * window (or host); this helper makes the singleton Chat pane visible first
+	 * and never uses agent/write mode for the review.
+	 */
+	Zotero.QLab.runQmdDraftReviewAction = async function ({
+		chatHost = null,
+		host = null,
+		window: windowRef = null,
+		root = '',
+		workspaceState = 'missing',
+		relativePath = '',
+		title = '',
+		itemID,
+	} = {}) {
+		let path = assertDraftActionPath(relativePath);
+		let view = qmdActionWindow(host, windowRef);
+		let chatTabID = Zotero.QLab.ensureChatPaneVisible
+			? await Zotero.QLab.ensureChatPaneVisible(view, { itemID })
+			: null;
+		let targetHost = chatHost || await waitForChatHost(view, chatTabID);
+		if (!targetHost) {
+			throw new Error('Chat is unavailable for Draft review');
+		}
+		let status = targetHost.querySelector('.qlab-shell-status');
+		try {
+			if (!root || workspaceState === 'missing' || workspaceState === 'incompatible') {
+				throw new Error('Choose a ready QLab workspace before reviewing a Draft.');
+			}
+			let prompt = Zotero.QLab.buildResearchActionPrompt('review-draft', {
+				qlabRoot: root,
+				object: {
+					kind: 'draft',
+					title: title || path.split('/').pop(),
+					relativePath: path,
+				},
+			});
+			let readerBlock = composerContextBlock(targetHost, { chatMode: 'ask' });
+			if (readerBlock) prompt = `${readerBlock}\n\n${prompt}`;
+			let rules = Zotero.QLab.loadChatRulesPreamble
+				? await Zotero.QLab.loadChatRulesPreamble(root)
+				: '';
+			if (rules) prompt = `${rules}\n\n${prompt}`;
+			let providerId = Zotero.QLab.Settings.getAgentProviderId();
+			if (status) status.textContent = `Reviewing ${path} via ${providerId}…`;
+			Zotero.QLab.startup && Zotero.QLab.startup();
+			let runtime = Zotero.QLab.getAgentRuntime && Zotero.QLab.getAgentRuntime();
+			if (!runtime) throw new Error('AgentRuntime is unavailable');
+			let chunks = [];
+			Zotero.QLab.appendChatMessage(targetHost, {
+				role: 'user',
+				text: `/review-draft ${path}`,
+			});
+			let reply = Zotero.QLab.appendChatMessage(targetHost, {
+				role: 'assistant',
+				text: 'Reviewing the Draft read-only…',
+			});
+			if (!targetHost._qlabThreadId) targetHost._qlabThreadId = newThreadId();
+			let model = Zotero.QLab.Settings.getAgentModel
+				? Zotero.QLab.Settings.getAgentModel()
+				: '';
+			setChatTurnRunning(targetHost, true);
+			let turn = runtime.startTurn({
+				mode: 'ask',
+				workspaceRoot: root,
+				prompt,
+				providerId,
+				model: model || undefined,
+				threadId: targetHost._qlabThreadId,
+				attachments: [{ kind: 'policy', readOnly: true }],
+			});
+			targetHost._qlabTurnHandle = turn;
+			let cancelled = await processAgentStream(
+				targetHost,
+				turn,
+				reply,
+				chunks,
+				status,
+				{ failClosed: true }
+			);
+			Zotero.QLab.updateChatMessage(targetHost, reply.id, chunks.join('') || '(empty)', {
+				status: cancelled ? 'cancelled' : '',
+			});
+			void Zotero.QLab.persistChatHost(targetHost, root);
+			return { status: cancelled ? 'cancelled' : 'completed', chatTabID, chatHost: targetHost };
+		}
+		catch (e) {
+			Zotero.logError && Zotero.logError(e);
+			if (status) status.textContent = e.message || String(e);
+			throw e;
+		}
+		finally {
+			targetHost._qlabTurnHandle = null;
+			setChatTurnRunning(targetHost, false);
+		}
+	};
+
+	function todoFailure(message) {
+		return {
+			ok: false,
+			todoCount: 0,
+			message: String(message || 'TODO-only completion did not produce a valid proposal'),
+		};
+	}
+
+	let qmdAgentActionSequence = 0;
+
+	function qmdWorkingCopyRoot(root, workingPath) {
+		let base = String(root || '').replace(/[\\/]+$/, '');
+		let relative = String(workingPath || '').replace(/\\/g, '/');
+		if (!Zotero.QLab.isSafeWorkspaceRelativePath(relative, {
+			under: 'work/qlab-zotero/draft-changes',
+		}) || !/\/draft\.qmd$/i.test(relative)) {
+			throw new Error('Unsafe private working-copy directory');
+		}
+		let directory = relative.replace(/\/draft\.qmd$/i, '');
+		return `${base}/${directory}`;
+	}
+
+	function normalizedFilePath(value) {
+		return String(value || '').replace(/\\/g, '/').replace(/\/+$/, '');
+	}
+
+	async function createPrivateQmdAgentWorkspace(root, prepared, proposalRoot, token, ioHost) {
+		let relativeDirectory = String(prepared.workingPath || '')
+			.replace(/\\/g, '/')
+			.replace(/\/draft\.qmd$/i, '');
+		let [realRoot, realProposalRoot] = await Promise.all([
+			ioHost.realPath(root),
+			ioHost.realPath(proposalRoot),
+		]);
+		let expectedProposalRoot = `${normalizedFilePath(realRoot)}/${relativeDirectory}`;
+		if (normalizedFilePath(realProposalRoot) !== expectedProposalRoot) {
+			throw new Error('Private Draft proposal uses a symbolic link or resolves outside its workspace');
+		}
+
+		let actionsRoot = `${proposalRoot}/agent-actions`;
+		let expectedActionsRoot = `${expectedProposalRoot}/agent-actions`;
+		if (await ioHost.exists(actionsRoot)) {
+			let realActionsRoot = await ioHost.realPath(actionsRoot);
+			if (normalizedFilePath(realActionsRoot) !== expectedActionsRoot) {
+				throw new Error('Agent action parent uses a symbolic link or resolves outside the private proposal');
+			}
+		}
+		else {
+			await ioHost.makeDir(actionsRoot, { createAncestors: false });
+			let realActionsRoot = await ioHost.realPath(actionsRoot);
+			if (normalizedFilePath(realActionsRoot) !== expectedActionsRoot) {
+				throw new Error('Agent action parent resolves outside the private Draft proposal');
+			}
+		}
+
+		let workspaceRoot = `${actionsRoot}/${token}`;
+		if (await ioHost.exists(workspaceRoot)) {
+			throw new Error('Private AI action directory already exists');
+		}
+		await ioHost.makeDir(workspaceRoot, { createAncestors: false });
+		let realWorkspaceRoot = await ioHost.realPath(workspaceRoot);
+		let expectedWorkspaceRoot = `${expectedActionsRoot}/${token}`;
+		if (normalizedFilePath(realWorkspaceRoot) !== expectedWorkspaceRoot) {
+			throw new Error('Isolated AI action resolves outside the private Draft proposal');
+		}
+		return { workspaceRoot, expectedWorkspaceRoot };
+	}
+
+	async function prepareQmdAgentAction(root, prepared, ioHost) {
+		if (!ioHost || typeof ioHost.makeDir !== 'function'
+				|| typeof ioHost.write !== 'function'
+				|| typeof ioHost.read !== 'function'
+				|| typeof ioHost.exists !== 'function'
+				|| typeof ioHost.realPath !== 'function') {
+			throw new Error('Draft proposal host cannot create an isolated AI action');
+		}
+		let proposal = await Zotero.QLab.QmdDraftIO.readSource(
+			root,
+			prepared.workingPath,
+			ioHost
+		);
+		let original = await Zotero.QLab.QmdDraftIO.readSource(
+			root,
+			prepared.originalPath,
+			ioHost
+		);
+		let proposalRoot = qmdWorkingCopyRoot(root, prepared.workingPath);
+		let token = `${Date.now().toString(36)}-${(++qmdAgentActionSequence).toString(36)}`;
+		let workspaceRoot = '';
+		let expectedWorkspaceRoot = '';
+		let draftPath = `${workspaceRoot}/draft.qmd`;
+		try {
+			let created = await createPrivateQmdAgentWorkspace(
+				root, prepared, proposalRoot, token, ioHost
+			);
+			workspaceRoot = created.workspaceRoot;
+			expectedWorkspaceRoot = created.expectedWorkspaceRoot;
+			draftPath = `${workspaceRoot}/draft.qmd`;
+			await ioHost.write(draftPath, proposal.text);
+			let realDraftPath = await ioHost.realPath(draftPath);
+			if (normalizedFilePath(realDraftPath) !== `${expectedWorkspaceRoot}/draft.qmd`) {
+				throw new Error('Isolated AI action Draft uses a symbolic link');
+			}
+			return {
+				workspaceRoot,
+				draftPath,
+				source: proposal.text,
+				proposalRevision: proposal.revision,
+				originalRevision: original.revision,
+			};
+		}
+		catch (error) {
+			if (workspaceRoot && typeof ioHost.remove === 'function') {
+				await ioHost.remove(workspaceRoot, { recursive: true }).catch(() => {});
+			}
+			throw error;
+		}
+	}
+
+	async function clearQmdAgentAction(action, ioHost) {
+		if (!action || !ioHost || typeof ioHost.remove !== 'function') return;
+		try {
+			await ioHost.remove(action.workspaceRoot, { recursive: true });
+		}
+		catch (error) {
+			Zotero.logError && Zotero.logError(error);
+		}
+	}
+
+	async function startQmdTodoChat({ chatHost, host, windowRef, root, originalPath }) {
+		if (!chatHost && !host && !windowRef) return null;
+		let view = qmdActionWindow(host, windowRef);
+		let chatTabID = Zotero.QLab.ensureChatPaneVisible
+			? await Zotero.QLab.ensureChatPaneVisible(view, {})
+			: null;
+		let targetHost = chatHost || await waitForChatHost(view, chatTabID);
+		if (!targetHost) throw new Error('Chat is unavailable for TODO completion');
+		Zotero.QLab.appendChatMessage(targetHost, {
+			role: 'user',
+			text: `/complete-todos ${originalPath}`,
+		});
+		let reply = Zotero.QLab.appendChatMessage(targetHost, {
+			role: 'assistant',
+			text: 'Preparing a private TODO completion proposal…',
+		});
+		return { host: targetHost, reply, root };
+	}
+
+	function updateQmdTodoChat(chat, text) {
+		if (!chat) return;
+		Zotero.QLab.updateChatMessage(chat.host, chat.reply.id, text);
+		void Zotero.QLab.persistChatHost(chat.host, chat.root);
+	}
+
+	/**
+	 * Create and guard a TODO-only private Draft proposal. This function never
+	 * promotes the proposal; a QMD workspace calls attachProposal with the
+	 * returned proposal only after the guard accepts its working-copy content.
+	 */
+	Zotero.QLab.runQmdTodoCompletion = async function ({
+		root = '',
+		originalPath = '',
+		ioHost = null,
+		runtime = null,
+		providerId = '',
+		model = '',
+		chatHost = null,
+		host: sourceHost = null,
+		window: windowRef = null,
+	} = {}) {
+		let path = assertDraftActionPath(originalPath);
+		if (!root) throw new Error('A QLab workspace is required to complete TODOs');
+		let draftIO = Zotero.QLab.QmdDraftIO;
+		if (!draftIO) throw new Error('QMD Draft IO is unavailable');
+		let pathHost = ioHost || draftIO.createGeckoHost();
+		let chat = await startQmdTodoChat({
+			chatHost,
+			host: sourceHost,
+			windowRef,
+			root,
+			originalPath: path,
+		});
+		let prepared;
+		let proposalSnapshot;
+		try {
+			prepared = await draftIO.prepareChange(root, path, pathHost);
+			proposalSnapshot = await draftIO.readSource(root, prepared.workingPath, pathHost);
+			if (proposalSnapshot.text !== prepared.text) {
+				throw new Error('The AI proposal changed while TODO completion was starting');
+			}
+			updateQmdTodoChat(chat, 'Completing TODOs in an isolated private action…');
+		}
+		catch (e) {
+			updateQmdTodoChat(chat, 'TODO completion could not start. No Draft was changed.');
+			throw e;
+		}
+		let agent = runtime || (Zotero.QLab.getAgentRuntime && Zotero.QLab.getAgentRuntime());
+		let resolvedProvider = providerId || (Zotero.QLab.Settings
+			&& Zotero.QLab.Settings.getAgentProviderId
+			&& Zotero.QLab.Settings.getAgentProviderId()) || '';
+		let resolvedModel = model || (Zotero.QLab.Settings
+			&& Zotero.QLab.Settings.getAgentModel
+			&& Zotero.QLab.Settings.getAgentModel()) || '';
+		let privateFeedback = '';
+		let validation = null;
+
+		for (let attempt = 1; attempt <= 2; attempt++) {
+			let run = null;
+			let prompt = Zotero.QLab.buildQmdTodoPrompt({
+				workingPath: prepared.workingPath,
+				originalPath: prepared.originalPath,
+			});
+			let completeGapsSkillPath = `${String(root).replace(/[\\/]+$/, '')}/skills/complete-gaps/SKILL.md`;
+			prompt += `\nReadable authority path: ${completeGapsSkillPath}`;
+			prompt += '\nExecution directory is an isolated TODO action directory. '
+				+ 'Read only ./input.qmd and write only ./todo-completions.json.';
+			if (privateFeedback) {
+				prompt += `\n\n<private_validation_feedback>\n${privateFeedback}\n`
+					+ 'The previous manifest was discarded. Write a complete replacement manifest.'
+					+ '\n</private_validation_feedback>';
+			}
+			try {
+				if (!agent) throw new Error('AgentRuntime is unavailable');
+				run = await draftIO.prepareTodoCompletionRun(
+					root,
+					prepared,
+					prepared.text,
+					pathHost
+				);
+				for await (let event of agent.startTurn({
+					mode: 'agent',
+					workspaceRoot: `${String(root).replace(/[\\/]+$/, '')}/${run.directory}`,
+					prompt,
+					providerId: resolvedProvider || undefined,
+					model: resolvedModel || undefined,
+				})) {
+					if (event.type === 'error') throw new Error(event.message || 'Agent error');
+					if (event.type === 'done' && event.status === 'cancelled') {
+						throw new Error('TODO completion was cancelled');
+					}
+				}
+				let manifest = await draftIO.readTodoCompletions(root, run, pathHost);
+				let applied = Zotero.QLab.applyQmdTodoCompletions(prepared.text, manifest);
+				validation = applied.ok
+					? Zotero.QLab.validateTodoOnlyChange(prepared.text, applied.after)
+					: applied;
+				await draftIO.clearTodoCompletions(root, run, pathHost);
+				run = null;
+				if (validation.ok) {
+					let current = await draftIO.readSource(root, prepared.workingPath, pathHost);
+					if (current.revision !== proposalSnapshot.revision
+							|| current.text !== prepared.text) {
+						validation = todoFailure(
+							'The AI proposal changed concurrently; reload before completing TODOs'
+						);
+						updateQmdTodoChat(
+							chat,
+							'TODO completion stopped because the AI proposal changed; the latest proposal was preserved.'
+						);
+						return {
+							status: 'rejected',
+							attempts: attempt,
+							validation,
+							state: prepared,
+							proposal: null,
+						};
+					}
+					try {
+						await draftIO.writeProposal(
+							root,
+							prepared,
+							applied.after,
+							proposalSnapshot.revision,
+							pathHost
+						);
+					}
+					catch (error) {
+						validation = todoFailure(
+							`The AI proposal changed concurrently: ${error.message || error}`
+						);
+						updateQmdTodoChat(
+							chat,
+							'TODO completion stopped because the AI proposal changed; the latest proposal was preserved.'
+						);
+						return {
+							status: 'rejected',
+							attempts: attempt,
+							validation,
+							state: prepared,
+							proposal: null,
+						};
+					}
+					updateQmdTodoChat(
+						chat,
+						'TODO completion finished. Proposal ready for review; no Draft was promoted.'
+					);
+					return {
+						status: 'proposal-ready',
+						attempts: attempt,
+						validation,
+						state: prepared,
+						proposal: {
+							state: prepared,
+							proposedText: applied.after,
+							baseText: prepared.baseText || prepared.text,
+						},
+					};
+				}
+			}
+			catch (e) {
+				validation = todoFailure(e.message || String(e));
+				if (run) {
+					try {
+						await draftIO.clearTodoCompletions(root, run, pathHost);
+					}
+					catch (cleanupError) {
+						validation = todoFailure(
+							`${validation.message}; failed to clear isolated TODO action: ${cleanupError.message || cleanupError}`
+						);
+					}
+					run = null;
+				}
+			}
+
+			let guard = Zotero.QLab.decideQmdTodoGuard(validation, { attempt });
+			if (!guard.retryPrivately) {
+				updateQmdTodoChat(
+					chat,
+					'TODO completion rejected after one private retry; the existing AI proposal was unchanged.'
+				);
+				return {
+					status: 'rejected',
+					attempts: attempt,
+					validation,
+					state: prepared,
+					proposal: null,
+				};
+			}
+			privateFeedback = guard.privateFeedback;
+			updateQmdTodoChat(chat, 'Retrying privately with a fresh isolated manifest…');
+		}
+
+		return { status: 'rejected', attempts: 2, validation, state: prepared, proposal: null };
+	};
 	
 	/**
 	 * Chat-shell Research Action → AgentRuntime.startTurn.
@@ -2268,8 +2965,8 @@ Zotero.QLab = Zotero.QLab || {};
 						}
 					}
 					try {
-						let container = typeof document !== 'undefined'
-							? document.getElementById(existing.id)
+						let container = tabsAPI.deck && tabsAPI.deck.ownerDocument
+							? tabsAPI.deck.ownerDocument.getElementById(existing.id)
 							: null;
 						if (container) {
 							void Zotero.QLab.mountShellTab(container, kind);
@@ -2285,7 +2982,7 @@ Zotero.QLab = Zotero.QLab || {};
 					'qlabqmd': 'QMD Editor',
 					'qlabsite': 'Knowledge Site',
 				};
-				let shellTabID = '';
+				let shellContainer = null;
 				let { id, container } = tabsAPI.add({
 					id: kind,
 					type: kind,
@@ -2294,17 +2991,16 @@ Zotero.QLab = Zotero.QLab || {};
 					select: false,
 					onClose: () => {
 						try {
-							let shell = typeof document !== 'undefined'
-								? document.getElementById(shellTabID)
-								: null;
-							shell?.querySelector('.qlab-shell-host')?._qlabQmdWorkspace?.dispose();
+							Zotero.QLab.cancelShellTabMount(shellContainer);
+							shellContainer?.querySelector('.qlab-shell-host')
+								?._qlabQmdWorkspace?.dispose();
 						}
 						catch (e) {
 							Zotero.logError && Zotero.logError(e);
 						}
 					},
 				});
-				shellTabID = id;
+				shellContainer = container;
 				Zotero.QLab.mountShellTab(container, kind);
 				return id;
 			},

@@ -80,16 +80,16 @@ source-driven QMD rendering with KaTeX, Quarto CLI 1.8.x, SCSS, Node
 - `createQmdWorkspaceController({ surface })` defaults to `visual`, migrates
   old `preview` to `website`, and serializes the normalized value.
 
-- [ ] Write literal cycle/default/migration/restoration tests.
-- [ ] Assert the shell renders all three resident panes and the eye action is
+- [x] Write literal cycle/default/migration/restoration tests.
+- [x] Assert the shell renders all three resident panes and the eye action is
   not a binary `aria-pressed` switch.
-- [ ] Run focused tests and verify RED.
-- [ ] Implement the pure state helpers and controller behavior.
-- [ ] Update shell layout so all three surfaces remain mounted and only the
+- [x] Run focused tests and verify RED.
+- [x] Implement the pure state helpers and controller behavior.
+- [x] Update shell layout so all three surfaces remain mounted and only the
   active one is hidden.
-- [ ] Keep `versionTarget` independent of mode; the Original/Proposed control
+- [x] Keep `versionTarget` independent of mode; the Original/Proposed control
   may not be repurposed as the eye control.
-- [ ] Run focused tests and commit.
+- [x] Run focused tests and commit.
 
 ### Task 5: Port the XPI Visual Editor Source Model and Save Engine
 
@@ -109,17 +109,17 @@ source-driven QMD rendering with KaTeX, Quarto CLI 1.8.x, SCSS, Node
 - `options.save(source, expectedRevision, generation)` is the only persistence
   path and returns the new source/revision.
 
-- [ ] Port XPI behavior tests for theorem/lemma/definition/proof cards,
+- [x] Port XPI behavior tests for theorem/lemma/definition/proof cards,
   formula-only editing, complete-card source editing, idle autosave, unique
   formal anchors, and stale-generation suppression.
-- [ ] Add pure math-range and formal-template tests where full DOM behavior is
+- [x] Add pure math-range and formal-template tests where full DOM behavior is
   not required.
-- [ ] Run focused tests and verify RED.
-- [ ] Port the mature XPI implementation into Gecko JavaScript, reusing
+- [x] Run focused tests and verify RED.
+- [x] Port the mature XPI implementation into Gecko JavaScript, reusing
   Chatero's `visualQmdBlocks`, `renderQmdBlockHTML`, and KaTeX output.
-- [ ] Ensure rendered formulas stop card click propagation and only replace
+- [x] Ensure rendered formulas stop card click propagation and only replace
   their exact LaTeX range.
-- [ ] Run focused tests and commit.
+- [x] Run focused tests and commit.
 
 ### Task 6: Wire Visual Edit to the Shared Draft Session
 
@@ -138,17 +138,17 @@ source-driven QMD rendering with KaTeX, Quarto CLI 1.8.x, SCSS, Node
   them.
 - Hidden Website state remains warm; mode switches do not stop/start Quarto.
 
-- [ ] Write identity/state-retention tests using recording Monaco, Visual
+- [x] Write identity/state-retention tests using recording Monaco, Visual
   Editor, Preview, and Draft-session fakes.
-- [ ] Write a conflict test proving a visual save cannot overwrite a newer
+- [x] Write a conflict test proving a visual save cannot overwrite a newer
   disk revision.
-- [ ] Run focused tests and verify RED.
-- [ ] Mount Visual Edit as a third resident surface and connect it to the
+- [x] Run focused tests and verify RED.
+- [x] Mount Visual Edit as a third resident surface and connect it to the
   Draft session.
-- [ ] Make surface changes await `finishActiveEdit` when needed.
-- [ ] Style cards, formula editors, and source editors to match the light
+- [x] Make surface changes await `finishActiveEdit` when needed.
+- [x] Style cards, formula editors, and source editors to match the light
   native Chatero/Quarto workspace rather than a black code theme.
-- [ ] Run focused tests and Sass build; commit.
+- [x] Run focused tests and Sass build; commit.
 
 ### Task 7: Preserve the Former XPI Toolbar Capabilities
 
@@ -169,16 +169,16 @@ source-driven QMD rendering with KaTeX, Quarto CLI 1.8.x, SCSS, Node
 - open in configured external editor;
 - refresh active surface.
 
-- [ ] Write a capability inventory test based on stable action identifiers,
+- [x] Write a capability inventory test based on stable action identifiers,
   not icon glyphs.
-- [ ] Assert every icon-only action has an English accessible label and title.
-- [ ] Assert formal-block tools are visible only in Visual Edit and proposal
+- [x] Assert every icon-only action has an English accessible label and title.
+- [x] Assert formal-block tools are visible only in Visual Edit and proposal
   actions follow proposal availability without being conflated with mode.
-- [ ] Run focused tests and verify RED.
-- [ ] Wire existing Chatero action services; port only missing XPI adapters and
+- [x] Run focused tests and verify RED.
+- [x] Wire existing Chatero action services; port only missing XPI adapters and
   do not create a second prompt system.
-- [ ] Keep Explorer/save/Reject only when they add distinct behavior.
-- [ ] Run focused tests and commit.
+- [x] Keep Explorer/save/Reject only when they add distinct behavior.
+- [x] Run focused tests and commit.
 
 ### Task 8: Integrate Truthful Persistence and Website Status
 
@@ -196,11 +196,11 @@ source-driven QMD rendering with KaTeX, Quarto CLI 1.8.x, SCSS, Node
 - [x] Wrote save-state precedence tests.
 - [x] Added the first production status combiner and removed the unconditional
   post-start `Saved` overwrite.
-- [ ] Adapt the partially implemented status code to `website` rather than the
+- [x] Adapt the partially implemented status code to `website` rather than the
   retired binary `preview` surface.
-- [ ] Keep Visual Edit/Monaco persistence messages independent from hidden
+- [x] Keep Visual Edit/Monaco persistence messages independent from hidden
   Website progress; show Website progress when Website is active.
-- [ ] Run all QMD tests and commit the integrated status model.
+- [x] Run all QMD tests and commit the integrated status model.
 
 ### Task 9: Harden Active-Process Lifecycle and Rapid File Switching
 
@@ -210,11 +210,11 @@ source-driven QMD rendering with KaTeX, Quarto CLI 1.8.x, SCSS, Node
 - Modify: `chrome/content/zotero/xpcom/qlab/qmdPreview.js`
 - Modify: `chrome/content/zotero/xpcom/qlab/qmdPreviewController.js`
 
-- [ ] Test same-document reuse, dead-cache restart, late kill registration,
+- [x] Test same-document reuse, dead-cache restart, late kill registration,
   and stale-generation cancellation.
-- [ ] Run focused tests and verify RED.
-- [ ] Implement the minimal lifecycle hardening.
-- [ ] Run focused and full Chatero tests; commit.
+- [x] Run focused tests and verify RED.
+- [x] Implement the minimal lifecycle hardening.
+- [x] Run focused and full Chatero tests; commit.
 
 ### Task 10: Live Verification, Review Guide, and Private DMG
 
@@ -226,7 +226,7 @@ source-driven QMD rendering with KaTeX, Quarto CLI 1.8.x, SCSS, Node
 - [ ] Manually verify the exact three-mode cycle, restored mode, Visual Edit
   math/card behavior, toolbar actions, last-good fallback, Explorer, AI diff,
   Keep, Reject, PDF tabs, and Zotero core behavior.
-- [ ] Run all focused QMD tests, full Chatero tests, Sass, and build.
-- [ ] Update and commit the review guide.
+- [x] Run all focused QMD tests, full Chatero tests, Sass, and build.
+- [x] Update and commit the review guide.
 - [ ] Package and verify the DMG, scan it for private QLab content, and report
   its checksum without committing the artifact.

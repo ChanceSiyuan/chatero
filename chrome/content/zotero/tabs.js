@@ -962,6 +962,22 @@ var Zotero_Tabs = new function () {
 		container.id = id;
 		this.deck.appendChild(container);
 		var tab = { id, type, title, data, onClose };
+		if (!tab.onClose
+				&& Zotero.QLab && Zotero.QLab.SHELL_TAB_TYPES
+				&& Zotero.QLab.SHELL_TAB_TYPES.includes(type)) {
+			tab.onClose = () => {
+				try {
+					if (Zotero.QLab.cancelShellTabMount) {
+						Zotero.QLab.cancelShellTabMount(container);
+					}
+					container.querySelector('.qlab-shell-host')
+						?._qlabQmdWorkspace?.dispose();
+				}
+				catch (e) {
+					Zotero.logError && Zotero.logError(e);
+				}
+			};
+		}
 		index = index || this._tabs.length;
 		this._tabs.splice(index, 0, tab);
 		this._update();
