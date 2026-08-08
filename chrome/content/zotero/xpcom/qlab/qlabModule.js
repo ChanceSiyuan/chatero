@@ -1687,6 +1687,16 @@ Zotero.QLab = Zotero.QLab || {};
 					if (payload && tabsAPI.setTabData) {
 						tabsAPI.setTabData(existing.id, payload);
 					}
+					// Heal TabGroups if it still keys the singleton by kind name
+					// while the live tab kept a restored random id.
+					if (existing.id !== kind && groups.tab(kind) && !groups.tab(existing.id)) {
+						try {
+							groups.rekeyTab(kind, existing.id);
+						}
+						catch (e) {
+							Zotero.logError && Zotero.logError(e);
+						}
+					}
 					try {
 						let container = typeof document !== 'undefined'
 							? document.getElementById(existing.id)

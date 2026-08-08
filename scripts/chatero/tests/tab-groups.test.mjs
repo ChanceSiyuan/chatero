@@ -143,3 +143,17 @@ test("version 1 session state restores as a two-pane layout", async () => {
 	assert.equal(snapshot.groups.right.activeTabID, "qlabchat");
 	assert.equal(snapshot.splitRatio, 0.45);
 });
+
+test("rekeyTab retargets pane membership onto a live tab id", async () => {
+	const QLab = await loadQLab();
+	const groups = new QLab.TabGroups();
+	groups.arrange(
+		{ kind: "reader", id: "reader:1", payload: { itemID: 1 } },
+		{ kind: "qlabqmd" },
+	);
+	assert.equal(groups.snapshot().groups.right.activeTabID, "qlabqmd");
+	assert.equal(groups.rekeyTab("qlabqmd", "tab-restored-qmd"), true);
+	assert.equal(groups.snapshot().groups.right.activeTabID, "tab-restored-qmd");
+	assert.equal(groups.tab("qlabqmd"), null);
+	assert.ok(groups.tab("tab-restored-qmd"));
+});

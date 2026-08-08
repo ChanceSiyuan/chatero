@@ -130,16 +130,30 @@ Zotero.QLab = Zotero.QLab || {};
 				}
 			}
 		}
-		if (remapped) {
-			groups.arrange(...specs);
-		}
-		
 		if (bridge.ensureShellTab) {
 			for (let spec of specs) {
-				if (SHELL_KINDS.has(spec.kind)) {
-					await bridge.ensureShellTab(spec.kind, spec.payload || null);
+				if (!SHELL_KINDS.has(spec.kind)) {
+					continue;
+				}
+				let shellTabID = await bridge.ensureShellTab(
+					spec.kind,
+					spec.payload || null
+				);
+				// Session restore historically minted random ids for shell tabs.
+				// Without this remap the deck goes is-split but no host gets
+				// qlab-visible-right -- an empty gray column.
+				if (shellTabID && shellTabID !== spec.id) {
+					spec.id = shellTabID;
+					remapped = true;
+				}
+				else if (shellTabID && !spec.id) {
+					spec.id = shellTabID;
+					remapped = true;
 				}
 			}
+		}
+		if (remapped) {
+			groups.arrange(...specs);
 		}
 		
 		let snapshot = groups.snapshot();

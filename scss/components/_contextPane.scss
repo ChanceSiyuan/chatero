@@ -3,7 +3,7 @@
 	flex-grow: 1;
 	flex-shrink: 1;
 
-	& > :not(.deck-selected):not(.tabs-split-handle) {
+	& > :not(.deck-selected):not(.tabs-split-handle):not(.qlab-visible-left):not(.qlab-visible-center):not(.qlab-visible-right) {
 		// Hide all sub-trees that are in the invisible tab deck
 		// to avoid the invisible tab decks' -moz-window-dragging to be triggered.
 		// Do not use display: none to avoid reflowing the layout.

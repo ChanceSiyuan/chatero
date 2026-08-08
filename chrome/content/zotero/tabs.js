@@ -466,6 +466,8 @@ var Zotero_Tabs = new function () {
 			},
 			qlabchat: async (tab, tabIndex) => {
 				this.add({
+					// Always the singleton id -- never the random session id.
+					id: 'qlabchat',
 					type: 'qlabchat',
 					title: tab.title || 'Chat',
 					index: tabIndex,
@@ -476,6 +478,7 @@ var Zotero_Tabs = new function () {
 			},
 			qlabqmd: async (tab, tabIndex) => {
 				this.add({
+					id: 'qlabqmd',
 					type: 'qlabqmd',
 					title: tab.title || 'QMD Editor',
 					index: tabIndex,
@@ -486,6 +489,7 @@ var Zotero_Tabs = new function () {
 			},
 			qlabsite: async (tab, tabIndex) => {
 				this.add({
+					id: 'qlabsite',
 					type: 'qlabsite',
 					title: tab.title || 'Knowledge Site',
 					index: tabIndex,

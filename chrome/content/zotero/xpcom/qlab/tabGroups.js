@@ -235,6 +235,36 @@ Zotero.QLab = Zotero.QLab || {};
 			});
 		},
 		
+		/**
+		 * Point an existing model entry at a different live tab id (session
+		 * restore may mint a random id while arrange still asks for the
+		 * singleton kind name).
+		 */
+		rekeyTab(oldID, newID) {
+			if (!oldID || !newID || oldID === newID) {
+				return false;
+			}
+			if (oldID === 'zotero-pane' || newID === 'zotero-pane') {
+				throw new Error('Library tab id cannot be rekeyed');
+			}
+			if (!this._tabs.has(oldID) || this._tabs.has(newID)) {
+				return false;
+			}
+			this._mutate(() => {
+				let tab = this._tabs.get(oldID);
+				this._tabs.delete(oldID);
+				tab.id = newID;
+				this._tabs.set(newID, tab);
+				for (let pane of this._panes) {
+					pane.tabIDs = pane.tabIDs.map(id => (id === oldID ? newID : id));
+					if (pane.activeTabID === oldID) {
+						pane.activeTabID = newID;
+					}
+				}
+			});
+			return true;
+		},
+		
 		activateTab(id) {
 			this._mutate(() => {
 				if (!this._tabs.has(id)) {

@@ -13,7 +13,7 @@
 }
 
 #tabs-deck:not(.is-split) > tab-content:not(.deck-selected),
-#tabs-deck.is-split > tab-content:not(.deck-selected) {
+#tabs-deck.is-split > tab-content:not(.deck-selected):not(.qlab-visible-left):not(.qlab-visible-center):not(.qlab-visible-right) {
 	// Hide inactive hosts without display:none to avoid Reader reflow/reload.
 	-moz-subtree-hidden-only-visually: 1;
 	position: absolute !important;
@@ -59,7 +59,15 @@
 	inset: auto;
 	pointer-events: auto;
 	z-index: 1;
-	-moz-subtree-hidden-only-visually: 0;
+	// Beat #tabs-deck > :not(.deck-selected) from contextPane.scss.
+	-moz-subtree-hidden-only-visually: 0 !important;
+	// XUL tab-content defaults to -moz-box; HTML shell hosts need a flex
+	// formatting context or they paint as an empty gray column.
+	display: flex !important;
+	flex-direction: column;
+	height: 100%;
+	min-height: 0;
+	overflow: hidden;
 }
 
 #tabs-deck.is-split > tab-content.qlab-visible-left {
