@@ -109,22 +109,26 @@
 						}
 					}));
 					qmdDisposables.push(qmdEditor.onDidChangeCursorPosition(event => {
+						let model = qmdEditor.getModel();
 						emitQmdMonaco({
 							type: 'cursor',
 							lineNumber: event.position.lineNumber,
 							column: event.position.column,
+							offset: model ? model.getOffsetAt(event.position) : 0,
 						});
 					}));
 					qmdEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
 						emitQmdMonaco({ type: 'command', command: 'save' });
 					});
 					qmdEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyK, () => {
+						let model = qmdEditor.getModel();
+						let selection = qmdEditor.getSelection();
 						emitQmdMonaco({
 							type: 'command',
 							command: 'ai',
-							selection: qmdEditor.getModel()
-								? qmdEditor.getModel().getValueInRange(qmdEditor.getSelection())
-								: '',
+							selection: model ? model.getValueInRange(selection) : '',
+							start: model ? model.getOffsetAt(selection.getStartPosition()) : 0,
+							end: model ? model.getOffsetAt(selection.getEndPosition()) : 0,
 						});
 					});
 					qmdCompletionProvider = monaco.languages.registerCompletionItemProvider('markdown', {

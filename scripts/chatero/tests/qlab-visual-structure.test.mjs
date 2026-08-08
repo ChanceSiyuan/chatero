@@ -18,7 +18,7 @@ test("chat shell exposes XPI-style topbar and composer footer", async () => {
 	assert.match(html, /qlab-control-icon/);
 });
 
-test("QMD shell exposes file column, toolbar, and three native modes", async () => {
+test("QMD shell exposes Explorer, Monaco, Quarto Preview, and Draft authority", async () => {
 	const QLab = await loadQLab();
 	const html = QLab.renderShellHTML({
 		kind: "qlabqmd",
@@ -30,10 +30,10 @@ test("QMD shell exposes file column, toolbar, and three native modes", async () 
 	assert.match(html, /data-qlab-file-column/);
 	assert.match(html, /data-qlab-draft-row="drafts\/alpha\.qmd"/);
 	assert.match(html, /data-qlab-draft-path/);
-	assert.match(html, /data-qlab-mode="visual"/);
-	assert.match(html, /data-qlab-mode="website"/);
-	assert.match(html, /data-qlab-mode="source"/);
-	assert.match(html, /Human: Save · AI: Keep/);
+	assert.match(html, /data-qlab-qmd-explorer/);
+	assert.match(html, /data-qlab-qmd-monaco/);
+	assert.match(html, /data-qlab-qmd-preview/);
+	assert.match(html, /Human edits autosave · AI changes require Keep/);
 });
 
 test("QLab visual tokens include light and dark XPI palette", async () => {
@@ -58,4 +58,11 @@ test("QLab visual tokens include light and dark XPI palette", async () => {
 	assert.match(source, /prefers-color-scheme:\s*dark/);
 	assert.match(source, /\.qlab-qmd-file-column/);
 	assert.match(source, /\.qlab-shell-composer-footer/);
+	const workspaceSource = await readFile(
+		new URL("../../../scss/components/_qlabQmdWorkspace.scss", import.meta.url),
+		"utf8",
+	);
+	assert.match(workspaceSource, /\.qlab-qmd-workspace-main/);
+	assert.match(workspaceSource, /\.qlab-qmd-monaco-frame/);
+	assert.match(workspaceSource, /\.qlab-qmd-preview-frame/);
 });

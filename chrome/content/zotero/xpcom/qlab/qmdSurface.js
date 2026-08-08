@@ -73,6 +73,9 @@ Zotero.QLab = Zotero.QLab || {};
 		}
 		host._qlabBuffer = String(text ?? '');
 		host._qlabDirty = !!dirty;
+		if (dirty && host._qlabQmdWorkspace && host._qlabQmdWorkspace.setBuffer) {
+			host._qlabQmdWorkspace.setBuffer(host._qlabBuffer, { human: true });
+		}
 		let editor = host.querySelector('[data-qlab-editor]');
 		if (editor && editor.value !== host._qlabBuffer) {
 			editor.value = host._qlabBuffer;

@@ -341,6 +341,13 @@ Zotero.QLab = Zotero.QLab || {};
 			].join('');
 		}
 		
+		if (kind === 'qlabqmd' && Zotero.QLab.renderQmdWorkspaceHTML) {
+			return Zotero.QLab.renderQmdWorkspaceHTML({
+				drafts,
+				status: workspaceState === 'ready' ? 'Ready' : copy.body,
+			});
+		}
+
 		if (kind === 'qlabqmd') {
 			let options = drafts.map(path => (
 				`<option value="${escapeHTML(path)}">${escapeHTML(path)}</option>`
@@ -556,7 +563,9 @@ Zotero.QLab = Zotero.QLab || {};
 			container.appendChild(host);
 		}
 		
+		let sameRoot = host._qlabMountRoot === root;
 		let sameKindMounted = host._qlabMountedKind === kind
+			&& (kind !== 'qlabqmd' || sameRoot)
 			&& host.querySelector(`[data-qlab-kind="${kind}"]`);
 		if (sameKindMounted) {
 			Zotero.QLab.refreshShellWorkspaceChrome(host, {
@@ -570,7 +579,11 @@ Zotero.QLab = Zotero.QLab || {};
 			return;
 		}
 		
-		let preserve = host._qlabMountedKind === kind;
+		if (host._qlabQmdWorkspace && !sameKindMounted) {
+			host._qlabQmdWorkspace.dispose();
+		}
+		let preserve = host._qlabMountedKind === kind
+			&& (kind !== 'qlabqmd' || sameRoot);
 		let preserved = preserve
 			? {
 				draftState: host._qlabDraftState,
@@ -625,7 +638,10 @@ Zotero.QLab = Zotero.QLab || {};
 			host._qlabTurnHandle = null;
 		}
 		
-		if (kind === 'qlabqmd' && Zotero.QLab.applyQmdSurfaceMode) {
+		if (kind === 'qlabqmd' && Zotero.QLab.mountQmdWorkspace && root && workspaceState === 'ready') {
+			await Zotero.QLab.mountQmdWorkspace(host, { root });
+		}
+		else if (kind === 'qlabqmd' && Zotero.QLab.applyQmdSurfaceMode) {
 			let mode = host._qlabSurfaceMode || 'visual';
 			if (host._qlabBuffer && Zotero.QLab.setQmdShellBuffer) {
 				Zotero.QLab.setQmdShellBuffer(host, host._qlabBuffer, {
@@ -1036,6 +1052,9 @@ Zotero.QLab = Zotero.QLab || {};
 	};
 	
 	Zotero.QLab.loadDraftIntoShell = async function (host, root, relativePath) {
+		if (host && host._qlabQmdWorkspace) {
+			return host._qlabQmdWorkspace.openDraft(relativePath);
+		}
 		let status = host.querySelector('.qlab-shell-status');
 		try {
 			let ioHost = Zotero.QLab.QmdDraftIO.createGeckoHost();
@@ -1086,6 +1105,9 @@ Zotero.QLab = Zotero.QLab || {};
 	};
 	
 	Zotero.QLab.saveDraftFromShell = async function (host, root) {
+		if (host && host._qlabQmdWorkspace) {
+			return host._qlabQmdWorkspace.saveNow();
+		}
 		let status = host.querySelector('.qlab-shell-status');
 		let state = host._qlabDraftState;
 		try {
@@ -1148,11 +1170,13 @@ Zotero.QLab = Zotero.QLab || {};
 				state.originalPath,
 				ioHost
 			);
+			let modernWorkspace = host._qlabQmdWorkspace;
 			host._qlabDraftState = {
 				originalPath: prepared.originalPath,
 				workingPath: prepared.workingPath,
+				basePath: prepared.basePath,
 				revision: prepared.revision,
-				viewingWorking: true,
+				viewingWorking: !modernWorkspace,
 			};
 			let shell = host.querySelector('.qlab-shell-qmd');
 			if (shell) {
@@ -1163,8 +1187,10 @@ Zotero.QLab = Zotero.QLab || {};
 				pathLabel.textContent = `${prepared.originalPath} · AI working copy`;
 				pathLabel.title = prepared.workingPath;
 			}
-			Zotero.QLab.setQmdShellBuffer(host, prepared.text, { dirty: false });
-			if (Zotero.QLab.applyQmdSurfaceMode) {
+			if (!modernWorkspace) {
+				Zotero.QLab.setQmdShellBuffer(host, prepared.text, { dirty: false });
+			}
+			if (!modernWorkspace && Zotero.QLab.applyQmdSurfaceMode) {
 				Zotero.QLab.applyQmdSurfaceMode(
 					host,
 					host._qlabSurfaceMode || 'visual',
@@ -1205,8 +1231,13 @@ Zotero.QLab = Zotero.QLab || {};
 					prepared.workingPath,
 					ioHost
 				);
-				Zotero.QLab.setQmdShellBuffer(host, working.text, { dirty: false });
-				if (Zotero.QLab.applyQmdSurfaceMode) {
+				if (modernWorkspace) {
+					await modernWorkspace.attachProposal(prepared, working.text, prepared.text);
+				}
+				else {
+					Zotero.QLab.setQmdShellBuffer(host, working.text, { dirty: false });
+				}
+				if (!modernWorkspace && Zotero.QLab.applyQmdSurfaceMode) {
 					Zotero.QLab.applyQmdSurfaceMode(
 						host,
 						host._qlabSurfaceMode || 'visual',
@@ -1228,6 +1259,9 @@ Zotero.QLab = Zotero.QLab || {};
 	};
 	
 	Zotero.QLab.keepDraftFromShell = async function (host, root) {
+		if (host && host._qlabQmdWorkspace) {
+			return host._qlabQmdWorkspace.keepProposal();
+		}
 		let status = host.querySelector('.qlab-shell-status');
 		let state = host._qlabDraftState;
 		try {
@@ -1651,10 +1685,35 @@ Zotero.QLab = Zotero.QLab || {};
 				}
 				throw new Error('The provider returned nothing to insert');
 			}
-			Zotero.QLab.insertIntoQmd(host.ownerDocument.defaultView, written, {
-				anchor,
-				label: `⌘K ${task.slice(0, 32)}`,
-			});
+			if (host._qlabQmdWorkspace && state && state.originalPath) {
+				await host._qlabQmdWorkspace.saveNow();
+				let composed = Zotero.QLab.composeQmdInsertion(buffer, anchor, written);
+				if (!composed.changed) throw new Error('Nothing changed');
+				let ioHost = Zotero.QLab.QmdDraftIO.createGeckoHost();
+				let prepared = await Zotero.QLab.QmdDraftIO.prepareChange(
+					root,
+					state.originalPath,
+					ioHost
+				);
+				await Zotero.QLab.QmdDraftIO.writeSource(
+					root,
+					prepared.workingPath,
+					composed.source,
+					null,
+					ioHost
+				);
+				await host._qlabQmdWorkspace.attachProposal(
+					prepared,
+					composed.source,
+					prepared.text
+				);
+			}
+			else {
+				Zotero.QLab.insertIntoQmd(host.ownerDocument.defaultView, written, {
+					anchor,
+					label: `⌘K ${task.slice(0, 32)}`,
+				});
+			}
 			if (bar) {
 				bar.hidden = true;
 				let input = bar.querySelector('[data-qlab-inline-prompt]');
@@ -1663,9 +1722,11 @@ Zotero.QLab = Zotero.QLab || {};
 				}
 			}
 			if (status) {
-				status.textContent = cancelled
-					? 'Partial write kept in the buffer — review, then Save'
-					: 'Written into the buffer — review, then Save';
+				status.textContent = host._qlabQmdWorkspace
+					? 'AI proposal ready — compare, then Keep or Reject'
+					: (cancelled
+						? 'Partial write kept in the buffer — review, then Save'
+						: 'Written into the buffer — review, then Save');
 			}
 		}
 		catch (e) {
@@ -2222,13 +2283,26 @@ Zotero.QLab = Zotero.QLab || {};
 					'qlabqmd': 'QMD Editor',
 					'qlabsite': 'Knowledge Site',
 				};
+				let shellTabID = '';
 				let { id, container } = tabsAPI.add({
 					id: kind,
 					type: kind,
 					title: titles[kind] || kind,
 					data: payload || {},
 					select: false,
+					onClose: () => {
+						try {
+							let shell = typeof document !== 'undefined'
+								? document.getElementById(shellTabID)
+								: null;
+							shell?.querySelector('.qlab-shell-host')?._qlabQmdWorkspace?.dispose();
+						}
+						catch (e) {
+							Zotero.logError && Zotero.logError(e);
+						}
+					},
 				});
+				shellTabID = id;
 				Zotero.QLab.mountShellTab(container, kind);
 				return id;
 			},

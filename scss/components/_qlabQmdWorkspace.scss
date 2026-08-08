@@ -1,0 +1,360 @@
+.qlab-qmd-workspace {
+	--qlab-qmd-editor-ratio: .5;
+	display: flex;
+	min-width: 0;
+	min-height: 0;
+	background: var(--zc-bg);
+
+	.qlab-qmd-toolbar {
+		min-height: 38px;
+		padding: 4px 7px;
+		background: var(--zc-bg-raised);
+	}
+}
+
+.qlab-qmd-workspace-action {
+	appearance: none;
+	display: inline-grid;
+	width: 27px;
+	height: 27px;
+	padding: 5px;
+	place-items: center;
+	border: 1px solid transparent;
+	border-radius: 6px;
+	color: var(--zc-muted);
+	background: transparent;
+	cursor: pointer;
+
+	svg {
+		width: 15px;
+		height: 15px;
+		fill: none;
+		stroke: currentColor;
+		stroke-linecap: round;
+		stroke-linejoin: round;
+		stroke-width: 1.7;
+	}
+
+	&:hover:not(:disabled) {
+		color: var(--zc-text);
+		background: var(--zc-bg-hover);
+	}
+
+	&:focus-visible {
+		outline: 2px solid var(--zc-accent);
+		outline-offset: 1px;
+	}
+
+	&:disabled {
+		opacity: .3;
+		cursor: default;
+	}
+
+	&[data-qlab-draft-keep]:not(:disabled) {
+		color: var(--zc-success);
+	}
+}
+
+.qlab-qmd-workspace-main {
+	display: grid;
+	grid-template-columns:
+		190px
+		minmax(260px, calc((100% - 195px) * var(--qlab-qmd-editor-ratio)))
+		5px
+		minmax(260px, 1fr);
+	flex: 1 1 auto;
+	min-width: 0;
+	min-height: 0;
+	overflow: hidden;
+	background: var(--zc-bg);
+}
+
+.qlab-qmd-workspace.is-files-collapsed {
+	.qlab-qmd-workspace-main {
+		grid-template-columns:
+			minmax(260px, calc((100% - 5px) * var(--qlab-qmd-editor-ratio)))
+			5px
+			minmax(260px, 1fr);
+	}
+
+	.qlab-qmd-explorer {
+		display: none;
+	}
+}
+
+.qlab-qmd-workspace.is-preview-collapsed {
+	.qlab-qmd-workspace-main {
+		grid-template-columns: 190px minmax(260px, 1fr);
+	}
+
+	&.is-files-collapsed .qlab-qmd-workspace-main {
+		grid-template-columns: minmax(260px, 1fr);
+	}
+
+	.qlab-qmd-preview-pane,
+	.qlab-qmd-splitter {
+		display: none;
+	}
+}
+
+.qlab-qmd-explorer,
+.qlab-qmd-editor-pane,
+.qlab-qmd-preview-pane {
+	display: flex;
+	min-width: 0;
+	min-height: 0;
+	flex-direction: column;
+	overflow: hidden;
+}
+
+.qlab-qmd-explorer {
+	border-right: 1px solid var(--zc-border);
+	background: var(--zc-bg-subtle);
+}
+
+.qlab-qmd-pane-title {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 6px;
+	min-height: 31px;
+	padding: 0 9px;
+	flex: none;
+	overflow: hidden;
+	border-bottom: 1px solid var(--zc-border);
+	color: var(--zc-muted);
+	background: color-mix(in srgb, var(--zc-bg-raised) 94%, transparent);
+	font-size: 9px;
+	font-weight: 680;
+	letter-spacing: .045em;
+	white-space: nowrap;
+}
+
+.qlab-qmd-editor-tab {
+	justify-content: flex-start;
+	color: var(--zc-text);
+	font-weight: 500;
+	letter-spacing: 0;
+}
+
+.qlab-qmd-tab-q,
+.qlab-qmd-file-icon {
+	display: inline-grid;
+	width: 15px;
+	height: 15px;
+	place-items: center;
+	border-radius: 3px;
+	color: #fff;
+	background: #3977d1;
+	font-size: 8px;
+	font-weight: 750;
+}
+
+[data-qlab-dirty-dot] {
+	width: 7px;
+	height: 7px;
+	margin-left: auto;
+	border-radius: 50%;
+	background: var(--zc-accent);
+}
+
+.qlab-qmd-explorer-tree {
+	padding: 5px;
+	overflow: auto;
+	scrollbar-width: thin;
+}
+
+.qlab-qmd-explorer-group {
+	margin: 0;
+
+	> summary {
+		display: flex;
+		align-items: center;
+		min-height: 25px;
+		padding: 0 5px;
+		color: var(--zc-muted);
+		font-size: 9px;
+		font-weight: 700;
+		letter-spacing: .04em;
+		text-transform: uppercase;
+		cursor: default;
+	}
+
+	.qlab-qmd-explorer-group {
+		margin-left: 9px;
+
+		> summary {
+			font-weight: 550;
+			letter-spacing: 0;
+			text-transform: none;
+		}
+	}
+}
+
+.qlab-qmd-explorer-file {
+	appearance: none;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	width: 100%;
+	min-width: 0;
+	min-height: 25px;
+	padding: 2px 6px 2px 14px;
+	overflow: hidden;
+	border: 0;
+	border-radius: 4px;
+	color: var(--zc-text);
+	background: transparent;
+	text-align: left;
+	font: inherit;
+	font-size: 10px;
+	cursor: pointer;
+
+	span:last-child {
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	&:hover {
+		background: var(--zc-bg-hover);
+	}
+
+	&.is-active {
+		color: var(--zc-text);
+		background: var(--zc-accent-soft);
+	}
+
+	&[aria-readonly="true"] {
+		color: var(--zc-muted);
+	}
+
+	&.is-bib .qlab-qmd-file-icon {
+		color: #fff;
+		background: #8a5bb7;
+	}
+
+	&.is-pdf .qlab-qmd-file-icon {
+		background: #ba4a4a;
+	}
+}
+
+.qlab-qmd-monaco-frame,
+.qlab-qmd-preview-frame {
+	width: 100%;
+	height: 100%;
+	min-width: 0;
+	min-height: 0;
+	flex: 1 1 auto;
+	border: 0;
+	background: var(--zc-bg);
+}
+
+.qlab-qmd-splitter {
+	position: relative;
+	z-index: 2;
+	width: 5px;
+	cursor: col-resize;
+	background: var(--zc-border);
+
+	&::after {
+		position: absolute;
+		inset: 0 -3px;
+		content: "";
+	}
+
+	&:hover,
+	&:focus-visible {
+		background: var(--zc-accent);
+		outline: none;
+	}
+}
+
+.qlab-qmd-preview-pane {
+	position: relative;
+	background: #fff;
+}
+
+.qlab-qmd-preview-versions {
+	display: inline-flex;
+	gap: 2px;
+	padding: 2px;
+	border-radius: 5px;
+	background: var(--zc-bg-subtle);
+
+	button {
+		appearance: none;
+		padding: 2px 6px;
+		border: 0;
+		border-radius: 4px;
+		color: var(--zc-muted);
+		background: transparent;
+		font: inherit;
+		font-size: 8.5px;
+		cursor: pointer;
+
+		&.is-active {
+			color: var(--zc-text);
+			background: var(--zc-bg-raised);
+			box-shadow: 0 1px 2px rgba(0, 0, 0, .12);
+		}
+
+		&:disabled {
+			opacity: .35;
+		}
+	}
+}
+
+.qlab-qmd-preview-empty {
+	position: absolute;
+	top: 50%;
+	left: 50%;
+	color: var(--zc-muted);
+	font-size: 10px;
+	transform: translate(-50%, -50%);
+}
+
+.qlab-qmd-workspace-status {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	min-height: 23px;
+	padding: 0 8px;
+	flex: none;
+	border-top: 1px solid var(--zc-border);
+	color: var(--zc-muted);
+	background: var(--zc-bg-raised);
+	font-size: 9px;
+}
+
+.qlab-qmd-workspace[data-status="error"],
+.qlab-qmd-workspace[data-status="conflict"] {
+	.qlab-qmd-workspace-status {
+		color: var(--zc-danger);
+	}
+}
+
+.qlab-qmd-workspace[data-status="proposal"] {
+	.qlab-qmd-workspace-status {
+		color: var(--zc-success);
+	}
+}
+
+@media (max-width: 900px) {
+	.qlab-qmd-workspace-main,
+	.qlab-qmd-workspace.is-files-collapsed .qlab-qmd-workspace-main {
+		grid-template-columns: minmax(280px, 1fr);
+	}
+
+	.qlab-qmd-explorer,
+	.qlab-qmd-preview-pane,
+	.qlab-qmd-splitter {
+		display: none;
+	}
+
+	.qlab-qmd-authority {
+		display: none;
+	}
+}

@@ -467,6 +467,17 @@ Zotero.QLab = Zotero.QLab || {};
 		if (!host) {
 			return { mode: 'end' };
 		}
+		let monacoSelection = host._qlabMonacoSelection;
+		if (host._qlabQmdWorkspace && monacoSelection) {
+			if (forInlineWrite && monacoSelection.end > monacoSelection.start) {
+				return {
+					mode: 'replace-range',
+					start: monacoSelection.start,
+					end: monacoSelection.end,
+				};
+			}
+			return { mode: 'cursor', offset: monacoSelection.start };
+		}
 		let mode = host._qlabSurfaceMode || 'visual';
 		if (mode === 'source') {
 			let editor = host.querySelector('[data-qlab-editor]');

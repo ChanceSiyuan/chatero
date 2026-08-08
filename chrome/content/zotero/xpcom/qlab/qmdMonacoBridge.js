@@ -52,6 +52,7 @@ Zotero.QLab = Zotero.QLab || {};
 		adapter,
 		session,
 		language = text => Zotero.QLab.qmdLanguageSnapshot(text, ''),
+		bibliographyText = '',
 		onCommand = () => {},
 		onCursor = () => {},
 	} = {}) {
@@ -69,7 +70,11 @@ Zotero.QLab = Zotero.QLab || {};
 				text: snapshot.text,
 				options: Zotero.QLab.qmdMonacoOptions(),
 				completions: Zotero.QLab.qmdCompletionItems
-					? Zotero.QLab.qmdCompletionItems({ source: snapshot.text, offset: 0 })
+					? Zotero.QLab.qmdCompletionItems({
+						source: snapshot.text,
+						offset: 0,
+						bibliographyText,
+					})
 					: [],
 				decorations: languageSnapshot.decorations || [],
 				diagnostics: languageSnapshot.diagnostics || [],

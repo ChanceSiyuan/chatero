@@ -196,6 +196,7 @@ const xpcomFilesLocal = [
 	'qlab/qmdApply',
 	'qlab/qmdPreview',
 	'qlab/qmdPreviewController',
+	'qlab/qmdWorkspaceShell',
 	'qlab/phase4',
 	'qlab/qlabModule',
 ];

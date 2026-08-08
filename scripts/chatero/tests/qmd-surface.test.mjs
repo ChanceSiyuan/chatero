@@ -56,7 +56,7 @@ test("surface modes normalize and label Preview/Website/Source", async () => {
 	assert.equal(QLab.qmdSurfaceModeLabel("source"), "Source");
 });
 
-test("qmd shell HTML exposes three surfaces and mode toggle", async () => {
+test("qmd shell HTML uses source editor plus rendered Preview without direct-preview modes", async () => {
 	const QLab = await loadQLab();
 	const html = QLab.renderShellHTML({
 		kind: "qlabqmd",
@@ -64,13 +64,10 @@ test("qmd shell HTML exposes three surfaces and mode toggle", async () => {
 		root: "/tmp/ws",
 		drafts: ["drafts/a.qmd"],
 	});
-	assert.match(html, /data-qlab-mode="visual"/);
-	assert.match(html, /data-qlab-mode="website"/);
-	assert.match(html, /data-qlab-mode="source"/);
-	assert.match(html, /data-qlab-surface="visual"/);
-	assert.match(html, /data-qlab-surface="website"/);
-	assert.match(html, /data-qlab-surface="source"/);
-	assert.match(html, /data-qlab-website-frame/);
+	assert.doesNotMatch(html, /data-qlab-mode=/);
+	assert.match(html, /data-qlab-qmd-monaco/);
+	assert.match(html, /data-qlab-qmd-preview/);
+	assert.match(html, /data-qlab-preview-frame/);
 	assert.match(html, /data-qlab-editor/);
 });
 
