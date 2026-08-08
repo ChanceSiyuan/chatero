@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { loadQLab } from "../lib/load-qlab.mjs";
 
-test("workspace renders Explorer and one switchable Source or Preview surface", async () => {
+test("workspace renders Explorer and three resident QMD surfaces", async () => {
 	const QLab = await loadQLab();
 	let html = QLab.renderQmdWorkspaceHTML({
 		path: "drafts/a.qmd",
@@ -18,12 +18,15 @@ test("workspace renders Explorer and one switchable Source or Preview surface", 
 	assert.match(html, /data-qlab-qmd-explorer/);
 	assert.match(html, /data-qlab-qmd-monaco/);
 	assert.match(html, /qmdMonaco\.html/);
+	assert.match(html, /data-qlab-visual-surface/);
 	assert.match(html, /data-qlab-qmd-preview/);
 	assert.match(html, /data-qlab-preview-stage/);
 	assert.match(html, /data-qlab-preview-quick/);
 	assert.match(html, /data-qlab-preview-browser-host/);
 	assert.match(html, /data-qlab-primary-surface/);
-	assert.match(html, /data-qlab-preview-toggle[^>]+aria-pressed="false"/);
+	assert.match(html, /data-qlab-preview-toggle[^>]+data-qlab-current-surface="visual"/);
+	assert.doesNotMatch(html, /data-qlab-preview-toggle[^>]+aria-pressed=/);
+	assert.match(html, /data-surface="visual"/);
 	assert.doesNotMatch(html, /role="separator"/);
 	assert.match(html, /data-qlab-qmd-status/);
 	assert.match(html, /data-qlab-draft-row="drafts\/a\.qmd"/);
@@ -118,6 +121,91 @@ test("preview surface uses a native Zotero browser for exact loopback content", 
 	assert.equal(browser.removed, true);
 });
 
+test("preview presentation distinguishes quick, exact, and last-good content", async () => {
+	const QLab = await loadQLab();
+	assert.deepEqual(JSON.parse(JSON.stringify(QLab.qmdPreviewPresentation({
+		status: "rendering",
+		fallback: "<main>quick</main>",
+		url: "",
+	}))), {
+		mode: "quick",
+		status: "Quick Preview · preparing Quarto…",
+		tone: "rendering",
+	});
+	assert.deepEqual(JSON.parse(JSON.stringify(QLab.qmdPreviewPresentation({
+		status: "ready",
+		fallback: "<main>quick</main>",
+		url: "http://127.0.0.1:43104/a.html",
+	}))), {
+		mode: "exact",
+		status: "Quarto Preview",
+		tone: "ready",
+	});
+	assert.deepEqual(JSON.parse(JSON.stringify(QLab.qmdPreviewPresentation({
+		status: "error",
+		fallback: "<main>quick</main>",
+		url: "",
+		error: "bad yaml",
+	}))), {
+		mode: "quick",
+		status: "Quick Preview · Quarto unavailable: bad yaml",
+		tone: "error",
+	});
+	assert.deepEqual(JSON.parse(JSON.stringify(QLab.qmdPreviewPresentation({
+		status: "error",
+		fallback: "<main>latest quick</main>",
+		url: "http://127.0.0.1:43104/a.html",
+		error: "bad yaml",
+	}))), {
+		mode: "exact",
+		status: "Quarto Preview · showing last good result: bad yaml",
+		tone: "error",
+	});
+});
+
+test("workspace status gives persistence failures priority without hiding Preview progress", async () => {
+	const QLab = await loadQLab();
+	let rendering = {
+		status: "rendering",
+		fallback: "<main>quick</main>",
+		url: "",
+	};
+	assert.deepEqual(JSON.parse(JSON.stringify(QLab.qmdWorkspaceStatus({
+		persistence: "conflict",
+		message: "Draft changed on disk",
+		preview: rendering,
+	}))), { text: "Draft changed on disk", tone: "conflict" });
+	assert.deepEqual(JSON.parse(JSON.stringify(QLab.qmdWorkspaceStatus({
+		persistence: "error",
+		message: "Save failed",
+		preview: rendering,
+	}))), { text: "Save failed", tone: "error" });
+	assert.deepEqual(JSON.parse(JSON.stringify(QLab.qmdWorkspaceStatus({
+		persistence: "saving",
+		preview: rendering,
+	}))), { text: "Saving…", tone: "saving" });
+	assert.deepEqual(JSON.parse(JSON.stringify(QLab.qmdWorkspaceStatus({
+		persistence: "saved",
+		preview: rendering,
+	}))), { text: "Quick Preview · preparing Quarto…", tone: "rendering" });
+	assert.deepEqual(JSON.parse(JSON.stringify(QLab.qmdWorkspaceStatus({
+		persistence: "saved",
+		preview: {
+			status: "rendering",
+			fallback: "<main>quick</main>",
+			url: "http://127.0.0.1:43104/a.html",
+		},
+	}))), { text: "Saved · updating Quarto…", tone: "rendering" });
+	assert.deepEqual(JSON.parse(JSON.stringify(QLab.qmdWorkspaceStatus({
+		persistence: "saved",
+		preview: {
+			status: "ready",
+			fallback: "<main>quick</main>",
+			url: "http://127.0.0.1:43104/a.html",
+		},
+	}))), { text: "Quarto Preview", tone: "ready" });
+});
+
 test("workspace disposal closes watcher, Monaco bridge, Preview, and session", async () => {
 	const QLab = await loadQLab();
 	let calls = [];
@@ -132,20 +220,48 @@ test("workspace disposal closes watcher, Monaco bridge, Preview, and session", a
 	assert.deepEqual(calls, ["watcher", "monaco", "preview", "session"]);
 });
 
-test("workspace toggles Source and Preview while remembering Explorer visibility", async () => {
+test("workspace cycles Visual Edit, Website Preview, and Monaco Source", async () => {
 	const QLab = await loadQLab();
 	let layouts = [];
 	let workspace = QLab.createQmdWorkspaceController({
 		onLayout: value => layouts.push(value),
-		previewVisible: false,
 	});
+	assert.equal(workspace.snapshot().surface, "visual");
+	workspace.toggleSurface();
+	assert.equal(workspace.snapshot().surface, "website");
+	workspace.toggleSurface();
 	assert.equal(workspace.snapshot().surface, "source");
 	workspace.toggleSurface();
-	assert.equal(workspace.snapshot().surface, "preview");
-	workspace.toggleSurface();
-	assert.equal(workspace.snapshot().surface, "source");
+	assert.equal(workspace.snapshot().surface, "visual");
 	workspace.toggleExplorer(false);
 	let state = workspace.snapshot();
 	assert.equal(state.explorerVisible, false);
-	assert.equal(layouts.length, 3);
+	assert.equal(layouts.length, 4);
+});
+
+test("workspace migrates legacy Preview state and preserves explicit restored surfaces", async () => {
+	const QLab = await loadQLab();
+	assert.equal(QLab.createQmdWorkspaceController({ surface: "preview" }).snapshot().surface, "website");
+	assert.equal(QLab.createQmdWorkspaceController({ surface: "source" }).snapshot().surface, "source");
+	assert.equal(QLab.createQmdWorkspaceController({ surface: "website" }).snapshot().surface, "website");
+	assert.equal(QLab.createQmdWorkspaceController({ surface: "invalid" }).snapshot().surface, "visual");
+});
+
+test("surface action model names the current and next surface", async () => {
+	const QLab = await loadQLab();
+	assert.deepEqual(JSON.parse(JSON.stringify(QLab.qmdSurfaceActionModel("visual"))), {
+		current: "visual",
+		next: "website",
+		label: "Visual Edit · switch to Website Preview",
+	});
+	assert.deepEqual(JSON.parse(JSON.stringify(QLab.qmdSurfaceActionModel("website"))), {
+		current: "website",
+		next: "source",
+		label: "Website Preview · switch to Monaco Source",
+	});
+	assert.deepEqual(JSON.parse(JSON.stringify(QLab.qmdSurfaceActionModel("source"))), {
+		current: "source",
+		next: "visual",
+		label: "Monaco Source · switch to Visual Edit",
+	});
 });

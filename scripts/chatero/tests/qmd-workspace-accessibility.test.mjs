@@ -6,18 +6,21 @@ import { loadQLab } from "../lib/load-qlab.mjs";
 test("workspace controls expose names without visible toolbar text", async () => {
 	const QLab = await loadQLab();
 	let model = QLab.qmdWorkspaceAccessibilityModel({ proposal: true, previewStatus: "error" });
+	assert.equal(model.actions.preview.label, "Visual Edit · switch to Website Preview");
 	assert.equal(model.actions.keep.label, "Keep AI changes");
 	assert.equal(model.actions.reject.label, "Reject AI changes");
 	assert.equal(model.actions.retry.label, "Retry Quarto Preview");
 	assert.equal(model.status.includes("Preview failed"), true);
 });
 
-test("rendered controls have labels, pressed state, and live status semantics", async () => {
+test("rendered controls have labels, tri-state mode metadata, and live status semantics", async () => {
 	const QLab = await loadQLab();
 	let html = QLab.renderQmdWorkspaceHTML({ status: "Ready", proposal: true });
 	assert.match(html, /aria-label="Keep AI changes"/);
 	assert.match(html, /aria-label="Reject AI changes"/);
-	assert.match(html, /data-qlab-preview-toggle[^>]+aria-pressed="false"/);
+	assert.match(html, /aria-label="Visual Edit · switch to Website Preview"/);
+	assert.match(html, /data-qlab-preview-toggle[^>]+data-qlab-current-surface="visual"/);
+	assert.doesNotMatch(html, /data-qlab-preview-toggle[^>]+aria-pressed=/);
 	assert.doesNotMatch(html, /role="separator"/);
 	assert.match(html, /role="status" aria-live="polite"/);
 	assert.match(html, /data-l10n-id="qlab-qmd-keep"/);

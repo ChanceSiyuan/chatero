@@ -42,7 +42,7 @@ test("applyQmdVisualBlock updates source losslessly", async () => {
 	assert.ok(!result.source.includes("# Hello\n") || result.source.includes("# Hello world"));
 });
 
-test("surface modes normalize and label Preview/Website/Source", async () => {
+test("surface modes normalize, migrate, label, and cycle Visual/Website/Source", async () => {
 	const QLab = await loadQLab();
 	assert.deepEqual(JSON.parse(JSON.stringify(QLab.QMD_SURFACE_MODES)), [
 		"visual",
@@ -50,13 +50,17 @@ test("surface modes normalize and label Preview/Website/Source", async () => {
 		"source",
 	]);
 	assert.equal(QLab.normalizeQmdSurfaceMode("website"), "website");
+	assert.equal(QLab.normalizeQmdSurfaceMode("preview"), "website");
 	assert.equal(QLab.normalizeQmdSurfaceMode("nope"), "visual");
-	assert.equal(QLab.qmdSurfaceModeLabel("visual"), "Preview");
-	assert.equal(QLab.qmdSurfaceModeLabel("website"), "Website");
-	assert.equal(QLab.qmdSurfaceModeLabel("source"), "Source");
+	assert.equal(QLab.qmdSurfaceModeLabel("visual"), "Visual Edit");
+	assert.equal(QLab.qmdSurfaceModeLabel("website"), "Website Preview");
+	assert.equal(QLab.qmdSurfaceModeLabel("source"), "Monaco Source");
+	assert.equal(QLab.nextQmdSurfaceMode("visual"), "website");
+	assert.equal(QLab.nextQmdSurfaceMode("website"), "source");
+	assert.equal(QLab.nextQmdSurfaceMode("source"), "visual");
 });
 
-test("qmd shell HTML uses source editor plus rendered Preview without direct-preview modes", async () => {
+test("qmd shell HTML keeps Visual Edit, Website Preview, and Monaco resident", async () => {
 	const QLab = await loadQLab();
 	const html = QLab.renderShellHTML({
 		kind: "qlabqmd",
@@ -64,7 +68,7 @@ test("qmd shell HTML uses source editor plus rendered Preview without direct-pre
 		root: "/tmp/ws",
 		drafts: ["drafts/a.qmd"],
 	});
-	assert.doesNotMatch(html, /data-qlab-mode=/);
+	assert.match(html, /data-qlab-visual-surface/);
 	assert.match(html, /data-qlab-qmd-monaco/);
 	assert.match(html, /data-qlab-qmd-preview/);
 	assert.match(html, /data-qlab-preview-quick/);

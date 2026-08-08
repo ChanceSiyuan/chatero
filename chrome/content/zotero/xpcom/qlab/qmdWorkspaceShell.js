@@ -134,7 +134,9 @@ Zotero.QLab = Zotero.QLab || {};
 		proposal = false,
 		previewStatus = 'ready',
 		conflict = false,
+		surface = 'visual',
 	} = {}) {
+		let surfaceAction = Zotero.QLab.qmdSurfaceActionModel(surface);
 		let status = conflict
 			? 'Draft conflict. Compare the on-disk and editor versions before saving.'
 			: previewStatus === 'error'
@@ -147,7 +149,7 @@ Zotero.QLab = Zotero.QLab || {};
 				explorer: { label: 'Toggle QLab Explorer', l10nId: 'qlab-qmd-toggle-explorer' },
 				reload: { label: 'Reload Draft', l10nId: 'qlab-qmd-reload' },
 				save: { label: 'Save now', l10nId: 'qlab-qmd-save' },
-				preview: { label: 'Toggle Quarto Preview', l10nId: 'qlab-qmd-toggle-preview' },
+				preview: { label: surfaceAction.label, l10nId: 'qlab-qmd-toggle-preview' },
 				retry: { label: 'Retry Quarto Preview', l10nId: 'qlab-qmd-preview-retry' },
 				ai: { label: 'Edit with AI', l10nId: 'qlab-qmd-edit-ai' },
 				compare: { label: 'Compare AI changes', l10nId: 'qlab-qmd-compare' },
@@ -156,6 +158,68 @@ Zotero.QLab = Zotero.QLab || {};
 			},
 			status,
 		};
+	};
+
+	Zotero.QLab.qmdPreviewPresentation = function (state = {}) {
+		let status = String(state.status || 'idle');
+		let error = String(state.error || '');
+		if (state.url) {
+			if (status === 'error') {
+				return {
+					mode: 'exact',
+					status: `Quarto Preview · showing last good result: ${error || 'render failed'}`,
+					tone: 'error',
+				};
+			}
+			return {
+				mode: 'exact',
+				status: status === 'rendering' ? 'Quarto Preview · updating…' : 'Quarto Preview',
+				tone: status === 'rendering' ? 'rendering' : 'ready',
+			};
+		}
+		if (state.fallback) {
+			if (status === 'error') {
+				return {
+					mode: 'quick',
+					status: `Quick Preview · Quarto unavailable: ${error || 'render failed'}`,
+					tone: 'error',
+				};
+			}
+			return {
+				mode: 'quick',
+				status: status === 'rendering'
+					? 'Quick Preview · preparing Quarto…'
+					: 'Quick Preview',
+				tone: status === 'rendering' ? 'rendering' : 'ready',
+			};
+		}
+		return { mode: 'empty', status: 'Select a Draft', tone: 'idle' };
+	};
+
+	Zotero.QLab.qmdWorkspaceStatus = function ({
+		persistence = 'saved',
+		message = '',
+		preview = {},
+	} = {}) {
+		if (persistence === 'conflict') {
+			return { text: message || 'Draft changed on disk', tone: 'conflict' };
+		}
+		if (persistence === 'error') {
+			return { text: message || 'Unable to save Draft', tone: 'error' };
+		}
+		if (persistence === 'saving') return { text: 'Saving…', tone: 'saving' };
+		if (persistence === 'dirty') return { text: 'Unsaved changes', tone: 'dirty' };
+		if (persistence === 'proposal') {
+			return { text: message || 'AI proposal ready for review', tone: 'proposal' };
+		}
+		if (!preview || ['idle', 'stale'].includes(preview.status)) {
+			return { text: message || 'Saved', tone: 'saved' };
+		}
+		if (preview.status === 'rendering' && preview.url) {
+			return { text: 'Saved · updating Quarto…', tone: 'rendering' };
+		}
+		let presentation = Zotero.QLab.qmdPreviewPresentation(preview);
+		return { text: presentation.status, tone: presentation.tone };
 	};
 
 	function rootFromDrafts(drafts) {
@@ -209,7 +273,8 @@ Zotero.QLab = Zotero.QLab || {};
 	} = {}) {
 		let tree = explorer.length ? explorer : rootFromDrafts(drafts);
 		let label = path || 'No Draft selected';
-		let accessibility = Zotero.QLab.qmdWorkspaceAccessibilityModel({ proposal });
+		let initialSurface = 'visual';
+		let accessibility = Zotero.QLab.qmdWorkspaceAccessibilityModel({ proposal, surface: initialSurface });
 		let actions = accessibility.actions;
 		let options = drafts.map(draft => (
 			`<option value="${escapeHTML(draft)}">${escapeHTML(draft)}</option>`
@@ -220,9 +285,9 @@ Zotero.QLab = Zotero.QLab || {};
 			iconButton('folder', actions.explorer.label, 'data-qlab-files-toggle', {
 				l10nId: actions.explorer.l10nId,
 			}),
-			iconButton('preview', actions.preview.label, 'data-qlab-preview-toggle', {
+			iconButton('preview', actions.preview.label,
+				`data-qlab-preview-toggle data-qlab-current-surface="${initialSurface}"`, {
 				l10nId: actions.preview.l10nId,
-				pressed: false,
 			}),
 			`<div class="qlab-qmd-path-wrap"><span class="qlab-qmd-tree-badge">Draft</span>`,
 			`<strong class="qlab-qmd-path" data-qlab-draft-path>${escapeHTML(label)}</strong></div>`,
@@ -254,14 +319,21 @@ Zotero.QLab = Zotero.QLab || {};
 			`<div class="qlab-qmd-explorer-tree" data-qlab-qmd-explorer>${Zotero.QLab.renderQmdExplorerHTML(tree)}</div>`,
 			`<label class="qlab-qmd-select-fallback">Draft<select data-qlab-draft>`
 			+ `<option value="">Select…</option>${options}</select></label></aside>`,
-			`<main class="qlab-qmd-primary-surface" data-qlab-primary-surface data-surface="source">`,
-			`<section class="qlab-qmd-editor-pane is-active" data-qlab-source-surface aria-label="QMD source editor">`,
+			`<main class="qlab-qmd-primary-surface" data-qlab-primary-surface data-surface="visual">`,
+			`<section class="qlab-qmd-visual-pane is-active" data-qlab-visual-surface data-qlab-surface="visual" `
+			+ `aria-label="Visual QMD editor">`,
+			`<div class="qlab-qmd-pane-title"><span>VISUAL EDIT</span></div>`,
+			`<article class="qlab-qmd-visual-editor" data-qlab-visual-editor-root `
+			+ `aria-label="Visual QMD editor"></article></section>`,
+			`<section class="qlab-qmd-editor-pane" data-qlab-source-surface data-qlab-surface="source" `
+			+ `aria-label="Monaco QMD source editor" hidden>`,
 			`<div class="qlab-qmd-pane-title qlab-qmd-editor-tab"><span class="qlab-qmd-tab-q">Q</span>`
 			+ `<span data-qlab-editor-tab>${escapeHTML(label)}</span><i data-qlab-dirty-dot hidden></i></div>`,
 			`<iframe class="qlab-qmd-monaco-frame" data-qlab-qmd-monaco `
 			+ `src="chrome://zotero/content/qlab/qmdMonaco.html" title="QMD source editor"></iframe>`,
 			`<textarea data-qlab-editor hidden aria-hidden="true"></textarea></section>`,
 			`<section class="qlab-qmd-preview-pane" data-qlab-qmd-preview data-qlab-preview-surface `
+			+ `data-qlab-surface="website" `
 			+ `aria-label="Quarto Preview" hidden>`,
 			`<div class="qlab-qmd-pane-title"><span data-l10n-id="qlab-qmd-preview">QUARTO PREVIEW</span>`,
 			`<div class="qlab-qmd-preview-versions" role="group" aria-label="Preview version"${proposal ? '' : ' hidden'}>`,
@@ -294,18 +366,19 @@ Zotero.QLab = Zotero.QLab || {};
 		session = null,
 		onLayout = () => {},
 		explorerVisible = true,
-		surface = 'source',
+		surface = null,
 		previewVisible = null,
 	} = {}) {
+		let restoredSurface = surface;
+		if (!restoredSurface && previewVisible !== null) {
+			restoredSurface = previewVisible ? 'website' : 'source';
+		}
 		let resources = { watcher, monaco, preview, session };
 		let state = {
 			explorerVisible: !!explorerVisible,
-			surface: surface === 'preview' ? 'preview' : 'source',
+			surface: Zotero.QLab.normalizeQmdSurfaceMode(restoredSurface),
 			disposed: false,
 		};
-		// `previewVisible` belonged to the retired simultaneous-pane layout. Accept
-		// it so restored tabs remain valid, while Source stays the safe default.
-		void previewVisible;
 		function layout() {
 			onLayout({ ...state });
 		}
@@ -329,11 +402,11 @@ Zotero.QLab = Zotero.QLab || {};
 				layout();
 			},
 			showSurface(value) {
-				state.surface = value === 'preview' ? 'preview' : 'source';
+				state.surface = Zotero.QLab.normalizeQmdSurfaceMode(value);
 				layout();
 			},
 			toggleSurface() {
-				state.surface = state.surface === 'source' ? 'preview' : 'source';
+				state.surface = Zotero.QLab.nextQmdSurfaceMode(state.surface);
 				layout();
 			},
 			snapshot() {
@@ -394,6 +467,9 @@ Zotero.QLab = Zotero.QLab || {};
 		let proposal = null;
 		let bibliographyText = '';
 		let previewVersion = 'original';
+		let persistence = 'saved';
+		let persistenceMessage = 'Saved';
+		let latestPreviewState = null;
 
 		try {
 			let bibPath = joinRoot(root, 'literature/ref.bib');
@@ -443,6 +519,17 @@ Zotero.QLab = Zotero.QLab || {};
 			if (shell) shell.dataset.status = state;
 		}
 
+		function setPersistenceStatus(state, message = '') {
+			persistence = state;
+			persistenceMessage = message;
+			let combined = Zotero.QLab.qmdWorkspaceStatus({
+				persistence,
+				message: persistenceMessage,
+				preview: latestPreviewState || {},
+			});
+			setStatus(combined.text, combined.tone);
+		}
+
 		function updateProposalControls() {
 			let hasProposal = !!proposal;
 			for (let control of host.querySelectorAll(
@@ -461,15 +548,25 @@ Zotero.QLab = Zotero.QLab || {};
 			if (!shell) return;
 			shell.classList.toggle('is-files-collapsed', !state.explorerVisible);
 			shell.dataset.surface = state.surface;
+			host._qlabSurfaceMode = state.surface;
 			let primary = host.querySelector('[data-qlab-primary-surface]');
 			if (primary) primary.dataset.surface = state.surface;
+			let visual = host.querySelector('[data-qlab-visual-surface]');
 			let source = host.querySelector('[data-qlab-source-surface]');
 			let preview = host.querySelector('[data-qlab-preview-surface]');
+			if (visual) visual.hidden = state.surface !== 'visual';
 			if (source) source.hidden = state.surface !== 'source';
-			if (preview) preview.hidden = state.surface !== 'preview';
+			if (preview) preview.hidden = state.surface !== 'website';
 			let toggle = host.querySelector('[data-qlab-preview-toggle]');
-			if (toggle) toggle.setAttribute('aria-pressed', state.surface === 'preview' ? 'true' : 'false');
-			activePreview?.setVisible(state.surface === 'preview');
+			if (toggle) {
+				let action = Zotero.QLab.qmdSurfaceActionModel(state.surface);
+				toggle.dataset.qlabCurrentSurface = action.current;
+				toggle.title = action.label;
+				toggle.setAttribute('aria-label', action.label);
+				let hiddenLabel = toggle.querySelector('.sr-only');
+				if (hiddenLabel) hiddenLabel.textContent = action.label;
+			}
+			activePreview?.setVisible(state.surface === 'website');
 			let tabs = view.Zotero_Tabs;
 			if (tabs && tabs.setTabData && host._qlabMountTabID) {
 				tabs.setTabData(host._qlabMountTabID, {
@@ -513,17 +610,25 @@ Zotero.QLab = Zotero.QLab || {};
 		});
 
 		function showPreviewState(state) {
+			latestPreviewState = state;
 			if (previewVersion !== 'original') return;
-			if (state.url) {
+			let presentation = Zotero.QLab.qmdPreviewPresentation(state);
+			if (presentation.mode === 'exact') {
 				previewSurface.showExact(state.url);
 			}
-			else if (state.fallback) {
+			else if (presentation.mode === 'quick') {
 				previewSurface.showQuick(state.fallback);
 			}
+			else previewSurface.showEmpty();
 			if (state.diagnostics && state.diagnostics.length && activeSession) {
 				monacoBridge.setDiagnostics(diagnosticOffsets(activeSession.snapshot().text, state.diagnostics));
 			}
-			if (state.status === 'error') setStatus(`Preview error · ${state.error}`, 'error');
+			let combined = Zotero.QLab.qmdWorkspaceStatus({
+				persistence,
+				message: persistenceMessage,
+				preview: state,
+			});
+			setStatus(combined.text, combined.tone);
 		}
 
 		async function showPreview(version) {
@@ -544,6 +649,9 @@ Zotero.QLab = Zotero.QLab || {};
 			if (!Zotero.QLab.isSafeWorkspaceRelativePath(relativePath, { under: 'drafts' })) return;
 			let doc = await Zotero.QLab.QmdDraftIO.readSource(root, relativePath, ioHost);
 			activePath = relativePath;
+			latestPreviewState = null;
+			persistence = 'saved';
+			persistenceMessage = 'Saved';
 			proposal = null;
 			let found = await Zotero.QLab.QmdDraftIO.findProposal(root, relativePath, ioHost);
 			if (found) {
@@ -575,19 +683,22 @@ Zotero.QLab = Zotero.QLab || {};
 					if (legacy) legacy.value = snapshot.text;
 					let dot = host.querySelector('[data-qlab-dirty-dot]');
 					if (dot) dot.hidden = !snapshot.dirty;
-					if (snapshot.saveError) setStatus(snapshot.saveError, 'error');
-					else if (snapshot.saving) setStatus('Saving…', 'saving');
-					else if (snapshot.dirty) setStatus('Unsaved changes', 'dirty');
-					else if (textChanged) monacoBridge.showNormal();
+					if (snapshot.saveError) setPersistenceStatus('error', snapshot.saveError);
+					else if (snapshot.saving) setPersistenceStatus('saving');
+					else if (snapshot.dirty) setPersistenceStatus('dirty');
+					else {
+						setPersistenceStatus(proposal ? 'proposal' : 'saved');
+						if (textChanged) monacoBridge.showNormal();
+					}
 				},
 				onSaved: snapshot => {
 					host._qlabLastSaved = snapshot.text;
 					if (host._qlabDraftState) host._qlabDraftState.revision = snapshot.revision;
-					setStatus('Saved', 'saved');
+					setPersistenceStatus(proposal ? 'proposal' : 'saved');
 					void activePreview?.refresh(snapshot.revision);
 				},
 				onConflict: ({ disk, buffer }) => {
-					setStatus('Draft changed on disk · compare before saving', 'conflict');
+					setPersistenceStatus('conflict', 'Draft changed on disk · compare before saving');
 					monacoBridge.showDiff({ original: disk.text, proposed: buffer.text });
 				},
 			});
@@ -596,6 +707,7 @@ Zotero.QLab = Zotero.QLab || {};
 			let preview = Zotero.QLab.createQmdPreviewController({
 				root,
 				path: relativePath,
+				visible: controller.snapshot().surface === 'website',
 				fallback: () => Zotero.QLab.renderQmdDocumentHTML(activeSession.snapshot().text, {
 					title: relativePath,
 				}),
@@ -631,8 +743,8 @@ Zotero.QLab = Zotero.QLab || {};
 			updateProposalControls();
 			previewVersion = 'original';
 			monacoBridge.showNormal();
+			setPersistenceStatus(proposal ? 'proposal' : 'saved');
 			void preview.start();
-			setStatus(proposal ? 'AI proposal ready for review' : 'Saved', proposal ? 'proposal' : 'saved');
 		}
 
 		let workspace = {
@@ -702,7 +814,7 @@ Zotero.QLab = Zotero.QLab || {};
 			},
 		};
 		host._qlabQmdWorkspace = workspace;
-		host._qlabSurfaceMode = 'source';
+		host._qlabSurfaceMode = controller.snapshot().surface;
 
 		host.addEventListener('click', event => {
 			let version = event.target.closest('[data-qlab-preview-version]');

@@ -25,18 +25,34 @@ Zotero.QLab = Zotero.QLab || {};
 	
 	Zotero.QLab.normalizeQmdSurfaceMode = function (mode) {
 		let value = String(mode || '').toLowerCase();
+		if (value === 'preview') return 'website';
 		return MODES.includes(value) ? value : 'visual';
+	};
+
+	Zotero.QLab.nextQmdSurfaceMode = function (mode) {
+		let current = Zotero.QLab.normalizeQmdSurfaceMode(mode);
+		return MODES[(MODES.indexOf(current) + 1) % MODES.length];
 	};
 	
 	Zotero.QLab.qmdSurfaceModeLabel = function (mode) {
 		switch (Zotero.QLab.normalizeQmdSurfaceMode(mode)) {
-			case 'website':
-				return 'Website';
+		case 'website':
+				return 'Website Preview';
 			case 'source':
-				return 'Source';
+				return 'Monaco Source';
 			default:
-				return 'Preview';
+				return 'Visual Edit';
 		}
+	};
+
+	Zotero.QLab.qmdSurfaceActionModel = function (mode) {
+		let current = Zotero.QLab.normalizeQmdSurfaceMode(mode);
+		let next = Zotero.QLab.nextQmdSurfaceMode(current);
+		return {
+			current,
+			next,
+			label: `${Zotero.QLab.qmdSurfaceModeLabel(current)} · switch to ${Zotero.QLab.qmdSurfaceModeLabel(next)}`,
+		};
 	};
 	
 	function escapeHTML(value) {
