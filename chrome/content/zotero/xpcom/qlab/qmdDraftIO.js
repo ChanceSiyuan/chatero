@@ -29,6 +29,45 @@ Zotero.QLab = Zotero.QLab || {};
 		}
 		return (h >>> 0).toString(16);
 	}
+
+	const CHANGE_ROOT = 'work/qlab-zotero/draft-changes';
+
+	function changeDirectory(relativePath) {
+		let rel = String(relativePath || '').replace(/\\/g, '/');
+		if (!Zotero.QLab.isSafeWorkspaceRelativePath(rel, { under: CHANGE_ROOT })
+				|| !/\/draft\.qmd$/.test(rel)) {
+			throw new Error('Unsafe Draft proposal path');
+		}
+		return rel.replace(/\/draft\.qmd$/, '');
+	}
+
+	async function proposalRecords(root, originalPath, host) {
+		let changesPath = joinRoot(root, CHANGE_ROOT);
+		if (!(await host.exists(changesPath))) return [];
+		let entries = await host.entries(changesPath);
+		let records = [];
+		for (let entry of entries) {
+			let token = host.filename(entry);
+			if (!token || token.startsWith('.') || token.includes('/')) continue;
+			let directory = `${CHANGE_ROOT}/${token}`;
+			try {
+				let manifest = JSON.parse(await host.read(joinRoot(root, `${directory}/manifest.json`)));
+				if (manifest.originalPath !== originalPath) continue;
+				records.push({
+					...manifest,
+					originalPath: manifest.originalPath,
+					workingPath: manifest.workingPath || `${directory}/draft.qmd`,
+					basePath: manifest.basePath || `${directory}/base.qmd`,
+					revision: manifest.baseRevision || manifest.revision,
+					directory,
+				});
+			}
+			catch (error) {
+				Zotero.debug && Zotero.debug(`Skipping invalid QLab Draft proposal: ${error}`);
+			}
+		}
+		return records.sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+	}
 	
 	Zotero.QLab.QmdDraftIO = {
 		_hash: simpleHash,
@@ -67,12 +106,16 @@ Zotero.QLab = Zotero.QLab || {};
 		
 		async readSource(root, relativePath, host) {
 			let rel = String(relativePath || '');
-			if (!rel.startsWith('drafts/') && !rel.startsWith('work/')) {
+			if (!rel.startsWith('drafts/') && !rel.startsWith(`${CHANGE_ROOT}/`)) {
 				throw new Error('Refusing to read outside drafts/ or work/');
 			}
 			if (rel.startsWith('drafts/')
 					&& !Zotero.QLab.isSafeWorkspaceRelativePath(rel, { under: 'drafts' })) {
 				throw new Error('Unsafe drafts path');
+			}
+			if (rel.startsWith(`${CHANGE_ROOT}/`)
+					&& !Zotero.QLab.isSafeWorkspaceRelativePath(rel, { under: CHANGE_ROOT })) {
+				throw new Error('Unsafe Draft proposal path');
 			}
 			let text = await host.read(joinRoot(root, rel));
 			return { path: rel, text, revision: simpleHash(text) };
@@ -89,6 +132,10 @@ Zotero.QLab = Zotero.QLab || {};
 					&& !Zotero.QLab.isSafeWorkspaceRelativePath(rel, { under: 'drafts' })) {
 				throw new Error('Unsafe drafts path');
 			}
+			if (rel.startsWith(`${CHANGE_ROOT}/`)
+					&& !Zotero.QLab.isSafeWorkspaceRelativePath(rel, { under: CHANGE_ROOT })) {
+				throw new Error('Unsafe Draft proposal path');
+			}
 			let path = joinRoot(root, rel);
 			if (expectedRevision) {
 				let current = await host.read(path);
@@ -103,29 +150,80 @@ Zotero.QLab = Zotero.QLab || {};
 		async prepareChange(root, relativePath, host) {
 			let original = await this.readSource(root, relativePath, host);
 			let token = simpleHash(`${relativePath}:${original.revision}:${Date.now()}`);
-			let workingRel = `work/qlab-zotero/draft-changes/${token}/draft.qmd`;
+			let workingRel = `${CHANGE_ROOT}/${token}/draft.qmd`;
+			let baseRel = `${CHANGE_ROOT}/${token}/base.qmd`;
 			let workingAbs = joinRoot(root, workingRel);
 			let workDir = workingAbs.replace(/\/draft\.qmd$/, '');
 			await host.makeDir(workDir, { createAncestors: true });
+			await host.write(joinRoot(root, baseRel), original.text);
 			await host.write(workingAbs, original.text);
 			await host.write(joinRoot(workDir, 'manifest.json'), JSON.stringify({
+				schemaVersion: 2,
 				originalPath: relativePath,
+				workingPath: workingRel,
+				basePath: baseRel,
+				baseRevision: original.revision,
 				revision: original.revision,
 				createdAt: new Date().toISOString(),
 			}, null, 2));
+			if (typeof host.remove === 'function') {
+				let records = await proposalRecords(root, relativePath, host);
+				for (let record of records) {
+					if (record.workingPath !== workingRel) {
+						await host.remove(joinRoot(root, record.directory), { recursive: true });
+					}
+				}
+			}
 			return {
 				originalPath: relativePath,
 				workingPath: workingRel,
+				basePath: baseRel,
 				revision: original.revision,
 				text: original.text,
 			};
 		},
+
+		async findProposal(root, originalPath, host) {
+			let records = await proposalRecords(root, originalPath, host);
+			return records[0] || null;
+		},
 		
 		async keepChange(root, state, host) {
 			let plan = Zotero.QLab.DraftWorkingCopy.buildKeepPlan(state);
-			let working = await host.read(joinRoot(root, plan.from));
-			await this.writeSource(root, state.originalPath, working, plan.expectedRevision, host);
-			return { kept: true, path: state.originalPath, revision: simpleHash(working) };
+			let proposed = await host.read(joinRoot(root, plan.from));
+			let current = await this.readSource(root, state.originalPath, host);
+			let directory = changeDirectory(plan.from);
+			let basePath = state.basePath || `${directory}/base.qmd`;
+			let base = null;
+			if (await host.exists(joinRoot(root, basePath))) {
+				base = await host.read(joinRoot(root, basePath));
+			}
+			let review = base === null
+				? { status: 'clean', text: proposed, hunks: [] }
+				: Zotero.QLab.reviewQmdProposal({ base, current: current.text, proposed });
+			if (review.status !== 'clean') {
+				return { kept: false, conflict: true, review };
+			}
+			let saved = await this.writeSource(
+				root,
+				state.originalPath,
+				review.text,
+				base === null ? plan.expectedRevision : current.revision,
+				host
+			);
+			if (typeof host.remove === 'function') {
+				await host.remove(joinRoot(root, directory), { recursive: true });
+			}
+			return { kept: true, path: state.originalPath, revision: saved.revision, review };
+		},
+
+		async rejectChange(root, state, host) {
+			let directory = changeDirectory(state && state.workingPath);
+			if (typeof host.remove !== 'function') {
+				throw new Error('Draft proposal host cannot remove review state');
+			}
+			await host.remove(joinRoot(root, directory), { recursive: true });
+			return { rejected: true, path: state.originalPath };
 		},
 		
 		createGeckoHost() {
@@ -138,6 +236,10 @@ Zotero.QLab = Zotero.QLab || {};
 				makeDir: (path, opts) => IOUtils.makeDirectory(path, {
 					createAncestors: !!(opts && opts.createAncestors),
 					ignoreExisting: true,
+				}),
+				remove: (path, opts) => IOUtils.remove(path, {
+					recursive: !!(opts && opts.recursive),
+					ignoreAbsent: true,
 				}),
 			};
 		},
@@ -161,6 +263,7 @@ Zotero.QLab = Zotero.QLab || {};
 				read: (p) => fs.readFile(p, 'utf8'),
 				write: (p, text) => fs.writeFile(p, text, 'utf8'),
 				makeDir: (p, opts) => fs.mkdir(p, { recursive: !!(opts && opts.createAncestors) }),
+				remove: (p, opts) => fs.rm(p, { recursive: !!(opts && opts.recursive), force: true }),
 			};
 		},
 	};

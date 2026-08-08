@@ -43,11 +43,17 @@ Zotero.QLab = Zotero.QLab || {};
 					throw new Error('Keep only applies to Draft QMD paths');
 				}
 			}
+			if (!Zotero.QLab.isSafeWorkspaceRelativePath(state.workingPath, {
+				under: 'work/qlab-zotero/draft-changes',
+			}) || !String(state.workingPath).endsWith('/draft.qmd')) {
+				throw new Error('Keep requires a safe private Draft proposal');
+			}
 			return {
 				action: 'keep',
 				from: state.workingPath,
 				to: state.originalPath,
 				expectedRevision: state.revision,
+				basePath: state.basePath || '',
 				clearReviewState: true,
 			};
 		},
