@@ -54,6 +54,40 @@ test("resolveQuartoPreviewTarget uses drafts root as cwd", async () => {
 	assert.equal(target.file, "note.qmd");
 });
 
+for (let [path, page] of [
+	["index.qmd", "/"],
+	["local_alg.qmd", "/local_alg.html"],
+	["topic/note.qmd", "/topic/note.html"],
+	["topic/index.qmd", "/topic/"],
+]) {
+	test(`selected Quarto route for ${path}`, async () => {
+		const QLab = await loadQLab();
+		assert.equal(QLab.qmdQuartoPagePath(path), page);
+	});
+}
+
+test("startQmdQuartoPreview probes and returns the selected page instead of the Draft index", async () => {
+	const QLab = await loadQLab();
+	QLab._qmdPreviewSessions = Object.create(null);
+	let fetched = [];
+	const runner = {
+		async *run() {
+			await new Promise(() => {});
+		},
+	};
+	let url = await QLab.startQmdQuartoPreview("/workspace-route", "drafts/topic/note.qmd", {
+		runner,
+		fetch: async value => {
+			fetched.push(String(value));
+			return { ok: true };
+		},
+		port: 43104,
+	});
+	assert.equal(url, "http://127.0.0.1:43104/topic/note.html");
+	assert.deepEqual(fetched, ["http://127.0.0.1:43104/topic/note.html"]);
+	QLab.stopQmdQuartoPreview("/workspace-route", "drafts/topic/note.qmd");
+});
+
 test("discoverQuartoExecutable prefers PATH and checks common macOS installs", async () => {
 	const QLab = await loadQLab();
 	let fromPath = await QLab.discoverQuartoExecutable({

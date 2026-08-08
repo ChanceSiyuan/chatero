@@ -35,6 +35,15 @@ Zotero.QLab = Zotero.QLab || {};
 		let normalized = String(rel || '').replace(/\\/g, '/').replace(/^\/+/, '');
 		return `${base}/${normalized}`;
 	}
+
+	Zotero.QLab.qmdQuartoPagePath = function (relativeFile) {
+		let within = String(relativeFile || '').replace(/\\/g, '/').replace(/^\/+/, '');
+		if (within === 'index.qmd') return '/';
+		if (within.endsWith('/index.qmd')) {
+			return `/${within.slice(0, -'index.qmd'.length)}`;
+		}
+		return `/${within.slice(0, -'.qmd'.length)}.html`;
+	};
 	
 	/**
 	 * Quarto preview cwd + file argument for a workspace-relative QMD path.
@@ -46,21 +55,26 @@ Zotero.QLab = Zotero.QLab || {};
 			throw new Error('Quarto preview requires a .qmd path');
 		}
 		if (rel.startsWith('drafts/')) {
+			let file = rel.slice('drafts/'.length);
 			return {
 				cwd: joinWorkspacePath(root, 'drafts'),
-				file: rel.slice('drafts/'.length),
+				file,
+				page: Zotero.QLab.qmdQuartoPagePath(file),
 			};
 		}
 		if (rel.includes('/')) {
 			let slash = rel.lastIndexOf('/');
+			let file = rel.slice(slash + 1);
 			return {
 				cwd: joinWorkspacePath(root, rel.slice(0, slash)),
-				file: rel.slice(slash + 1),
+				file,
+				page: Zotero.QLab.qmdQuartoPagePath(file),
 			};
 		}
 		return {
 			cwd: root,
 			file: rel,
+			page: Zotero.QLab.qmdQuartoPagePath(rel),
 		};
 	};
 	
@@ -127,7 +141,8 @@ Zotero.QLab = Zotero.QLab || {};
 		}
 		
 		let port = options.port || Zotero.QLab.nextQmdPreviewPort(hash(key));
-		let url = `http://127.0.0.1:${port}/`;
+		let origin = `http://127.0.0.1:${port}/`;
+		let url = `${origin.replace(/\/$/, '')}${target.page}`;
 		let runner = options.runner
 			|| (Zotero.QLab.createGeckoProcessRunner && Zotero.QLab.createGeckoProcessRunner());
 		if (!runner) {
