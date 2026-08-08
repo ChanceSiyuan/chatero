@@ -32,6 +32,7 @@ const QLAB_SCRIPTS = [
 	"qmdDraftIO.js",
 	"qmdDraftSession.js",
 	"qmdSourceModel.js",
+	"qmdLanguage.js",
 	"qmdMathRender.js",
 	"qmdMarkdownLite.js",
 	"qmdSurface.js",

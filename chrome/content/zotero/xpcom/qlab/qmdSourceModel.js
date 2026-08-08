@@ -72,6 +72,16 @@ Zotero.QLab = Zotero.QLab || {};
 	
 	function semanticFence(attributes) {
 		let attrs = String(attributes || '');
+		let idKind = /#(thm|lem|def|prf|proof)-[\w:.-]+/.exec(attrs);
+		if (idKind) {
+			return {
+				thm: 'theorem',
+				lem: 'lemma',
+				def: 'definition',
+				prf: 'proof',
+				proof: 'proof',
+			}[idKind[1]];
+		}
 		if (/\btheorem\b/.test(attrs)) {
 			return 'theorem';
 		}
