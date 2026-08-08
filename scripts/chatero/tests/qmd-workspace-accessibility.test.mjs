@@ -9,16 +9,16 @@ test("workspace controls expose names without visible toolbar text", async () =>
 	assert.equal(model.actions.keep.label, "Keep AI changes");
 	assert.equal(model.actions.reject.label, "Reject AI changes");
 	assert.equal(model.actions.retry.label, "Retry Quarto Preview");
-	assert.equal(model.splitter.role, "separator");
 	assert.equal(model.status.includes("Preview failed"), true);
 });
 
-test("rendered controls have labels, live status, and keyboard separator semantics", async () => {
+test("rendered controls have labels, pressed state, and live status semantics", async () => {
 	const QLab = await loadQLab();
 	let html = QLab.renderQmdWorkspaceHTML({ status: "Ready", proposal: true });
 	assert.match(html, /aria-label="Keep AI changes"/);
 	assert.match(html, /aria-label="Reject AI changes"/);
-	assert.match(html, /role="separator" tabindex="0"/);
+	assert.match(html, /data-qlab-preview-toggle[^>]+aria-pressed="false"/);
+	assert.doesNotMatch(html, /role="separator"/);
 	assert.match(html, /role="status" aria-live="polite"/);
 	assert.match(html, /data-l10n-id="qlab-qmd-keep"/);
 	assert.match(html, /data-qlab-preview-retry/);
