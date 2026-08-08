@@ -22,10 +22,102 @@
 	height: 100%;
 }
 
+.qlab-shell-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+}
+
 .qlab-shell-header h1 {
 	margin: 0;
 	font-size: 1.35rem;
 	font-weight: 600;
+}
+
+.qlab-shell-header-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+
+.qlab-shell-header-actions button {
+	appearance: none;
+	border: 1px solid var(--fill-quinary);
+	background: transparent;
+	color: var(--fill-secondary);
+	border-radius: 4px;
+	padding: 4px 8px;
+	font-size: 0.75rem;
+	cursor: pointer;
+}
+
+.qlab-shell-header-actions button:hover {
+	border-color: var(--accent-blue, #0a84ff);
+	color: var(--accent-blue, #0a84ff);
+}
+
+.qlab-shell-toolbar {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 10px 16px;
+	align-items: center;
+}
+
+.qlab-composer-at-wrap {
+	position: relative;
+}
+
+.qlab-at-picker {
+	position: absolute;
+	left: 0;
+	right: 0;
+	bottom: calc(100% + 4px);
+	z-index: 5;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	padding: 6px;
+	border: 1px solid var(--fill-quinary);
+	border-radius: 6px;
+	background: var(--material-background);
+	box-shadow: 0 4px 16px color-mix(in srgb, #000 12%, transparent);
+}
+
+.qlab-at-picker[hidden] {
+	display: none;
+}
+
+.qlab-at-picker-item {
+	appearance: none;
+	border: 0;
+	background: transparent;
+	text-align: start;
+	padding: 6px 8px;
+	border-radius: 4px;
+	color: var(--fill-primary);
+	cursor: pointer;
+	font: inherit;
+}
+
+.qlab-at-picker-item:hover {
+	background: var(--material-button-hover, var(--fill-quinary));
+}
+
+.qlab-at-picker-empty {
+	padding: 6px 8px;
+	color: var(--fill-tertiary);
+	font-size: 0.85rem;
+}
+
+.qlab-chat-message.is-cancelled {
+	opacity: 0.85;
+	border-style: dashed;
+}
+
+.qlab-shell-composer-row [data-qlab-stop]:not([hidden]) {
+	border-color: var(--accent-red, #d70015);
+	color: var(--accent-red, #d70015);
 }
 
 .qlab-shell-status {
@@ -365,6 +457,42 @@ button.qlab-qmd-pending-label:hover {
 .qlab-qmd-visual-block.is-active {
 	border-color: var(--accent-blue, #0a84ff);
 	box-shadow: inset 2px 0 0 var(--accent-blue, #0a84ff);
+}
+
+.qlab-qmd-visual-block.is-pending {
+	border-color: var(--accent-blue, #0a84ff);
+	background: color-mix(in srgb, var(--accent-blue, #0a84ff) 6%, var(--material-background));
+}
+
+.qlab-qmd-visual-pending-actions {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	margin-top: 8px;
+	padding-top: 8px;
+	border-top: 1px dashed color-mix(in srgb, var(--accent-blue, #0a84ff) 40%, transparent);
+}
+
+.qlab-qmd-visual-pending-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.qlab-qmd-visual-pending-row button {
+	appearance: none;
+	border: 1px solid var(--fill-quinary);
+	background: transparent;
+	color: var(--fill-secondary);
+	border-radius: 999px;
+	padding: 2px 8px;
+	font-size: 0.75rem;
+	cursor: pointer;
+}
+
+.qlab-qmd-visual-pending-row button:hover {
+	border-color: var(--accent-blue, #0a84ff);
+	color: var(--accent-blue, #0a84ff);
 }
 
 .qlab-qmd-visual-badge {

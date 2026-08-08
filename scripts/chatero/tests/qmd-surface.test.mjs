@@ -93,6 +93,29 @@ test("shared buffer survives mode metadata and soft website HTML", async () => {
 	assert.match(doc, /Hello/);
 });
 
+test("pendingRegionsForQmdBlock finds overlapping inserts", async () => {
+	const QLab = await loadQLab();
+	const blocks = QLab.visualQmdBlocks(SAMPLE);
+	const paragraph = blocks.find((b) => b.kind === "paragraph");
+	const host = {
+		_qlabPendingInserts: [
+			{
+				id: "r1",
+				insertedStart: paragraph.start + 1,
+				insertedEnd: paragraph.start + 4,
+			},
+			{
+				id: "r2",
+				insertedStart: paragraph.end + 10,
+				insertedEnd: paragraph.end + 20,
+			},
+		],
+	};
+	const hits = QLab.pendingRegionsForQmdBlock(host, paragraph);
+	assert.equal(hits.length, 1);
+	assert.equal(hits[0].id, "r1");
+});
+
 test("preview port is stable for a seed", async () => {
 	const QLab = await loadQLab();
 	const a = QLab.nextQmdPreviewPort(42);

@@ -66,6 +66,37 @@ test("chat shell HTML exposes provider select and composer tags", async () => {
 	assert.match(html, /codex-cli|Local Codex/);
 });
 
+test("truncateReaderPageText bounds and collapses whitespace", async () => {
+	const QLab = await loadQLab();
+	assert.equal(QLab.truncateReaderPageText("  hello   world  "), "hello world");
+	const long = "x".repeat(50);
+	const truncated = QLab.truncateReaderPageText(long, 10);
+	assert.equal(truncated.length, 10);
+	assert.ok(truncated.endsWith("…"));
+});
+
+test("listComposerAtPickerItems includes current PDF when context is set", async () => {
+	const QLab = await loadQLab();
+	QLab.ReaderContextStore.clear();
+	QLab.ReaderContextStore._context = Object.freeze({
+		schemaVersion: 1,
+		capturedAt: "2026-08-08T00:00:00.000Z",
+		attachment: Object.freeze({
+			id: 1,
+			key: "ABCDEFGH",
+			libraryID: 1,
+			filename: "paper.pdf",
+		}),
+		parent: Object.freeze({ id: 2, key: "PARENTKEY", title: "Demo Paper" }),
+		page: Object.freeze({ pageIndex: 0, pageNumber: 1, text: "page body" }),
+		selection: null,
+		warnings: Object.freeze([]),
+	});
+	const items = QLab.listComposerAtPickerItems(null);
+	assert.ok(items.some((item) => item.id === "current-pdf"));
+	assert.match(items.find((item) => item.id === "current-pdf").label, /Demo Paper/);
+});
+
 test("registerReaderHooks is a no-op without Reader host", async () => {
 	const QLab = await loadQLab();
 	assert.equal(typeof QLab.registerReaderHooks, "function");

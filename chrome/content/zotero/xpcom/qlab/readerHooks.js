@@ -162,13 +162,16 @@ Zotero.QLab = Zotero.QLab || {};
 			}
 			let key = String(event.key || '').toLowerCase();
 			
-			// ⌘L works even inside editors (Cursor behavior).
+			// ⌘L / ⌘⇧L pin context. Shift = never steal focus; plain ⌘L also
+			// skips focus when Chat is already visible (Research Desk).
 			if (key === 'l') {
 				event.preventDefault();
 				event.stopPropagation();
-				void Zotero.QLab.addCurrentContextToChat(win, {
-					preference: 'auto',
-				}).catch((e) => {
+				let opts = { preference: 'auto' };
+				if (event.shiftKey) {
+					opts.focus = false;
+				}
+				void Zotero.QLab.addCurrentContextToChat(win, opts).catch((e) => {
 					Zotero.logError(e);
 					try {
 						Zotero.alert(null, 'QLab', e.message || String(e));

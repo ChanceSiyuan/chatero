@@ -250,6 +250,73 @@ test("buildQmdInlineWritePrompt requires an instruction", async () => {
 	assert.throws(() => QLab.buildQmdInlineWritePrompt({ instruction: "   " }));
 });
 
+test("buildQmdInlineWritePrompt rewrite mode asks for replacement markdown only", async () => {
+	const QLab = await loadQLab();
+	const prompt = QLab.buildQmdInlineWritePrompt({
+		instruction: "tighten this paragraph",
+		replace: true,
+		selectedText: "Old prose about attention.",
+		before: "# Heading",
+		after: "Next block.",
+	});
+	assert.ok(prompt.includes("<qmd_inline_rewrite>"));
+	assert.ok(prompt.includes("<qmd_text_selected>\nOld prose about attention.\n</qmd_text_selected>"));
+	assert.ok(prompt.includes("Return only the replacement Quarto Markdown"));
+	assert.ok(!prompt.includes("to insert at that point"));
+});
+
+test("extractFirstFencedMarkdown prefers the first fence body", async () => {
+	const QLab = await loadQLab();
+	assert.equal(
+		QLab.extractFirstFencedMarkdown("Intro\n\n```md\nKeep me\n```\n\nOutro"),
+		"Keep me",
+	);
+	assert.equal(QLab.extractFirstFencedMarkdown("no fences here"), null);
+});
+
+test("composeQmdInsertion replace-range swaps the selection", async () => {
+	const QLab = await loadQLab();
+	const source = "AAA\n\nBBB\n\nCCC\n";
+	const start = source.indexOf("BBB");
+	const end = start + 3;
+	const result = QLab.composeQmdInsertion(
+		source,
+		{ mode: "replace-range", start, end },
+		"BBB rewritten",
+	);
+	assert.equal(result.changed, true);
+	assert.ok(result.source.includes("BBB rewritten"));
+	assert.ok(!result.source.includes("\nBBB\n"));
+	assert.equal(result.previousOuterText, "BBB");
+});
+
+test("resolveQmdAnchor forInlineWrite uses replace modes", async () => {
+	const QLab = await loadQLab();
+	const host = {
+		_qlabSurfaceMode: "source",
+		_qlabActiveBlockIndex: 1,
+		querySelector(sel) {
+			if (sel === "[data-qlab-editor]") {
+				return { selectionStart: 2, selectionEnd: 8 };
+			}
+			return null;
+		},
+	};
+	assert.equal(
+		JSON.stringify(QLab.resolveQmdAnchor(host, { forInlineWrite: true })),
+		JSON.stringify({ mode: "replace-range", start: 2, end: 8 }),
+	);
+	host._qlabSurfaceMode = "visual";
+	assert.equal(
+		JSON.stringify(QLab.resolveQmdAnchor(host, { forInlineWrite: true })),
+		JSON.stringify({ mode: "replace-block", blockIndex: 1 }),
+	);
+	assert.equal(
+		JSON.stringify(QLab.resolveQmdAnchor(host)),
+		JSON.stringify({ mode: "after-block", blockIndex: 1 }),
+	);
+});
+
 test("stripQmdAnswerFence unwraps a whole-answer code fence only", async () => {
 	const QLab = await loadQLab();
 	assert.equal(

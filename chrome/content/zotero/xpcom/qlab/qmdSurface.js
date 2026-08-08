@@ -226,6 +226,21 @@ Zotero.QLab = Zotero.QLab || {};
 	};
 	
 	/**
+	 * Pending regions that overlap a visual block's source range.
+	 */
+	Zotero.QLab.pendingRegionsForQmdBlock = function (host, block) {
+		if (!block) {
+			return [];
+		}
+		let pending = Zotero.QLab.pendingQmdInserts
+			? Zotero.QLab.pendingQmdInserts(host)
+			: [];
+		return pending.filter(region => (
+			region.insertedStart < block.end && region.insertedEnd > block.start
+		));
+	};
+	
+	/**
 	 * Render source-driven Visual Preview cards into the visual pane.
 	 */
 	Zotero.QLab.renderQmdVisualPane = function (host) {
@@ -255,6 +270,11 @@ Zotero.QLab = Zotero.QLab || {};
 			card.setAttribute('role', 'button');
 			card.title = 'Click to edit this QMD block';
 			
+			let overlapping = Zotero.QLab.pendingRegionsForQmdBlock(host, block);
+			if (overlapping.length) {
+				card.classList.add('is-pending');
+			}
+			
 			let badge = pane.ownerDocument.createElement('div');
 			badge.className = 'qlab-qmd-visual-badge';
 			badge.textContent = block.semantic || block.kind;
@@ -264,6 +284,33 @@ Zotero.QLab = Zotero.QLab || {};
 			body.className = 'qlab-qmd-visual-body';
 			body.innerHTML = Zotero.QLab.renderQmdBlockHTML(block);
 			card.appendChild(body);
+			
+			if (overlapping.length) {
+				let review = pane.ownerDocument.createElement('div');
+				review.className = 'qlab-qmd-visual-pending-actions';
+				for (let region of overlapping) {
+					let row = pane.ownerDocument.createElement('div');
+					row.className = 'qlab-qmd-visual-pending-row';
+					row.dataset.qlabPendingId = region.id;
+					let label = pane.ownerDocument.createElement('span');
+					label.className = 'qlab-qmd-pending-label';
+					label.textContent = region.label || 'Pending';
+					row.appendChild(label);
+					let accept = pane.ownerDocument.createElement('button');
+					accept.type = 'button';
+					accept.dataset.qlabPendingAccept = '';
+					accept.textContent = 'Accept';
+					row.appendChild(accept);
+					let reject = pane.ownerDocument.createElement('button');
+					reject.type = 'button';
+					reject.dataset.qlabPendingReject = '';
+					reject.textContent = 'Reject';
+					row.appendChild(reject);
+					review.appendChild(row);
+				}
+				card.appendChild(review);
+			}
+			
 			if (i === host._qlabActiveBlockIndex) {
 				card.classList.add('is-active');
 			}
@@ -282,6 +329,13 @@ Zotero.QLab = Zotero.QLab || {};
 		let block = pane._qlabBlocks[blockIndex];
 		let card = pane.querySelector(`[data-qlab-block-index="${blockIndex}"]`);
 		if (!block || !card || card.querySelector('textarea')) {
+			return;
+		}
+		// Pending Accept/Reject buttons own their clicks; don't open the editor.
+		if (card.classList.contains('is-pending')
+				&& host.ownerDocument.activeElement
+				&& host.ownerDocument.activeElement.closest
+				&& host.ownerDocument.activeElement.closest('[data-qlab-pending-id]')) {
 			return;
 		}
 		Zotero.QLab.setQmdActiveBlock(host, blockIndex);

@@ -330,8 +330,8 @@ Zotero.QLab = Zotero.QLab || {};
 	
 	/**
 	 * Focus chat composer after adding a tag (Cursor ⌘L).
-	 * Selection is only moved when the composer is off-screen, so pinning context
-	 * from the Reader or the QMD editor keeps the caret where it was.
+	 * When Chat is already visible, default is no focus steal; ⌘⇧L always
+	 * passes focus:false. Selection stays in Reader / QMD unless focus is set.
 	 */
 	Zotero.QLab.focusChatComposer = function (win, options = {}) {
 		let windowRef = win || (typeof Zotero !== 'undefined' && Zotero.getMainWindow && Zotero.getMainWindow());
@@ -344,7 +344,7 @@ Zotero.QLab = Zotero.QLab || {};
 		}
 		let visible = windowRef.Zotero_Tabs.isTabVisible
 			&& windowRef.Zotero_Tabs.isTabVisible(chat.id);
-		if (!visible) {
+		if (!visible && options.select !== false) {
 			windowRef.Zotero_Tabs.select(chat.id);
 		}
 		let container = windowRef.document.getElementById(chat.id);
@@ -352,10 +352,141 @@ Zotero.QLab = Zotero.QLab || {};
 		if (host) {
 			Zotero.QLab.refreshComposerTags(host);
 			let textarea = host.querySelector('[data-qlab-prompt]');
-			if (textarea && options.focus !== false) {
+			if (textarea && options.focus) {
 				textarea.focus();
 			}
 		}
+	};
+	
+	/**
+	 * Candidates for the composer `@` picker (Current PDF / Draft / Readers).
+	 */
+	Zotero.QLab.listComposerAtPickerItems = function (win) {
+		let windowRef = win || (typeof Zotero !== 'undefined' && Zotero.getMainWindow && Zotero.getMainWindow());
+		let items = [];
+		try {
+			let ctx = Zotero.QLab.ReaderContextStore && Zotero.QLab.ReaderContextStore.get();
+			if (ctx && ctx.attachment) {
+				let title = (ctx.parent && ctx.parent.title)
+					|| ctx.attachment.filename
+					|| 'Current PDF';
+				items.push({
+					id: 'current-pdf',
+					kind: 'pdf',
+					label: `Current PDF · ${truncate(title, 36)}`,
+					preference: 'auto',
+				});
+			}
+		}
+		catch (e) {}
+		
+		try {
+			let tabs = windowRef && windowRef.Zotero_Tabs;
+			let qmd = tabs && tabs._tabs.find(t => t.type === 'qlabqmd' || t.id === 'qlabqmd');
+			if (qmd) {
+				let container = windowRef.document.getElementById(qmd.id);
+				let host = container && container.querySelector('.qlab-shell-host');
+				let state = host && host._qlabDraftState;
+				let path = state
+					? (state.viewingWorking && state.workingPath
+						? state.workingPath
+						: state.originalPath)
+					: '';
+				if (path || (host && Zotero.QLab.getQmdShellBuffer
+						&& Zotero.QLab.getQmdShellBuffer(host))) {
+					items.push({
+						id: 'current-draft',
+						kind: 'qmd',
+						label: path
+							? `Current Draft · ${truncate(path.replace(/^drafts\//, ''), 36)}`
+							: 'Current Draft',
+						relativePath: path,
+					});
+				}
+			}
+		}
+		catch (e) {}
+		
+		try {
+			let readers = (Zotero.Reader && Zotero.Reader._readers) || [];
+			for (let reader of readers) {
+				if (!reader || !reader.itemID) {
+					continue;
+				}
+				let item = Zotero.Items && Zotero.Items.get && Zotero.Items.get(reader.itemID);
+				let label = (item && (item.attachmentFilename || item.getField && item.getField('title')))
+					|| `Reader ${reader.itemID}`;
+				items.push({
+					id: `reader-${reader.itemID}`,
+					kind: 'reader',
+					label: `Open Reader · ${truncate(label, 36)}`,
+					itemID: reader.itemID,
+					reader,
+				});
+			}
+		}
+		catch (e) {}
+		
+		return items;
+	};
+	
+	Zotero.QLab.renderComposerAtPickerHTML = function (items) {
+		let list = items || [];
+		if (!list.length) {
+			return `<div class="qlab-at-picker" data-qlab-at-picker hidden>`
+				+ `<div class="qlab-at-picker-empty">No PDF or Draft context</div></div>`;
+		}
+		let rows = list.map(item => (
+			`<button type="button" class="qlab-at-picker-item" data-qlab-at-pick="${escapeHTML(item.id)}">`
+			+ `${escapeHTML(item.label)}</button>`
+		)).join('');
+		return `<div class="qlab-at-picker" data-qlab-at-picker hidden>${rows}</div>`;
+	};
+	
+	/**
+	 * Apply one `@` picker choice into ChatComposerContext via existing add().
+	 */
+	Zotero.QLab.applyComposerAtPickerItem = async function (win, item) {
+		if (!item) {
+			return null;
+		}
+		let windowRef = win || Zotero.getMainWindow();
+		if (item.kind === 'pdf' || item.kind === 'reader') {
+			if (item.reader && Zotero.QLab.ReaderContextStore) {
+				await Zotero.QLab.ReaderContextStore.captureFromEvent({
+					reader: item.reader,
+					params: {},
+				});
+			}
+			let ctx = Zotero.QLab.ReaderContextStore && Zotero.QLab.ReaderContextStore.get();
+			if (!ctx) {
+				throw new Error('No PDF context to attach');
+			}
+			let tag = Zotero.QLab.createPdfComposerTag(ctx, item.preference || 'auto');
+			return Zotero.QLab.ChatComposerContext.add(tag);
+		}
+		if (item.kind === 'qmd') {
+			let tabs = windowRef && windowRef.Zotero_Tabs;
+			let qmd = tabs && tabs._tabs.find(t => t.type === 'qlabqmd' || t.id === 'qlabqmd');
+			let container = qmd && windowRef.document.getElementById(qmd.id);
+			let host = container && container.querySelector('.qlab-shell-host');
+			let state = host && host._qlabDraftState;
+			let path = item.relativePath || (state
+				? (state.viewingWorking && state.workingPath
+					? state.workingPath
+					: state.originalPath)
+				: '');
+			let source = host && Zotero.QLab.getQmdShellBuffer
+				? Zotero.QLab.getQmdShellBuffer(host)
+				: '';
+			let tag = Zotero.QLab.createQmdComposerTag({
+				relativePath: path,
+				source,
+				surfaceMode: (host && host._qlabSurfaceMode) || 'source',
+			});
+			return Zotero.QLab.ChatComposerContext.add(tag);
+		}
+		return null;
 	};
 	
 	/**
@@ -515,6 +646,11 @@ Zotero.QLab = Zotero.QLab || {};
 		
 		Zotero.QLab.ChatComposerContext.add(tag);
 		
+		let chat = tabs._tabs.find(t => t.type === 'qlabchat' || t.id === 'qlabchat');
+		let chatAlreadyVisible = !!(chat
+			&& tabs.isTabVisible
+			&& tabs.isTabVisible(chat.id));
+		
 		await Zotero.QLab.ensureChatPaneVisible(windowRef, { itemID: anchorItemID });
 		if (tabs._qlab && tabs._qlab.ensureShellTab) {
 			tabs._qlab.ensureShellTab('qlabchat', {
@@ -522,7 +658,12 @@ Zotero.QLab = Zotero.QLab || {};
 			});
 		}
 		
-		Zotero.QLab.focusChatComposer(windowRef, { focus: options.focus !== false });
+		// Default: do not steal focus when Chat / Research Desk is already up.
+		// ⌘⇧L always passes focus:false. Opening Chat for the first time focuses.
+		let shouldFocus = options.focus !== undefined
+			? !!options.focus
+			: !chatAlreadyVisible;
+		Zotero.QLab.focusChatComposer(windowRef, { focus: shouldFocus });
 		return tag;
 	};
 })();

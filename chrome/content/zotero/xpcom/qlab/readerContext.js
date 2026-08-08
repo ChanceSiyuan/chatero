@@ -17,6 +17,67 @@ Zotero.QLab = Zotero.QLab || {};
 	const MAX_PAGE = 12000;
 	const MAX_SELECTION = 8000;
 	
+	/**
+	 * Bound page text for prompts / composer tags.
+	 */
+	Zotero.QLab.truncateReaderPageText = function (text, max = MAX_PAGE) {
+		let value = String(text || '').replace(/\s+/g, ' ').trim();
+		let limit = Number.isFinite(max) && max > 0 ? max : MAX_PAGE;
+		if (value.length <= limit) {
+			return value;
+		}
+		return `${value.slice(0, Math.max(0, limit - 1))}…`;
+	};
+	
+	/**
+	 * Best-effort current-page text from a Reader instance.
+	 * Prefers the rendered textLayer; falls back to getPageData chars.
+	 */
+	Zotero.QLab.extractReaderPageText = async function (reader, pageIndex) {
+		if (!reader || !Number.isInteger(pageIndex) || pageIndex < 0) {
+			return '';
+		}
+		try {
+			let primaryView = reader._internalReader && reader._internalReader._primaryView;
+			let iframe = primaryView && primaryView._iframeWindow;
+			if (iframe && iframe.document) {
+				let layer = iframe.document.querySelector(
+					`[data-page-number="${pageIndex + 1}"] .textLayer`
+				);
+				if (layer && layer.textContent) {
+					return Zotero.QLab.truncateReaderPageText(layer.textContent, MAX_PAGE);
+				}
+			}
+		}
+		catch (_) {}
+		
+		try {
+			let primaryView = reader._internalReader && reader._internalReader._primaryView;
+			let iframe = primaryView && primaryView._iframeWindow;
+			let pdfDocument = iframe
+				&& iframe.PDFViewerApplication
+				&& iframe.PDFViewerApplication.pdfDocument;
+			if (pdfDocument && typeof pdfDocument.getPageData === 'function') {
+				let pageData = await pdfDocument.getPageData({ pageIndex });
+				if (pageData && Array.isArray(pageData.chars)) {
+					let parts = [];
+					for (let ch of pageData.chars) {
+						if (ch && ch.u) {
+							parts.push(ch.u);
+						}
+						if (ch && (ch.spaceAfter || ch.lineBreakAfter || ch.paragraphBreakAfter)) {
+							parts.push(' ');
+						}
+					}
+					return Zotero.QLab.truncateReaderPageText(parts.join(''), MAX_PAGE);
+				}
+			}
+		}
+		catch (_) {}
+		
+		return '';
+	};
+	
 	Zotero.QLab.ReaderContextStore = {
 		_context: null,
 		_chips: { paper: true, page: true, selection: true },
@@ -77,6 +138,12 @@ Zotero.QLab = Zotero.QLab || {};
 				selectionText = this._context.selection.text || '';
 			}
 			
+			let pageText = '';
+			try {
+				pageText = await Zotero.QLab.extractReaderPageText(reader, pageIndex);
+			}
+			catch (e) {}
+			
 			let title = parent
 				? (await parent.getDisplayTitle())
 				: (item.attachmentFilename || item.getField('title') || 'PDF');
@@ -100,7 +167,7 @@ Zotero.QLab = Zotero.QLab || {};
 				page: Object.freeze({
 					pageIndex,
 					pageNumber: pageIndex + 1,
-					text: '',
+					text: pageText,
 				}),
 				selection: selectionText
 					? Object.freeze({

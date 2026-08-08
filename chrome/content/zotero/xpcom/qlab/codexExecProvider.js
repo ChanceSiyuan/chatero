@@ -87,11 +87,15 @@ Zotero.QLab = Zotero.QLab || {};
 		return [{ type: 'text-delta', text: `[codex:${label}]\n` }];
 	};
 	
-	Zotero.QLab.buildCodexExecArgv = function (turn, prompt, { executable } = {}) {
+	Zotero.QLab.buildCodexExecArgv = function (turn, prompt, { executable, model } = {}) {
 		let exe = executable || 'codex';
 		let args = ['exec', '--json', '--skip-git-repo-check', '--color', 'never'];
 		let sandbox = sandboxForTurn(turn);
 		args.push('-s', sandbox);
+		let modelId = model || (turn && turn.model) || '';
+		if (modelId) {
+			args.push('-m', String(modelId));
+		}
 		if (turn.workspaceRoot) {
 			args.push('-C', turn.workspaceRoot);
 		}
@@ -147,7 +151,8 @@ Zotero.QLab = Zotero.QLab || {};
 				await resolveExe();
 				return cachedStatus;
 			},
-			async *startTurn(turn, prompt) {
+			async *startTurn(turn, prompt, options = {}) {
+				let cancelToken = options.cancelToken || null;
 				let exe = await resolveExe();
 				if (!exe) {
 					yield {
@@ -175,19 +180,39 @@ Zotero.QLab = Zotero.QLab || {};
 				
 				let { command, args, sandbox } = Zotero.QLab.buildCodexExecArgv(turn, prompt, {
 					executable: exe,
+					model: turn.model,
 				});
 				yield {
 					type: 'text-delta',
 					text: `[codex-cli] sandbox=${sandbox} cwd=${turn.workspaceRoot || '(none)'}\n`,
 				};
 				
+				if (cancelToken && cancelToken.cancelled) {
+					yield { type: 'done', status: 'cancelled' };
+					return;
+				}
+				
 				let sawDone = false;
 				let exitCode = null;
+				let killed = false;
 				try {
 					for await (let event of runner.run(command, args, {
 						cwd: turn.workspaceRoot || undefined,
 						env: { NO_COLOR: '1' },
+						registerKill: (kill) => {
+							if (cancelToken && cancelToken.onCancel) {
+								cancelToken.onCancel(() => {
+									killed = true;
+									kill();
+								});
+							}
+						},
 					})) {
+						if (cancelToken && cancelToken.cancelled) {
+							killed = true;
+							yield { type: 'done', status: 'cancelled' };
+							return;
+						}
 						if (event.type === 'stdout') {
 							for (let mapped of Zotero.QLab.mapCodexExecJsonLine(event.data)) {
 								if (mapped.type === 'done') {
@@ -205,10 +230,19 @@ Zotero.QLab = Zotero.QLab || {};
 					}
 				}
 				catch (e) {
+					if (killed || (cancelToken && cancelToken.cancelled)) {
+						yield { type: 'done', status: 'cancelled' };
+						return;
+					}
 					yield {
 						type: 'error',
 						message: e.message || String(e),
 					};
+					yield { type: 'done', status: 'cancelled' };
+					return;
+				}
+				
+				if (killed || (cancelToken && cancelToken.cancelled)) {
 					yield { type: 'done', status: 'cancelled' };
 					return;
 				}

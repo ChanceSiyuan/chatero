@@ -20,6 +20,14 @@ test("buildCodexExecArgv uses read-only sandbox for ask turns", async () => {
 	assert.ok(!built.args.includes("--dangerously-bypass-approvals-and-sandbox"));
 });
 
+test("buildCodexExecArgv passes -m when a model is set", async () => {
+	const QLab = await loadQLab();
+	const turn = QLab.createProveTurn({ mode: "ask", model: "o3" });
+	const built = QLab.buildCodexExecArgv(turn, "hi", { executable: "codex" });
+	assert.ok(built.args.includes("-m"));
+	assert.ok(built.args.includes("o3"));
+});
+
 test("buildCodexExecArgv uses workspace-write for agent turns with root", async () => {
 	const QLab = await loadQLab();
 	const turn = QLab.createProveTurn({

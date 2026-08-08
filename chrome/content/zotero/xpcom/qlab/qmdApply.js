@@ -85,6 +85,11 @@ Zotero.QLab = Zotero.QLab || {};
 		else if (mode === 'before-block' && block) {
 			offset = block.start;
 		}
+		else if (mode === 'replace-range'
+				&& Number.isInteger(anchor.start)
+				&& Number.isInteger(anchor.end)) {
+			offset = clamp(anchor.start, 0, text.length);
+		}
 		else if (mode === 'cursor') {
 			offset = Zotero.QLab.snapQmdOffset(text, anchor && anchor.offset);
 		}
@@ -112,8 +117,8 @@ Zotero.QLab = Zotero.QLab || {};
 	};
 	
 	/**
-	 * Prompt for ⌘K paragraph writing. The model returns document text only, so
-	 * whatever comes back can be inserted verbatim as a pending region.
+	 * Prompt for ⌘K paragraph writing / rewriting. The model returns document
+	 * text only, so whatever comes back can land as a pending region.
 	 */
 	Zotero.QLab.buildQmdInlineWritePrompt = function ({
 		instruction = '',
@@ -121,6 +126,8 @@ Zotero.QLab = Zotero.QLab || {};
 		before = '',
 		after = '',
 		draftPath = '',
+		replace = false,
+		selectedText = '',
 	} = {}) {
 		let task = String(instruction || '').trim();
 		if (!task) {
@@ -130,23 +137,35 @@ Zotero.QLab = Zotero.QLab || {};
 		if (composerContext) {
 			parts.push(composerContext);
 		}
-		parts.push('<qmd_inline_write>');
+		parts.push(replace ? '<qmd_inline_rewrite>' : '<qmd_inline_write>');
 		if (draftPath) {
 			parts.push(`draft: ${draftPath}`);
 		}
 		parts.push(`instruction: ${task}`);
-		parts.push('</qmd_inline_write>');
+		parts.push(replace ? '</qmd_inline_rewrite>' : '</qmd_inline_write>');
+		if (replace && selectedText) {
+			parts.push(`<qmd_text_selected>\n${normalize(selectedText).trim()}\n</qmd_text_selected>`);
+		}
 		if (before) {
 			parts.push(`<qmd_text_before>\n${before}\n</qmd_text_before>`);
 		}
 		if (after) {
 			parts.push(`<qmd_text_after>\n${after}\n</qmd_text_after>`);
 		}
-		parts.push(
-			'Return only the Quarto Markdown to insert at that point. '
-			+ 'No preamble, no explanation, no surrounding code fence, '
-			+ 'and do not repeat the surrounding text.'
-		);
+		if (replace) {
+			parts.push(
+				'Return only the replacement Quarto Markdown for the selected region. '
+				+ 'No preamble, no explanation, no surrounding code fence, '
+				+ 'and do not repeat the surrounding text.'
+			);
+		}
+		else {
+			parts.push(
+				'Return only the Quarto Markdown to insert at that point. '
+				+ 'No preamble, no explanation, no surrounding code fence, '
+				+ 'and do not repeat the surrounding text.'
+			);
+		}
 		return parts.join('\n\n');
 	};
 	
@@ -157,6 +176,20 @@ Zotero.QLab = Zotero.QLab || {};
 		let body = normalize(text).trim();
 		let fenced = /^(`{3,})[^\n]*\n([\s\S]*?)\n\1\s*$/.exec(body);
 		return fenced ? fenced[2] : body;
+	};
+	
+	/**
+	 * Prefer the first fenced code block from a chat reply when inserting into
+	 * notes; otherwise null so callers keep the full reply text.
+	 */
+	Zotero.QLab.extractFirstFencedMarkdown = function (text) {
+		let body = normalize(text);
+		let match = /```[^\n]*\n([\s\S]*?)\n```/.exec(body);
+		if (!match) {
+			return null;
+		}
+		let inner = match[1].replace(/\s+$/, '');
+		return inner || null;
 	};
 	
 	/**
@@ -196,6 +229,23 @@ Zotero.QLab = Zotero.QLab || {};
 				outerEnd: block.start + outerText.length,
 				outerText,
 				previousOuterText: text.slice(block.start, block.end),
+				changed: true,
+			};
+		}
+		
+		if (mode === 'replace-range'
+				&& Number.isInteger(anchor.start)
+				&& Number.isInteger(anchor.end)) {
+			let start = clamp(anchor.start, 0, text.length);
+			let end = clamp(anchor.end, start, text.length);
+			return {
+				source: `${text.slice(0, start)}${body}${text.slice(end)}`,
+				insertedStart: start,
+				insertedEnd: start + body.length,
+				outerStart: start,
+				outerEnd: start + body.length,
+				outerText: body,
+				previousOuterText: text.slice(start, end),
 				changed: true,
 			};
 		}
@@ -410,8 +460,10 @@ Zotero.QLab = Zotero.QLab || {};
 	
 	/**
 	 * Where the next insert goes, based on what the user last touched.
+	 * Pass `{ forInlineWrite: true }` for ⌘K so a Source selection or active
+	 * Preview block becomes a replace rather than an insert-after.
 	 */
-	Zotero.QLab.resolveQmdAnchor = function (host) {
+	Zotero.QLab.resolveQmdAnchor = function (host, { forInlineWrite = false } = {}) {
 		if (!host) {
 			return { mode: 'end' };
 		}
@@ -419,14 +471,52 @@ Zotero.QLab = Zotero.QLab || {};
 		if (mode === 'source') {
 			let editor = host.querySelector('[data-qlab-editor]');
 			if (editor && typeof editor.selectionStart === 'number') {
+				if (forInlineWrite
+						&& typeof editor.selectionEnd === 'number'
+						&& editor.selectionEnd > editor.selectionStart) {
+					return {
+						mode: 'replace-range',
+						start: editor.selectionStart,
+						end: editor.selectionEnd,
+					};
+				}
 				return { mode: 'cursor', offset: editor.selectionStart };
 			}
 			return { mode: 'end' };
 		}
 		if (mode === 'visual' && Number.isInteger(host._qlabActiveBlockIndex)) {
+			if (forInlineWrite) {
+				return {
+					mode: 'replace-block',
+					blockIndex: host._qlabActiveBlockIndex,
+				};
+			}
 			return { mode: 'after-block', blockIndex: host._qlabActiveBlockIndex };
 		}
 		return { mode: 'end' };
+	};
+	
+	/**
+	 * Selected / active-block text for a rewrite prompt, if any.
+	 */
+	Zotero.QLab.qmdAnchorSelectedText = function (host, anchor) {
+		if (!host || !anchor) {
+			return '';
+		}
+		let buffer = Zotero.QLab.getQmdShellBuffer
+			? Zotero.QLab.getQmdShellBuffer(host)
+			: '';
+		if (anchor.mode === 'replace-range'
+				&& Number.isInteger(anchor.start)
+				&& Number.isInteger(anchor.end)) {
+			return buffer.slice(anchor.start, anchor.end);
+		}
+		if (anchor.mode === 'replace-block' && Number.isInteger(anchor.blockIndex)) {
+			let blocks = blocksOf(buffer);
+			let block = blocks[anchor.blockIndex];
+			return block ? block.source : '';
+		}
+		return '';
 	};
 	
 	/**

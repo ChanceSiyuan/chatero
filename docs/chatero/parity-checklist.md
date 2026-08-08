@@ -55,9 +55,14 @@ Legend: `P0` required for daily path · `P1` Phase 4 RC · `P2` polish
 - [x] AgentRuntime + Provider registry (UI never calls HTTP/API keys)
 - [x] Chat / Tools UI to switch `codex-cli` / `openai-compat` / `prove-harness`
 - [x] Local `codex-cli` via `codex exec --json` + Subprocess runner (Phase 3B)
+- [x] Multi-turn Chat: bounded transcript + stable `threadId`; remount hydrates without wiping state
+- [x] Chat New chat / Regenerate; Stop + Esc cancel (partial reply kept, Apply-able)
+- [x] Chat model preference (`qlab.agentModel`) + Ask|Agent mode; Send disabled when `codex-cli` unavailable
+- [x] Composer `@` picker (Current PDF / Draft / Open Readers) via `ChatComposerContext.add`
+- [x] ⌘L does not steal focus when Chat already visible; ⌘⇧L always no-focus
 - [ ] Full Codex app-server / NativeBridge parity (optional upgrade path)
 - [ ] Native helper spawn for PTY/terminal; long tasks survive tab hide/move
-- [ ] Region + page capture attachments (bounded; page text still stub)
+- [x] Page text capture into `ReaderContextStore.page.text` (bounded truncate; region capture still later)
 - [x] Full Chat is native tab (`qlabchat`); float panel deferred
 - [ ] Remote Chat withholds local Zotero paths from prompts
 - [x] Shell UI mounts without blocking Zotero core
@@ -100,9 +105,12 @@ Legend: `P0` required for daily path · `P1` Phase 4 RC · `P2` polish
 - [x] Inserts snap to block boundaries; never split a fence, math block, or frontmatter
 - [x] PDF quotes carry a `chatero://open-pdf/...?page=N` link back to the page
 - [x] Multiple pending regions per shell; per-hunk Accept / Reject / Reject all
+- [x] Preview inline hunk review: overlapping blocks marked `is-pending` with Accept/Reject
+- [x] Chat “Insert into notes” prefers first fenced code block when present
 - [x] Reject re-anchors by content and refuses ambiguous matches
 - [x] Pending markers clear on Save and on Draft reload
 - [x] ⌘K writes a passage at the anchor (`ask` mode → pending region, never writes the file)
+- [x] ⌘K rewrite: Source selection or active Preview block → replace pending region
 
 ### XPI sources
 `qmd-workspace.ts`, `qmd-visual-editor.ts`, `qmd-source-model.ts`,

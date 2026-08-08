@@ -45,6 +45,46 @@ Zotero.QLab = Zotero.QLab || {};
 	}
 	
 	/**
+	 * Cooperative cancel token for streaming turns. Providers may register a
+	 * kill hook (e.g. subprocess SIGTERM); callers get `.cancel()` on the
+	 * async iterator returned by AgentRuntime.startTurn.
+	 */
+	Zotero.QLab.createCancelToken = function () {
+		let cancelled = false;
+		let hooks = [];
+		return {
+			get cancelled() {
+				return cancelled;
+			},
+			onCancel(fn) {
+				if (typeof fn !== 'function') {
+					return;
+				}
+				if (cancelled) {
+					try {
+						fn();
+					}
+					catch (_) {}
+					return;
+				}
+				hooks.push(fn);
+			},
+			cancel() {
+				if (cancelled) {
+					return;
+				}
+				cancelled = true;
+				for (let fn of hooks.splice(0)) {
+					try {
+						fn();
+					}
+					catch (_) {}
+				}
+			},
+		};
+	};
+	
+	/**
 	 * @param {object} input
 	 * @returns {object} ProveTurn
 	 */
@@ -74,6 +114,7 @@ Zotero.QLab = Zotero.QLab || {};
 					: []
 			),
 			providerId: input.providerId ? String(input.providerId) : null,
+			model: input.model ? String(input.model) : null,
 			createdAt: Number.isFinite(input.createdAt) ? input.createdAt : Date.now(),
 		});
 	};
@@ -168,79 +209,107 @@ Zotero.QLab = Zotero.QLab || {};
 		
 		/**
 		 * Start a turn against the selected provider.
-		 * Returns an async iterator of normalized AgentEvents when providers stream;
-		 * stub providers yield a single not-ready/error/done sequence.
+		 * Returns an async iterable of normalized AgentEvents with a `.cancel()`
+		 * method that cooperatively stops the stream and kills the subprocess
+		 * when the provider registered a kill hook.
 		 */
-		async *startTurn(input = {}) {
-			let providerId = input.providerId || this.getActiveProviderId();
-			if (!providerId || !this._registry) {
-				yield Zotero.QLab.normalizeAgentEvent({
-					type: 'error',
-					message: 'No agent provider is registered',
-				});
-				yield Zotero.QLab.normalizeAgentEvent({ type: 'done', status: 'cancelled' });
-				return;
-			}
+		startTurn(input = {}) {
+			let cancelToken = input.cancelToken || Zotero.QLab.createCancelToken();
+			let self = this;
 			
-			let provider = this._registry.get(providerId);
-			if (!provider) {
-				yield Zotero.QLab.normalizeAgentEvent({
-					type: 'error',
-					message: `Provider not found: ${providerId}`,
-				});
-				yield Zotero.QLab.normalizeAgentEvent({ type: 'done', status: 'cancelled' });
-				return;
-			}
-			
-			let turn;
-			try {
-				turn = Zotero.QLab.createProveTurn({
-					...input,
-					providerId,
-				});
-			}
-			catch (e) {
-				yield Zotero.QLab.normalizeAgentEvent({
-					type: 'error',
-					message: e.message || String(e),
-				});
-				yield Zotero.QLab.normalizeAgentEvent({ type: 'done', status: 'cancelled' });
-				return;
-			}
-			
-			this._threads.set(turn.threadId, {
-				threadId: turn.threadId,
-				providerId,
-				mode: turn.mode,
-				updatedAt: Date.now(),
-			});
-			
-			let prompt = String(input.prompt || '');
-			let stream;
-			try {
-				stream = provider.startTurn(turn, prompt);
-			}
-			catch (e) {
-				yield Zotero.QLab.normalizeAgentEvent({
-					type: 'error',
-					message: e.message || String(e),
-				});
-				yield Zotero.QLab.normalizeAgentEvent({ type: 'done', status: 'cancelled' });
-				return;
-			}
-			
-			for await (let raw of stream) {
-				let event = Zotero.QLab.normalizeAgentEvent(raw);
-				if (event.type === 'tool-call'
-						&& !Zotero.QLab.turnAllowsTool(turn, event.name)) {
+			async function* events() {
+				let providerId = input.providerId || self.getActiveProviderId();
+				if (!providerId || !self._registry) {
 					yield Zotero.QLab.normalizeAgentEvent({
 						type: 'error',
-						message: `Tool not granted for this turn: ${event.name}`,
+						message: 'No agent provider is registered',
 					});
-					continue;
+					yield Zotero.QLab.normalizeAgentEvent({ type: 'done', status: 'cancelled' });
+					return;
 				}
-				yield event;
+				
+				let provider = self._registry.get(providerId);
+				if (!provider) {
+					yield Zotero.QLab.normalizeAgentEvent({
+						type: 'error',
+						message: `Provider not found: ${providerId}`,
+					});
+					yield Zotero.QLab.normalizeAgentEvent({ type: 'done', status: 'cancelled' });
+					return;
+				}
+				
+				let turn;
+				try {
+					turn = Zotero.QLab.createProveTurn({
+						...input,
+						providerId,
+					});
+				}
+				catch (e) {
+					yield Zotero.QLab.normalizeAgentEvent({
+						type: 'error',
+						message: e.message || String(e),
+					});
+					yield Zotero.QLab.normalizeAgentEvent({ type: 'done', status: 'cancelled' });
+					return;
+				}
+				
+				self._threads.set(turn.threadId, {
+					threadId: turn.threadId,
+					providerId,
+					mode: turn.mode,
+					updatedAt: Date.now(),
+				});
+				
+				let prompt = String(input.prompt || '');
+				let stream;
+				try {
+					stream = provider.startTurn(turn, prompt, { cancelToken });
+				}
+				catch (e) {
+					yield Zotero.QLab.normalizeAgentEvent({
+						type: 'error',
+						message: e.message || String(e),
+					});
+					yield Zotero.QLab.normalizeAgentEvent({ type: 'done', status: 'cancelled' });
+					return;
+				}
+				
+				for await (let raw of stream) {
+					if (cancelToken.cancelled) {
+						yield Zotero.QLab.normalizeAgentEvent({
+							type: 'done',
+							status: 'cancelled',
+						});
+						return;
+					}
+					let event = Zotero.QLab.normalizeAgentEvent(raw);
+					if (event.type === 'tool-call'
+							&& !Zotero.QLab.turnAllowsTool(turn, event.name)) {
+						yield Zotero.QLab.normalizeAgentEvent({
+							type: 'error',
+							message: `Tool not granted for this turn: ${event.name}`,
+						});
+						continue;
+					}
+					yield event;
+					if (event.type === 'done' || event.type === 'error') {
+						// Keep draining only until a terminal event when cancelled mid-stream.
+					}
+				}
+				
+				if (cancelToken.cancelled) {
+					yield Zotero.QLab.normalizeAgentEvent({
+						type: 'done',
+						status: 'cancelled',
+					});
+				}
 			}
+			
+			let iterator = events();
+			iterator.cancel = () => cancelToken.cancel();
+			iterator.cancelToken = cancelToken;
+			return iterator;
 		},
 		
 		getThread(threadId) {

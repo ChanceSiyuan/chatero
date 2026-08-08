@@ -72,12 +72,62 @@ Zotero.QLab = Zotero.QLab || {};
 			.join('');
 	}
 	
+	const MODEL_CHOICES = [
+		{ id: '', label: 'Default model' },
+		{ id: 'gpt-5', label: 'gpt-5' },
+		{ id: 'gpt-5-mini', label: 'gpt-5-mini' },
+		{ id: 'o3', label: 'o3' },
+		{ id: 'o4-mini', label: 'o4-mini' },
+	];
+	
+	function modelOptionsHTML(selected) {
+		let value = String(selected || '');
+		return MODEL_CHOICES.map(opt => (
+			`<option value="${escapeHTML(opt.id)}"${opt.id === value ? ' selected' : ''}>`
+			+ `${escapeHTML(opt.label)}</option>`
+		)).join('');
+	}
+	
+	function newThreadId() {
+		return `thread-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+	}
+	
+	/**
+	 * Frame a bounded recent transcript for multi-turn chat.
+	 * Excludes a trailing empty / in-flight assistant reply by default.
+	 */
+	Zotero.QLab.buildChatTranscriptPrompt = function (messages, {
+		maxTurns = 8,
+		excludeTrailingAssistant = true,
+	} = {}) {
+		let list = Array.isArray(messages) ? messages.slice() : [];
+		if (excludeTrailingAssistant) {
+			while (list.length && list[list.length - 1].role === 'assistant') {
+				list.pop();
+			}
+		}
+		let maxMessages = Math.max(1, maxTurns) * 2;
+		if (list.length > maxMessages) {
+			list = list.slice(-maxMessages);
+		}
+		if (!list.length) {
+			return '';
+		}
+		let parts = ['<chat_transcript>'];
+		for (let message of list) {
+			let role = message.role === 'assistant' ? 'assistant' : 'user';
+			parts.push(`${role}: ${String(message.text || '').trim()}`);
+		}
+		parts.push('</chat_transcript>');
+		return parts.join('\n');
+	};
+	
 	Zotero.QLab.renderShellHTML = function ({
 		kind,
 		workspaceState = 'missing',
 		root = '',
 		drafts = [],
-		contextSummary = '',
+		contextSummary: _contextSummary = '',
 	} = {}) {
 		let copy = shellCopy(kind, workspaceState, root);
 		let providerId = 'codex-cli';
@@ -97,19 +147,52 @@ Zotero.QLab = Zotero.QLab || {};
 			let tagsHTML = Zotero.QLab.renderComposerTagsHTML
 				? Zotero.QLab.renderComposerTagsHTML()
 				: `<div class="qlab-composer-tags" data-qlab-context-tags></div>`;
+			let atPickerHTML = Zotero.QLab.renderComposerAtPickerHTML
+				? Zotero.QLab.renderComposerAtPickerHTML([])
+				: `<div class="qlab-at-picker" data-qlab-at-picker hidden></div>`;
+			let modelId = '';
+			let chatMode = 'ask';
+			try {
+				modelId = Zotero.QLab.Settings.getAgentModel
+					? Zotero.QLab.Settings.getAgentModel()
+					: '';
+				chatMode = Zotero.QLab.Settings.getChatMode
+					? Zotero.QLab.Settings.getChatMode()
+					: 'ask';
+			}
+			catch (e) {}
 			return [
 				`<div class="qlab-shell" data-qlab-kind="qlabchat">`,
-				`<header class="qlab-shell-header"><h1>${escapeHTML(copy.title)}</h1></header>`,
+				`<header class="qlab-shell-header">`,
+				`<h1>${escapeHTML(copy.title)}</h1>`,
+				`<div class="qlab-shell-header-actions">`,
+				`<button type="button" data-qlab-new-chat title="Clear transcript">New chat</button>`,
+				`<button type="button" data-qlab-regenerate title="Resend last user message">Regenerate</button>`,
+				`</div>`,
+				`</header>`,
 				`<p class="qlab-shell-status">${escapeHTML(copy.body)}</p>`,
+				`<div class="qlab-shell-toolbar">`,
 				`<label class="qlab-shell-field">Provider `
 				+ `<select data-qlab-provider>${providerOptionsHTML(providerId)}</select></label>`,
+				`<label class="qlab-shell-field">Model `
+				+ `<select data-qlab-model>${modelOptionsHTML(modelId)}</select></label>`,
+				`<label class="qlab-shell-field">Mode `
+				+ `<select data-qlab-chat-mode>`
+				+ `<option value="ask"${chatMode === 'ask' ? ' selected' : ''}>Ask</option>`
+				+ `<option value="agent"${chatMode === 'agent' ? ' selected' : ''}>Agent</option>`
+				+ `</select></label>`,
+				`</div>`,
 				`<div class="qlab-shell-actions">${actionButtons}</div>`,
 				`<div class="qlab-shell-composer">`,
 				tagsHTML,
+				`<div class="qlab-composer-at-wrap">`,
 				`<textarea data-qlab-prompt rows="3" `
-				+ `placeholder="Ask…  ⌘L pins PDF / QMD context as tags"></textarea>`,
+				+ `placeholder="Ask…  @ for context · ⌘L pins PDF / QMD · ⌘↵ send"></textarea>`,
+				atPickerHTML,
+				`</div>`,
 				`<div class="qlab-shell-composer-row">`,
 				`<button type="button" data-qlab-send>Send</button>`,
+				`<button type="button" data-qlab-stop hidden>Stop</button>`,
 				`</div>`,
 				`</div>`,
 				`<div class="qlab-shell-output" data-qlab-output role="log"></div>`,
@@ -142,8 +225,9 @@ Zotero.QLab = Zotero.QLab || {};
 				`</div>`,
 				`<div class="qlab-qmd-inline" data-qlab-inline hidden>`,
 				`<input type="text" data-qlab-inline-prompt `
-				+ `placeholder="Write a paragraph about…  (inserts at the anchor)"/>`,
+				+ `placeholder="Write or rewrite at the anchor…  (selection → replace)"/>`,
 				`<button type="button" data-qlab-inline-run>Write</button>`,
+				`<button type="button" data-qlab-inline-stop hidden>Stop</button>`,
 				`<button type="button" data-qlab-inline-cancel>Cancel</button>`,
 				`</div>`,
 				`<div class="qlab-qmd-pending" data-qlab-pending hidden></div>`,
@@ -174,7 +258,100 @@ Zotero.QLab = Zotero.QLab || {};
 	};
 	
 	/**
+	 * Refresh workspace chrome on an already-mounted shell without wiping
+	 * transcript / buffer / pending state.
+	 */
+	Zotero.QLab.refreshShellWorkspaceChrome = function (host, {
+		kind,
+		workspaceState = 'missing',
+		root = '',
+		drafts = [],
+	} = {}) {
+		if (!host) {
+			return;
+		}
+		let copy = shellCopy(kind, workspaceState, root);
+		let status = host.querySelector('.qlab-shell-status');
+		if (status && !host._qlabTurnHandle) {
+			status.textContent = copy.body;
+		}
+		let draftSelect = host.querySelector('[data-qlab-draft]');
+		if (draftSelect && Array.isArray(drafts)) {
+			let current = draftSelect.value;
+			let options = ['<option value="">Select…</option>'].concat(
+				drafts.map(path => (
+					`<option value="${escapeHTML(path)}"${path === current ? ' selected' : ''}>`
+					+ `${escapeHTML(path)}</option>`
+				))
+			);
+			draftSelect.innerHTML = options.join('');
+		}
+		if (kind === 'qlabchat') {
+			Zotero.QLab.refreshComposerTags && Zotero.QLab.refreshComposerTags(host);
+			Zotero.QLab.renderChatMessages(host);
+			void Zotero.QLab.refreshChatProviderAvailability(host);
+		}
+		if (kind === 'qlabqmd') {
+			Zotero.QLab.renderQmdPendingBar && Zotero.QLab.renderQmdPendingBar(host);
+			let mode = host._qlabSurfaceMode || 'visual';
+			if (Zotero.QLab.applyQmdSurfaceMode) {
+				Zotero.QLab.applyQmdSurfaceMode(host, mode, { silent: true, root });
+			}
+		}
+	};
+	
+	/**
+	 * Disable Send when the active local provider is unavailable.
+	 */
+	Zotero.QLab.refreshChatProviderAvailability = async function (host) {
+		if (!host) {
+			return;
+		}
+		let send = host.querySelector('[data-qlab-send]');
+		let status = host.querySelector('.qlab-shell-status');
+		try {
+			let providerId = Zotero.QLab.Settings
+				? Zotero.QLab.Settings.getAgentProviderId()
+				: 'codex-cli';
+			let runtime = Zotero.QLab.getAgentRuntime && Zotero.QLab.getAgentRuntime();
+			let provider = runtime && runtime._registry && runtime._registry.get(providerId);
+			if (provider && typeof provider.refreshStatus === 'function') {
+				await provider.refreshStatus();
+			}
+			let unavailable = provider && provider.status === 'unavailable';
+			if (send) {
+				send.disabled = !!unavailable || !!host._qlabTurnHandle;
+			}
+			if (unavailable && status && !host._qlabTurnHandle) {
+				status.textContent = providerId === 'codex-cli'
+					? 'Codex CLI unavailable — install Codex or switch provider.'
+					: `Provider ${providerId} is unavailable.`;
+			}
+		}
+		catch (e) {
+			Zotero.logError && Zotero.logError(e);
+		}
+	};
+	
+	function setChatTurnRunning(host, running) {
+		let send = host && host.querySelector('[data-qlab-send]');
+		let stop = host && host.querySelector('[data-qlab-stop]');
+		if (send && !running) {
+			// Availability refresh may re-disable; optimistic enable here.
+			send.disabled = false;
+		}
+		else if (send && running) {
+			send.disabled = true;
+		}
+		if (stop) {
+			stop.hidden = !running;
+		}
+	}
+	
+	/**
 	 * Mount shell UI into a tab-content host. Safe to call repeatedly.
+	 * Same-kind remounts hydrate chrome only -- transcript, buffer, pending
+	 * inserts, draft state, and surface mode are preserved.
 	 */
 	Zotero.QLab.mountShellTab = async function (container, kind) {
 		if (!container) {
@@ -220,6 +397,37 @@ Zotero.QLab = Zotero.QLab || {};
 			host.className = 'qlab-shell-host';
 			container.appendChild(host);
 		}
+		
+		let sameKindMounted = host._qlabMountedKind === kind
+			&& host.querySelector(`[data-qlab-kind="${kind}"]`);
+		if (sameKindMounted) {
+			Zotero.QLab.refreshShellWorkspaceChrome(host, {
+				kind,
+				workspaceState,
+				root,
+				drafts,
+			});
+			host._qlabMountRoot = root;
+			host._qlabMountWorkspaceState = workspaceState;
+			return;
+		}
+		
+		let preserve = host._qlabMountedKind === kind;
+		let preserved = preserve
+			? {
+				draftState: host._qlabDraftState,
+				buffer: host._qlabBuffer,
+				dirty: host._qlabDirty,
+				surfaceMode: host._qlabSurfaceMode,
+				websiteUrl: host._qlabWebsiteUrl,
+				messages: host._qlabMessages,
+				pending: host._qlabPendingInserts,
+				activeBlock: host._qlabActiveBlockIndex,
+				threadId: host._qlabThreadId,
+				lastSaved: host._qlabLastSaved,
+			}
+			: null;
+		
 		host.innerHTML = Zotero.QLab.renderShellHTML({
 			kind,
 			workspaceState,
@@ -227,19 +435,55 @@ Zotero.QLab = Zotero.QLab || {};
 			drafts,
 			contextSummary,
 		});
-		host._qlabDraftState = null;
-		host._qlabBuffer = '';
-		host._qlabDirty = false;
-		host._qlabSurfaceMode = 'visual';
-		host._qlabWebsiteUrl = '';
-		host._qlabMessages = [];
-		host._qlabPendingInserts = [];
-		host._qlabActiveBlockIndex = null;
+		host._qlabMountedKind = kind;
+		host._qlabMountRoot = root;
+		host._qlabMountWorkspaceState = workspaceState;
+		
+		if (preserve && preserved) {
+			host._qlabDraftState = preserved.draftState || null;
+			host._qlabBuffer = typeof preserved.buffer === 'string' ? preserved.buffer : '';
+			host._qlabDirty = !!preserved.dirty;
+			host._qlabSurfaceMode = preserved.surfaceMode || 'visual';
+			host._qlabWebsiteUrl = preserved.websiteUrl || '';
+			host._qlabMessages = Array.isArray(preserved.messages) ? preserved.messages : [];
+			host._qlabPendingInserts = Array.isArray(preserved.pending) ? preserved.pending : [];
+			host._qlabActiveBlockIndex = Number.isInteger(preserved.activeBlock)
+				? preserved.activeBlock
+				: null;
+			host._qlabThreadId = preserved.threadId || newThreadId();
+			host._qlabLastSaved = preserved.lastSaved;
+		}
+		else {
+			host._qlabDraftState = null;
+			host._qlabBuffer = '';
+			host._qlabDirty = false;
+			host._qlabSurfaceMode = 'visual';
+			host._qlabWebsiteUrl = '';
+			host._qlabMessages = [];
+			host._qlabPendingInserts = [];
+			host._qlabActiveBlockIndex = null;
+			host._qlabThreadId = newThreadId();
+			host._qlabTurnHandle = null;
+		}
+		
 		if (kind === 'qlabqmd' && Zotero.QLab.applyQmdSurfaceMode) {
-			Zotero.QLab.applyQmdSurfaceMode(host, 'visual', { silent: true, root });
+			let mode = host._qlabSurfaceMode || 'visual';
+			if (host._qlabBuffer && Zotero.QLab.setQmdShellBuffer) {
+				Zotero.QLab.setQmdShellBuffer(host, host._qlabBuffer, {
+					dirty: host._qlabDirty,
+					render: false,
+				});
+			}
+			Zotero.QLab.applyQmdSurfaceMode(host, mode, { silent: true, root });
+			Zotero.QLab.renderQmdPendingBar && Zotero.QLab.renderQmdPendingBar(host);
+		}
+		if (kind === 'qlabchat') {
+			Zotero.QLab.renderChatMessages(host);
+			void Zotero.QLab.refreshChatProviderAvailability(host);
 		}
 		
 		host.onchange = (event) => {
+			let mountRoot = host._qlabMountRoot || root;
 			let provider = event.target.closest('[data-qlab-provider]');
 			if (provider && Zotero.QLab.Settings) {
 				Zotero.QLab.Settings.setAgentProviderId(provider.value);
@@ -252,6 +496,15 @@ Zotero.QLab = Zotero.QLab || {};
 				catch (e) {
 					Zotero.logError && Zotero.logError(e);
 				}
+				void Zotero.QLab.refreshChatProviderAvailability(host);
+			}
+			let model = event.target.closest('[data-qlab-model]');
+			if (model && Zotero.QLab.Settings && Zotero.QLab.Settings.setAgentModel) {
+				Zotero.QLab.Settings.setAgentModel(model.value);
+			}
+			let chatMode = event.target.closest('[data-qlab-chat-mode]');
+			if (chatMode && Zotero.QLab.Settings && Zotero.QLab.Settings.setChatMode) {
+				Zotero.QLab.Settings.setChatMode(chatMode.value);
 			}
 			let chip = event.target.closest('[data-qlab-chip]');
 			if (chip && Zotero.QLab.ReaderContextStore) {
@@ -259,11 +512,13 @@ Zotero.QLab = Zotero.QLab || {};
 			}
 			let draftSelect = event.target.closest('[data-qlab-draft]');
 			if (draftSelect && draftSelect.value) {
-				void Zotero.QLab.loadDraftIntoShell(host, root, draftSelect.value);
+				void Zotero.QLab.loadDraftIntoShell(host, mountRoot, draftSelect.value);
 			}
 		};
 		
 		host.onclick = (event) => {
+			let mountRoot = host._qlabMountRoot || root;
+			let mountState = host._qlabMountWorkspaceState || workspaceState;
 			let removeTag = event.target.closest('[data-qlab-tag-remove]');
 			if (removeTag) {
 				let chip = removeTag.closest('[data-qlab-tag-id]');
@@ -332,12 +587,15 @@ Zotero.QLab = Zotero.QLab || {};
 			}
 			let modeBtn = event.target.closest('[data-qlab-mode]');
 			if (modeBtn && Zotero.QLab.applyQmdSurfaceMode) {
-				Zotero.QLab.applyQmdSurfaceMode(host, modeBtn.dataset.qlabMode, { root });
+				Zotero.QLab.applyQmdSurfaceMode(host, modeBtn.dataset.qlabMode, {
+					root: mountRoot,
+				});
 				return;
 			}
 			let visualBlock = event.target.closest('[data-qlab-block-index]');
 			if (visualBlock
 					&& !event.target.closest('textarea')
+					&& !event.target.closest('[data-qlab-pending-id]')
 					&& Zotero.QLab.beginQmdVisualBlockEdit) {
 				Zotero.QLab.beginQmdVisualBlockEdit(
 					host,
@@ -350,32 +608,49 @@ Zotero.QLab = Zotero.QLab || {};
 				void Zotero.QLab.runShellResearchAction({
 					host,
 					actionID: action.dataset.qlabAction,
-					root,
-					workspaceState,
+					root: mountRoot,
+					workspaceState: mountState,
 				});
 				return;
 			}
 			if (event.target.closest('[data-qlab-send]')) {
-				void Zotero.QLab.runShellFreeform(host, root, workspaceState);
+				void Zotero.QLab.runShellFreeform(host, mountRoot, mountState);
+				return;
+			}
+			if (event.target.closest('[data-qlab-stop]')) {
+				Zotero.QLab.cancelShellTurn(host);
+				return;
+			}
+			if (event.target.closest('[data-qlab-new-chat]')) {
+				Zotero.QLab.resetChatThread(host);
+				return;
+			}
+			if (event.target.closest('[data-qlab-regenerate]')) {
+				void Zotero.QLab.regenerateLastChatTurn(host, mountRoot, mountState);
+				return;
+			}
+			let atPick = event.target.closest('[data-qlab-at-pick]');
+			if (atPick) {
+				void Zotero.QLab.handleComposerAtPick(host, atPick.dataset.qlabAtPick);
 				return;
 			}
 			if (event.target.closest('[data-qlab-draft-reload]')) {
 				let sel = host.querySelector('[data-qlab-draft]');
 				if (sel && sel.value) {
-					void Zotero.QLab.loadDraftIntoShell(host, root, sel.value);
+					void Zotero.QLab.loadDraftIntoShell(host, mountRoot, sel.value);
 				}
 				return;
 			}
 			if (event.target.closest('[data-qlab-draft-save]')) {
-				void Zotero.QLab.saveDraftFromShell(host, root);
+				void Zotero.QLab.saveDraftFromShell(host, mountRoot);
 				return;
 			}
 			if (event.target.closest('[data-qlab-draft-ai]')) {
-				void Zotero.QLab.editDraftWithAI(host, root, workspaceState);
+				void Zotero.QLab.editDraftWithAI(host, mountRoot, mountState);
 				return;
 			}
 			if (event.target.closest('[data-qlab-draft-keep]')) {
-				void Zotero.QLab.keepDraftFromShell(host, root);
+				void Zotero.QLab.keepDraftFromShell(host, mountRoot);
 				return;
 			}
 			if (event.target.closest('[data-qlab-inline-toggle]')) {
@@ -383,7 +658,14 @@ Zotero.QLab = Zotero.QLab || {};
 				return;
 			}
 			if (event.target.closest('[data-qlab-inline-cancel]')) {
+				if (host._qlabTurnHandle) {
+					Zotero.QLab.cancelShellTurn(host);
+				}
 				Zotero.QLab.toggleQmdInlineBar(host, false);
+				return;
+			}
+			if (event.target.closest('[data-qlab-inline-stop]')) {
+				Zotero.QLab.cancelShellTurn(host);
 				return;
 			}
 			if (event.target.closest('[data-qlab-inline-run]')) {
@@ -391,18 +673,21 @@ Zotero.QLab = Zotero.QLab || {};
 				void Zotero.QLab.requestQmdInlineWrite({
 					host,
 					instruction: input ? input.value : '',
-					root,
-					workspaceState,
+					root: mountRoot,
+					workspaceState: mountState,
 				});
 				return;
 			}
 			if (event.target.closest('[data-qlab-website-quarto]')) {
 				void Zotero.QLab.refreshQmdWebsitePane(host, {
-					root,
+					root: mountRoot,
 					forceQuarto: true,
 				});
 				if (host._qlabSurfaceMode !== 'website' && Zotero.QLab.applyQmdSurfaceMode) {
-					Zotero.QLab.applyQmdSurfaceMode(host, 'website', { root, silent: true });
+					Zotero.QLab.applyQmdSurfaceMode(host, 'website', {
+						root: mountRoot,
+						silent: true,
+					});
 				}
 			}
 		};
@@ -422,27 +707,95 @@ Zotero.QLab = Zotero.QLab || {};
 					void Zotero.QLab.requestQmdInlineWrite({
 						host,
 						instruction: inlinePrompt.value,
-						root,
-						workspaceState,
+						root: host._qlabMountRoot || root,
+						workspaceState: host._qlabMountWorkspaceState || workspaceState,
 					});
 				}
 				else if (event.key === 'Escape') {
 					event.preventDefault();
-					Zotero.QLab.toggleQmdInlineBar(host, false);
+					if (host._qlabTurnHandle) {
+						Zotero.QLab.cancelShellTurn(host);
+					}
+					else {
+						Zotero.QLab.toggleQmdInlineBar(host, false);
+					}
 				}
 			});
 		}
 		
-		// ⌘K only claims the key while focus is inside a QMD shell. The host
-		// element outlives re-mounts, so this binds exactly once.
-		if (kind === 'qlabqmd' && !host._qlabInlineKeyBound) {
-			host._qlabInlineKeyBound = true;
-			host.addEventListener('keydown', (event) => {
-				if ((event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey
-						&& String(event.key || '').toLowerCase() === 'k') {
+		let prompt = host.querySelector('[data-qlab-prompt]');
+		if (prompt) {
+			prompt.addEventListener('keydown', (event) => {
+				let meta = event.metaKey || event.ctrlKey;
+				if (meta && event.key === 'Enter' && !event.shiftKey) {
 					event.preventDefault();
-					event.stopPropagation();
-					Zotero.QLab.toggleQmdInlineBar(host, true);
+					void Zotero.QLab.runShellFreeform(
+						host,
+						host._qlabMountRoot || root,
+						host._qlabMountWorkspaceState || workspaceState
+					);
+					return;
+				}
+				if (event.key === 'Escape') {
+					event.preventDefault();
+					if (host._qlabTurnHandle) {
+						Zotero.QLab.cancelShellTurn(host);
+					}
+					else {
+						Zotero.QLab.hideComposerAtPicker(host);
+					}
+					return;
+				}
+				if (event.key === '@' || (event.key === '2' && event.shiftKey)) {
+					// Defer until the character is in the textarea.
+					host.ownerDocument.defaultView.setTimeout(() => {
+						Zotero.QLab.maybeShowComposerAtPicker(host);
+					}, 0);
+				}
+			});
+			prompt.addEventListener('input', () => {
+				Zotero.QLab.maybeShowComposerAtPicker(host);
+			});
+		}
+		
+		// Shell keyboard shortcuts bind once per host element.
+		if (!host._qlabShellKeyBound) {
+			host._qlabShellKeyBound = true;
+			host.addEventListener('keydown', (event) => {
+				let meta = event.metaKey || event.ctrlKey;
+				let key = String(event.key || '').toLowerCase();
+				if (host._qlabMountedKind === 'qlabqmd') {
+					if (meta && !event.shiftKey && !event.altKey && key === 'k') {
+						event.preventDefault();
+						event.stopPropagation();
+						Zotero.QLab.toggleQmdInlineBar(host, true);
+						return;
+					}
+				}
+				if (meta && event.shiftKey && !event.altKey && key === 'enter') {
+					let pending = Zotero.QLab.pendingQmdInserts
+						? Zotero.QLab.pendingQmdInserts(host)
+						: [];
+					if (pending.length) {
+						event.preventDefault();
+						Zotero.QLab.acceptPendingQmdInsert(host, pending[pending.length - 1].id);
+					}
+					return;
+				}
+				if (meta && event.shiftKey && !event.altKey
+						&& (key === 'backspace' || event.key === 'Backspace')) {
+					let pending = Zotero.QLab.pendingQmdInserts
+						? Zotero.QLab.pendingQmdInserts(host)
+						: [];
+					if (pending.length) {
+						event.preventDefault();
+						runPendingReview(host, () => (
+							Zotero.QLab.rejectPendingQmdInsert(
+								host,
+								pending[pending.length - 1].id
+							)
+						));
+					}
 				}
 			}, true);
 		}
@@ -676,7 +1029,11 @@ Zotero.QLab = Zotero.QLab || {};
 	 * Chat transcript model. Messages are addressable so each assistant reply can
 	 * carry its own Apply actions, the way a Cursor chat turn does.
 	 */
-	Zotero.QLab.appendChatMessage = function (host, { role = 'assistant', text = '' } = {}) {
+	Zotero.QLab.appendChatMessage = function (host, {
+		role = 'assistant',
+		text = '',
+		status = '',
+	} = {}) {
 		if (!host) {
 			return null;
 		}
@@ -684,13 +1041,14 @@ Zotero.QLab = Zotero.QLab || {};
 			id: `msg-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
 			role,
 			text: String(text || ''),
+			status: status || '',
 		};
 		host._qlabMessages = (host._qlabMessages || []).concat(message);
 		Zotero.QLab.renderChatMessages(host);
 		return message;
 	};
 	
-	Zotero.QLab.updateChatMessage = function (host, id, text) {
+	Zotero.QLab.updateChatMessage = function (host, id, text, { status } = {}) {
 		if (!host || !host._qlabMessages) {
 			return;
 		}
@@ -698,10 +1056,25 @@ Zotero.QLab = Zotero.QLab || {};
 		if (!message) {
 			return;
 		}
-		message.text = String(text || '');
-		let body = host.querySelector(`[data-qlab-message-id="${id}"] .qlab-chat-message-body`);
+		if (text !== undefined) {
+			message.text = String(text || '');
+		}
+		if (status !== undefined) {
+			message.status = status || '';
+		}
+		let article = host.querySelector(`[data-qlab-message-id="${id}"]`);
+		let body = article && article.querySelector('.qlab-chat-message-body');
 		if (body) {
 			body.textContent = message.text;
+			if (article) {
+				article.classList.toggle('is-cancelled', message.status === 'cancelled');
+				let role = article.querySelector('.qlab-chat-message-role');
+				if (role) {
+					role.textContent = message.status === 'cancelled'
+						? `${message.role} · cancelled`
+						: message.role;
+				}
+			}
 		}
 		else {
 			Zotero.QLab.renderChatMessages(host);
@@ -719,16 +1092,20 @@ Zotero.QLab = Zotero.QLab || {};
 		}
 		let messages = host._qlabMessages || [];
 		output.innerHTML = messages.map((message) => {
-			let actions = message.role === 'assistant'
+			let actions = message.role === 'assistant' && message.text.trim()
 				? `<div class="qlab-chat-message-actions">`
 					+ `<button type="button" data-qlab-msg-insert>Insert into notes</button>`
 					+ `<button type="button" data-qlab-msg-quote>Insert as quote</button>`
 					+ `<button type="button" data-qlab-msg-copy>Copy</button>`
 					+ `</div>`
 				: '';
-			return `<article class="qlab-chat-message is-${escapeHTML(message.role)}" `
+			let roleLabel = message.status === 'cancelled'
+				? `${message.role} · cancelled`
+				: message.role;
+			let cancelled = message.status === 'cancelled' ? ' is-cancelled' : '';
+			return `<article class="qlab-chat-message is-${escapeHTML(message.role)}${cancelled}" `
 				+ `data-qlab-message-id="${escapeHTML(message.id)}">`
-				+ `<header class="qlab-chat-message-role">${escapeHTML(message.role)}</header>`
+				+ `<header class="qlab-chat-message-role">${escapeHTML(roleLabel)}</header>`
 				+ `<pre class="qlab-chat-message-body">${escapeHTML(message.text)}</pre>`
 				+ actions
 				+ `</article>`;
@@ -736,9 +1113,102 @@ Zotero.QLab = Zotero.QLab || {};
 		output.scrollTop = output.scrollHeight;
 	};
 	
+	Zotero.QLab.resetChatThread = function (host) {
+		if (!host) {
+			return;
+		}
+		Zotero.QLab.cancelShellTurn(host);
+		host._qlabMessages = [];
+		host._qlabThreadId = newThreadId();
+		Zotero.QLab.renderChatMessages(host);
+		let status = host.querySelector('.qlab-shell-status');
+		if (status) {
+			status.textContent = 'New chat';
+		}
+	};
+	
+	Zotero.QLab.cancelShellTurn = function (host) {
+		let handle = host && host._qlabTurnHandle;
+		if (handle && typeof handle.cancel === 'function') {
+			handle.cancel();
+		}
+	};
+	
+	Zotero.QLab.hideComposerAtPicker = function (host) {
+		let picker = host && host.querySelector('[data-qlab-at-picker]');
+		if (picker) {
+			picker.hidden = true;
+		}
+	};
+	
+	Zotero.QLab.maybeShowComposerAtPicker = function (host) {
+		let textarea = host && host.querySelector('[data-qlab-prompt]');
+		let picker = host && host.querySelector('[data-qlab-at-picker]');
+		if (!textarea || !picker) {
+			return;
+		}
+		let value = textarea.value || '';
+		let pos = typeof textarea.selectionStart === 'number'
+			? textarea.selectionStart
+			: value.length;
+		let before = value.slice(0, pos);
+		let at = /(?:^|[\s([{])@$/.test(before) || /(?:^|[\s([{])@\w*$/.test(before);
+		if (!at) {
+			picker.hidden = true;
+			return;
+		}
+		let win = host.ownerDocument.defaultView;
+		let items = Zotero.QLab.listComposerAtPickerItems
+			? Zotero.QLab.listComposerAtPickerItems(win)
+			: [];
+		host._qlabAtPickerItems = items;
+		let wrap = host.ownerDocument.createElement('div');
+		wrap.innerHTML = Zotero.QLab.renderComposerAtPickerHTML(items);
+		let next = wrap.firstElementChild;
+		if (next) {
+			next.hidden = !items.length;
+			picker.replaceWith(next);
+		}
+	};
+	
+	Zotero.QLab.handleComposerAtPick = async function (host, itemId) {
+		let items = host._qlabAtPickerItems || [];
+		let item = items.find(entry => entry.id === itemId);
+		let status = host.querySelector('.qlab-shell-status');
+		try {
+			if (!item) {
+				return;
+			}
+			await Zotero.QLab.applyComposerAtPickerItem(
+				host.ownerDocument.defaultView,
+				item
+			);
+			let textarea = host.querySelector('[data-qlab-prompt]');
+			if (textarea) {
+				let value = textarea.value || '';
+				let pos = typeof textarea.selectionStart === 'number'
+					? textarea.selectionStart
+					: value.length;
+				// Remove the trailing @token before the caret.
+				let stripped = value.slice(0, pos).replace(/@\w*$/, '');
+				textarea.value = stripped + value.slice(pos);
+				textarea.setSelectionRange(stripped.length, stripped.length);
+			}
+			Zotero.QLab.hideComposerAtPicker(host);
+			Zotero.QLab.refreshComposerTags(host);
+		}
+		catch (e) {
+			Zotero.logError && Zotero.logError(e);
+			if (status) {
+				status.textContent = e.message || String(e);
+			}
+		}
+	};
+	
 	/**
 	 * Apply a chat reply into the live QMD buffer. User-initiated only: this is a
 	 * human edit that still has to go through Save, never an agent write.
+	 * Prefers the first fenced code block when present.
 	 */
 	Zotero.QLab.applyChatMessageToQmd = function (host, messageID, { asQuote = false } = {}) {
 		let status = host && host.querySelector('.qlab-shell-status');
@@ -747,9 +1217,16 @@ Zotero.QLab = Zotero.QLab || {};
 			if (!message || !message.text.trim()) {
 				throw new Error('Nothing to insert');
 			}
+			let text = message.text;
+			if (!asQuote && Zotero.QLab.extractFirstFencedMarkdown) {
+				let fenced = Zotero.QLab.extractFirstFencedMarkdown(text);
+				if (fenced) {
+					text = fenced;
+				}
+			}
 			let snippet = asQuote
-				? Zotero.QLab.buildQuoteSnippet({ text: message.text, title: 'Chat' })
-				: Zotero.QLab.buildChatSnippet({ text: message.text });
+				? Zotero.QLab.buildQuoteSnippet({ text, title: 'Chat' })
+				: Zotero.QLab.buildChatSnippet({ text });
 			let win = host.ownerDocument.defaultView;
 			let result = Zotero.QLab.insertIntoQmd(win, snippet, {
 				label: asQuote ? 'Chat quote' : 'Chat reply',
@@ -771,8 +1248,8 @@ Zotero.QLab = Zotero.QLab || {};
 	};
 	
 	/**
-	 * ⌘K: write a passage at the current anchor. Runs in `ask` mode and lands as
-	 * a pending region, so it never touches the Draft file or the Keep contract.
+	 * ⌘K: write or rewrite at the current anchor. Runs in `ask` mode and lands
+	 * as a pending region, so it never touches the Draft file or Keep.
 	 */
 	Zotero.QLab.requestQmdInlineWrite = async function ({
 		host,
@@ -783,6 +1260,7 @@ Zotero.QLab = Zotero.QLab || {};
 		let status = host && host.querySelector('.qlab-shell-status');
 		let bar = host && host.querySelector('[data-qlab-inline]');
 		let submit = bar && bar.querySelector('[data-qlab-inline-run]');
+		let stop = bar && bar.querySelector('[data-qlab-inline-stop]');
 		try {
 			if (workspaceState !== 'ready') {
 				throw new Error('Choose a ready QLab workspace first');
@@ -791,7 +1269,11 @@ Zotero.QLab = Zotero.QLab || {};
 			if (!task) {
 				throw new Error('Describe what to write');
 			}
-			let anchor = Zotero.QLab.resolveQmdAnchor(host);
+			let anchor = Zotero.QLab.resolveQmdAnchor(host, { forInlineWrite: true });
+			let replace = anchor.mode === 'replace-block' || anchor.mode === 'replace-range';
+			let selectedText = replace
+				? Zotero.QLab.qmdAnchorSelectedText(host, anchor)
+				: '';
 			let buffer = Zotero.QLab.getQmdShellBuffer(host);
 			let context = Zotero.QLab.qmdAnchorContext(buffer, anchor);
 			let state = host._qlabDraftState;
@@ -801,9 +1283,14 @@ Zotero.QLab = Zotero.QLab || {};
 				before: context.before,
 				after: context.after,
 				draftPath: state ? state.originalPath : '',
+				replace,
+				selectedText,
 			});
 			
 			let providerId = Zotero.QLab.Settings.getAgentProviderId();
+			let model = Zotero.QLab.Settings.getAgentModel
+				? Zotero.QLab.Settings.getAgentModel()
+				: '';
 			let runtime = Zotero.QLab.getAgentRuntime();
 			if (!runtime) {
 				throw new Error('AgentRuntime is unavailable');
@@ -811,20 +1298,32 @@ Zotero.QLab = Zotero.QLab || {};
 			if (submit) {
 				submit.disabled = true;
 			}
+			if (stop) {
+				stop.hidden = false;
+			}
 			if (status) {
-				status.textContent = `Writing at the anchor via ${providerId}…`;
+				status.textContent = replace
+					? `Rewriting selection via ${providerId}…`
+					: `Writing at the anchor via ${providerId}…`;
 			}
 			
 			let chunks = [];
-			for await (let event of runtime.startTurn({
+			let cancelled = false;
+			let turn = runtime.startTurn({
 				mode: 'ask',
 				workspaceRoot: root,
 				prompt,
 				providerId,
+				model: model || undefined,
 				attachments: [{ kind: 'policy', readOnly: true }],
-			})) {
+			});
+			host._qlabTurnHandle = turn;
+			for await (let event of turn) {
 				if (event.type === 'text-delta' && event.text) {
 					chunks.push(event.text);
+				}
+				else if (event.type === 'done' && event.status === 'cancelled') {
+					cancelled = true;
 				}
 				else if (event.type === 'error') {
 					throw new Error(event.message);
@@ -833,6 +1332,12 @@ Zotero.QLab = Zotero.QLab || {};
 			
 			let written = Zotero.QLab.stripQmdAnswerFence(chunks.join(''));
 			if (!written.trim()) {
+				if (cancelled) {
+					if (status) {
+						status.textContent = 'Write cancelled';
+					}
+					return;
+				}
 				throw new Error('The provider returned nothing to insert');
 			}
 			Zotero.QLab.insertIntoQmd(host.ownerDocument.defaultView, written, {
@@ -847,7 +1352,9 @@ Zotero.QLab = Zotero.QLab || {};
 				}
 			}
 			if (status) {
-				status.textContent = 'Written into the buffer — review, then Save';
+				status.textContent = cancelled
+					? 'Partial write kept in the buffer — review, then Save'
+					: 'Written into the buffer — review, then Save';
 			}
 		}
 		catch (e) {
@@ -857,8 +1364,12 @@ Zotero.QLab = Zotero.QLab || {};
 			}
 		}
 		finally {
+			host._qlabTurnHandle = null;
 			if (submit) {
 				submit.disabled = false;
+			}
+			if (stop) {
+				stop.hidden = true;
 			}
 		}
 	};
@@ -894,6 +1405,9 @@ Zotero.QLab = Zotero.QLab || {};
 		let textarea = host.querySelector('[data-qlab-prompt]');
 		let status = host.querySelector('.qlab-shell-status');
 		try {
+			if (host._qlabTurnHandle) {
+				throw new Error('A turn is already running — Stop it first');
+			}
 			if (workspaceState !== 'ready') {
 				throw new Error('Choose a ready QLab workspace first');
 			}
@@ -902,36 +1416,97 @@ Zotero.QLab = Zotero.QLab || {};
 				throw new Error('Enter a prompt');
 			}
 			let providerId = Zotero.QLab.Settings.getAgentProviderId();
-			let context = composerContextBlock();
-			let prompt = [context, userText].filter(Boolean).join('\n\n');
+			let model = Zotero.QLab.Settings.getAgentModel
+				? Zotero.QLab.Settings.getAgentModel()
+				: '';
+			let chatMode = Zotero.QLab.Settings.getChatMode
+				? Zotero.QLab.Settings.getChatMode()
+				: 'ask';
 			let runtime = Zotero.QLab.getAgentRuntime();
-			let chunks = [];
+			if (!runtime) {
+				throw new Error('AgentRuntime is unavailable');
+			}
+			
+			// Fail closed when the local CLI is missing -- never silent-fail.
+			try {
+				let provider = runtime._registry && runtime._registry.get(providerId);
+				if (provider && typeof provider.refreshStatus === 'function') {
+					await provider.refreshStatus();
+				}
+				if (provider && provider.status === 'unavailable') {
+					throw new Error(
+						providerId === 'codex-cli'
+							? 'Codex CLI unavailable — install Codex or switch provider.'
+							: `Provider ${providerId} is unavailable.`
+					);
+				}
+			}
+			catch (e) {
+				if (/unavailable/i.test(e.message || '')) {
+					throw e;
+				}
+			}
+			
 			Zotero.QLab.appendChatMessage(host, { role: 'user', text: userText });
 			if (textarea) {
 				textarea.value = '';
 			}
+			Zotero.QLab.hideComposerAtPicker(host);
+			
+			if (!host._qlabThreadId) {
+				host._qlabThreadId = newThreadId();
+			}
+			let context = composerContextBlock();
+			let transcript = Zotero.QLab.buildChatTranscriptPrompt(host._qlabMessages, {
+				maxTurns: 8,
+				excludeTrailingAssistant: true,
+			});
+			let prompt = [context, transcript].filter(Boolean).join('\n\n');
+			
 			let reply = Zotero.QLab.appendChatMessage(host, { role: 'assistant', text: '' });
+			let chunks = [];
+			let cancelled = false;
 			if (status) {
 				status.textContent = `Sending via ${providerId}…`;
 			}
-			for await (let event of runtime.startTurn({
-				mode: 'ask',
+			setChatTurnRunning(host, true);
+			
+			let turn = runtime.startTurn({
+				mode: chatMode === 'agent' ? 'agent' : 'ask',
 				workspaceRoot: root,
 				prompt,
 				providerId,
-				attachments: [{ kind: 'policy', readOnly: true }],
-			})) {
+				model: model || undefined,
+				threadId: host._qlabThreadId,
+				attachments: chatMode === 'agent'
+					? []
+					: [{ kind: 'policy', readOnly: true }],
+			});
+			host._qlabTurnHandle = turn;
+			
+			for await (let event of turn) {
 				if (event.type === 'text-delta') {
 					chunks.push(event.text || '');
 					Zotero.QLab.updateChatMessage(host, reply.id, chunks.join(''));
 				}
 				else if (event.type === 'error') {
 					chunks.push(`\n[error] ${event.message}`);
+					Zotero.QLab.updateChatMessage(host, reply.id, chunks.join(''));
+				}
+				else if (event.type === 'done' && event.status === 'cancelled') {
+					cancelled = true;
 				}
 			}
-			Zotero.QLab.updateChatMessage(host, reply.id, chunks.join('') || '(empty response)');
+			
+			let finalText = chunks.join('');
+			if (!finalText.trim()) {
+				finalText = cancelled ? '(cancelled)' : '(empty response)';
+			}
+			Zotero.QLab.updateChatMessage(host, reply.id, finalText, {
+				status: cancelled ? 'cancelled' : '',
+			});
 			if (status) {
-				status.textContent = 'Done';
+				status.textContent = cancelled ? 'Cancelled' : 'Done';
 			}
 		}
 		catch (e) {
@@ -940,6 +1515,43 @@ Zotero.QLab = Zotero.QLab || {};
 				status.textContent = e.message || String(e);
 			}
 		}
+		finally {
+			host._qlabTurnHandle = null;
+			setChatTurnRunning(host, false);
+			void Zotero.QLab.refreshChatProviderAvailability(host);
+		}
+	};
+	
+	Zotero.QLab.regenerateLastChatTurn = async function (host, root, workspaceState) {
+		if (!host) {
+			return;
+		}
+		if (host._qlabTurnHandle) {
+			Zotero.QLab.cancelShellTurn(host);
+		}
+		let messages = host._qlabMessages || [];
+		let lastUserIdx = -1;
+		for (let i = messages.length - 1; i >= 0; i--) {
+			if (messages[i].role === 'user') {
+				lastUserIdx = i;
+				break;
+			}
+		}
+		if (lastUserIdx < 0) {
+			let status = host.querySelector('.qlab-shell-status');
+			if (status) {
+				status.textContent = 'Nothing to regenerate';
+			}
+			return;
+		}
+		let userText = messages[lastUserIdx].text;
+		host._qlabMessages = messages.slice(0, lastUserIdx);
+		Zotero.QLab.renderChatMessages(host);
+		let textarea = host.querySelector('[data-qlab-prompt]');
+		if (textarea) {
+			textarea.value = userText;
+		}
+		await Zotero.QLab.runShellFreeform(host, root, workspaceState);
 	};
 	
 	/**
@@ -988,15 +1600,27 @@ Zotero.QLab = Zotero.QLab || {};
 			}
 			
 			let chunks = [];
+			let cancelled = false;
 			Zotero.QLab.appendChatMessage(host, { role: 'user', text: `/${actionID}` });
 			let reply = Zotero.QLab.appendChatMessage(host, { role: 'assistant', text: '' });
-			for await (let event of runtime.startTurn({
+			if (!host._qlabThreadId) {
+				host._qlabThreadId = newThreadId();
+			}
+			let model = Zotero.QLab.Settings.getAgentModel
+				? Zotero.QLab.Settings.getAgentModel()
+				: '';
+			setChatTurnRunning(host, true);
+			let turn = runtime.startTurn({
 				mode: readOnly ? 'ask' : 'agent',
 				workspaceRoot: root,
 				prompt,
 				providerId,
+				model: model || undefined,
+				threadId: host._qlabThreadId,
 				attachments: readOnly ? [{ kind: 'policy', readOnly: true }] : [],
-			})) {
+			});
+			host._qlabTurnHandle = turn;
+			for await (let event of turn) {
 				if (event.type === 'text-delta' && event.text) {
 					chunks.push(event.text);
 					Zotero.QLab.updateChatMessage(host, reply.id, chunks.join(''));
@@ -1007,17 +1631,26 @@ Zotero.QLab = Zotero.QLab || {};
 				else if (event.type === 'approval-needed') {
 					chunks.push(`\n[approval] ${event.reason}`);
 				}
-				else if (event.type === 'done' && status) {
-					status.textContent = `Done (${event.status})`;
+				else if (event.type === 'done') {
+					cancelled = event.status === 'cancelled';
+					if (status) {
+						status.textContent = `Done (${event.status})`;
+					}
 				}
 			}
-			Zotero.QLab.updateChatMessage(host, reply.id, chunks.join('') || '(empty)');
+			Zotero.QLab.updateChatMessage(host, reply.id, chunks.join('') || '(empty)', {
+				status: cancelled ? 'cancelled' : '',
+			});
 		}
 		catch (e) {
 			Zotero.logError && Zotero.logError(e);
 			if (status) {
 				status.textContent = e.message || String(e);
 			}
+		}
+		finally {
+			host._qlabTurnHandle = null;
+			setChatTurnRunning(host, false);
 		}
 	};
 	

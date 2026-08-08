@@ -14,6 +14,8 @@ Zotero.QLab = Zotero.QLab || {};
 	const PREF_ROOT = 'qlab.root';
 	const PREF_ENABLED = 'qlab.enabled';
 	const PREF_PROVIDER = 'qlab.agentProvider';
+	const PREF_MODEL = 'qlab.agentModel';
+	const PREF_CHAT_MODE = 'qlab.chatMode';
 	
 	Zotero.QLab.Settings = {
 		isEnabled() {
@@ -58,6 +60,39 @@ Zotero.QLab = Zotero.QLab || {};
 		setAgentProviderId(id) {
 			if (typeof Zotero !== 'undefined' && Zotero.Prefs) {
 				Zotero.Prefs.set(PREF_PROVIDER, String(id || 'codex-cli'));
+			}
+		},
+		
+		getAgentModel() {
+			try {
+				if (typeof Zotero !== 'undefined' && Zotero.Prefs) {
+					return String(Zotero.Prefs.get(PREF_MODEL) || '');
+				}
+			}
+			catch (e) {}
+			return '';
+		},
+		
+		setAgentModel(model) {
+			if (typeof Zotero !== 'undefined' && Zotero.Prefs) {
+				Zotero.Prefs.set(PREF_MODEL, String(model || ''));
+			}
+		},
+		
+		getChatMode() {
+			try {
+				if (typeof Zotero !== 'undefined' && Zotero.Prefs) {
+					let mode = String(Zotero.Prefs.get(PREF_CHAT_MODE) || 'ask');
+					return mode === 'agent' ? 'agent' : 'ask';
+				}
+			}
+			catch (e) {}
+			return 'ask';
+		},
+		
+		setChatMode(mode) {
+			if (typeof Zotero !== 'undefined' && Zotero.Prefs) {
+				Zotero.Prefs.set(PREF_CHAT_MODE, mode === 'agent' ? 'agent' : 'ask');
 			}
 		},
 		

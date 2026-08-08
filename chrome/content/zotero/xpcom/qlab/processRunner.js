@@ -22,6 +22,7 @@ Zotero.QLab = Zotero.QLab || {};
 	 *     args: string[],
 	 *     cwd?: string,
 	 *     env?: Record<string,string>,
+	 *     registerKill?: (kill: () => void) => void,
 	 *   }) => AsyncIterable<{ type: 'stdout'|'stderr'|'exit', data?: string, exitCode?: number|null }>
 	 * }} impl
 	 */
@@ -36,6 +37,7 @@ Zotero.QLab = Zotero.QLab || {};
 					args: Array.isArray(args) ? args : [],
 					cwd: options.cwd,
 					env: options.env,
+					registerKill: options.registerKill,
 				})) {
 					yield event;
 				}
@@ -45,7 +47,7 @@ Zotero.QLab = Zotero.QLab || {};
 	
 	Zotero.QLab.createGeckoProcessRunner = function () {
 		return Zotero.QLab.createProcessRunner({
-			async *spawn({ command, args, cwd, env }) {
+			async *spawn({ command, args, cwd, env, registerKill }) {
 				let { Subprocess } = ChromeUtils.importESModule(
 					'resource://gre/modules/Subprocess.sys.mjs'
 				);
@@ -67,6 +69,14 @@ Zotero.QLab = Zotero.QLab || {};
 					opts.environmentAppend = true;
 				}
 				let proc = await Subprocess.call(opts);
+				if (typeof registerKill === 'function') {
+					registerKill(() => {
+						try {
+							proc.kill();
+						}
+						catch (e) {}
+					});
+				}
 				let buffer = '';
 				while (true) {
 					let chunk = await proc.stdout.readString();
@@ -113,13 +123,23 @@ Zotero.QLab = Zotero.QLab || {};
 	 */
 	Zotero.QLab.createNodeProcessRunner = function (childProcess, pathModule) {
 		return Zotero.QLab.createProcessRunner({
-			async *spawn({ command, args, cwd, env }) {
+			async *spawn({ command, args, cwd, env, registerKill }) {
 				let { spawn } = childProcess;
 				let proc = spawn(command, args, {
 					cwd: cwd || undefined,
 					env: env ? { ...process.env, ...env } : undefined,
 					stdio: ['ignore', 'pipe', 'pipe'],
 				});
+				if (typeof registerKill === 'function') {
+					registerKill(() => {
+						try {
+							if (!proc.killed) {
+								proc.kill('SIGTERM');
+							}
+						}
+						catch (e) {}
+					});
+				}
 				let queue = [];
 				let waiters = [];
 				let closed = false;
