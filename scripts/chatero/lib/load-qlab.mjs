@@ -30,6 +30,7 @@ const QLAB_SCRIPTS = [
 	"qmdCompletion.js",
 	"chatComposerContext.js",
 	"qmdDraftIO.js",
+	"qmdDraftSession.js",
 	"qmdSourceModel.js",
 	"qmdMathRender.js",
 	"qmdMarkdownLite.js",

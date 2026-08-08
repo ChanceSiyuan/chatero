@@ -184,6 +184,7 @@ const xpcomFilesLocal = [
 	'qlab/qmdCompletion',
 	'qlab/chatComposerContext',
 	'qlab/qmdDraftIO',
+	'qlab/qmdDraftSession',
 	'qlab/qmdSourceModel',
 	'qlab/qmdMathRender',
 	'qlab/qmdMarkdownLite',
