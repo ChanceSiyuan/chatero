@@ -9,7 +9,7 @@ Choose a QLab repository that contains:
 - `drafts/review-demo.qmd`
 - `knowledge/` with at least one QMD note
 - `literature/ref.bib` with at least one citekey
-- Quarto on `PATH`
+- Quarto installed in the GUI process `PATH`, `/usr/local/bin`, `/opt/homebrew/bin`, or `/Applications/quarto/bin`
 
 The Draft should include YAML frontmatter, inline and display math, and one each of:
 
@@ -34,16 +34,18 @@ A proof.
 ## 1. Native workspace and layout
 
 1. Open the QMD Editor native tab.
-2. Confirm the tab contains QLab Explorer, Monaco source, and Quarto Preview.
-3. Drag the divider and use Left/Right Arrow while it is focused.
-4. Collapse and restore Explorer; resize the window to medium and narrow widths.
-5. Close and reopen Chatero.
+2. Confirm the tab opens with QLab Explorer and the light Monaco Source surface.
+3. Click the eye action to switch to Quarto Preview, then click it again to return to Source.
+4. Collapse and restore Explorer; resize the QMD pane while it is beside a PDF.
+5. Close and reopen Chatero after leaving Preview selected.
 
 Expected:
 
 - PDF, Chat, and QMD remain independent native tabs and retain the existing split arrangements.
-- Divider ratio, Explorer visibility, Preview visibility, and active Draft survive session restoration.
-- At medium width Explorer collapses before Preview; at narrow width Monaco remains usable.
+- Source and Preview never appear simultaneously inside the QMD tab, and no internal divider remains.
+- Explorer visibility, Source/Preview selection, and active Draft survive session restoration.
+- At compact width Explorer is a drawer contained by the QMD pane and does not consume or cover the adjacent PDF pane.
+- Toolbar actions remain icon-only and never overlap; their names appear as tooltips.
 
 ## 2. Explorer and external changes
 
@@ -75,14 +77,18 @@ Expected:
 
 ## 4. Quarto Preview
 
-1. Confirm YAML, headings, math, `thm`, `lem`, `def`, and `proof` render normally.
-2. Introduce a Quarto compile error and save.
-3. Fix the error and save again.
+1. Click the eye action and confirm YAML, headings, math, `thm`, `lem`, `def`, and `proof` render normally.
+2. Switch Source/Preview repeatedly and confirm the Preview does not restart unnecessarily.
+3. Introduce a Quarto compile error and save.
+4. Fix the error and save again.
+5. Temporarily make Quarto unavailable, click Retry, and inspect the status message.
 
 Expected:
 
 - Quarto runs only on `127.0.0.1` with execution disabled.
+- A Finder-launched Chatero discovers standard Intel and Apple Silicon Quarto installations.
 - A failed build leaves the last successful page visible and reports the failure in status/Monaco.
+- Missing executables and early Quarto exits report their real error instead of a generic readiness timeout.
 - Preview recovers automatically after the source is fixed.
 - Three consecutive process failures pause automatic restart until Retry is requested.
 

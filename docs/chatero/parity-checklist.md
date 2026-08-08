@@ -101,7 +101,7 @@ Legend: `P0` required for daily path · `P1` Phase 4 RC · `P2` polish
 
 ### Behaviors
 - [x] QMD shell tab registered; drafts path messaging when workspace ready
-- [x] Cursor-style QLab Explorer + Monaco source + Quarto Preview in one native tab
+- [x] QLab Explorer + one switchable light Monaco Source / Quarto Preview surface in one native tab
 - [x] Drafts are writable; Knowledge and Literature appear as read-only context trees
 - [x] Explorer polls external changes without remounting the native tab
 - [x] Monaco uses stable in-memory URIs that never expose the absolute QLab path
@@ -110,7 +110,7 @@ Legend: `P0` required for daily path · `P1` Phase 4 RC · `P2` polish
 - [x] QMD language support includes YAML, math decoration, fenced-Div diagnostics, `thm` / `lem` / `def` / `proof` snippets, and `literature/ref.bib` citekeys
 - [x] Live Quarto Preview binds to loopback and always passes `--no-execute`
 - [x] Preview retains the last good URL on render failure and reports file/line/column diagnostics to Monaco
-- [x] Explorer / Preview visibility and the editor divider persist in the QMD tab session
+- [x] Explorer visibility, Source/Preview selection, and the active Draft persist in the QMD tab session
 - [x] Approved source-driven design supersedes direct editing inside rendered HTML; the old Visual Edit cards remain fallback-only
 - [x] CAS / revision checks on save; no silent overwrite
 - [x] Agent edits retain one latest disk-backed private proposal (`base.qmd`, `draft.qmd`, `manifest.json`)
