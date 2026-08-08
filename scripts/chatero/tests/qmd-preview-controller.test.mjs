@@ -4,10 +4,12 @@ import { loadQLab } from "../lib/load-qlab.mjs";
 
 test("controller retains the last good URL when a rebuild fails", async () => {
 	const QLab = await loadQLab();
-	let starts = ["http://127.0.0.1:43001/", new Error("compile failed")];
+	let starts = ["http://127.0.0.1:43001/a.html", new Error("compile failed")];
+	let quick = "<main>quick v1</main>";
 	let controller = QLab.createQmdPreviewController({
 		root: "/repo",
 		path: "drafts/a.qmd",
+		fallback: () => quick,
 		startPreview: async () => {
 			let next = starts.shift();
 			if (next instanceof Error) throw next;
@@ -16,10 +18,62 @@ test("controller retains the last good URL when a rebuild fails", async () => {
 		stopPreview: () => {},
 	});
 	await controller.start();
+	quick = "<main>quick v2</main>";
 	await controller.refresh("r2");
-	assert.equal(controller.snapshot().url, "http://127.0.0.1:43001/");
+	assert.equal(controller.snapshot().url, "http://127.0.0.1:43001/a.html");
+	assert.equal(controller.snapshot().fallback, "<main>quick v2</main>");
 	assert.equal(controller.snapshot().status, "error");
 	assert.equal(controller.snapshot().revision, "r2");
+});
+
+test("controller publishes quick HTML while exact Quarto is pending", async () => {
+	const QLab = await loadQLab();
+	let release;
+	let exact = new Promise(resolve => { release = resolve; });
+	let states = [];
+	let controller = QLab.createQmdPreviewController({
+		root: "/repo",
+		path: "drafts/a.qmd",
+		fallback: () => "<main>quick a</main>",
+		startPreview: () => exact,
+		stopPreview: () => {},
+		onState: state => states.push(state),
+	});
+	let pending = controller.start();
+	await Promise.resolve();
+	assert.equal(states.at(-1).status, "rendering");
+	assert.equal(states.at(-1).fallback, "<main>quick a</main>");
+	release("http://127.0.0.1:43001/a.html");
+	await pending;
+	assert.equal(controller.snapshot().status, "ready");
+});
+
+test("an initially hidden preview defers quick rendering and Quarto until revealed", async () => {
+	const QLab = await loadQLab();
+	let starts = 0;
+	let fallbacks = 0;
+	let controller = QLab.createQmdPreviewController({
+		root: "/repo",
+		path: "drafts/a.qmd",
+		visible: false,
+		fallback: () => {
+			fallbacks++;
+			return "<main>quick</main>";
+		},
+		startPreview: async () => {
+			starts++;
+			return "http://127.0.0.1:43001/a.html";
+		},
+		stopPreview: () => {},
+	});
+	await controller.start();
+	assert.equal(starts, 0);
+	assert.equal(fallbacks, 0);
+	assert.equal(controller.snapshot().status, "stale");
+	await controller.setVisible(true);
+	assert.equal(starts, 1);
+	assert.equal(fallbacks, 1);
+	assert.equal(controller.snapshot().status, "ready");
 });
 
 test("three consecutive crashes pause automatic restart", async () => {

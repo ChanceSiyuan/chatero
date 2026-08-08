@@ -55,6 +55,7 @@ Zotero.QLab = Zotero.QLab || {};
 		fallback = null,
 		reveal = null,
 		onState = () => {},
+		visible = true,
 	} = {}) {
 		if (!root || !path || typeof startPreview !== 'function') {
 			throw new Error('QMD Preview controller requires a root, Draft path, and preview starter');
@@ -68,7 +69,7 @@ Zotero.QLab = Zotero.QLab || {};
 			error: '',
 			diagnostics: [],
 			revision: '',
-			visible: true,
+			visible: visible !== false,
 			pendingRefresh: false,
 			crashCount: 0,
 			canAutoRestart: true,
@@ -95,6 +96,17 @@ Zotero.QLab = Zotero.QLab || {};
 			}
 			if (!manual && !state.canAutoRestart) return snapshot();
 			let currentGeneration = ++generation;
+			if (typeof fallback === 'function') {
+				try {
+					let quick = fallback({ root, path, phase: 'rendering' });
+					if (quick && typeof quick.then === 'function') quick = await quick;
+					if (state.disposed || currentGeneration !== generation) return snapshot();
+					state.fallback = String(quick || state.fallback || '');
+				}
+				catch (fallbackError) {
+					Zotero.logError && Zotero.logError(fallbackError);
+				}
+			}
 			state.status = 'rendering';
 			state.error = '';
 			state.pendingRefresh = false;
@@ -103,7 +115,6 @@ Zotero.QLab = Zotero.QLab || {};
 				let url = await startPreview(root, path);
 				if (state.disposed || currentGeneration !== generation) return snapshot();
 				state.url = String(url || '');
-				state.fallback = '';
 				state.status = 'ready';
 				state.diagnostics = [];
 				state.crashCount = 0;
@@ -118,14 +129,6 @@ Zotero.QLab = Zotero.QLab || {};
 				state.error = error && error.message ? error.message : String(error);
 				let output = error && (error.stderr || error.output || error.message);
 				state.diagnostics = Zotero.QLab.parseQmdQuartoDiagnostics(output, path);
-				if (typeof fallback === 'function') {
-					try {
-						state.fallback = String(await fallback({ root, path, error }) || '');
-					}
-					catch (fallbackError) {
-						Zotero.logError && Zotero.logError(fallbackError);
-					}
-				}
 			}
 			publish();
 			return snapshot();
