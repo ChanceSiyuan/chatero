@@ -44,6 +44,92 @@ Zotero.QLab = Zotero.QLab || {};
 			+ `${icon(name)}<span class="sr-only">${escapeHTML(label)}</span></button>`;
 	}
 
+	Zotero.QLab.createQmdPreviewSurface = function (document, host, {
+		onLoadError = () => {},
+	} = {}) {
+		let quick = host && host.querySelector('[data-qlab-preview-quick]');
+		let browserHost = host && host.querySelector('[data-qlab-preview-browser-host]');
+		let empty = host && host.querySelector('[data-qlab-preview-empty]');
+		let browser = null;
+		let exactURL = '';
+		let quickHTML = '';
+		let disposed = false;
+
+		if (document && typeof document.createXULElement === 'function' && browserHost) {
+			browser = document.createXULElement('browser');
+			browser.setAttribute('class', 'qlab-qmd-preview-browser');
+			browser.setAttribute('type', 'content');
+			browser.setAttribute('remote', 'true');
+			browser.setAttribute('maychangeremoteness', 'true');
+			browser.hidden = true;
+			browserHost.appendChild(browser);
+		}
+
+		function showQuick(html = quickHTML) {
+			if (disposed || !quick) return false;
+			quickHTML = String(html || quickHTML || '');
+			quick.removeAttribute('src');
+			quick.srcdoc = quickHTML;
+			quick.hidden = false;
+			if (browser) browser.hidden = true;
+			if (browserHost) browserHost.hidden = true;
+			if (empty) empty.hidden = true;
+			return true;
+		}
+
+		function onBrowserError() {
+			let failedURL = exactURL;
+			if (quickHTML) showQuick();
+			else {
+				if (browser) browser.hidden = true;
+				if (browserHost) browserHost.hidden = true;
+				if (empty) empty.hidden = false;
+			}
+			onLoadError(failedURL);
+		}
+
+		if (browser) browser.addEventListener('error', onBrowserError);
+
+		return {
+			showQuick,
+			showExact(url, { reload = false } = {}) {
+				if (disposed || !browser) return false;
+				let value = String(url || '');
+				if (!/^http:\/\/(?:127\.0\.0\.1|localhost):\d+(?:\/|$)/.test(value)) {
+					throw new Error('QMD Preview accepts only a loopback Quarto URL');
+				}
+				exactURL = value;
+				let current = browser.getAttribute('src') || '';
+				if (current !== value) browser.setAttribute('src', value);
+				else if (reload && typeof browser.reload === 'function') browser.reload();
+				if (quick) quick.hidden = true;
+				if (empty) empty.hidden = true;
+				if (browserHost) browserHost.hidden = false;
+				browser.hidden = false;
+				return true;
+			},
+			showEmpty(message = 'Select a Draft to preview it.') {
+				if (disposed) return;
+				if (quick) quick.hidden = true;
+				if (browser) browser.hidden = true;
+				if (browserHost) browserHost.hidden = true;
+				if (empty) {
+					empty.textContent = message;
+					empty.hidden = false;
+				}
+			},
+			dispose() {
+				if (disposed) return;
+				disposed = true;
+				if (browser) {
+					browser.removeEventListener('error', onBrowserError);
+					browser.removeAttribute('src');
+					browser.remove();
+				}
+			},
+		};
+	};
+
 	Zotero.QLab.qmdWorkspaceAccessibilityModel = function ({
 		proposal = false,
 		previewStatus = 'ready',
@@ -186,9 +272,12 @@ Zotero.QLab = Zotero.QLab || {};
 				l10nId: actions.retry.l10nId,
 			}),
 			`</div>`,
-			`<iframe class="qlab-qmd-preview-frame" data-qlab-preview-frame title="Rendered QMD Preview" `
-			+ `sandbox="allow-same-origin allow-scripts allow-popups"></iframe>`,
+			`<div class="qlab-qmd-preview-stage" data-qlab-preview-stage>`,
+			`<iframe class="qlab-qmd-preview-quick" data-qlab-preview-quick title="Quick QMD Preview" `
+			+ `sandbox="allow-same-origin"></iframe>`,
+			`<div class="qlab-qmd-preview-browser-host" data-qlab-preview-browser-host hidden></div>`,
 			`<div class="qlab-qmd-preview-empty" data-qlab-preview-empty>Select a Draft to preview it.</div>`,
+			`</div>`,
 			`</section></main></div>`,
 			`<footer class="qlab-qmd-workspace-status">`,
 			`<span class="qlab-shell-status" data-qlab-qmd-status role="status" aria-live="polite">${escapeHTML(status)}</span>`,
@@ -294,7 +383,11 @@ Zotero.QLab = Zotero.QLab || {};
 		let ioHost = Zotero.QLab.QmdDraftIO.createGeckoHost();
 		let explorerHost = Zotero.QLab.createGeckoQmdExplorerHost();
 		let frame = host.querySelector('[data-qlab-qmd-monaco]');
-		let previewFrame = host.querySelector('[data-qlab-preview-frame]');
+		let previewSurface = Zotero.QLab.createQmdPreviewSurface(document, host, {
+			onLoadError(url) {
+				setStatus(`Preview error · unable to load ${url}`, 'error');
+			},
+		});
 		let activeSession = null;
 		let activePreview = null;
 		let activePath = '';
@@ -420,17 +513,12 @@ Zotero.QLab = Zotero.QLab || {};
 		});
 
 		function showPreviewState(state) {
-			if (!previewFrame || previewVersion !== 'original') return;
-			let empty = host.querySelector('[data-qlab-preview-empty]');
+			if (previewVersion !== 'original') return;
 			if (state.url) {
-				previewFrame.removeAttribute('srcdoc');
-				if (previewFrame.getAttribute('src') !== state.url) previewFrame.setAttribute('src', state.url);
-				if (empty) empty.hidden = true;
+				previewSurface.showExact(state.url);
 			}
 			else if (state.fallback) {
-				previewFrame.removeAttribute('src');
-				previewFrame.srcdoc = state.fallback;
-				if (empty) empty.hidden = true;
+				previewSurface.showQuick(state.fallback);
 			}
 			if (state.diagnostics && state.diagnostics.length && activeSession) {
 				monacoBridge.setDiagnostics(diagnosticOffsets(activeSession.snapshot().text, state.diagnostics));
@@ -444,10 +532,9 @@ Zotero.QLab = Zotero.QLab || {};
 				button.classList.toggle('is-active', button.dataset.qlabPreviewVersion === previewVersion);
 			}
 			if (previewVersion === 'proposed') {
-				previewFrame.removeAttribute('src');
-				previewFrame.srcdoc = Zotero.QLab.renderQmdDocumentHTML(proposal.proposed, {
+				previewSurface.showQuick(Zotero.QLab.renderQmdDocumentHTML(proposal.proposed, {
 					title: `${activePath} · Proposed`,
-				});
+				}));
 				return;
 			}
 			showPreviewState(activePreview ? activePreview.snapshot() : {});
@@ -610,6 +697,7 @@ Zotero.QLab = Zotero.QLab || {};
 			},
 			dispose() {
 				controller.dispose();
+				previewSurface.dispose();
 				host._qlabQmdWorkspace = null;
 			},
 		};

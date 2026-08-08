@@ -67,7 +67,8 @@ test("qmd shell HTML uses source editor plus rendered Preview without direct-pre
 	assert.doesNotMatch(html, /data-qlab-mode=/);
 	assert.match(html, /data-qlab-qmd-monaco/);
 	assert.match(html, /data-qlab-qmd-preview/);
-	assert.match(html, /data-qlab-preview-frame/);
+	assert.match(html, /data-qlab-preview-quick/);
+	assert.match(html, /data-qlab-preview-browser-host/);
 	assert.match(html, /data-qlab-editor/);
 });
 

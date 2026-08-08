@@ -64,5 +64,7 @@ test("QLab visual tokens include light and dark XPI palette", async () => {
 	);
 	assert.match(workspaceSource, /\.qlab-qmd-workspace-main/);
 	assert.match(workspaceSource, /\.qlab-qmd-monaco-frame/);
-	assert.match(workspaceSource, /\.qlab-qmd-preview-frame/);
+	assert.match(workspaceSource, /\.qlab-qmd-preview-stage/);
+	assert.match(workspaceSource, /\.qlab-qmd-preview-quick/);
+	assert.match(workspaceSource, /\.qlab-qmd-preview-browser-host/);
 });
