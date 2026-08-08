@@ -292,7 +292,7 @@ Zotero.QLab = Zotero.QLab || {};
 			return;
 		}
 		let wrap = host.ownerDocument.createElement('div');
-		wrap.innerHTML = Zotero.QLab.renderComposerTagsHTML();
+		Zotero.QLab.setHTML(wrap, Zotero.QLab.renderComposerTagsHTML());
 		let next = wrap.firstElementChild;
 		if (next) {
 			row.replaceWith(next);

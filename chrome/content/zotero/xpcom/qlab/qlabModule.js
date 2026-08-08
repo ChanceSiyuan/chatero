@@ -21,6 +21,27 @@ Zotero.QLab = Zotero.QLab || {};
 			.replace(/"/g, '&quot;');
 	}
 	
+	/**
+	 * XUL windows are XML documents, so assigning ordinary HTML containing
+	 * boolean attributes or void elements to innerHTML throws. Parse as HTML
+	 * first, then import the resulting nodes into the chrome document.
+	 */
+	Zotero.QLab.setHTML = function (element, html) {
+		if (!element) {
+			return;
+		}
+		let doc = element.ownerDocument;
+		let Parser = doc.defaultView && doc.defaultView.DOMParser
+			? doc.defaultView.DOMParser
+			: DOMParser;
+		let parsed = new Parser().parseFromString(String(html || ''), 'text/html');
+		let fragment = doc.createDocumentFragment();
+		for (let child of Array.from(parsed.body.childNodes)) {
+			fragment.appendChild(doc.importNode(child, true));
+		}
+		element.replaceChildren(fragment);
+	};
+	
 	function shellCopy(kind, workspaceState, root) {
 		let providerId = 'codex-cli';
 		try {
@@ -284,7 +305,7 @@ Zotero.QLab = Zotero.QLab || {};
 					+ `${escapeHTML(path)}</option>`
 				))
 			);
-			draftSelect.innerHTML = options.join('');
+			Zotero.QLab.setHTML(draftSelect, options.join(''));
 		}
 		if (kind === 'qlabchat') {
 			Zotero.QLab.refreshComposerTags && Zotero.QLab.refreshComposerTags(host);
@@ -428,13 +449,13 @@ Zotero.QLab = Zotero.QLab || {};
 			}
 			: null;
 		
-		host.innerHTML = Zotero.QLab.renderShellHTML({
+		Zotero.QLab.setHTML(host, Zotero.QLab.renderShellHTML({
 			kind,
 			workspaceState,
 			root,
 			drafts,
 			contextSummary,
-		});
+		}));
 		host._qlabMountedKind = kind;
 		host._qlabMountRoot = root;
 		host._qlabMountWorkspaceState = workspaceState;
@@ -1091,7 +1112,7 @@ Zotero.QLab = Zotero.QLab || {};
 			return;
 		}
 		let messages = host._qlabMessages || [];
-		output.innerHTML = messages.map((message) => {
+		Zotero.QLab.setHTML(output, messages.map((message) => {
 			let actions = message.role === 'assistant' && message.text.trim()
 				? `<div class="qlab-chat-message-actions">`
 					+ `<button type="button" data-qlab-msg-insert>Insert into notes</button>`
@@ -1109,7 +1130,7 @@ Zotero.QLab = Zotero.QLab || {};
 				+ `<pre class="qlab-chat-message-body">${escapeHTML(message.text)}</pre>`
 				+ actions
 				+ `</article>`;
-		}).join('');
+		}).join(''));
 		output.scrollTop = output.scrollHeight;
 	};
 	
@@ -1163,7 +1184,7 @@ Zotero.QLab = Zotero.QLab || {};
 			: [];
 		host._qlabAtPickerItems = items;
 		let wrap = host.ownerDocument.createElement('div');
-		wrap.innerHTML = Zotero.QLab.renderComposerAtPickerHTML(items);
+		Zotero.QLab.setHTML(wrap, Zotero.QLab.renderComposerAtPickerHTML(items));
 		let next = wrap.firstElementChild;
 		if (next) {
 			next.hidden = !items.length;

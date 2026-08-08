@@ -123,7 +123,7 @@ Zotero.QLab = Zotero.QLab || {};
 			: [];
 		if (!pending.length) {
 			bar.hidden = true;
-			bar.innerHTML = '';
+			bar.replaceChildren();
 			return;
 		}
 		let rows = pending.map((region) => {
@@ -143,7 +143,7 @@ Zotero.QLab = Zotero.QLab || {};
 				+ `</div>`
 			: '';
 		bar.hidden = false;
-		bar.innerHTML = rows + bulk;
+		Zotero.QLab.setHTML(bar, rows + bulk);
 	};
 	
 	/**
@@ -250,7 +250,7 @@ Zotero.QLab = Zotero.QLab || {};
 		}
 		let source = Zotero.QLab.getQmdShellBuffer(host);
 		let blocks = Zotero.QLab.visualQmdBlocks(source);
-		pane.innerHTML = '';
+		pane.replaceChildren();
 		pane._qlabBlocks = blocks;
 		
 		if (!source.trim()) {
@@ -282,7 +282,7 @@ Zotero.QLab = Zotero.QLab || {};
 			
 			let body = pane.ownerDocument.createElement('div');
 			body.className = 'qlab-qmd-visual-body';
-			body.innerHTML = Zotero.QLab.renderQmdBlockHTML(block);
+			Zotero.QLab.setHTML(body, Zotero.QLab.renderQmdBlockHTML(block));
 			card.appendChild(body);
 			
 			if (overlapping.length) {
@@ -339,7 +339,7 @@ Zotero.QLab = Zotero.QLab || {};
 			return;
 		}
 		Zotero.QLab.setQmdActiveBlock(host, blockIndex);
-		card.innerHTML = '';
+		card.replaceChildren();
 		let badge = pane.ownerDocument.createElement('div');
 		badge.className = 'qlab-qmd-visual-badge';
 		badge.textContent = `${block.semantic || block.kind} · editing`;
