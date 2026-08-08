@@ -1,0 +1,176 @@
+/*
+	***** BEGIN LICENSE BLOCK *****
+	
+	Copyright © 2026 Chance Siyuan / Chatero contributors
+	
+	This file is part of Chatero (a Zotero fork).
+	
+	***** END LICENSE BLOCK *****
+*/
+
+/**
+ * Resilient lifecycle for a single Draft's live Quarto preview.
+ */
+Zotero.QLab = Zotero.QLab || {};
+
+(function () {
+	function clone(value) {
+		return JSON.parse(JSON.stringify(value));
+	}
+
+	function normalizedPath(value) {
+		return String(value || '').replace(/\\/g, '/').replace(/^\.\//, '');
+	}
+
+	Zotero.QLab.parseQmdQuartoDiagnostics = function (output, relativePath) {
+		let expected = normalizedPath(relativePath);
+		let seen = new Set();
+		let diagnostics = [];
+		let pattern = /^(?:ERROR:\s*)?(.+?\.qmd):(\d+):(\d+)\s+(.+)$/gm;
+		let match;
+		while ((match = pattern.exec(String(output || '')))) {
+			let file = normalizedPath(match[1].trim());
+			if (file !== expected && !file.endsWith(`/${expected}`)) continue;
+			let diagnostic = {
+				code: 'quarto',
+				severity: 'error',
+				message: match[4].trim(),
+				line: Number(match[2]),
+				column: Number(match[3]),
+			};
+			let key = JSON.stringify(diagnostic);
+			if (!seen.has(key)) {
+				seen.add(key);
+				diagnostics.push(diagnostic);
+			}
+		}
+		return diagnostics;
+	};
+
+	Zotero.QLab.createQmdPreviewController = function ({
+		root,
+		path,
+		startPreview = Zotero.QLab.startQmdQuartoPreview,
+		stopPreview = Zotero.QLab.stopQmdQuartoPreview,
+		fallback = null,
+		reveal = null,
+		onState = () => {},
+	} = {}) {
+		if (!root || !path || typeof startPreview !== 'function') {
+			throw new Error('QMD Preview controller requires a root, Draft path, and preview starter');
+		}
+		let state = {
+			root,
+			path,
+			status: 'idle',
+			url: '',
+			fallback: '',
+			error: '',
+			diagnostics: [],
+			revision: '',
+			visible: true,
+			pendingRefresh: false,
+			crashCount: 0,
+			canAutoRestart: true,
+			disposed: false,
+		};
+		let ownsSession = false;
+		let generation = 0;
+
+		function snapshot() {
+			return clone(state);
+		}
+
+		function publish() {
+			onState(snapshot());
+		}
+
+		async function launch({ manual = false } = {}) {
+			if (state.disposed) return snapshot();
+			if (!state.visible) {
+				state.status = 'stale';
+				state.pendingRefresh = true;
+				publish();
+				return snapshot();
+			}
+			if (!manual && !state.canAutoRestart) return snapshot();
+			let currentGeneration = ++generation;
+			state.status = 'rendering';
+			state.error = '';
+			state.pendingRefresh = false;
+			publish();
+			try {
+				let url = await startPreview(root, path);
+				if (state.disposed || currentGeneration !== generation) return snapshot();
+				state.url = String(url || '');
+				state.fallback = '';
+				state.status = 'ready';
+				state.diagnostics = [];
+				state.crashCount = 0;
+				state.canAutoRestart = true;
+				ownsSession = true;
+			}
+			catch (error) {
+				if (state.disposed || currentGeneration !== generation) return snapshot();
+				state.crashCount++;
+				state.canAutoRestart = state.crashCount < 3;
+				state.status = 'error';
+				state.error = error && error.message ? error.message : String(error);
+				let output = error && (error.stderr || error.output || error.message);
+				state.diagnostics = Zotero.QLab.parseQmdQuartoDiagnostics(output, path);
+				if (typeof fallback === 'function') {
+					try {
+						state.fallback = String(await fallback({ root, path, error }) || '');
+					}
+					catch (fallbackError) {
+						Zotero.logError && Zotero.logError(fallbackError);
+					}
+				}
+			}
+			publish();
+			return snapshot();
+		}
+
+		return {
+			start() {
+				return launch();
+			},
+			refresh(savedRevision = '') {
+				state.revision = String(savedRevision || '');
+				return launch();
+			},
+			retry() {
+				return launch({ manual: true });
+			},
+			revealBlock(key) {
+				if (typeof reveal === 'function') {
+					return reveal(key, snapshot());
+				}
+				return false;
+			},
+			setVisible(visible) {
+				state.visible = !!visible;
+				if (!state.visible) {
+					publish();
+					return Promise.resolve(snapshot());
+				}
+				if (state.pendingRefresh || state.status === 'idle' || state.status === 'stale') {
+					return launch();
+				}
+				publish();
+				return Promise.resolve(snapshot());
+			},
+			snapshot,
+			dispose() {
+				if (state.disposed) return;
+				state.disposed = true;
+				generation++;
+				if (ownsSession && typeof stopPreview === 'function') {
+					stopPreview(root, path);
+				}
+				ownsSession = false;
+				publish();
+			},
+		};
+	};
+})();

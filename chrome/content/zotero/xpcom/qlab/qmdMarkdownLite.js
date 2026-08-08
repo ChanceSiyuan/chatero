@@ -78,12 +78,6 @@ Zotero.QLab = Zotero.QLab || {};
 		}
 		let kind = block.kind;
 		let source = String(block.source || '');
-		// #region agent log
-		if (kind === 'display-math' || kind === 'callout' || kind === 'theorem' || kind === 'paragraph') {
-			fetch('http://127.0.0.1:7350/ingest/ba635be9-3f49-40ce-9509-feafde36c36e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'be0fa9'},body:JSON.stringify({sessionId:'be0fa9',location:'qmdMarkdownLite.js:renderQmdBlockHTML',message:'block render',data:{kind,sourcePreview:source.slice(0,80),hasDollar:source.includes('$')},timestamp:Date.now(),hypothesisId:kind==='callout'||kind==='theorem'?'B':'D'})}).catch(()=>{});
-		}
-		// #endregion
-		
 		if (kind === 'frontmatter') {
 			return `<pre class="qlab-qmd-frontmatter">${escapeHTML(source)}</pre>`;
 		}

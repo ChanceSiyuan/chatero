@@ -455,9 +455,6 @@ Zotero.QLab = Zotero.QLab || {};
 		
 		let liveUrl = host._qlabWebsiteUrl || '';
 		let quartoError = '';
-		// #region agent log
-		fetch('http://127.0.0.1:7350/ingest/ba635be9-3f49-40ce-9509-feafde36c36e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'be0fa9'},body:JSON.stringify({sessionId:'be0fa9',location:'qmdSurface.js:refreshQmdWebsitePane',message:'website refresh start',data:{existingUrl:liveUrl,hasState:!!state},timestamp:Date.now(),hypothesisId:'C'})}).catch(()=>{});
-		// #endregion
 		if (Zotero.QLab.startQmdQuartoPreview && state) {
 			try {
 				let root = options.root || (Zotero.QLab.Settings && Zotero.QLab.Settings.getRoot()) || '';
@@ -466,18 +463,12 @@ Zotero.QLab = Zotero.QLab || {};
 					: state.originalPath;
 				liveUrl = await Zotero.QLab.startQmdQuartoPreview(root, path);
 				host._qlabWebsiteUrl = liveUrl;
-				// #region agent log
-				fetch('http://127.0.0.1:7350/ingest/ba635be9-3f49-40ce-9509-feafde36c36e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'be0fa9'},body:JSON.stringify({sessionId:'be0fa9',location:'qmdSurface.js:refreshQmdWebsitePane',message:'quarto preview ok',data:{liveUrl,path,root},timestamp:Date.now(),hypothesisId:'C'})}).catch(()=>{});
-				// #endregion
 			}
 			catch (e) {
 				Zotero.logError && Zotero.logError(e);
 				host._qlabWebsiteUrl = '';
 				quartoError = e.message || String(e);
 				liveUrl = '';
-				// #region agent log
-				fetch('http://127.0.0.1:7350/ingest/ba635be9-3f49-40ce-9509-feafde36c36e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'be0fa9'},body:JSON.stringify({sessionId:'be0fa9',location:'qmdSurface.js:refreshQmdWebsitePane',message:'quarto preview failed',data:{error:quartoError},timestamp:Date.now(),hypothesisId:'C'})}).catch(()=>{});
-				// #endregion
 			}
 		}
 		
@@ -487,9 +478,6 @@ Zotero.QLab = Zotero.QLab || {};
 			if (meta) {
 				meta.textContent = `Quarto website · ${liveUrl}`;
 			}
-			// #region agent log
-			fetch('http://127.0.0.1:7350/ingest/ba635be9-3f49-40ce-9509-feafde36c36e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'be0fa9'},body:JSON.stringify({sessionId:'be0fa9',location:'qmdSurface.js:refreshQmdWebsitePane',message:'using quarto iframe',data:{liveUrl},timestamp:Date.now(),hypothesisId:'C'})}).catch(()=>{});
-			// #endregion
 			return;
 		}
 		
@@ -501,8 +489,5 @@ Zotero.QLab = Zotero.QLab || {};
 			meta.textContent = quartoError
 				|| 'Quarto preview unavailable — install Quarto and ensure drafts/_quarto.yml exists.';
 		}
-		// #region agent log
-		fetch('http://127.0.0.1:7350/ingest/ba635be9-3f49-40ce-9509-feafde36c36e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'be0fa9'},body:JSON.stringify({sessionId:'be0fa9',location:'qmdSurface.js:refreshQmdWebsitePane',message:'quarto unavailable',data:{quartoError},timestamp:Date.now(),hypothesisId:'C'})}).catch(()=>{});
-		// #endregion
 	};
 })();

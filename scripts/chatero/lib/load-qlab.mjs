@@ -40,6 +40,7 @@ const QLAB_SCRIPTS = [
 	"qmdSurface.js",
 	"qmdApply.js",
 	"qmdPreview.js",
+	"qmdPreviewController.js",
 	"phase4.js",
 	"qlabModule.js",
 ];
