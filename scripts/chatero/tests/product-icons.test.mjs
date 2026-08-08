@@ -45,4 +45,7 @@ test("both DMG packagers apply the Chatero volume icon", async () => {
 		let source = String(await read(path));
 		assert.match(source, /--icon .*AppIcon\.icns/, path);
 	}
+	let packager = String(await read("app/mac/pkg-dmg"));
+	assert.match(packager, /'cmd_SetFile'\s*=>\s*'\/usr\/bin\/SetFile'/);
+	assert.doesNotMatch(packager, /'cmd_SetFile'\s*=>\s*'\/Developer\/Tools\/SetFile'/);
 });

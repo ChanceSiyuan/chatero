@@ -311,7 +311,8 @@ my(@gCleanup, %gConfig, $gDarwinMajor, $gDryRun, $gVerbosity);
             'cmd_Rez'            => '/Developer/Tools/Rez',
             'cmd_rm'             => 'rm',
             'cmd_rsync'          => 'rsync',
-            'cmd_SetFile'        => '/Developer/Tools/SetFile',
+            # Xcode 4+ and modern Command Line Tools install SetFile here.
+            'cmd_SetFile'        => '/usr/bin/SetFile',
             'cmd_xattr'          => 'xattr',
 
             # create_directly indicates whether hdiutil create supports
