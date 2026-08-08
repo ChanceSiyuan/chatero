@@ -24,13 +24,15 @@ test("rendered controls have labels, pressed state, and live status semantics", 
 	assert.match(html, /data-qlab-preview-retry/);
 });
 
-test("workspace styles preserve Preview at medium widths and honor reduced motion", async () => {
+test("workspace styles hide icon labels and use a QMD-local compact Explorer drawer", async () => {
 	let source = await readFile(
 		new URL("../../../scss/components/_qlabQmdWorkspace.scss", import.meta.url),
 		"utf8",
 	);
-	assert.match(source, /max-width:\s*1050px/);
-	assert.match(source, /max-width:\s*720px/);
+	assert.match(source, /\.qlab-qmd-workspace-action\s*\{[\s\S]+\.sr-only\s*\{[\s\S]+clip:/);
+	assert.match(source, /\.qlab-qmd-primary-surface/);
+	assert.match(source, /@media\s*\(max-width:\s*900px\)[\s\S]+\.qlab-qmd-explorer[\s\S]+position:\s*absolute/);
+	assert.match(source, /\.qlab-qmd-toolbar-actions[\s\S]+overflow:\s*hidden/);
 	assert.match(source, /prefers-reduced-motion:\s*reduce/);
 	assert.match(source, /:focus-visible/);
 });

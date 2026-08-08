@@ -6,8 +6,8 @@
 	<title>QLab QMD Editor</title>
 	<style>
 		:root {
-			color-scheme: dark;
-			background: #181818;
+			color-scheme: light;
+			background: #fff;
 		}
 		html, body, #qmd-monaco, #qmd-normal, #qmd-diff {
 			width: 100%;
@@ -16,7 +16,7 @@
 			overflow: hidden;
 		}
 		body {
-			background: #181818;
+			background: #fff;
 		}
 		#qmd-monaco {
 			position: relative;
@@ -39,7 +39,7 @@
 			background: rgba(166, 106, 255, 0.07);
 		}
 		.qmd-block-frontmatter {
-			background: rgba(255, 255, 255, 0.025);
+			background: rgba(60, 120, 220, 0.035);
 		}
 	</style>
 </head>
@@ -96,7 +96,7 @@
 					qmdMonaco = monaco;
 					qmdEditor = monaco.editor.create(document.getElementById('qmd-normal'), {
 						language: 'markdown',
-						theme: 'vs-dark',
+						theme: 'vs',
 						automaticLayout: true,
 						wordWrap: 'on',
 						minimap: { enabled: false },

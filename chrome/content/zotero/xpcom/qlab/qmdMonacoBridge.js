@@ -31,7 +31,7 @@ Zotero.QLab = Zotero.QLab || {};
 		return `inmemory://qlab/${encodeURI(draftPath(relativePath))}`;
 	};
 	
-	Zotero.QLab.qmdMonacoOptions = function ({ theme = 'dark', wordWrap = 'on' } = {}) {
+	Zotero.QLab.qmdMonacoOptions = function ({ theme = 'light', wordWrap = 'on' } = {}) {
 		return {
 			theme: theme === 'light' ? 'vs' : 'vs-dark',
 			language: 'markdown',

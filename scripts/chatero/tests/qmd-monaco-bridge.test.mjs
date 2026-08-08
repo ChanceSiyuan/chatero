@@ -77,8 +77,8 @@ test("bridge exposes proposed changes through a Monaco diff model", async () => 
 
 test("Monaco options use QMD writing defaults", async () => {
 	const QLab = await loadQLab();
-	let options = QLab.qmdMonacoOptions({ theme: "dark" });
-	assert.equal(options.theme, "vs-dark");
+	let options = QLab.qmdMonacoOptions();
+	assert.equal(options.theme, "vs");
 	assert.equal(options.wordWrap, "on");
 	assert.equal(options.minimap.enabled, false);
 	assert.equal(options.tabSize, 2);

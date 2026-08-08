@@ -28,3 +28,10 @@ test("QMD Monaco host provides save and AI keyboard commands", async () => {
 	assert.match(html, /command:\s*'save'/);
 	assert.match(html, /command:\s*'ai'/);
 });
+
+test("QMD Monaco host boots in an always-light editing surface", async () => {
+	let html = await readFile(hostPath, "utf8");
+	assert.match(html, /color-scheme:\s*light/);
+	assert.match(html, /theme:\s*'vs'/);
+	assert.doesNotMatch(html, /theme:\s*'vs-dark'/);
+});

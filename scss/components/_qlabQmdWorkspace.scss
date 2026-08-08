@@ -1,5 +1,4 @@
 .qlab-qmd-workspace {
-	--qlab-qmd-editor-ratio: .5;
 	display: flex;
 	min-width: 0;
 	min-height: 0;
@@ -8,7 +7,19 @@
 	.qlab-qmd-toolbar {
 		min-height: 38px;
 		padding: 4px 7px;
+		flex-wrap: nowrap;
 		background: var(--zc-bg-raised);
+	}
+
+	.qlab-qmd-path-wrap,
+	.qlab-qmd-toolbar-actions {
+		order: initial;
+	}
+
+	.qlab-qmd-toolbar-actions {
+		width: auto;
+		min-width: 0;
+		overflow: hidden;
 	}
 }
 
@@ -16,8 +27,10 @@
 	appearance: none;
 	display: inline-grid;
 	width: 27px;
+	min-width: 27px;
 	height: 27px;
 	padding: 5px;
+	flex: none;
 	place-items: center;
 	border: 1px solid transparent;
 	border-radius: 6px;
@@ -53,15 +66,23 @@
 	&[data-qlab-draft-keep]:not(:disabled) {
 		color: var(--zc-success);
 	}
+
+	.sr-only {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		padding: 0;
+		overflow: hidden;
+		clip: rect(0, 0, 0, 0);
+		white-space: nowrap;
+		border: 0;
+	}
 }
 
 .qlab-qmd-workspace-main {
+	position: relative;
 	display: grid;
-	grid-template-columns:
-		190px
-		minmax(260px, calc((100% - 195px) * var(--qlab-qmd-editor-ratio)))
-		5px
-		minmax(260px, 1fr);
+	grid-template-columns: 190px minmax(0, 1fr);
 	flex: 1 1 auto;
 	min-width: 0;
 	min-height: 0;
@@ -71,10 +92,7 @@
 
 .qlab-qmd-workspace.is-files-collapsed {
 	.qlab-qmd-workspace-main {
-		grid-template-columns:
-			minmax(260px, calc((100% - 5px) * var(--qlab-qmd-editor-ratio)))
-			5px
-			minmax(260px, 1fr);
+		grid-template-columns: minmax(0, 1fr);
 	}
 
 	.qlab-qmd-explorer {
@@ -82,19 +100,12 @@
 	}
 }
 
-.qlab-qmd-workspace.is-preview-collapsed {
-	.qlab-qmd-workspace-main {
-		grid-template-columns: 190px minmax(260px, 1fr);
-	}
-
-	&.is-files-collapsed .qlab-qmd-workspace-main {
-		grid-template-columns: minmax(260px, 1fr);
-	}
-
-	.qlab-qmd-preview-pane,
-	.qlab-qmd-splitter {
-		display: none;
-	}
+.qlab-qmd-primary-surface {
+	display: grid;
+	min-width: 0;
+	min-height: 0;
+	overflow: hidden;
+	background: #fff;
 }
 
 .qlab-qmd-explorer,
@@ -105,6 +116,17 @@
 	min-height: 0;
 	flex-direction: column;
 	overflow: hidden;
+}
+
+.qlab-qmd-editor-pane,
+.qlab-qmd-preview-pane {
+	grid-area: 1 / 1;
+	background: #fff;
+}
+
+.qlab-qmd-editor-pane[hidden],
+.qlab-qmd-preview-pane[hidden] {
+	display: none;
 }
 
 .qlab-qmd-explorer {
@@ -248,27 +270,7 @@
 	min-height: 0;
 	flex: 1 1 auto;
 	border: 0;
-	background: var(--zc-bg);
-}
-
-.qlab-qmd-splitter {
-	position: relative;
-	z-index: 2;
-	width: 5px;
-	cursor: col-resize;
-	background: var(--zc-border);
-
-	&::after {
-		position: absolute;
-		inset: 0 -3px;
-		content: "";
-	}
-
-	&:hover,
-	&:focus-visible {
-		background: var(--zc-accent);
-		outline: none;
-	}
+	background: #fff;
 }
 
 .qlab-qmd-preview-pane {
@@ -352,33 +354,49 @@
 	}
 }
 
-@media (max-width: 1050px) {
+@media (max-width: 900px) {
 	.qlab-qmd-workspace-main,
 	.qlab-qmd-workspace.is-files-collapsed .qlab-qmd-workspace-main {
-		grid-template-columns:
-			minmax(260px, calc((100% - 5px) * var(--qlab-qmd-editor-ratio)))
-			5px
-			minmax(260px, 1fr);
+		grid-template-columns: minmax(0, 1fr);
 	}
 
 	.qlab-qmd-explorer {
+		position: absolute;
+		z-index: 12;
+		inset: 0 auto 0 0;
+		display: flex;
+		width: min(260px, 78%);
+		box-shadow: 10px 0 28px rgba(0, 0, 0, .14);
+	}
+
+	.qlab-qmd-workspace.is-files-collapsed .qlab-qmd-explorer {
 		display: none;
 	}
 }
 
 @media (max-width: 720px) {
-	.qlab-qmd-workspace-main,
-	.qlab-qmd-workspace.is-files-collapsed .qlab-qmd-workspace-main {
-		grid-template-columns: minmax(280px, 1fr);
+	.qlab-qmd-workspace .qlab-qmd-toolbar {
+		flex-wrap: nowrap;
 	}
 
-	.qlab-qmd-preview-pane,
-	.qlab-qmd-splitter {
-		display: none;
+	.qlab-qmd-workspace .qlab-qmd-path-wrap,
+	.qlab-qmd-workspace .qlab-qmd-toolbar-actions {
+		width: auto;
+		order: initial;
 	}
 
 	.qlab-qmd-authority {
 		display: none;
+	}
+}
+
+@media (max-width: 560px) {
+	.qlab-qmd-tree-badge {
+		display: none;
+	}
+
+	.qlab-qmd-path-wrap {
+		min-width: 0;
 	}
 }
 
