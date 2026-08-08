@@ -16,6 +16,11 @@ Zotero.QLab = Zotero.QLab || {};
 (function () {
 	const PREVIEW_PORT_MIN = 43000;
 	const PREVIEW_PORT_SPAN = 1500;
+	const QUARTO_MAC_CANDIDATES = [
+		'/usr/local/bin/quarto',
+		'/opt/homebrew/bin/quarto',
+		'/Applications/quarto/bin/quarto',
+	];
 	
 	function hash(value) {
 		let total = 5381;
@@ -62,6 +67,49 @@ Zotero.QLab = Zotero.QLab || {};
 	Zotero.QLab.nextQmdPreviewPort = function (seed) {
 		return PREVIEW_PORT_MIN + (Math.abs(seed) % PREVIEW_PORT_SPAN);
 	};
+
+	Zotero.QLab.discoverQuartoExecutable = async function (host = {}) {
+		if (typeof host.pathSearch === 'function') {
+			try {
+				let found = await host.pathSearch('quarto');
+				if (found) return found;
+			}
+			catch (error) {}
+		}
+		if (typeof host.exists === 'function') {
+			for (let candidate of QUARTO_MAC_CANDIDATES) {
+				try {
+					if (await host.exists(candidate)) return candidate;
+				}
+				catch (error) {}
+			}
+		}
+		return null;
+	};
+
+	Zotero.QLab.createGeckoQuartoDiscoveryHost = function () {
+		return {
+			pathSearch: async (name) => {
+				try {
+					let { Subprocess } = ChromeUtils.importESModule(
+						'resource://gre/modules/Subprocess.sys.mjs'
+					);
+					return await Subprocess.pathSearch(name);
+				}
+				catch (error) {
+					return null;
+				}
+			},
+			exists: async (path) => {
+				try {
+					return await IOUtils.exists(path);
+				}
+				catch (error) {
+					return false;
+				}
+			},
+		};
+	};
 	
 	Zotero.QLab._qmdPreviewSessions = Zotero.QLab._qmdPreviewSessions || Object.create(null);
 	
@@ -86,7 +134,21 @@ Zotero.QLab = Zotero.QLab || {};
 			throw new Error('Process runner unavailable for Quarto preview');
 		}
 		
-		let command = options.quartoCommand || 'quarto';
+		let command = options.quartoCommand || '';
+		if (!command && (options.discoveryHost || !options.runner)) {
+			let discoveryHost = options.discoveryHost
+				|| (Zotero.QLab.createGeckoQuartoDiscoveryHost
+					? Zotero.QLab.createGeckoQuartoDiscoveryHost()
+					: {});
+			command = await Zotero.QLab.discoverQuartoExecutable(discoveryHost) || '';
+			if (!command) {
+				throw new Error(
+					'Quarto executable not found. Install Quarto in /usr/local/bin, '
+					+ '/opt/homebrew/bin, or /Applications/quarto/bin.'
+				);
+			}
+		}
+		if (!command) command = 'quarto';
 		let args = [
 			'preview',
 			target.file,
@@ -100,6 +162,36 @@ Zotero.QLab = Zotero.QLab || {};
 		
 		let killProcess = null;
 		let abort = false;
+		let resolveProcessFailure;
+		let processFailure = new Promise(resolve => {
+			resolveProcessFailure = resolve;
+		});
+		let output = [];
+		function recordOutput(event) {
+			if (!event || !['stdout', 'stderr'].includes(event.type) || !event.data) return;
+			output.push(String(event.data));
+			if (output.length > 24) output.shift();
+		}
+		function reportProcessFailure(error) {
+			if (abort) return;
+			delete Zotero.QLab._qmdPreviewSessions[key];
+			resolveProcessFailure({ error });
+		}
+
+		Zotero.QLab._qmdPreviewSessions[key] = {
+			url,
+			port,
+			stop: () => {
+				abort = true;
+				if (killProcess) {
+					try {
+						killProcess();
+					}
+					catch (error) {}
+				}
+			},
+		};
+
 		(async () => {
 			try {
 				for await (let event of runner.run(command, args, {
@@ -111,30 +203,24 @@ Zotero.QLab = Zotero.QLab || {};
 					if (abort) {
 						break;
 					}
+					recordOutput(event);
 					if (event.type === 'exit') {
 						delete Zotero.QLab._qmdPreviewSessions[key];
+						if (Number(event.exitCode) !== 0) {
+							let detail = output.join('\n').trim();
+							reportProcessFailure(new Error(
+								`Quarto preview exited with code ${event.exitCode}`
+								+ (detail ? `: ${detail}` : '')
+							));
+						}
 					}
 				}
 			}
-			catch (e) {
-				Zotero.logError && Zotero.logError(e);
-				delete Zotero.QLab._qmdPreviewSessions[key];
+			catch (error) {
+				Zotero.logError && Zotero.logError(error);
+				reportProcessFailure(error);
 			}
 		})();
-		
-		Zotero.QLab._qmdPreviewSessions[key] = {
-			url,
-			port,
-			stop: () => {
-				abort = true;
-				if (killProcess) {
-					try {
-						killProcess();
-					}
-					catch (e) {}
-				}
-			},
-		};
 		
 		let fetchImpl = options.fetch || (typeof fetch === 'function' ? fetch.bind(globalThis) : null);
 		if (!fetchImpl) {
@@ -143,15 +229,23 @@ Zotero.QLab = Zotero.QLab || {};
 		}
 		
 		let deadline = Date.now() + (options.timeoutMs || 20000);
+		let pollIntervalMs = options.pollIntervalMs || 400;
+		let delay = options.delay || (ms => new Promise(resolve => setTimeout(resolve, ms)));
 		while (Date.now() < deadline) {
-			try {
-				let response = await fetchImpl(url, { cache: 'no-store' });
-				if (response && response.ok) {
-					return url;
-				}
+			let probe = Promise.resolve()
+				.then(() => fetchImpl(url, { cache: 'no-store' }))
+				.then(response => response && response.ok ? { ready: true } : null)
+				.catch(() => null);
+			let outcome = await Promise.race([
+				probe,
+				processFailure,
+				delay(pollIntervalMs).then(() => null),
+			]);
+			if (outcome && outcome.error) {
+				Zotero.QLab.stopQmdQuartoPreview(root, relativePath);
+				throw outcome.error;
 			}
-			catch (e) {}
-			await new Promise(r => setTimeout(r, 400));
+			if (outcome && outcome.ready) return url;
 		}
 		Zotero.QLab.stopQmdQuartoPreview(root, relativePath);
 		throw new Error('Quarto preview did not become ready in time');

@@ -54,6 +54,26 @@ test("resolveQuartoPreviewTarget uses drafts root as cwd", async () => {
 	assert.equal(target.file, "note.qmd");
 });
 
+test("discoverQuartoExecutable prefers PATH and checks common macOS installs", async () => {
+	const QLab = await loadQLab();
+	let fromPath = await QLab.discoverQuartoExecutable({
+		pathSearch: async name => name === "quarto" ? "/custom/bin/quarto" : null,
+		exists: async () => false,
+	});
+	assert.equal(fromPath, "/custom/bin/quarto");
+
+	let checked = [];
+	let common = await QLab.discoverQuartoExecutable({
+		pathSearch: async () => null,
+		exists: async path => {
+			checked.push(path);
+			return path === "/usr/local/bin/quarto";
+		},
+	});
+	assert.equal(common, "/usr/local/bin/quarto");
+	assert.deepEqual(checked, ["/usr/local/bin/quarto"]);
+});
+
 test("startQmdQuartoPreview passes drafts cwd and no-execute flags", async () => {
 	const QLab = await loadQLab();
 	let seen = null;
@@ -76,4 +96,67 @@ test("startQmdQuartoPreview passes drafts cwd and no-execute flags", async () =>
 	assert.ok(seen.args.includes("--host"));
 	assert.ok(seen.args.includes("127.0.0.1"));
 	assert.equal(seen.args.at(-1), "43100");
+});
+
+test("startQmdQuartoPreview uses a discovered absolute executable", async () => {
+	const QLab = await loadQLab();
+	QLab._qmdPreviewSessions = Object.create(null);
+	let command = "";
+	const runner = {
+		async *run(value) {
+			command = value;
+			await new Promise(() => {});
+		},
+	};
+	await QLab.startQmdQuartoPreview("/workspace-discovery", "drafts/note.qmd", {
+		runner,
+		discoveryHost: {
+			pathSearch: async () => null,
+			exists: async path => path === "/opt/homebrew/bin/quarto",
+		},
+		fetch: async () => ({ ok: true }),
+		port: 43101,
+	});
+	assert.equal(command, "/opt/homebrew/bin/quarto");
+});
+
+test("startQmdQuartoPreview reports a spawn failure instead of timing out", async () => {
+	const QLab = await loadQLab();
+	QLab._qmdPreviewSessions = Object.create(null);
+	const runner = {
+		async *run() {
+			throw new Error("spawn exploded");
+		},
+	};
+	await assert.rejects(
+		QLab.startQmdQuartoPreview("/workspace-spawn", "drafts/note.qmd", {
+			runner,
+			fetch: async () => ({ ok: false }),
+			pollIntervalMs: 1,
+			timeoutMs: 50,
+			port: 43102,
+		}),
+		/spawn exploded/,
+	);
+});
+
+test("startQmdQuartoPreview reports stderr from an early process exit", async () => {
+	const QLab = await loadQLab();
+	QLab._qmdPreviewSessions = Object.create(null);
+	const runner = {
+		async *run() {
+			yield { type: "stderr", data: "bad yaml at line 2" };
+			yield { type: "exit", exitCode: 1 };
+		},
+	};
+	await assert.rejects(
+		QLab.startQmdQuartoPreview("/workspace-exit", "drafts/note.qmd", {
+			runner,
+			fetch: async () => ({ ok: false }),
+			pollIntervalMs: 1,
+			timeoutMs: 50,
+			port: 43103,
+		}),
+		/bad yaml at line 2.*code 1|code 1.*bad yaml at line 2/,
+	);
 });
