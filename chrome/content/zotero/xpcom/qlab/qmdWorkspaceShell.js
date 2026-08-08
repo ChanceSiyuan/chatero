@@ -362,21 +362,24 @@ Zotero.QLab = Zotero.QLab || {};
 	Zotero.QLab.createQmdWorkspaceController = function ({
 		watcher = null,
 		monaco = null,
+		visual = null,
 		preview = null,
 		session = null,
 		onLayout = () => {},
 		explorerVisible = true,
 		surface = null,
 		previewVisible = null,
+		versionTarget = 'original',
 	} = {}) {
 		let restoredSurface = surface;
 		if (!restoredSurface && previewVisible !== null) {
 			restoredSurface = previewVisible ? 'website' : 'source';
 		}
-		let resources = { watcher, monaco, preview, session };
+		let resources = { watcher, monaco, visual, preview, session };
 		let state = {
 			explorerVisible: !!explorerVisible,
 			surface: Zotero.QLab.normalizeQmdSurfaceMode(restoredSurface),
+			versionTarget: versionTarget === 'proposed' ? 'proposed' : 'original',
 			disposed: false,
 		};
 		function layout() {
@@ -390,7 +393,7 @@ Zotero.QLab = Zotero.QLab || {};
 		}
 		return {
 			setResources(next = {}) {
-				for (let name of ['preview', 'session']) {
+				for (let name of ['visual', 'preview', 'session']) {
 					if (Object.prototype.hasOwnProperty.call(next, name) && resources[name] !== next[name]) {
 						disposeResource(name);
 						resources[name] = next[name];
@@ -405,6 +408,10 @@ Zotero.QLab = Zotero.QLab || {};
 				state.surface = Zotero.QLab.normalizeQmdSurfaceMode(value);
 				layout();
 			},
+			showVersionTarget(value) {
+				state.versionTarget = value === 'proposed' ? 'proposed' : 'original';
+				layout();
+			},
 			toggleSurface() {
 				state.surface = Zotero.QLab.nextQmdSurfaceMode(state.surface);
 				layout();
@@ -415,7 +422,7 @@ Zotero.QLab = Zotero.QLab || {};
 			dispose() {
 				if (state.disposed) return;
 				state.disposed = true;
-				for (let name of ['watcher', 'monaco', 'preview', 'session']) disposeResource(name);
+				for (let name of ['watcher', 'monaco', 'visual', 'preview', 'session']) disposeResource(name);
 			},
 		};
 	};
@@ -548,7 +555,9 @@ Zotero.QLab = Zotero.QLab || {};
 			if (!shell) return;
 			shell.classList.toggle('is-files-collapsed', !state.explorerVisible);
 			shell.dataset.surface = state.surface;
+			shell.dataset.versionTarget = state.versionTarget;
 			host._qlabSurfaceMode = state.surface;
+			previewVersion = state.versionTarget;
 			let primary = host.querySelector('[data-qlab-primary-surface]');
 			if (primary) primary.dataset.surface = state.surface;
 			let visual = host.querySelector('[data-qlab-visual-surface]');
@@ -567,12 +576,19 @@ Zotero.QLab = Zotero.QLab || {};
 				if (hiddenLabel) hiddenLabel.textContent = action.label;
 			}
 			activePreview?.setVisible(state.surface === 'website');
+			for (let button of host.querySelectorAll('[data-qlab-preview-version]')) {
+				button.classList.toggle(
+					'is-active',
+					button.dataset.qlabPreviewVersion === state.versionTarget
+				);
+			}
 			let tabs = view.Zotero_Tabs;
 			if (tabs && tabs.setTabData && host._qlabMountTabID) {
 				tabs.setTabData(host._qlabMountTabID, {
 					qmdWorkspace: {
 						explorerVisible: state.explorerVisible,
 						surface: state.surface,
+						versionTarget: state.versionTarget,
 					},
 				});
 			}
@@ -607,6 +623,7 @@ Zotero.QLab = Zotero.QLab || {};
 			explorerVisible: !layout || layout.explorerVisible !== false,
 			surface: layout && layout.surface,
 			previewVisible: layout && layout.previewVisible,
+			versionTarget: layout && layout.versionTarget,
 		});
 
 		function showPreviewState(state) {
@@ -633,9 +650,7 @@ Zotero.QLab = Zotero.QLab || {};
 
 		async function showPreview(version) {
 			previewVersion = version === 'proposed' && proposal ? 'proposed' : 'original';
-			for (let button of host.querySelectorAll('[data-qlab-preview-version]')) {
-				button.classList.toggle('is-active', button.dataset.qlabPreviewVersion === previewVersion);
-			}
+			controller.showVersionTarget(previewVersion);
 			if (previewVersion === 'proposed') {
 				previewSurface.showQuick(Zotero.QLab.renderQmdDocumentHTML(proposal.proposed, {
 					title: `${activePath} · Proposed`,
@@ -742,6 +757,7 @@ Zotero.QLab = Zotero.QLab || {};
 			}
 			updateProposalControls();
 			previewVersion = 'original';
+			controller.showVersionTarget('original');
 			monacoBridge.showNormal();
 			setPersistenceStatus(proposal ? 'proposal' : 'saved');
 			void preview.start();
@@ -767,6 +783,7 @@ Zotero.QLab = Zotero.QLab || {};
 			},
 			showProposalDiff() {
 				if (!proposal || !activeSession) return;
+				controller.showVersionTarget('proposed');
 				controller.showSurface('source');
 				monacoBridge.showDiff({ original: activeSession.snapshot().text, proposed: proposal.proposed });
 			},
