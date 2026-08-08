@@ -26,20 +26,25 @@ Zotero.QLab = Zotero.QLab || {};
 	const PLUGIN_ID = 'chatero-qlab@local';
 	let _registered = false;
 	let _handlers = [];
-	
-	function buttonCSS() {
-		return 'display:grid;place-items:center;width:32px;height:32px;border:0;'
+
+	function iconButtonCSS(size = 32) {
+		return `display:grid;place-items:center;width:${size}px;height:${size}px;border:0;`
 			+ 'border-radius:8px;background:transparent;cursor:pointer;padding:5px;'
-			+ 'color:var(--fill-secondary, #555);font:600 11px/1 system-ui,sans-serif';
+			+ 'color:var(--fill-secondary, #555);';
 	}
-	
-	function makeToolbarButton(doc, { title, label, onClick }) {
+
+	function makeIconButton(doc, { title, iconSrc, onClick, size = 32, iconSize = 22 }) {
 		let button = doc.createElement('button');
 		button.type = 'button';
 		button.title = title;
 		button.setAttribute('aria-label', title);
-		button.style.cssText = buttonCSS();
-		button.textContent = label;
+		button.style.cssText = iconButtonCSS(size);
+		let icon = doc.createElement('img');
+		icon.src = iconSrc;
+		icon.alt = '';
+		icon.style.cssText = `width:${iconSize}px;height:${iconSize}px;`
+			+ (iconSrc.includes('9b8cff') ? 'border-radius:6px;' : '');
+		button.append(icon);
 		button.addEventListener('click', (event) => {
 			event.preventDefault();
 			event.stopPropagation();
@@ -47,7 +52,7 @@ Zotero.QLab = Zotero.QLab || {};
 		});
 		return button;
 	}
-	
+
 	async function arrangeFromReader(event, which) {
 		try {
 			if (Zotero.QLab.ReaderContextStore) {
@@ -80,7 +85,7 @@ Zotero.QLab = Zotero.QLab || {};
 			catch (_) {}
 		}
 	}
-	
+
 	async function askSelection(event) {
 		try {
 			if (Zotero.QLab.ReaderContextStore) {
@@ -98,7 +103,7 @@ Zotero.QLab = Zotero.QLab || {};
 			Zotero.logError(e);
 		}
 	}
-	
+
 	/**
 	 * PDF selection -> blockquote in the live QMD buffer, with a deep link back
 	 * to the page it came from.
@@ -144,12 +149,12 @@ Zotero.QLab = Zotero.QLab || {};
 			catch (_) {}
 		}
 	}
-	
+
 	function isEditableTarget(target) {
 		return !!(target && (target.isContentEditable
 			|| /^(INPUT|TEXTAREA|SELECT)$/i.test(target.tagName)));
 	}
-	
+
 	function installShortcuts(win) {
 		if (!win || win._qlabShortcutsBound) {
 			return;
@@ -161,7 +166,7 @@ Zotero.QLab = Zotero.QLab || {};
 				return;
 			}
 			let key = String(event.key || '').toLowerCase();
-			
+
 			// ⌘L / ⌘⇧L pin context. Shift = never steal focus; plain ⌘L also
 			// skips focus when Chat is already visible (Research Desk).
 			if (key === 'l') {
@@ -180,7 +185,7 @@ Zotero.QLab = Zotero.QLab || {};
 				});
 				return;
 			}
-			
+
 			// ⌘⇧K quotes the current PDF selection straight into the draft.
 			if (key === 'k' && event.shiftKey) {
 				event.preventDefault();
@@ -191,7 +196,7 @@ Zotero.QLab = Zotero.QLab || {};
 				void quoteSelectionIntoQmd({ reader, params: {} });
 				return;
 			}
-			
+
 			if (isEditableTarget(event.target)) {
 				return;
 			}
@@ -224,47 +229,49 @@ Zotero.QLab = Zotero.QLab || {};
 			}
 		}, true);
 	}
-	
+
 	/**
 	 * Also bind ⌘L on the main Zotero window (QMD shell / library focus).
 	 */
 	Zotero.QLab.installMainWindowShortcuts = function (win) {
 		installShortcuts(win || Zotero.getMainWindow());
 	};
-	
+
 	Zotero.QLab.registerReaderHooks = function () {
 		if (_registered || !Zotero.Reader || !Zotero.Reader.registerEventListener) {
 			return;
 		}
 		_registered = true;
-		
+
 		try {
 			Zotero.QLab.installMainWindowShortcuts(Zotero.getMainWindow());
 		}
 		catch (e) {}
-		
+
+		let icons = Zotero.QLab.ReaderIcons || {};
+
 		let toolbarHandler = (event) => {
 			try {
 				let { doc, append } = event;
 				installShortcuts(doc.defaultView);
-				append(makeToolbarButton(doc, {
+				append(makeIconButton(doc, {
 					title: 'Add to Chat (⌘L)',
-					label: '@',
+					iconSrc: icons.chat,
 					onClick: () => askSelection(event),
 				}));
-				append(makeToolbarButton(doc, {
+				append(makeIconButton(doc, {
 					title: 'Arrange PDF | Chat (⌘I)',
-					label: 'Chat',
+					iconSrc: icons.chatLayout,
 					onClick: () => arrangeFromReader(event, 'pdf-chat'),
 				}));
-				append(makeToolbarButton(doc, {
+				append(makeIconButton(doc, {
 					title: 'Arrange PDF | QMD Editor (⌘⇧E)',
-					label: 'QMD',
+					iconSrc: icons.editorSplit,
 					onClick: () => arrangeFromReader(event, 'pdf-editor'),
 				}));
-				append(makeToolbarButton(doc, {
+				append(makeIconButton(doc, {
 					title: 'Research Desk: PDF | QMD | Chat (⌘⇧D)',
-					label: 'Desk',
+					iconSrc: icons.desk,
 					onClick: () => arrangeFromReader(event, 'desk'),
 				}));
 			}
@@ -272,7 +279,7 @@ Zotero.QLab = Zotero.QLab || {};
 				Zotero.logError(e);
 			}
 		};
-		
+
 		let selectionHandler = (event) => {
 			try {
 				let { doc, append } = event;
@@ -280,30 +287,28 @@ Zotero.QLab = Zotero.QLab || {};
 				void Zotero.QLab.ReaderContextStore
 					&& Zotero.QLab.ReaderContextStore.captureFromEvent(event).catch(() => {});
 				let group = doc.createElement('div');
-				group.style.cssText = 'display:flex;gap:5px;padding:5px 4px 2px';
-				let ask = makeToolbarButton(doc, {
+				group.style.cssText = 'display:flex;gap:4px;padding:2px 4px 0;margin-top:6px;';
+				group.append(makeIconButton(doc, {
 					title: 'Add selection to Chat (⌘L)',
-					label: '⌘L',
+					iconSrc: icons.chat,
+					size: 28,
+					iconSize: 20,
 					onClick: () => askSelection(event),
-				});
-				ask.style.width = 'auto';
-				ask.style.padding = '4px 8px';
-				group.append(ask);
-				let quote = makeToolbarButton(doc, {
-					title: 'Insert selection into the QMD draft as a quote (⌘⇧K)',
-					label: 'Quote →',
+				}));
+				group.append(makeIconButton(doc, {
+					title: 'Insert selection into QMD as quote (⌘⇧K)',
+					iconSrc: icons.quote,
+					size: 28,
+					iconSize: 20,
 					onClick: () => quoteSelectionIntoQmd(event),
-				});
-				quote.style.width = 'auto';
-				quote.style.padding = '4px 8px';
-				group.append(quote);
+				}));
 				append(group);
 			}
 			catch (e) {
 				Zotero.logError(e);
 			}
 		};
-		
+
 		Zotero.Reader.registerEventListener('renderToolbar', toolbarHandler, PLUGIN_ID);
 		Zotero.Reader.registerEventListener('renderTextSelectionPopup', selectionHandler, PLUGIN_ID);
 		_handlers.push(
@@ -311,7 +316,7 @@ Zotero.QLab = Zotero.QLab || {};
 			['renderTextSelectionPopup', selectionHandler],
 		);
 	};
-	
+
 	Zotero.QLab.unregisterReaderHooks = function () {
 		if (!_registered || !Zotero.Reader) {
 			return;

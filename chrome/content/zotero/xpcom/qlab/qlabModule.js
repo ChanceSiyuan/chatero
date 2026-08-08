@@ -21,6 +21,21 @@ Zotero.QLab = Zotero.QLab || {};
 			.replace(/"/g, '&quot;');
 	}
 	
+	function ensureKatexStyles(doc) {
+		if (!doc || !Zotero.QLab.katexStylesheetHref) {
+			return;
+		}
+		let head = doc.head || doc.querySelector('head');
+		if (!head || head.querySelector('[data-qlab-katex-css]')) {
+			return;
+		}
+		let link = doc.createElementNS('http://www.w3.org/1999/xhtml', 'link');
+		link.rel = 'stylesheet';
+		link.href = Zotero.QLab.katexStylesheetHref();
+		link.setAttribute('data-qlab-katex-css', 'true');
+		head.appendChild(link);
+	}
+	
 	/**
 	 * XUL windows are XML documents, so assigning ordinary HTML containing
 	 * boolean attributes or void elements to innerHTML throws. Parse as HTML
@@ -116,7 +131,7 @@ Zotero.QLab = Zotero.QLab || {};
 	function iconButtonHTML({ name, label, attribute, className = '' }) {
 		return `<button type="button" class="qlab-icon-button ${escapeHTML(className)}" `
 			+ `${attribute} title="${escapeHTML(label)}" aria-label="${escapeHTML(label)}">`
-			+ `${shellIcon(name)}<span class="qlab-control-label">${escapeHTML(label)}</span></button>`;
+			+ `${shellIcon(name)}</button>`;
 	}
 	
 	function draftRowsHTML(drafts, selected = '') {
@@ -157,6 +172,7 @@ Zotero.QLab = Zotero.QLab || {};
 	 */
 	Zotero.QLab.buildChatTranscriptPrompt = function (messages, {
 		maxTurns = 8,
+		maxChars = 24_000,
 		excludeTrailingAssistant = true,
 	} = {}) {
 		let list = Array.isArray(messages) ? messages.slice() : [];
@@ -172,10 +188,42 @@ Zotero.QLab = Zotero.QLab || {};
 		if (!list.length) {
 			return '';
 		}
-		let parts = ['<chat_transcript>'];
-		for (let message of list) {
+		let budget = Number(maxChars);
+		if (!Number.isFinite(budget) || budget <= 0) {
+			budget = 24_000;
+		}
+		budget = Math.max(500, Math.min(budget, 120_000));
+		let selected = [];
+		let used = 0;
+		for (let i = list.length - 1; i >= 0; i--) {
+			let message = list[i];
 			let role = message.role === 'assistant' ? 'assistant' : 'user';
-			parts.push(`${role}: ${String(message.text || '').trim()}`);
+			let body = String(message.text || '').trim();
+			if (body.length > 1200) {
+				body = `${body.slice(0, 1199)}…`;
+			}
+			let line = `${role}: ${body}`;
+			if (selected.length && used + line.length > budget) {
+				break;
+			}
+			if (!selected.length && line.length > budget) {
+				body = body.slice(0, Math.max(0, budget - role.length - 4)) + '…';
+				line = `${role}: ${body}`;
+			}
+			selected.unshift(message);
+			used += line.length + 1;
+		}
+		if (!selected.length) {
+			selected = list.slice(-1);
+		}
+		let parts = ['<chat_transcript>'];
+		for (let message of selected) {
+			let role = message.role === 'assistant' ? 'assistant' : 'user';
+			let body = String(message.text || '').trim();
+			if (body.length > 1200) {
+				body = `${body.slice(0, 1199)}…`;
+			}
+			parts.push(`${role}: ${body}`);
 		}
 		parts.push('</chat_transcript>');
 		return parts.join('\n');
@@ -245,6 +293,7 @@ Zotero.QLab = Zotero.QLab || {};
 				`<span class="qlab-shell-status">${escapeHTML(copy.body)}</span>`,
 				`</div>`,
 				`<div class="qlab-shell-output" data-qlab-output role="log"></div>`,
+				`<div class="qlab-agent-draft-banner" data-qlab-agent-banner hidden></div>`,
 				`<div class="qlab-shell-composer">`,
 				`<div class="qlab-shell-actions" aria-label="Research suggestions">${actionButtons}</div>`,
 				tagsHTML,
@@ -264,6 +313,7 @@ Zotero.QLab = Zotero.QLab || {};
 				+ `<option value="ask"${chatMode === 'ask' ? ' selected' : ''}>Ask</option>`
 				+ `<option value="agent"${chatMode === 'agent' ? ' selected' : ''}>Agent</option>`
 				+ `</select></label>`,
+				`<span class="qlab-context-meter" data-qlab-context-meter></span>`,
 				`</div>`,
 				`<div class="qlab-shell-composer-row">`,
 				iconButtonHTML({
@@ -336,7 +386,7 @@ Zotero.QLab = Zotero.QLab || {};
 				`<div class="qlab-qmd-surface" data-qlab-surface="website" role="tabpanel" hidden>`,
 				`<p class="qlab-shell-note" data-qlab-website-meta>Website preview</p>`,
 				`<iframe class="qlab-qmd-website-frame" data-qlab-website-frame `
-				+ `title="QMD website preview" sandbox="allow-same-origin allow-scripts"></iframe>`,
+				+ `title="QMD website preview" sandbox="allow-same-origin allow-scripts allow-popups"></iframe>`,
 				`</div>`,
 				`<div class="qlab-qmd-surface" data-qlab-surface="source" role="tabpanel" hidden>`,
 				`<textarea class="qlab-shell-editor" data-qlab-editor rows="18" `
@@ -538,6 +588,7 @@ Zotero.QLab = Zotero.QLab || {};
 			drafts,
 			contextSummary,
 		}));
+		ensureKatexStyles(host.ownerDocument);
 		host._qlabMountedKind = kind;
 		host._qlabMountRoot = root;
 		host._qlabMountWorkspaceState = workspaceState;
@@ -581,7 +632,20 @@ Zotero.QLab = Zotero.QLab || {};
 			Zotero.QLab.renderQmdPendingBar && Zotero.QLab.renderQmdPendingBar(host);
 		}
 		if (kind === 'qlabchat') {
+			if (!preserve && root && workspaceState === 'ready' && Zotero.QLab.loadLatestChatThread) {
+				void Zotero.QLab.loadLatestChatThread(host, root).then(() => {
+					Zotero.QLab.renderChatMessages(host);
+					Zotero.QLab.refreshComposerTags(host);
+					Zotero.QLab.updateChatContextMeter(host);
+				});
+			}
+			if (root && Zotero.QLab.loadApprovalPolicy) {
+				void Zotero.QLab.loadApprovalPolicy(root).then((policy) => {
+					host._qlabApprovalPolicy = policy;
+				});
+			}
 			Zotero.QLab.renderChatMessages(host);
+			Zotero.QLab.updateChatContextMeter(host);
 			void Zotero.QLab.refreshChatProviderAvailability(host);
 		}
 		
@@ -648,8 +712,25 @@ Zotero.QLab = Zotero.QLab || {};
 					Zotero.QLab.applyChatMessageToQmd(host, messageID);
 					return;
 				}
+				if (event.target.closest('[data-qlab-msg-apply]')) {
+					Zotero.QLab.applyChatMessageToQmd(host, messageID);
+					return;
+				}
 				if (event.target.closest('[data-qlab-msg-quote]')) {
 					Zotero.QLab.applyChatMessageToQmd(host, messageID, { asQuote: true });
+					return;
+				}
+				if (event.target.closest('[data-qlab-msg-regenerate]')) {
+					void Zotero.QLab.regenerateChatMessage(host, messageID, mountRoot, mountState);
+					return;
+				}
+				if (event.target.closest('[data-qlab-msg-edit]')) {
+					Zotero.QLab.editChatMessage(host, messageID);
+					return;
+				}
+				if (event.target.closest('[data-qlab-msg-fork]')) {
+					Zotero.QLab.forkChatThread(host);
+					Zotero.QLab.editChatMessage(host, messageID);
 					return;
 				}
 				if (event.target.closest('[data-qlab-msg-copy]')) {
@@ -730,6 +811,22 @@ Zotero.QLab = Zotero.QLab || {};
 			}
 			if (event.target.closest('[data-qlab-regenerate]')) {
 				void Zotero.QLab.regenerateLastChatTurn(host, mountRoot, mountState);
+				return;
+			}
+			if (event.target.closest('[data-qlab-approval-allow]')) {
+				Zotero.QLab.resolveChatApproval(host, true);
+				return;
+			}
+			if (event.target.closest('[data-qlab-approval-deny]')) {
+				Zotero.QLab.resolveChatApproval(host, false);
+				return;
+			}
+			if (event.target.closest('[data-qlab-agent-keep]')) {
+				void Zotero.QLab.keepAgentDraftFromChat(host, mountRoot);
+				return;
+			}
+			if (event.target.closest('[data-qlab-agent-discard]')) {
+				Zotero.QLab.hideAgentDraftBanner(host);
 				return;
 			}
 			if (event.target.closest('[data-qlab-files-toggle]')) {
@@ -818,6 +915,27 @@ Zotero.QLab = Zotero.QLab || {};
 		let editor = host.querySelector('[data-qlab-editor]');
 		if (editor) {
 			editor.addEventListener('input', () => {
+				Zotero.QLab.setQmdShellBuffer(host, editor.value, { dirty: true });
+			});
+			editor.addEventListener('keydown', (event) => {
+				if (event.key !== 'Tab' || event.shiftKey || event.ctrlKey || event.metaKey) {
+					return;
+				}
+				if (!Zotero.QLab.suggestQmdCompletion) {
+					return;
+				}
+				let suggestion = Zotero.QLab.suggestQmdCompletion(
+					editor.value,
+					editor.selectionStart
+				);
+				if (!suggestion) {
+					return;
+				}
+				event.preventDefault();
+				let start = editor.selectionStart;
+				let end = editor.selectionEnd;
+				editor.value = editor.value.slice(0, start) + suggestion + editor.value.slice(end);
+				editor.selectionStart = editor.selectionEnd = start + suggestion.length;
 				Zotero.QLab.setQmdShellBuffer(host, editor.value, { dirty: true });
 			});
 		}
@@ -1010,7 +1128,7 @@ Zotero.QLab = Zotero.QLab || {};
 				status.textContent = `Saved ${path}`;
 			}
 			if (host._qlabSurfaceMode === 'website' && Zotero.QLab.refreshQmdWebsitePane) {
-				void Zotero.QLab.refreshQmdWebsitePane(host, { root });
+				void Zotero.QLab.refreshQmdWebsitePane(host, { root, tryQuarto: true });
 			}
 		}
 		catch (e) {
@@ -1193,6 +1311,8 @@ Zotero.QLab = Zotero.QLab || {};
 		};
 		host._qlabMessages = (host._qlabMessages || []).concat(message);
 		Zotero.QLab.renderChatMessages(host);
+		Zotero.QLab.updateChatContextMeter(host);
+		void Zotero.QLab.persistChatHost(host, host._qlabMountRoot);
 		return message;
 	};
 	
@@ -1260,11 +1380,17 @@ Zotero.QLab = Zotero.QLab || {};
 		Zotero.QLab.setHTML(output, messages.map((message) => {
 			let actions = message.role === 'assistant' && message.text.trim()
 				? `<div class="qlab-chat-message-actions">`
-					+ `<button type="button" data-qlab-msg-insert>Insert into notes</button>`
-					+ `<button type="button" data-qlab-msg-quote>Insert as quote</button>`
+					+ `<button type="button" class="is-primary" data-qlab-msg-apply>Apply to QMD</button>`
+					+ `<button type="button" data-qlab-msg-quote>Quote</button>`
+					+ `<button type="button" data-qlab-msg-regenerate>Regenerate</button>`
 					+ `<button type="button" data-qlab-msg-copy>Copy</button>`
 					+ `</div>`
-				: '';
+				: message.role === 'user' && message.text.trim()
+					? `<div class="qlab-chat-message-actions">`
+						+ `<button type="button" data-qlab-msg-edit>Edit</button>`
+						+ `<button type="button" data-qlab-msg-fork>Fork</button>`
+						+ `</div>`
+					: '';
 			let roleLabel = message.status === 'cancelled'
 				? `${message.role} · cancelled`
 				: message.role;
@@ -1292,7 +1418,14 @@ Zotero.QLab = Zotero.QLab || {};
 		Zotero.QLab.cancelShellTurn(host);
 		host._qlabMessages = [];
 		host._qlabThreadId = newThreadId();
+		host._qlabParentThreadId = null;
+		if (Zotero.QLab.ChatComposerContext) {
+			Zotero.QLab.ChatComposerContext.clear();
+		}
 		Zotero.QLab.renderChatMessages(host);
+		Zotero.QLab.refreshComposerTags(host);
+		Zotero.QLab.updateChatContextMeter(host);
+		void Zotero.QLab.persistChatHost(host, host._qlabMountRoot);
 		let status = host.querySelector('.qlab-shell-status');
 		if (status) {
 			status.textContent = 'New chat';
@@ -1313,7 +1446,7 @@ Zotero.QLab = Zotero.QLab || {};
 		}
 	};
 	
-	Zotero.QLab.maybeShowComposerAtPicker = function (host) {
+	Zotero.QLab.maybeShowComposerAtPicker = async function (host) {
 		let textarea = host && host.querySelector('[data-qlab-prompt]');
 		let picker = host && host.querySelector('[data-qlab-at-picker]');
 		if (!textarea || !picker) {
@@ -1324,15 +1457,28 @@ Zotero.QLab = Zotero.QLab || {};
 			? textarea.selectionStart
 			: value.length;
 		let before = value.slice(0, pos);
-		let at = /(?:^|[\s([{])@$/.test(before) || /(?:^|[\s([{])@\w*$/.test(before);
+		let tokenMatch = /(?:^|[\s([{])@(\w*)$/.exec(before);
+		let at = tokenMatch || /(?:^|[\s([{])@$/.test(before);
 		if (!at) {
 			picker.hidden = true;
 			return;
 		}
+		let query = tokenMatch ? tokenMatch[1] : '';
 		let win = host.ownerDocument.defaultView;
 		let items = Zotero.QLab.listComposerAtPickerItems
-			? Zotero.QLab.listComposerAtPickerItems(win)
+			? Zotero.QLab.listComposerAtPickerItems(win, { query })
 			: [];
+		if (query.length >= 2 && host._qlabMountRoot && Zotero.QLab.searchWorkspaceForComposer) {
+			try {
+				let hits = await Zotero.QLab.searchWorkspaceForComposer(
+					host._qlabMountRoot,
+					query,
+					{ maxResults: 6 }
+				);
+				items = items.concat(hits);
+			}
+			catch (e) {}
+		}
 		host._qlabAtPickerItems = items;
 		let wrap = host.ownerDocument.createElement('div');
 		Zotero.QLab.setHTML(wrap, Zotero.QLab.renderComposerAtPickerHTML(items));
@@ -1405,7 +1551,7 @@ Zotero.QLab = Zotero.QLab || {};
 			});
 			if (status) {
 				status.textContent = result
-					? 'Inserted into the QMD buffer (unsaved — Save to write the Draft)'
+					? 'Applied to QMD as pending — review, then Save'
 					: 'Nothing to insert';
 			}
 			return result;
@@ -1563,15 +1709,218 @@ Zotero.QLab = Zotero.QLab || {};
 		}
 	};
 	
-	function composerContextBlock() {
+	function composerContextBlock(host, { chatMode } = {}) {
 		if (Zotero.QLab.ChatComposerContext
 				&& Zotero.QLab.ChatComposerContext.list().length) {
 			return Zotero.QLab.ChatComposerContext.formatForPrompt();
 		}
-		return Zotero.QLab.ReaderContextStore
-			? Zotero.QLab.ReaderContextStore.formatForPrompt()
-			: '';
+		if (chatMode === 'ask') {
+			return '<composer_context>\n(no pinned context — use ⌘L or @)\n</composer_context>';
+		}
+		return '';
 	}
+
+	Zotero.QLab.updateChatContextMeter = function (host) {
+		let meter = host && host.querySelector('[data-qlab-context-meter]');
+		if (!meter) {
+			return;
+		}
+		let tags = Zotero.QLab.ChatComposerContext
+			? Zotero.QLab.ChatComposerContext.list()
+			: [];
+		let tagChars = tags.reduce((n, t) => n + String(t.text || '').length, 0);
+		let transcript = Zotero.QLab.buildChatTranscriptPrompt(host._qlabMessages || [], {
+			maxTurns: 8,
+			maxChars: 1_000_000,
+		});
+		let maxChars = Zotero.QLab.Settings && Zotero.QLab.Settings.getChatTranscriptMaxChars
+			? Zotero.QLab.Settings.getChatTranscriptMaxChars()
+			: 24_000;
+		let total = tagChars + transcript.length;
+		meter.textContent = `${Math.min(total, maxChars).toLocaleString()} / ${maxChars.toLocaleString()} ctx`;
+	};
+
+	Zotero.QLab.renderChatApprovalCard = function (host, event) {
+		let output = host && host.querySelector('[data-qlab-output]');
+		if (!output) {
+			return;
+		}
+		let card = host.ownerDocument.createElement('article');
+		card.className = 'qlab-chat-approval';
+		card.dataset.qlabApprovalId = event.approvalId || '';
+		Zotero.QLab.setHTML(card,
+			`<header>Approval required</header>`
+			+ `<p>${escapeHTML(event.reason || 'Agent requests permission')}</p>`
+			+ (event.tool ? `<p class="qlab-chat-approval-tool">${escapeHTML(event.tool)}</p>` : '')
+			+ `<div class="qlab-chat-message-actions">`
+			+ `<button type="button" class="is-primary" data-qlab-approval-allow>Allow once</button>`
+			+ `<button type="button" data-qlab-approval-deny>Deny</button>`
+			+ `</div>`
+		);
+		output.appendChild(card);
+		output.scrollTop = output.scrollHeight;
+	};
+
+	Zotero.QLab.waitForChatApproval = function (host, event) {
+		return new Promise((resolve) => {
+			host._qlabApprovalResolver = resolve;
+			host._qlabPendingApproval = event;
+			Zotero.QLab.renderChatApprovalCard(host, event);
+		});
+	};
+
+	Zotero.QLab.resolveChatApproval = function (host, allowed) {
+		let resolver = host && host._qlabApprovalResolver;
+		host._qlabApprovalResolver = null;
+		host._qlabPendingApproval = null;
+		if (resolver) {
+			resolver(!!allowed);
+		}
+	};
+
+	async function processAgentStream(host, turn, reply, chunks, status) {
+		let cancelled = false;
+		for await (let event of turn) {
+			if (event.type === 'text-delta') {
+				chunks.push(event.text || '');
+				Zotero.QLab.updateChatMessage(host, reply.id, chunks.join(''));
+			}
+			else if (event.type === 'error') {
+				chunks.push(`\n[error] ${event.message}`);
+				Zotero.QLab.updateChatMessage(host, reply.id, chunks.join(''));
+			}
+			else if (event.type === 'approval-needed') {
+				let policy = host._qlabApprovalPolicy;
+				if (!policy && host._qlabMountRoot && Zotero.QLab.loadApprovalPolicy) {
+					policy = await Zotero.QLab.loadApprovalPolicy(host._qlabMountRoot);
+					host._qlabApprovalPolicy = policy;
+				}
+				let decision = Zotero.QLab.evaluateApproval(policy, event);
+				if (decision === 'allow') {
+					chunks.push(`\n[approved] ${event.reason}\n`);
+					continue;
+				}
+				if (decision === 'deny') {
+					chunks.push(`\n[denied] ${event.reason}\n`);
+					if (turn.cancel) {
+						turn.cancel();
+					}
+					break;
+				}
+				let approved = await Zotero.QLab.waitForChatApproval(host, event);
+				if (!approved) {
+					chunks.push(`\n[denied] ${event.reason}\n`);
+					if (turn.cancel) {
+						turn.cancel();
+					}
+					break;
+				}
+				chunks.push(`\n[approved] ${event.reason}\n`);
+			}
+			else if (event.type === 'done' && event.status === 'cancelled') {
+				cancelled = true;
+			}
+		}
+		return cancelled;
+	}
+
+	Zotero.QLab.editChatMessage = function (host, messageID) {
+		let message = Zotero.QLab.getChatMessage(host, messageID);
+		let textarea = host && host.querySelector('[data-qlab-prompt]');
+		if (!message || !textarea || message.role !== 'user') {
+			return;
+		}
+		textarea.value = message.text;
+		textarea.focus();
+		textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+	};
+
+	Zotero.QLab.regenerateChatMessage = async function (host, messageID, root, workspaceState) {
+		if (!host) {
+			return;
+		}
+		let idx = (host._qlabMessages || []).findIndex(m => m.id === messageID);
+		if (idx < 0) {
+			return;
+		}
+		let message = host._qlabMessages[idx];
+		if (message.role !== 'assistant') {
+			return;
+		}
+		let userIdx = idx - 1;
+		while (userIdx >= 0 && host._qlabMessages[userIdx].role !== 'user') {
+			userIdx--;
+		}
+		if (userIdx < 0) {
+			return;
+		}
+		let userText = host._qlabMessages[userIdx].text;
+		host._qlabMessages = host._qlabMessages.slice(0, userIdx);
+		Zotero.QLab.renderChatMessages(host);
+		let textarea = host.querySelector('[data-qlab-prompt]');
+		if (textarea) {
+			textarea.value = userText;
+		}
+		await Zotero.QLab.runShellFreeform(host, root, workspaceState);
+	};
+
+	Zotero.QLab.hideAgentDraftBanner = function (host) {
+		let banner = host && host.querySelector('[data-qlab-agent-banner]');
+		if (banner) {
+			banner.hidden = true;
+			banner.replaceChildren();
+		}
+	};
+
+	Zotero.QLab.maybeShowAgentDraftBanner = async function (host, root) {
+		if (!host || !root) {
+			return;
+		}
+		let qmd = host.ownerDocument.defaultView.Zotero_Tabs
+			&& host.ownerDocument.defaultView.Zotero_Tabs._tabs
+			&& host.ownerDocument.defaultView.Zotero_Tabs._tabs.find(
+				t => t.type === 'qlabqmd' || t.id === 'qlabqmd'
+			);
+		let qmdHost = null;
+		if (qmd) {
+			let container = host.ownerDocument.getElementById(qmd.id);
+			qmdHost = container && container.querySelector('.qlab-shell-host');
+		}
+		let state = qmdHost && qmdHost._qlabDraftState;
+		if (!state || !state.workingPath) {
+			Zotero.QLab.hideAgentDraftBanner(host);
+			return;
+		}
+		let banner = host.querySelector('[data-qlab-agent-banner]');
+		if (!banner) {
+			return;
+		}
+		banner.hidden = false;
+		Zotero.QLab.setHTML(banner,
+			`<span>AI modified <strong>${escapeHTML(state.originalPath || 'Draft')}</strong> in the working copy.</span>`
+			+ `<div class="qlab-chat-message-actions">`
+			+ `<button type="button" class="is-primary" data-qlab-agent-keep>Keep</button>`
+			+ `<button type="button" data-qlab-agent-discard>Discard banner</button>`
+			+ `</div>`
+		);
+	};
+
+	Zotero.QLab.keepAgentDraftFromChat = async function (host, root) {
+		let win = host.ownerDocument.defaultView;
+		let qmd = win.Zotero_Tabs && win.Zotero_Tabs._tabs.find(
+			t => t.type === 'qlabqmd' || t.id === 'qlabqmd'
+		);
+		if (!qmd) {
+			return;
+		}
+		win.Zotero_Tabs.select(qmd.id);
+		let container = win.document.getElementById(qmd.id);
+		let qmdHost = container && container.querySelector('.qlab-shell-host');
+		if (qmdHost) {
+			await Zotero.QLab.keepDraftFromShell(qmdHost, root);
+		}
+		Zotero.QLab.hideAgentDraftBanner(host);
+	};
 	
 	Zotero.QLab.runShellFreeform = async function (host, root, workspaceState) {
 		let textarea = host.querySelector('[data-qlab-prompt]');
@@ -1628,12 +1977,20 @@ Zotero.QLab = Zotero.QLab || {};
 			if (!host._qlabThreadId) {
 				host._qlabThreadId = newThreadId();
 			}
-			let context = composerContextBlock();
+			let context = composerContextBlock(host, { chatMode });
+			let rules = Zotero.QLab.loadChatRulesPreamble
+				? await Zotero.QLab.loadChatRulesPreamble(root)
+				: '';
+			let maxChars = Zotero.QLab.Settings && Zotero.QLab.Settings.getChatTranscriptMaxChars
+				? Zotero.QLab.Settings.getChatTranscriptMaxChars()
+				: 24_000;
 			let transcript = Zotero.QLab.buildChatTranscriptPrompt(host._qlabMessages, {
 				maxTurns: 8,
+				maxChars,
 				excludeTrailingAssistant: true,
 			});
-			let prompt = [context, transcript].filter(Boolean).join('\n\n');
+			let prompt = [rules, context, transcript].filter(Boolean).join('\n\n');
+			Zotero.QLab.updateChatContextMeter(host);
 			
 			let reply = Zotero.QLab.appendChatMessage(host, { role: 'assistant', text: '' });
 			let chunks = [];
@@ -1656,19 +2013,7 @@ Zotero.QLab = Zotero.QLab || {};
 			});
 			host._qlabTurnHandle = turn;
 			
-			for await (let event of turn) {
-				if (event.type === 'text-delta') {
-					chunks.push(event.text || '');
-					Zotero.QLab.updateChatMessage(host, reply.id, chunks.join(''));
-				}
-				else if (event.type === 'error') {
-					chunks.push(`\n[error] ${event.message}`);
-					Zotero.QLab.updateChatMessage(host, reply.id, chunks.join(''));
-				}
-				else if (event.type === 'done' && event.status === 'cancelled') {
-					cancelled = true;
-				}
-			}
+			cancelled = await processAgentStream(host, turn, reply, chunks, status);
 			
 			let finalText = chunks.join('');
 			if (!finalText.trim()) {
@@ -1680,6 +2025,10 @@ Zotero.QLab = Zotero.QLab || {};
 			if (status) {
 				status.textContent = cancelled ? 'Cancelled' : 'Done';
 			}
+			if (!cancelled && chatMode === 'agent') {
+				await Zotero.QLab.maybeShowAgentDraftBanner(host, root);
+			}
+			void Zotero.QLab.persistChatHost(host, root);
 		}
 		catch (e) {
 			Zotero.logError && Zotero.logError(e);
@@ -1756,9 +2105,15 @@ Zotero.QLab = Zotero.QLab || {};
 					attachmentKey: ctx && ctx.attachment && ctx.attachment.key,
 				},
 			});
-			let readerBlock = composerContextBlock();
+			let readerBlock = composerContextBlock(host, { chatMode: readOnly ? 'ask' : 'agent' });
 			if (readerBlock) {
 				prompt = `${readerBlock}\n\n${prompt}`;
+			}
+			let rules = Zotero.QLab.loadChatRulesPreamble
+				? await Zotero.QLab.loadChatRulesPreamble(root)
+				: '';
+			if (rules) {
+				prompt = `${rules}\n\n${prompt}`;
 			}
 			let providerId = Zotero.QLab.Settings.getAgentProviderId();
 			if (status) {
@@ -1792,27 +2147,14 @@ Zotero.QLab = Zotero.QLab || {};
 				attachments: readOnly ? [{ kind: 'policy', readOnly: true }] : [],
 			});
 			host._qlabTurnHandle = turn;
-			for await (let event of turn) {
-				if (event.type === 'text-delta' && event.text) {
-					chunks.push(event.text);
-					Zotero.QLab.updateChatMessage(host, reply.id, chunks.join(''));
-				}
-				else if (event.type === 'error') {
-					chunks.push(`\n[error] ${event.message}`);
-				}
-				else if (event.type === 'approval-needed') {
-					chunks.push(`\n[approval] ${event.reason}`);
-				}
-				else if (event.type === 'done') {
-					cancelled = event.status === 'cancelled';
-					if (status) {
-						status.textContent = `Done (${event.status})`;
-					}
-				}
-			}
+			cancelled = await processAgentStream(host, turn, reply, chunks, status);
 			Zotero.QLab.updateChatMessage(host, reply.id, chunks.join('') || '(empty)', {
 				status: cancelled ? 'cancelled' : '',
 			});
+			if (!cancelled && !readOnly) {
+				await Zotero.QLab.maybeShowAgentDraftBanner(host, root);
+			}
+			void Zotero.QLab.persistChatHost(host, root);
 		}
 		catch (e) {
 			Zotero.logError && Zotero.logError(e);

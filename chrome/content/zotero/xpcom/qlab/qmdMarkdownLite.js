@@ -10,7 +10,7 @@
 
 /**
  * Lightweight Markdown → HTML for Visual Preview cards and soft Website fallback.
- * Not Quarto; unknown constructs stay escaped as preformatted text.
+ * Math uses KaTeX when available; unknown constructs stay escaped as preformatted text.
  */
 Zotero.QLab = Zotero.QLab || {};
 
@@ -24,6 +24,9 @@ Zotero.QLab = Zotero.QLab || {};
 	}
 	
 	function inlineFormat(text) {
+		if (Zotero.QLab.inlineQmdFormatHTML) {
+			return Zotero.QLab.inlineQmdFormatHTML(text);
+		}
 		let escaped = escapeHTML(text);
 		escaped = escaped.replace(/`([^`]+)`/g, '<code>$1</code>');
 		escaped = escaped.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
@@ -49,6 +52,9 @@ Zotero.QLab = Zotero.QLab || {};
 			return `<pre class="qlab-qmd-code"><code>${escapeHTML(source)}</code></pre>`;
 		}
 		if (kind === 'display-math') {
+			if (Zotero.QLab.renderDisplayMathHTML) {
+				return Zotero.QLab.renderDisplayMathHTML(source);
+			}
 			return `<pre class="qlab-qmd-math">${escapeHTML(source)}</pre>`;
 		}
 		if (kind === 'raw' || kind === 'callout' || kind === 'theorem') {
@@ -87,8 +93,15 @@ Zotero.QLab = Zotero.QLab || {};
 		if (!body) {
 			body = `<pre>${escapeHTML(source)}</pre>`;
 		}
+		let katexHref = Zotero.QLab.katexStylesheetHref
+			? Zotero.QLab.katexStylesheetHref()
+			: '';
+		let katexLink = katexHref
+			? `<link rel="stylesheet" href="${escapeHTML(katexHref)}"/>`
+			: '';
 		return `<!DOCTYPE html><html><head><meta charset="utf-8"/>`
 			+ `<title>${escapeHTML(title)}</title>`
+			+ katexLink
 			+ `<style>
 body{font:16px/1.55 system-ui,sans-serif;max-width:42rem;margin:2rem auto;padding:0 1.25rem;color:#1a1a1a}
 pre,code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:0.9em}
@@ -98,6 +111,10 @@ pre{background:#f4f4f5;padding:0.85rem 1rem;border-radius:6px;overflow:auto}
 blockquote{border-left:3px solid #ccc;margin:1rem 0;padding-left:1rem;color:#444}
 h1,h2,h3{line-height:1.25}
 a{color:#0b57d0}
+.qlab-qmd-math-block{margin:1rem 0;text-align:center;overflow-x:auto}
+.qlab-qmd-math-display{display:block}
+.qlab-qmd-math-inline{display:inline-block;vertical-align:-.12em}
+.qlab-qmd-math-error{color:#b45309;font-family:ui-monospace,monospace;font-size:0.9em}
 </style></head><body>${body}</body></html>`;
 	};
 })();

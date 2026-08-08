@@ -82,6 +82,13 @@ const browserifyConfigs = [
 			standalone: 'sinon'
 		}
 	},
+	{
+		src: 'node_modules/katex/dist/katex.js',
+		dest: 'resource/katex.js',
+		config: {
+			standalone: 'katex'
+		}
+	},
 ];
 
 // exclude mask used for js, copy, symlink and sass tasks

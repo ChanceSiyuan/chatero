@@ -110,6 +110,43 @@ Zotero.QLab = Zotero.QLab || {};
 		}
 	};
 	
+	function truncateDiff(text, n = 120) {
+		let value = String(text || '').replace(/\s+/g, ' ').trim();
+		if (value.length <= n) {
+			return value;
+		}
+		return `${value.slice(0, n - 1)}…`;
+	}
+
+	Zotero.QLab.formatQmdPendingDiffHTML = function (region) {
+		if (!region) {
+			return '';
+		}
+		let before = String(region.previousOuterText || '').trim();
+		let after = String(region.outerText || '').trim();
+		if (!before && !after) {
+			return '';
+		}
+		if (before && after) {
+			return `<div class="qlab-qmd-pending-diff">`
+				+ `<div class="qlab-qmd-pending-diff-before">`
+				+ `<span class="qlab-qmd-pending-diff-label">Before</span>`
+				+ `<pre>${escapeHTML(truncateDiff(before, 240))}</pre></div>`
+				+ `<div class="qlab-qmd-pending-diff-after">`
+				+ `<span class="qlab-qmd-pending-diff-label">After</span>`
+				+ `<pre>${escapeHTML(truncateDiff(after, 240))}</pre></div>`
+				+ `</div>`;
+		}
+		if (after) {
+			return `<div class="qlab-qmd-pending-diff is-insert-only">`
+				+ `<span class="qlab-qmd-pending-diff-label">Insert</span>`
+				+ `<pre>${escapeHTML(truncateDiff(after, 240))}</pre></div>`;
+		}
+		return `<div class="qlab-qmd-pending-diff is-remove-only">`
+			+ `<span class="qlab-qmd-pending-diff-label">Remove</span>`
+			+ `<pre>${escapeHTML(truncateDiff(before, 240))}</pre></div>`;
+	};
+	
 	/**
 	 * Per-region review bar for Apply inserts (Cursor-style hunk review).
 	 */
@@ -128,12 +165,15 @@ Zotero.QLab = Zotero.QLab || {};
 		}
 		let rows = pending.map((region) => {
 			let length = Math.max(0, region.insertedEnd - region.insertedStart);
+			let diff = Zotero.QLab.formatQmdPendingDiffHTML(region);
 			return `<div class="qlab-qmd-pending-row" data-qlab-pending-id="${escapeHTML(region.id)}">`
 				+ `<button type="button" class="qlab-qmd-pending-label" data-qlab-pending-reveal>`
 				+ `${escapeHTML(region.label)} · ${length} chars</button>`
+				+ diff
+				+ `<div class="qlab-qmd-pending-actions">`
 				+ `<button type="button" data-qlab-pending-accept>Accept</button>`
 				+ `<button type="button" data-qlab-pending-reject>Reject</button>`
-				+ `</div>`;
+				+ `</div></div>`;
 		}).join('');
 		let bulk = pending.length > 1
 			? `<div class="qlab-qmd-pending-row is-bulk">`
@@ -215,7 +255,7 @@ Zotero.QLab = Zotero.QLab || {};
 			}
 		}
 		else if (next === 'website') {
-			void Zotero.QLab.refreshQmdWebsitePane(host, options);
+			void Zotero.QLab.refreshQmdWebsitePane(host, { ...options, tryQuarto: true });
 			if (status && !options.silent) {
 				status.textContent = 'Website · Quarto HTML when available, else soft HTML preview';
 			}
@@ -296,16 +336,27 @@ Zotero.QLab = Zotero.QLab || {};
 					label.className = 'qlab-qmd-pending-label';
 					label.textContent = region.label || 'Pending';
 					row.appendChild(label);
+					let diffWrap = pane.ownerDocument.createElement('div');
+					Zotero.QLab.setHTML(
+						diffWrap,
+						Zotero.QLab.formatQmdPendingDiffHTML(region)
+					);
+					if (diffWrap.firstElementChild) {
+						row.appendChild(diffWrap.firstElementChild);
+					}
+					let actions = pane.ownerDocument.createElement('div');
+					actions.className = 'qlab-qmd-pending-actions';
 					let accept = pane.ownerDocument.createElement('button');
 					accept.type = 'button';
 					accept.dataset.qlabPendingAccept = '';
 					accept.textContent = 'Accept';
-					row.appendChild(accept);
+					actions.appendChild(accept);
 					let reject = pane.ownerDocument.createElement('button');
 					reject.type = 'button';
 					reject.dataset.qlabPendingReject = '';
 					reject.textContent = 'Reject';
-					row.appendChild(reject);
+					actions.appendChild(reject);
+					row.appendChild(actions);
 					review.appendChild(row);
 				}
 				card.appendChild(review);
@@ -403,7 +454,8 @@ Zotero.QLab = Zotero.QLab || {};
 		let title = (state && state.originalPath) || 'Draft';
 		
 		let liveUrl = host._qlabWebsiteUrl || '';
-		if (options.forceQuarto && Zotero.QLab.startQmdQuartoPreview && state) {
+		let shouldTryQuarto = options.forceQuarto || options.tryQuarto;
+		if (shouldTryQuarto && Zotero.QLab.startQmdQuartoPreview && state) {
 			try {
 				let root = options.root || (Zotero.QLab.Settings && Zotero.QLab.Settings.getRoot()) || '';
 				let path = state.viewingWorking && state.workingPath
@@ -414,7 +466,8 @@ Zotero.QLab = Zotero.QLab || {};
 			}
 			catch (e) {
 				Zotero.logError && Zotero.logError(e);
-				if (meta) {
+				host._qlabWebsiteUrl = '';
+				if (meta && options.forceQuarto) {
 					meta.textContent = e.message || String(e);
 				}
 				liveUrl = '';

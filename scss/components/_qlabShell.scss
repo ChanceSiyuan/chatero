@@ -133,10 +133,11 @@
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
-	gap: 5px;
+	gap: 0;
+	width: 28px;
 	min-width: 28px;
 	height: 28px;
-	padding: 0 7px;
+	padding: 0;
 	border: 0;
 	border-radius: 7px;
 	color: var(--zc-text);
@@ -158,8 +159,8 @@
 
 .qlab-control-icon {
 	display: block;
-	width: 15px;
-	height: 15px;
+	width: 16px;
+	height: 16px;
 	flex: none;
 	pointer-events: none;
 }
@@ -729,6 +730,87 @@
 	background: var(--zc-bg-subtle);
 }
 
+.qlab-context-meter {
+	flex: none;
+	font-size: 9px;
+	color: var(--zc-muted);
+	white-space: nowrap;
+}
+
+.qlab-chat-message-actions .is-primary,
+.qlab-icon-button.is-primary {
+	color: #fff;
+	background: var(--zc-accent);
+}
+
+.qlab-agent-draft-banner {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	padding: 6px 10px;
+	flex: none;
+	border-bottom: 1px solid var(--zc-border);
+	background: color-mix(in srgb, var(--zc-accent) 8%, transparent);
+	font-size: 10px;
+}
+
+.qlab-chat-approval {
+	margin: 8px 12px;
+	padding: 10px 12px;
+	border: 1px solid color-mix(in srgb, var(--zc-warning) 45%, var(--zc-border));
+	border-radius: 10px;
+	background: color-mix(in srgb, var(--zc-warning) 8%, transparent);
+}
+
+.qlab-chat-approval header {
+	font-weight: 650;
+	font-size: 10.5px;
+}
+
+.qlab-chat-approval-tool {
+	font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+	font-size: 9.5px;
+	color: var(--zc-muted);
+}
+
+.qlab-qmd-pending-diff {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 6px;
+	margin: 4px 0 6px;
+	font-size: 9.5px;
+}
+
+.qlab-qmd-pending-diff pre {
+	margin: 0;
+	padding: 6px;
+	max-height: 72px;
+	overflow: auto;
+	border-radius: 6px;
+	background: var(--zc-bg-subtle);
+	white-space: pre-wrap;
+}
+
+.qlab-qmd-pending-diff-label {
+	display: block;
+	margin-bottom: 2px;
+	font-size: 8.5px;
+	font-weight: 650;
+	color: var(--zc-muted);
+	text-transform: uppercase;
+}
+
+.qlab-qmd-pending-actions {
+	display: flex;
+	gap: 4px;
+}
+
+.qlab-qmd-pending-row {
+	flex-direction: column;
+	align-items: stretch;
+}
+
 .qlab-qmd-toolbar-actions [data-qlab-draft-keep] {
 	color: var(--zc-success);
 }
@@ -938,6 +1020,27 @@
 	border-radius: 4px;
 	background: #f0f1f3;
 	font: .86em/1.4 "SFMono-Regular", Menlo, Monaco, monospace;
+}
+
+.qlab-qmd-math-block {
+	margin: 12px 0;
+	overflow-x: auto;
+	text-align: center;
+}
+
+.qlab-qmd-math-display {
+	display: block;
+}
+
+.qlab-qmd-math-inline {
+	display: inline-block;
+	max-width: 100%;
+	vertical-align: -.12em;
+}
+
+.qlab-qmd-math-error {
+	color: #b45309;
+	font: 12px/1.45 "SFMono-Regular", Menlo, Monaco, monospace;
 }
 
 .qlab-qmd-frontmatter,

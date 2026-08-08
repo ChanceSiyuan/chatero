@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runInNewContext } from "node:vm";
+import katex from "katex";
 
 const repositoryRoot = fileURLToPath(new URL("../../../", import.meta.url));
 const qlabRoot = join(repositoryRoot, "chrome/content/zotero/xpcom/qlab");
@@ -20,10 +21,17 @@ const QLAB_SCRIPTS = [
 	"agentProviders.js",
 	"splitLayout.js",
 	"readerContext.js",
+	"readerIcons.js",
 	"readerHooks.js",
+	"approvalPolicy.js",
+	"chatRules.js",
+	"chatThreadIO.js",
+	"workspaceSearch.js",
+	"qmdCompletion.js",
 	"chatComposerContext.js",
 	"qmdDraftIO.js",
 	"qmdSourceModel.js",
+	"qmdMathRender.js",
 	"qmdMarkdownLite.js",
 	"qmdSurface.js",
 	"qmdApply.js",
@@ -49,5 +57,6 @@ export async function loadQLab(extraZotero = {}) {
 		const source = await readFile(join(qlabRoot, name), "utf8");
 		runInNewContext(source, sandbox, { filename: name });
 	}
+	Zotero.QLab._katexCache = katex;
 	return Zotero.QLab;
 }

@@ -52,6 +52,16 @@ Legend: `P0` required for daily path · `P1` Phase 4 RC · `P2` polish
 - [x] Chat composer + Research Actions prepend `<reader_context>` / composer tags
 - [x] Cursor-like ⌘L: PDF selection/page/paper or live QMD → composer tag
 - [x] Composer tags clickable to reveal source; × removes
+- [x] Unified composer context (tags only; no implicit ReaderContext fallback in Ask)
+- [x] Composer `@` picker: PDF page/selection, Draft block, workspace file search
+- [x] Chat Apply to QMD as pending with before/after diff review
+- [x] Agent approval cards + `qlab/approval-policy.json`
+- [x] Chat thread JSON persistence under `work/qlab-zotero/chat/`
+- [x] Transcript char budget + context meter in composer
+- [x] Agent mode shows Keep banner when working copy exists
+- [x] Per-message Regenerate / Edit / Fork; QMD Source Tab completion
+- [x] `qlab/rules/*.md` injected as workspace rules preamble
+- [x] ⌘L focus preference (`qlab.chatFocusOnPin`)
 - [x] AgentRuntime + Provider registry (UI never calls HTTP/API keys)
 - [x] Chat / Tools UI to switch `codex-cli` / `openai-compat` / `prove-harness`
 - [x] Local `codex-cli` via `codex exec --json` + Subprocess runner (Phase 3B)

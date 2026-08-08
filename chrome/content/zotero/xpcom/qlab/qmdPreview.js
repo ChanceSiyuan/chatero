@@ -26,6 +26,40 @@ Zotero.QLab = Zotero.QLab || {};
 		return total;
 	}
 	
+	function joinWorkspacePath(root, rel) {
+		let base = String(root || '').replace(/[/\\]+$/, '');
+		let normalized = String(rel || '').replace(/\\/g, '/').replace(/^\/+/, '');
+		return `${base}/${normalized}`;
+	}
+	
+	/**
+	 * Quarto preview cwd + file argument for a workspace-relative QMD path.
+	 * Drafts preview from drafts/ with the note-relative path, matching quarto-lab.
+	 */
+	Zotero.QLab.resolveQuartoPreviewTarget = function (root, relativePath) {
+		let rel = String(relativePath || '').replace(/\\/g, '/');
+		if (!rel.endsWith('.qmd')) {
+			throw new Error('Quarto preview requires a .qmd path');
+		}
+		if (rel.startsWith('drafts/')) {
+			return {
+				cwd: joinWorkspacePath(root, 'drafts'),
+				file: rel.slice('drafts/'.length),
+			};
+		}
+		if (rel.includes('/')) {
+			let slash = rel.lastIndexOf('/');
+			return {
+				cwd: joinWorkspacePath(root, rel.slice(0, slash)),
+				file: rel.slice(slash + 1),
+			};
+		}
+		return {
+			cwd: root,
+			file: rel,
+		};
+	};
+	
 	Zotero.QLab.nextQmdPreviewPort = function (seed) {
 		return PREVIEW_PORT_MIN + (Math.abs(seed) % PREVIEW_PORT_SPAN);
 	};
@@ -38,10 +72,8 @@ Zotero.QLab = Zotero.QLab || {};
 	 */
 	Zotero.QLab.startQmdQuartoPreview = async function (root, relativePath, options = {}) {
 		let rel = String(relativePath || '');
-		if (!rel.endsWith('.qmd')) {
-			throw new Error('Quarto preview requires a .qmd path');
-		}
-		let key = `${root}:${rel}`;
+		let target = Zotero.QLab.resolveQuartoPreviewTarget(root, rel);
+		let key = `${target.cwd}:${target.file}`;
 		let existing = Zotero.QLab._qmdPreviewSessions[key];
 		if (existing && existing.url) {
 			return existing.url;
@@ -56,13 +88,27 @@ Zotero.QLab = Zotero.QLab || {};
 		}
 		
 		let command = options.quartoCommand || 'quarto';
-		let args = ['preview', rel, '--port', String(port), '--no-browser'];
+		let args = [
+			'preview',
+			target.file,
+			'--no-browser',
+			'--no-execute',
+			'--host',
+			'127.0.0.1',
+			'--port',
+			String(port),
+		];
 		
-		// Fire-and-forget; poll until the port answers.
+		let killProcess = null;
 		let abort = false;
 		(async () => {
 			try {
-				for await (let event of runner.run(command, args, { cwd: root })) {
+				for await (let event of runner.run(command, args, {
+					cwd: target.cwd,
+					registerKill: (kill) => {
+						killProcess = kill;
+					},
+				})) {
 					if (abort) {
 						break;
 					}
@@ -77,7 +123,19 @@ Zotero.QLab = Zotero.QLab || {};
 			}
 		})();
 		
-		Zotero.QLab._qmdPreviewSessions[key] = { url, port, stop: () => { abort = true; } };
+		Zotero.QLab._qmdPreviewSessions[key] = {
+			url,
+			port,
+			stop: () => {
+				abort = true;
+				if (killProcess) {
+					try {
+						killProcess();
+					}
+					catch (e) {}
+				}
+			},
+		};
 		
 		let fetchImpl = options.fetch || (typeof fetch === 'function' ? fetch.bind(globalThis) : null);
 		if (!fetchImpl) {
@@ -96,11 +154,14 @@ Zotero.QLab = Zotero.QLab || {};
 			catch (e) {}
 			await new Promise(r => setTimeout(r, 400));
 		}
+		Zotero.QLab.stopQmdQuartoPreview(root, relativePath);
 		throw new Error('Quarto preview did not become ready in time');
 	};
 	
 	Zotero.QLab.stopQmdQuartoPreview = function (root, relativePath) {
-		let key = `${root}:${relativePath}`;
+		let rel = String(relativePath || '');
+		let target = Zotero.QLab.resolveQuartoPreviewTarget(root, rel);
+		let key = `${target.cwd}:${target.file}`;
 		let session = Zotero.QLab._qmdPreviewSessions[key];
 		if (session && session.stop) {
 			session.stop();

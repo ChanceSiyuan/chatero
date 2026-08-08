@@ -16,6 +16,8 @@ Zotero.QLab = Zotero.QLab || {};
 	const PREF_PROVIDER = 'qlab.agentProvider';
 	const PREF_MODEL = 'qlab.agentModel';
 	const PREF_CHAT_MODE = 'qlab.chatMode';
+	const PREF_CHAT_FOCUS = 'qlab.chatFocusOnPin';
+	const PREF_TRANSCRIPT_CHARS = 'qlab.chatTranscriptMaxChars';
 	
 	Zotero.QLab.Settings = {
 		isEnabled() {
@@ -93,6 +95,50 @@ Zotero.QLab = Zotero.QLab || {};
 		setChatMode(mode) {
 			if (typeof Zotero !== 'undefined' && Zotero.Prefs) {
 				Zotero.Prefs.set(PREF_CHAT_MODE, mode === 'agent' ? 'agent' : 'ask');
+			}
+		},
+
+		getChatFocusOnPin() {
+			try {
+				if (typeof Zotero !== 'undefined' && Zotero.Prefs) {
+					let v = String(Zotero.Prefs.get(PREF_CHAT_FOCUS) || 'whenChatVisible');
+					if (v === 'always' || v === 'never') {
+						return v;
+					}
+				}
+			}
+			catch (e) {}
+			return 'whenChatVisible';
+		},
+
+		setChatFocusOnPin(mode) {
+			let v = mode === 'always' || mode === 'never' ? mode : 'whenChatVisible';
+			if (typeof Zotero !== 'undefined' && Zotero.Prefs) {
+				Zotero.Prefs.set(PREF_CHAT_FOCUS, v);
+			}
+		},
+
+		getChatTranscriptMaxChars() {
+			try {
+				if (typeof Zotero !== 'undefined' && Zotero.Prefs) {
+					let n = Number(Zotero.Prefs.get(PREF_TRANSCRIPT_CHARS));
+					if (Number.isFinite(n) && n >= 4000) {
+						return Math.min(n, 120_000);
+					}
+				}
+			}
+			catch (e) {}
+			return 24_000;
+		},
+
+		setChatTranscriptMaxChars(chars) {
+			let n = Number(chars);
+			if (!Number.isFinite(n)) {
+				return;
+			}
+			n = Math.max(4000, Math.min(120_000, Math.round(n)));
+			if (typeof Zotero !== 'undefined' && Zotero.Prefs) {
+				Zotero.Prefs.set(PREF_TRANSCRIPT_CHARS, n);
 			}
 		},
 		

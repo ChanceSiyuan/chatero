@@ -144,4 +144,112 @@ Zotero.QLab = Zotero.QLab || {};
 			filename: path => PathUtils.filename(path),
 		};
 	};
+
+	Zotero.QLab.joinWorkspacePath = function (root, rel) {
+		let a = String(root || '').replace(/[\\/]+$/, '');
+		let b = String(rel || '').replace(/^[/\\]+/, '');
+		if (typeof PathUtils !== 'undefined') {
+			return PathUtils.join(a, b);
+		}
+		return `${a}/${b}`;
+	};
+
+	Zotero.QLab.readWorkspaceRel = async function (root, rel, host, { maxChars = 256_000 } = {}) {
+		if (!root || !rel || !host) {
+			return '';
+		}
+		let abs = Zotero.QLab.joinWorkspacePath(root, rel);
+		let text = '';
+		if (typeof host.read === 'function') {
+			text = await host.read(abs);
+		}
+		else if (typeof IOUtils !== 'undefined') {
+			text = await IOUtils.readUTF8(abs);
+		}
+		text = String(text || '');
+		if (maxChars && text.length > maxChars) {
+			return text.slice(0, maxChars);
+		}
+		return text;
+	};
+
+	Zotero.QLab.writeWorkspaceRel = async function (root, rel, body, host) {
+		if (!root || !rel || !host) {
+			return;
+		}
+		let abs = Zotero.QLab.joinWorkspacePath(root, rel);
+		if (typeof host.write === 'function') {
+			await host.write(abs, body);
+			return;
+		}
+		if (typeof IOUtils !== 'undefined') {
+			let dir = PathUtils.parent(abs);
+			await IOUtils.makeDirectory(dir, { createAncestors: true, ignoreExisting: true });
+			await IOUtils.writeUTF8(abs, body);
+		}
+	};
+
+	/**
+	 * List relative file paths under a workspace prefix (recursive).
+	 */
+	Zotero.QLab.walkWorkspaceRelPaths = async function (root, prefix, host, {
+		extensions = [],
+		maxDepth = 6,
+	} = {}) {
+		if (!root || !prefix || !host || !host.entries) {
+			return [];
+		}
+		let extSet = new Set(extensions.map(e => String(e).toLowerCase()));
+		let out = [];
+		async function walk(absDir, relDir, depth) {
+			if (depth > maxDepth) {
+				return;
+			}
+			let children = [];
+			try {
+				children = await host.entries(absDir);
+			}
+			catch (e) {
+				return;
+			}
+			for (let childAbs of children) {
+				let name = host.filename(childAbs);
+				if (name.startsWith('.')) {
+					continue;
+				}
+				let rel = relDir ? `${relDir}/${name}` : name;
+				let sub = null;
+				try {
+					sub = await host.entries(childAbs);
+				}
+				catch (e) {
+					sub = null;
+				}
+				if (Array.isArray(sub)) {
+					await walk(childAbs, rel, depth + 1);
+					continue;
+				}
+				if (!extSet.size) {
+					out.push(rel);
+					continue;
+				}
+				let lower = name.toLowerCase();
+				for (let ext of extSet) {
+					if (lower.endsWith(ext)) {
+						out.push(rel);
+						break;
+					}
+				}
+			}
+		}
+		let startAbs = Zotero.QLab.joinWorkspacePath(root, prefix.replace(/\/$/, ''));
+		try {
+			if (!(await host.exists(startAbs))) {
+				return [];
+			}
+			await walk(startAbs, prefix.replace(/\/$/, ''), 0);
+		}
+		catch (e) {}
+		return out;
+	};
 })();

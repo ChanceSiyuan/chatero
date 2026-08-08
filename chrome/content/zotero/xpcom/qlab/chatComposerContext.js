@@ -361,9 +361,10 @@ Zotero.QLab = Zotero.QLab || {};
 	/**
 	 * Candidates for the composer `@` picker (Current PDF / Draft / Readers).
 	 */
-	Zotero.QLab.listComposerAtPickerItems = function (win) {
+	Zotero.QLab.listComposerAtPickerItems = function (win, { query = '' } = {}) {
 		let windowRef = win || (typeof Zotero !== 'undefined' && Zotero.getMainWindow && Zotero.getMainWindow());
 		let items = [];
+		let q = String(query || '').trim();
 		try {
 			let ctx = Zotero.QLab.ReaderContextStore && Zotero.QLab.ReaderContextStore.get();
 			if (ctx && ctx.attachment) {
@@ -373,9 +374,25 @@ Zotero.QLab = Zotero.QLab || {};
 				items.push({
 					id: 'current-pdf',
 					kind: 'pdf',
-					label: `Current PDF · ${truncate(title, 36)}`,
+					label: `PDF · ${truncate(title, 36)}`,
 					preference: 'auto',
 				});
+				if (ctx.page && ctx.page.pageNumber) {
+					items.push({
+						id: 'current-pdf-page',
+						kind: 'pdf',
+						label: `PDF · p.${ctx.page.pageNumber}`,
+						preference: 'page',
+					});
+				}
+				if (ctx.selection && ctx.selection.text) {
+					items.push({
+						id: 'current-pdf-selection',
+						kind: 'pdf',
+						label: `PDF · selection (${ctx.selection.text.length} chars)`,
+						preference: 'selection',
+					});
+				}
 			}
 		}
 		catch (e) {}
@@ -398,10 +415,19 @@ Zotero.QLab = Zotero.QLab || {};
 						id: 'current-draft',
 						kind: 'qmd',
 						label: path
-							? `Current Draft · ${truncate(path.replace(/^drafts\//, ''), 36)}`
+							? `Draft · ${truncate(path.replace(/^drafts\//, ''), 36)}`
 							: 'Current Draft',
 						relativePath: path,
 					});
+					if (host && Number.isInteger(host._qlabActiveBlockIndex)) {
+						items.push({
+							id: 'current-draft-block',
+							kind: 'qmd-block',
+							label: `Draft · block ${host._qlabActiveBlockIndex + 1}`,
+							relativePath: path,
+							blockIndex: host._qlabActiveBlockIndex,
+						});
+					}
 				}
 			}
 		}
@@ -419,14 +445,19 @@ Zotero.QLab = Zotero.QLab || {};
 				items.push({
 					id: `reader-${reader.itemID}`,
 					kind: 'reader',
-					label: `Open Reader · ${truncate(label, 36)}`,
+					label: `Reader · ${truncate(label, 36)}`,
 					itemID: reader.itemID,
 					reader,
 				});
 			}
 		}
 		catch (e) {}
-		
+
+		if (q) {
+			let lower = q.toLowerCase();
+			items = items.filter(item => item.label.toLowerCase().includes(lower));
+		}
+
 		return items;
 	};
 	
@@ -465,7 +496,7 @@ Zotero.QLab = Zotero.QLab || {};
 			let tag = Zotero.QLab.createPdfComposerTag(ctx, item.preference || 'auto');
 			return Zotero.QLab.ChatComposerContext.add(tag);
 		}
-		if (item.kind === 'qmd') {
+		if (item.kind === 'qmd' || item.kind === 'qmd-block') {
 			let tabs = windowRef && windowRef.Zotero_Tabs;
 			let qmd = tabs && tabs._tabs.find(t => t.type === 'qlabqmd' || t.id === 'qlabqmd');
 			let container = qmd && windowRef.document.getElementById(qmd.id);
@@ -479,10 +510,29 @@ Zotero.QLab = Zotero.QLab || {};
 			let source = host && Zotero.QLab.getQmdShellBuffer
 				? Zotero.QLab.getQmdShellBuffer(host)
 				: '';
+			let blockIndex = item.kind === 'qmd-block' ? item.blockIndex : null;
 			let tag = Zotero.QLab.createQmdComposerTag({
 				relativePath: path,
 				source,
+				blockIndex,
 				surfaceMode: (host && host._qlabSurfaceMode) || 'source',
+			});
+			return Zotero.QLab.ChatComposerContext.add(tag);
+		}
+		if (item.kind === 'workspace-file' && item.relativePath) {
+			let root = Zotero.QLab.Settings && Zotero.QLab.Settings.getRoot();
+			let io = Zotero.QLab.QmdDraftIO && Zotero.QLab.QmdDraftIO.createGeckoHost
+				? Zotero.QLab.QmdDraftIO.createGeckoHost()
+				: null;
+			let text = root && io
+				? await Zotero.QLab.readWorkspaceRel(root, item.relativePath, io, {
+					maxChars: MAX_TEXT,
+				})
+				: '';
+			let tag = Zotero.QLab.createQmdComposerTag({
+				relativePath: item.relativePath,
+				source: text,
+				surfaceMode: 'source',
 			});
 			return Zotero.QLab.ChatComposerContext.add(tag);
 		}
@@ -659,10 +709,22 @@ Zotero.QLab = Zotero.QLab || {};
 		}
 		
 		// Default: do not steal focus when Chat / Research Desk is already up.
-		// ⌘⇧L always passes focus:false. Opening Chat for the first time focuses.
-		let shouldFocus = options.focus !== undefined
-			? !!options.focus
-			: !chatAlreadyVisible;
+		let focusPref = Zotero.QLab.Settings && Zotero.QLab.Settings.getChatFocusOnPin
+			? Zotero.QLab.Settings.getChatFocusOnPin()
+			: 'whenChatVisible';
+		let shouldFocus;
+		if (options.focus !== undefined) {
+			shouldFocus = !!options.focus;
+		}
+		else if (focusPref === 'always') {
+			shouldFocus = true;
+		}
+		else if (focusPref === 'never') {
+			shouldFocus = false;
+		}
+		else {
+			shouldFocus = !chatAlreadyVisible;
+		}
 		Zotero.QLab.focusChatComposer(windowRef, { focus: shouldFocus });
 		return tag;
 	};
