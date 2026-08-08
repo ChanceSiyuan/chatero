@@ -44,6 +44,8 @@ Zotero.QLab = Zotero.QLab || {};
 			scrollBeyondLastLine: false,
 			renderWhitespace: 'selection',
 			links: true,
+			accessibilitySupport: 'auto',
+			ariaLabel: 'QMD source editor',
 			padding: { top: 12, bottom: 28 },
 		};
 	};

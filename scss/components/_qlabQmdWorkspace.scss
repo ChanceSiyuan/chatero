@@ -327,6 +327,16 @@
 	color: var(--zc-muted);
 	background: var(--zc-bg-raised);
 	font-size: 9px;
+
+	&::before {
+		width: 6px;
+		height: 6px;
+		flex: none;
+		border: 1px solid currentColor;
+		border-radius: 50%;
+		background: currentColor;
+		content: "";
+	}
 }
 
 .qlab-qmd-workspace[data-status="error"],
@@ -342,13 +352,26 @@
 	}
 }
 
-@media (max-width: 900px) {
+@media (max-width: 1050px) {
+	.qlab-qmd-workspace-main,
+	.qlab-qmd-workspace.is-files-collapsed .qlab-qmd-workspace-main {
+		grid-template-columns:
+			minmax(260px, calc((100% - 5px) * var(--qlab-qmd-editor-ratio)))
+			5px
+			minmax(260px, 1fr);
+	}
+
+	.qlab-qmd-explorer {
+		display: none;
+	}
+}
+
+@media (max-width: 720px) {
 	.qlab-qmd-workspace-main,
 	.qlab-qmd-workspace.is-files-collapsed .qlab-qmd-workspace-main {
 		grid-template-columns: minmax(280px, 1fr);
 	}
 
-	.qlab-qmd-explorer,
 	.qlab-qmd-preview-pane,
 	.qlab-qmd-splitter {
 		display: none;
@@ -356,5 +379,16 @@
 
 	.qlab-qmd-authority {
 		display: none;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.qlab-qmd-workspace *,
+	.qlab-qmd-workspace *::before,
+	.qlab-qmd-workspace *::after {
+		scroll-behavior: auto !important;
+		transition-duration: .01ms !important;
+		animation-duration: .01ms !important;
+		animation-iteration-count: 1 !important;
 	}
 }

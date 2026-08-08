@@ -83,4 +83,6 @@ test("Monaco options use QMD writing defaults", async () => {
 	assert.equal(options.minimap.enabled, false);
 	assert.equal(options.tabSize, 2);
 	assert.equal(options.insertSpaces, true);
+	assert.equal(options.accessibilitySupport, "auto");
+	assert.equal(options.ariaLabel, "QMD source editor");
 });

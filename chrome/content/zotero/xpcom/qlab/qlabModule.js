@@ -27,9 +27,6 @@ Zotero.QLab = Zotero.QLab || {};
 		}
 		let head = doc.head || doc.querySelector('head');
 		if (!head || head.querySelector('[data-qlab-katex-css]')) {
-			// #region agent log
-			fetch('http://127.0.0.1:7350/ingest/ba635be9-3f49-40ce-9509-feafde36c36e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'be0fa9'},body:JSON.stringify({sessionId:'be0fa9',location:'qlabModule.js:ensureKatexStyles',message:'katex css skip',data:{hasHead:!!head,alreadyLinked:!!(head&&head.querySelector('[data-qlab-katex-css]'))},timestamp:Date.now(),hypothesisId:'E'})}).catch(()=>{});
-			// #endregion
 			return;
 		}
 		let link = doc.createElementNS('http://www.w3.org/1999/xhtml', 'link');
@@ -37,9 +34,6 @@ Zotero.QLab = Zotero.QLab || {};
 		link.href = Zotero.QLab.katexStylesheetHref();
 		link.setAttribute('data-qlab-katex-css', 'true');
 		head.appendChild(link);
-		// #region agent log
-		fetch('http://127.0.0.1:7350/ingest/ba635be9-3f49-40ce-9509-feafde36c36e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'be0fa9'},body:JSON.stringify({sessionId:'be0fa9',location:'qlabModule.js:ensureKatexStyles',message:'katex css linked',data:{href:link.href},timestamp:Date.now(),hypothesisId:'E'})}).catch(()=>{});
-		// #endregion
 	}
 	
 	/**
@@ -639,7 +633,14 @@ Zotero.QLab = Zotero.QLab || {};
 		}
 		
 		if (kind === 'qlabqmd' && Zotero.QLab.mountQmdWorkspace && root && workspaceState === 'ready') {
-			await Zotero.QLab.mountQmdWorkspace(host, { root });
+			let tabs = container.ownerDocument.defaultView.Zotero_Tabs;
+			let tab = tabs && tabs._tabs.find(item => item.id === container.id);
+			host._qlabMountTabID = container.id;
+			await Zotero.QLab.mountQmdWorkspace(host, {
+				root,
+				initialPath: tab && tab.data && tab.data.draftPath,
+				layout: tab && tab.data && tab.data.qmdWorkspace,
+			});
 		}
 		else if (kind === 'qlabqmd' && Zotero.QLab.applyQmdSurfaceMode) {
 			let mode = host._qlabSurfaceMode || 'visual';

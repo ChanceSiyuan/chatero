@@ -36,11 +36,43 @@ Zotero.QLab = Zotero.QLab || {};
 		return `<svg viewBox="0 0 24 24" aria-hidden="true">${paths[name] || paths.preview}</svg>`;
 	}
 
-	function iconButton(name, label, attribute, { disabled = false } = {}) {
+	function iconButton(name, label, attribute, { disabled = false, l10nId = '' } = {}) {
 		return `<button type="button" class="qlab-qmd-workspace-action" ${attribute} `
+			+ `${l10nId ? `data-l10n-id="${escapeHTML(l10nId)}" ` : ''}`
 			+ `title="${escapeHTML(label)}" aria-label="${escapeHTML(label)}"${disabled ? ' disabled' : ''}>`
 			+ `${icon(name)}<span class="sr-only">${escapeHTML(label)}</span></button>`;
 	}
+
+	Zotero.QLab.qmdWorkspaceAccessibilityModel = function ({
+		proposal = false,
+		previewStatus = 'ready',
+		conflict = false,
+	} = {}) {
+		let status = conflict
+			? 'Draft conflict. Compare the on-disk and editor versions before saving.'
+			: previewStatus === 'error'
+				? 'Preview failed. The last successful render remains visible.'
+				: proposal
+					? 'AI changes are ready for review.'
+					: 'Draft ready.';
+		return {
+			actions: {
+				explorer: { label: 'Toggle QLab Explorer', l10nId: 'qlab-qmd-toggle-explorer' },
+				reload: { label: 'Reload Draft', l10nId: 'qlab-qmd-reload' },
+				save: { label: 'Save now', l10nId: 'qlab-qmd-save' },
+				ai: { label: 'Edit with AI', l10nId: 'qlab-qmd-edit-ai' },
+				compare: { label: 'Compare AI changes', l10nId: 'qlab-qmd-compare' },
+				keep: { label: 'Keep AI changes', l10nId: 'qlab-qmd-keep' },
+				reject: { label: 'Reject AI changes', l10nId: 'qlab-qmd-reject' },
+			},
+			splitter: {
+				role: 'separator',
+				label: 'Resize source editor and Preview',
+				l10nId: 'qlab-qmd-resize',
+			},
+			status,
+		};
+	};
 
 	function rootFromDrafts(drafts) {
 		return [{
@@ -93,22 +125,35 @@ Zotero.QLab = Zotero.QLab || {};
 	} = {}) {
 		let tree = explorer.length ? explorer : rootFromDrafts(drafts);
 		let label = path || 'No Draft selected';
+		let accessibility = Zotero.QLab.qmdWorkspaceAccessibilityModel({ proposal });
+		let actions = accessibility.actions;
 		let options = drafts.map(draft => (
 			`<option value="${escapeHTML(draft)}">${escapeHTML(draft)}</option>`
 		)).join('');
 		return [
 			`<div class="qlab-shell qlab-shell-qmd qlab-qmd-workspace" data-qlab-kind="qlabqmd" data-status="${escapeHTML(status)}">`,
 			`<header class="qlab-qmd-toolbar">`,
-			iconButton('folder', 'Toggle Explorer', 'data-qlab-files-toggle'),
+			iconButton('folder', actions.explorer.label, 'data-qlab-files-toggle', {
+				l10nId: actions.explorer.l10nId,
+			}),
 			`<div class="qlab-qmd-path-wrap"><span class="qlab-qmd-tree-badge">Draft</span>`,
 			`<strong class="qlab-qmd-path" data-qlab-draft-path>${escapeHTML(label)}</strong></div>`,
 			`<div class="qlab-qmd-toolbar-actions" role="toolbar" aria-label="QMD actions">`,
-			iconButton('reload', 'Reload Draft', 'data-qlab-draft-reload'),
-			iconButton('save', 'Save now', 'data-qlab-draft-save'),
-			iconButton('ai', 'Edit with AI', 'data-qlab-draft-ai'),
-			iconButton('diff', 'Compare AI proposal', 'data-qlab-proposal-compare', { disabled: !proposal }),
-			iconButton('keep', 'Keep AI proposal', 'data-qlab-draft-keep', { disabled: !proposal }),
-			iconButton('reject', 'Reject AI proposal', 'data-qlab-draft-reject', { disabled: !proposal }),
+			iconButton('reload', actions.reload.label, 'data-qlab-draft-reload', { l10nId: actions.reload.l10nId }),
+			iconButton('save', actions.save.label, 'data-qlab-draft-save', { l10nId: actions.save.l10nId }),
+			iconButton('ai', actions.ai.label, 'data-qlab-draft-ai', { l10nId: actions.ai.l10nId }),
+			iconButton('diff', actions.compare.label, 'data-qlab-proposal-compare', {
+				disabled: !proposal,
+				l10nId: actions.compare.l10nId,
+			}),
+			iconButton('keep', actions.keep.label, 'data-qlab-draft-keep', {
+				disabled: !proposal,
+				l10nId: actions.keep.l10nId,
+			}),
+			iconButton('reject', actions.reject.label, 'data-qlab-draft-reject', {
+				disabled: !proposal,
+				l10nId: actions.reject.l10nId,
+			}),
 			`</div></header>`,
 			`<div class="qlab-qmd-inline" data-qlab-inline hidden>`,
 			`<input type="text" data-qlab-inline-prompt placeholder="Describe a focused QMD edit…"/>`,
@@ -117,7 +162,7 @@ Zotero.QLab = Zotero.QLab || {};
 			`<button type="button" data-qlab-inline-cancel>Cancel</button></div>`,
 			`<div class="qlab-qmd-workspace-main">`,
 			`<aside class="qlab-qmd-explorer" data-qlab-file-column aria-label="QLab Explorer">`,
-			`<div class="qlab-qmd-pane-title"><span>QLAB EXPLORER</span></div>`,
+			`<div class="qlab-qmd-pane-title"><span data-l10n-id="qlab-qmd-explorer">QLAB EXPLORER</span></div>`,
 			`<div class="qlab-qmd-explorer-tree" data-qlab-qmd-explorer>${Zotero.QLab.renderQmdExplorerHTML(tree)}</div>`,
 			`<label class="qlab-qmd-select-fallback">Draft<select data-qlab-draft>`
 			+ `<option value="">Select…</option>${options}</select></label></aside>`,
@@ -127,10 +172,11 @@ Zotero.QLab = Zotero.QLab || {};
 			`<iframe class="qlab-qmd-monaco-frame" data-qlab-qmd-monaco `
 			+ `src="chrome://zotero/content/qlab/qmdMonaco.html" title="QMD source editor"></iframe>`,
 			`<textarea data-qlab-editor hidden aria-hidden="true"></textarea></section>`,
-			`<div class="qlab-qmd-splitter" data-qlab-qmd-splitter role="separator" tabindex="0" `
-			+ `aria-label="Resize editor and Preview" aria-orientation="vertical"></div>`,
+			`<div class="qlab-qmd-splitter" data-qlab-qmd-splitter role="${accessibility.splitter.role}" tabindex="0" `
+			+ `data-l10n-id="${accessibility.splitter.l10nId}" aria-label="${accessibility.splitter.label}" `
+			+ `aria-orientation="vertical" aria-valuemin="20" aria-valuemax="80" aria-valuenow="50"></div>`,
 			`<section class="qlab-qmd-preview-pane" data-qlab-qmd-preview aria-label="Quarto Preview">`,
-			`<div class="qlab-qmd-pane-title"><span>QUARTO PREVIEW</span>`,
+			`<div class="qlab-qmd-pane-title"><span data-l10n-id="qlab-qmd-preview">QUARTO PREVIEW</span>`,
 			`<div class="qlab-qmd-preview-versions" role="group" aria-label="Preview version">`,
 			`<button type="button" class="is-active" data-qlab-preview-version="original">Original</button>`,
 			`<button type="button" data-qlab-preview-version="proposed"${proposal ? '' : ' disabled'}>Proposed</button>`,
@@ -140,7 +186,7 @@ Zotero.QLab = Zotero.QLab || {};
 			`<div class="qlab-qmd-preview-empty" data-qlab-preview-empty>Select a Draft to preview it.</div>`,
 			`</section></div>`,
 			`<footer class="qlab-qmd-workspace-status">`,
-			`<span class="qlab-shell-status" data-qlab-qmd-status>${escapeHTML(status)}</span>`,
+			`<span class="qlab-shell-status" data-qlab-qmd-status role="status" aria-live="polite">${escapeHTML(status)}</span>`,
 			`<span class="qlab-qmd-authority">Human edits autosave · AI changes require Keep</span>`,
 			`</footer>`,
 			`</div>`,
@@ -232,6 +278,7 @@ Zotero.QLab = Zotero.QLab || {};
 	Zotero.QLab.mountQmdWorkspace = async function (host, {
 		root,
 		initialPath = '',
+		layout = {},
 	} = {}) {
 		if (!host || !root) return null;
 		if (host._qlabQmdWorkspace) return host._qlabQmdWorkspace;
@@ -313,7 +360,19 @@ Zotero.QLab = Zotero.QLab || {};
 			shell.style.setProperty('--qlab-qmd-editor-ratio', String(state.splitRatio));
 			shell.classList.toggle('is-files-collapsed', !state.explorerVisible);
 			shell.classList.toggle('is-preview-collapsed', !state.previewVisible);
+			let splitter = host.querySelector('[data-qlab-qmd-splitter]');
+			if (splitter) splitter.setAttribute('aria-valuenow', String(Math.round(state.splitRatio * 100)));
 			activePreview?.setVisible(state.previewVisible);
+			let tabs = view.Zotero_Tabs;
+			if (tabs && tabs.setTabData && host._qlabMountTabID) {
+				tabs.setTabData(host._qlabMountTabID, {
+					qmdWorkspace: {
+						splitRatio: state.splitRatio,
+						explorerVisible: state.explorerVisible,
+						previewVisible: state.previewVisible,
+					},
+				});
+			}
 		}
 
 		let watcher = Zotero.QLab.createQmdExplorerWatcher({
@@ -342,6 +401,9 @@ Zotero.QLab = Zotero.QLab || {};
 			watcher,
 			monaco: monacoBridge,
 			onLayout: applyLayout,
+			splitRatio: layout && layout.splitRatio,
+			explorerVisible: !layout || layout.explorerVisible !== false,
+			previewVisible: !layout || layout.previewVisible !== false,
 		});
 
 		function showPreviewState(state) {
@@ -450,6 +512,10 @@ Zotero.QLab = Zotero.QLab || {};
 			};
 			host._qlabLastSaved = doc.text;
 			host._qlabBuffer = doc.text;
+			let tabs = view.Zotero_Tabs;
+			if (tabs && tabs.setTabData && host._qlabMountTabID) {
+				tabs.setTabData(host._qlabMountTabID, { draftPath: relativePath });
+			}
 			let pathLabel = host.querySelector('[data-qlab-draft-path]');
 			if (pathLabel) {
 				pathLabel.textContent = relativePath;
