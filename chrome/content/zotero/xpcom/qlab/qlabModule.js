@@ -852,9 +852,10 @@ Zotero.QLab = Zotero.QLab || {};
 				return;
 			}
 			if (event.target.closest('[data-qlab-files-toggle]')) {
-				let shell = host.querySelector('.qlab-shell-qmd');
-				if (shell) {
-					shell.classList.toggle('is-files-collapsed');
+				if (host._qlabQmdWorkspace) host._qlabQmdWorkspace.toggleExplorer();
+				else {
+					let shell = host.querySelector('.qlab-shell-qmd');
+					if (shell) shell.classList.toggle('is-files-collapsed');
 				}
 				return;
 			}

@@ -1,6 +1,6 @@
 # Chatero ↔ QLab XPI Parity Checklist
 
-- **Date:** 2026-08-07
+- **Date:** 2026-08-08
 - **XPI baseline:** `quarto-lab/integrations/zotero` v0.12.0 (frozen)
 - **XPI tests:** ~1219 Vitest + visual/native suites
 - **Chatero target:** `chrome/content/zotero/xpcom/qlab/` + shell tabs
@@ -97,30 +97,38 @@ Legend: `P0` required for daily path · `P1` Phase 4 RC · `P2` polish
 
 ---
 
-## C. QMD Draft + Visual Edit + Keep — P0 (Phase 3)
+## C. QMD Draft + Monaco + Quarto Preview + Keep — P0 (Phase 3)
 
 ### Behaviors
 - [x] QMD shell tab registered; drafts path messaging when workspace ready
-- [x] Three switchable surfaces: **Preview** (visual) · **Website** (HTML) · **Source** (QMD)
-- [x] Shared buffer across modes (Cursor-like; switch does not drop edits)
-- [x] Preview: source-driven block cards; click → edit → write back to QMD
-- [x] Website: soft HTML always; optional Quarto live preview button
-- [x] Draft list / read / save with hash revision CAS
-- [ ] Richer Visual Edit (LaTeX/theorem toolbars, KaTeX) — incremental
+- [x] Cursor-style QLab Explorer + Monaco source + Quarto Preview in one native tab
+- [x] Drafts are writable; Knowledge and Literature appear as read-only context trees
+- [x] Explorer polls external changes without remounting the native tab
+- [x] Monaco uses stable in-memory URIs that never expose the absolute QLab path
+- [x] Human edits become dirty immediately, auto-save after 800 ms, and save immediately with ⌘S
+- [x] Draft list / read / save uses hash revision CAS; external conflicts never overwrite memory
+- [x] QMD language support includes YAML, math decoration, fenced-Div diagnostics, `thm` / `lem` / `def` / `proof` snippets, and `literature/ref.bib` citekeys
+- [x] Live Quarto Preview binds to loopback and always passes `--no-execute`
+- [x] Preview retains the last good URL on render failure and reports file/line/column diagnostics to Monaco
+- [x] Explorer / Preview visibility and the editor divider persist in the QMD tab session
+- [x] Approved source-driven design supersedes direct editing inside rendered HTML; the old Visual Edit cards remain fallback-only
 - [x] CAS / revision checks on save; no silent overwrite
-- [x] Agent edits in one private working copy (`work/qlab-zotero/draft-changes/…`)
-- [x] **Keep** is the only AI→Draft promotion (`QmdDraftIO.keepChange` + `DraftWorkingCopy`)
+- [x] Agent edits retain one latest disk-backed private proposal (`base.qmd`, `draft.qmd`, `manifest.json`)
+- [x] Monaco diff compares current human source with the latest AI proposal
+- [x] Preview switches between Original and Proposed without editing rendered HTML
+- [x] **Keep** is the only AI→Draft promotion and performs a three-way replay over disjoint human edits
+- [x] Overlapping human/AI edits remain a conflict with base/current/proposed preserved; no Draft write occurs
+- [x] Reject removes only private proposal state and never changes the Draft
+- [x] Proposal review survives tab/app restart through `work/qlab-zotero/draft-changes/…`
 - [x] Unknown syntax retained as raw blocks (lossless Preview)
-- [x] **Apply**: Chat reply / PDF selection → live buffer as a human edit (still needs Save)
+- [x] **Apply**: Chat reply / PDF selection → live buffer as a human edit (then auto-save)
 - [x] Inserts snap to block boundaries; never split a fence, math block, or frontmatter
 - [x] PDF quotes carry a `chatero://open-pdf/...?page=N` link back to the page
-- [x] Multiple pending regions per shell; per-hunk Accept / Reject / Reject all
-- [x] Preview inline hunk review: overlapping blocks marked `is-pending` with Accept/Reject
+- [x] Historical pending-region helpers remain compatible for Chat Apply and fallback UI
 - [x] Chat “Insert into notes” prefers first fenced code block when present
 - [x] Reject re-anchors by content and refuses ambiguous matches
-- [x] Pending markers clear on Save and on Draft reload
-- [x] ⌘K writes a passage at the anchor (`ask` mode → pending region, never writes the file)
-- [x] ⌘K rewrite: Source selection or active Preview block → replace pending region
+- [x] ⌘K writes or rewrites at the Monaco cursor/selection into a private AI proposal
+- [x] ⌘K output requires Compare + Keep/Reject and never writes the Draft directly
 
 ### XPI sources
 `qmd-workspace.ts`, `qmd-visual-editor.ts`, `qmd-source-model.ts`,
@@ -131,11 +139,12 @@ Legend: `P0` required for daily path · `P1` Phase 4 RC · `P2` polish
 `qmd-render.test.ts`, `external-editor.test.ts`, `test/visual/draft-parity.test.mjs`
 
 ### Chatero targets
-`xpcom/qlab/qmdDraftIO.js`, `qmdSourceModel.js`, `qmdSurface.js`,
-`qmdMarkdownLite.js`, `qmdPreview.js`, `draftWorkingCopy.js`, `qlabModule.js`
+`xpcom/qlab/qmdDraftSession.js`, `qmdDraftIO.js`, `qmdLanguage.js`,
+`qmdExplorer.js`, `qmdMonacoBridge.js`, `qmdPreviewController.js`,
+`qmdProposalReview.js`, `qmdWorkspaceShell.js`, `draftWorkingCopy.js`, `qlabModule.js`
 
 ### Chatero tests
-`scripts/chatero/tests/qmd-draft-io.test.mjs`, `qmd-surface.test.mjs`
+`scripts/chatero/tests/qmd-*.test.mjs`, `qlab-visual-structure.test.mjs`
 
 ---
 

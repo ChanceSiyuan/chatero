@@ -55,8 +55,8 @@ test("buildResearchActionPrompt wraps a single research_object envelope", async 
 test("Draft Keep plan is the only AI promotion path helper", async () => {
 	const QLab = await loadQLab();
 	const plan = QLab.DraftWorkingCopy.buildKeepPlan({
-		originalPath: "/ws/drafts/reading-notes/a.qmd",
-		workingPath: "/ws/work/qlab-zotero/draft-changes/a.qmd",
+		originalPath: "drafts/reading-notes/a.qmd",
+		workingPath: "work/qlab-zotero/draft-changes/token/draft.qmd",
 		revision: 3,
 	});
 	assert.equal(plan.action, "keep");

@@ -60,6 +60,8 @@ Zotero.QLab = Zotero.QLab || {};
 				explorer: { label: 'Toggle QLab Explorer', l10nId: 'qlab-qmd-toggle-explorer' },
 				reload: { label: 'Reload Draft', l10nId: 'qlab-qmd-reload' },
 				save: { label: 'Save now', l10nId: 'qlab-qmd-save' },
+				preview: { label: 'Toggle Quarto Preview', l10nId: 'qlab-qmd-toggle-preview' },
+				retry: { label: 'Retry Quarto Preview', l10nId: 'qlab-qmd-preview-retry' },
 				ai: { label: 'Edit with AI', l10nId: 'qlab-qmd-edit-ai' },
 				compare: { label: 'Compare AI changes', l10nId: 'qlab-qmd-compare' },
 				keep: { label: 'Keep AI changes', l10nId: 'qlab-qmd-keep' },
@@ -136,6 +138,9 @@ Zotero.QLab = Zotero.QLab || {};
 			iconButton('folder', actions.explorer.label, 'data-qlab-files-toggle', {
 				l10nId: actions.explorer.l10nId,
 			}),
+			iconButton('preview', actions.preview.label, 'data-qlab-preview-toggle', {
+				l10nId: actions.preview.l10nId,
+			}),
 			`<div class="qlab-qmd-path-wrap"><span class="qlab-qmd-tree-badge">Draft</span>`,
 			`<strong class="qlab-qmd-path" data-qlab-draft-path>${escapeHTML(label)}</strong></div>`,
 			`<div class="qlab-qmd-toolbar-actions" role="toolbar" aria-label="QMD actions">`,
@@ -180,7 +185,11 @@ Zotero.QLab = Zotero.QLab || {};
 			`<div class="qlab-qmd-preview-versions" role="group" aria-label="Preview version">`,
 			`<button type="button" class="is-active" data-qlab-preview-version="original">Original</button>`,
 			`<button type="button" data-qlab-preview-version="proposed"${proposal ? '' : ' disabled'}>Proposed</button>`,
-			`</div></div>`,
+			`</div>`,
+			iconButton('reload', actions.retry.label, 'data-qlab-preview-retry', {
+				l10nId: actions.retry.l10nId,
+			}),
+			`</div>`,
 			`<iframe class="qlab-qmd-preview-frame" data-qlab-preview-frame title="Rendered QMD Preview" `
 			+ `sandbox="allow-same-origin allow-scripts allow-popups"></iframe>`,
 			`<div class="qlab-qmd-preview-empty" data-qlab-preview-empty>Select a Draft to preview it.</div>`,
@@ -603,6 +612,8 @@ Zotero.QLab = Zotero.QLab || {};
 			if (version && !version.disabled) void showPreview(version.dataset.qlabPreviewVersion);
 			if (event.target.closest('[data-qlab-proposal-compare]')) workspace.showProposalDiff();
 			if (event.target.closest('[data-qlab-draft-reject]')) void workspace.rejectProposal();
+			if (event.target.closest('[data-qlab-preview-toggle]')) workspace.togglePreview();
+			if (event.target.closest('[data-qlab-preview-retry]')) void activePreview?.retry();
 		});
 
 		let splitter = host.querySelector('[data-qlab-qmd-splitter]');
