@@ -1,19 +1,19 @@
 {
   "schemaVersion": 1,
-  "digest": "cef2e52f04370b3a8685d464aca79e16394fbbc16b66094a0e45452a5b38579d",
-  "archiveSha256": "519a29f52d1f7063fb7d2591577542f4219197be5886976bff3e0cddd0e4964d",
+  "digest": "ae90a796ab799928fd98515268cee38b1d8e034a88c7e6b243c65a29d3f34acb",
+  "archiveSha256": "149fdf0b40151216fcac96996d9997bb1fd409fc360731cf57222d0219b15973",
   "entries": [
     {
       "path": ".gitignore",
       "kind": "file",
       "mode": "0644",
-      "digest": "2a49f639cb1ad447a30577b75598762b42189fe9df7c3f0cd394e782c1ee8539"
+      "digest": "d9b4bfa707923633ee9de4a4d13b5cfd247914821248c7df974f0aed28b34676"
     },
     {
       "path": ".node-version",
       "kind": "file",
       "mode": "0644",
-      "digest": "7d2df647f25529bd87500319c41564e032e2be642e565350fa6136d7a1ec4d10"
+      "digest": "f14b4987904bcb5814e4459a057ed4d20f58a633152288a761214dcd28780b56"
     },
     {
       "path": ".research-loop",
@@ -31,70 +31,34 @@
       "mode": "0755"
     },
     {
-      "path": ".research-loop/tooling/scripts/build-problem-index.mjs",
+      "path": ".research-loop/tooling/scripts/build-app.mjs",
       "kind": "file",
       "mode": "0644",
-      "digest": "541df1b75d64533c731cb994eb241d1711515ee3272a11bd3c2464e433159584"
+      "digest": "c0e5a736371c4e1a2e15937fc8e36964d6d63cb82e5578ea93c148e11c66c90f"
     },
     {
-      "path": ".research-loop/tooling/scripts/dev-problem-index.mjs",
+      "path": ".research-loop/tooling/scripts/knowledge.mjs",
       "kind": "file",
       "mode": "0644",
-      "digest": "632df62aa76736be56aadd3d7579737c6d85bc8182a1c084250f4c88df927fee"
+      "digest": "3a3f4b098c3f8b4a2ccae23d37a7c7975a35245acd6aab2b6e7929c6169f3e6f"
     },
     {
-      "path": ".research-loop/tooling/scripts/draft-check.ts",
+      "path": ".research-loop/tooling/scripts/qlab.mjs",
       "kind": "file",
       "mode": "0644",
-      "digest": "24e510caa29102eb45fe95032c64b0bb23ba4da1afd17f22957e3df61a8dd5ec"
+      "digest": "ea7ae65d1bdeb9d8cc33b270080e274f6710674293e40e4a5e129336f6cf5780"
     },
     {
-      "path": ".research-loop/tooling/scripts/draft-preview.ts",
+      "path": ".research-loop/tooling/scripts/start-site.mjs",
       "kind": "file",
       "mode": "0644",
-      "digest": "fe2274ebdd5a46b7e32e9624bcdf7e3b1e7562c5d86f427be8566aabdce42850"
-    },
-    {
-      "path": ".research-loop/tooling/scripts/ensure-sci-brain.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "24d2de208ea933fa67e9ef51ff3d5c684ccacc0d404864577d9a83b2c549799c"
-    },
-    {
-      "path": ".research-loop/tooling/scripts/knowledge.ts",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "27db8aa75d7ce8d246cda484bdbf743fb928cfc5d33713fa544b4675b3262f0c"
-    },
-    {
-      "path": ".research-loop/tooling/scripts/literature.ts",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "9b9ec744dcd73f9b0ab9940c4e3b2de6b6f0961dbea412ccb7f6f5e24defe073"
-    },
-    {
-      "path": ".research-loop/tooling/scripts/local-assessment-service.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "fcf28b4f5ef2fa342287e8df7dfbd62b81919ad8dc836da2f7cf72e0b6010df6"
-    },
-    {
-      "path": ".research-loop/tooling/scripts/local-autoresearch-service.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "ac9ba7eb12c73cf59003124077ccefe954b495a21ae09bb9ada81e326a1d6732"
-    },
-    {
-      "path": ".research-loop/tooling/scripts/qlab.ts",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "ffff5bbf95bcfa1046559141e7189575ee7e28944834c153de69ec8841e5bd30"
+      "digest": "4ee7519b0695fcc5ac418ec04c46515c4ff9b5037e0a306f5fdd781b1e54af42"
     },
     {
       "path": "AGENTS.md",
       "kind": "file",
       "mode": "0644",
-      "digest": "5bc6a61072b1f29405c6105b3f96522452679bc1cab2ebb1cd7b21ee6a3ac1ff"
+      "digest": "73183c49f1d6133d42120478770f1f74b8744f14c711bdf4393492373213ee3d"
     },
     {
       "path": "CLAUDE.md",
@@ -106,13 +70,13 @@
       "path": "Makefile",
       "kind": "file",
       "mode": "0644",
-      "digest": "53669a9c2b5cc159e8200685b3f70554daee685d62579ead5f13146666a76f12"
+      "digest": "aff82b87aa25c91e1a80f67d9f0eb0395a45be402b0fd12bccc234165a58009b"
     },
     {
       "path": "README.md",
       "kind": "file",
       "mode": "0644",
-      "digest": "3d8466217f91d14b4c7ee6a4a6c5e7a99e34631eb285550d46e4fab064193941"
+      "digest": "fb48a307c35a5b05e05d8e90255160795e2d29fa77ec31f93e84049f612232fc"
     },
     {
       "path": "drafts",
@@ -123,7 +87,7 @@
       "path": "drafts/_quarto.yml",
       "kind": "file",
       "mode": "0644",
-      "digest": "e446a43c05b2e536cf85742db8c731d422d0519433f2208071cbb00d3ab38d75"
+      "digest": "147148887f32dbd93530358ba9cedb0e964e1ef4236bff81c78f4d226546301e"
     },
     {
       "path": "drafts/examples",
@@ -134,13 +98,7 @@
       "path": "drafts/examples/theorem-blocks.qmd",
       "kind": "file",
       "mode": "0644",
-      "digest": "01f41f817bb7b4de636ef674cc005eea058e59d295047aa9895abcacb9e05ead"
-    },
-    {
-      "path": "eslint.config.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "36e06be69745106b0396abaca19f3401da54e2f06119568bf33eb7638102c880"
+      "digest": "34fd97992d81f5b70ffcee0bd9db234bb9a6b8eb2b12755213dac7c7499cb288"
     },
     {
       "path": "knowledge",
@@ -151,13 +109,13 @@
       "path": "knowledge/_quarto.yml",
       "kind": "file",
       "mode": "0644",
-      "digest": "d9e636c44ed63825b03bcea531ddd7fc7928e25d9f2d30b732c165ec24f8c779"
+      "digest": "37020ca52c9c443e346ca5368d00b69dfeab0ab0500727f7dcb056d801510ba5"
     },
     {
       "path": "knowledge/index.qmd",
       "kind": "file",
       "mode": "0644",
-      "digest": "0a172b506f58329c1c784389ca56ec4190d0b41b99f62015cea2c25827e7b318"
+      "digest": "b03b183656510bd2b92c2224be818f978cde42529e29933a402e1b5a2cb5a964"
     },
     {
       "path": "knowledge/research-loop-tree-header.html",
@@ -189,274 +147,22 @@
       "digest": "1139da380c27a5f164043a060fb9bf5cda0dcbb605e63eb9bf5782184315dfe0"
     },
     {
-      "path": "next.config.ts",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "614bce25b089c3f19b1e17a6346c74b858034040154c6621e7d35303004767cc"
-    },
-    {
       "path": "package-lock.json",
       "kind": "file",
       "mode": "0644",
-      "digest": "7fc85b23e0525827c06d4b6dc7d287efb103e80bbb786ce3712b7fd797c825d0"
+      "digest": "1f565603cfa50e4ad7d0e5b0296b9ba909a3e6679726b05386229d4a4bfdc557"
     },
     {
       "path": "package.json",
       "kind": "file",
       "mode": "0644",
-      "digest": "8fc3ae0328bcaa0d68131579e9aef0e7e4ff16019ff5ea8920e6ce3b6c057cbd"
-    },
-    {
-      "path": "playwright.assessment.config.ts",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "0807321fa83bc22d2bae7ce0a764fb7f057d13d872d7dd83aeb68da052c4bfcd"
-    },
-    {
-      "path": "playwright.autoresearch.config.ts",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "c24496de033369855ef56cf7bbb3640c89bac6cebec4d4b36cc383150cb87542"
-    },
-    {
-      "path": "playwright.config.ts",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "690dfca0d134c13061cfcaa910d22a2f0b79f02422ed8def2fce77efa5899297"
-    },
-    {
-      "path": "postcss.config.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "dfac7ac2d86d326a0e5adb024e7943c181393ed17a5fcb8f0315b24c7da6ddde"
-    },
-    {
-      "path": "public/favicon.svg",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "e6d2e59b7b5bbb0342e0fb496dfc262decbfe4426bbb7b047aec8d467d1dc6f7"
-    },
-    {
-      "path": "public/og.png",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "27b63900fb7776206ef184aab880812578515b0a07fd5641f2a742455aa73ede"
+      "digest": "07bc2421b3bf10498302657e63df44dffaa2652567eb98ee3ab457eaf21e71d9"
     },
     {
       "path": "qlab",
       "kind": "file",
       "mode": "0755",
-      "digest": "92af66d54ed71b1227fd4a16e26daaf8843ca0902e13fb2d1720bbf3d5d9c8d2"
-    },
-    {
-      "path": "schemas",
-      "kind": "directory",
-      "mode": "0755"
-    },
-    {
-      "path": "schemas/autoresearch-preparation-output.schema.json",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "5d7748750a31d382d97d28a148b0c45c4eba9c5df4141c380e13253f42ce307a"
-    },
-    {
-      "path": "schemas/quantum-valuation-research.schema.json",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "aae261af5689429bd318575509eb9a5f4de03ff6d2b62fe21d3386255d7d5b68"
-    },
-    {
-      "path": "schemas/quantum-valuation-snapshot.schema.json",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "f53d3159df796d0ea60c4f72e0a011ec61f960d62563c9e56b74cdf6243dad85"
-    },
-    {
-      "path": "schemas/research-problem-assessment.schema.json",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "d9bdc4377edee206f6f8f5485a077525307b3b028a8dce0b782b06c6d81935a7"
-    },
-    {
-      "path": "skills",
-      "kind": "directory",
-      "mode": "0755"
-    },
-    {
-      "path": "skills/add-problem",
-      "kind": "directory",
-      "mode": "0755"
-    },
-    {
-      "path": "skills/add-problem/SKILL.md",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "742194575b842606d50043ff01a78b9e4db878bd4c89fe385f2a90f03b99547d"
-    },
-    {
-      "path": "skills/assess-research-problem",
-      "kind": "directory",
-      "mode": "0755"
-    },
-    {
-      "path": "skills/assess-research-problem/SKILL.md",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "e0ec75b796d6f4dd01a63ce4573235b39804e7c4ffe32a564cdce526902324a8"
-    },
-    {
-      "path": "skills/capture-chat-draft",
-      "kind": "directory",
-      "mode": "0755"
-    },
-    {
-      "path": "skills/capture-chat-draft/SKILL.md",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "d0a78d59eac0ba6bca1b728ae673aa3536d0c7d2683dbf689dd75b1e57bca629"
-    },
-    {
-      "path": "skills/complete-gaps",
-      "kind": "directory",
-      "mode": "0755"
-    },
-    {
-      "path": "skills/complete-gaps/SKILL.md",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "0f6f25b2488b6f55a8b483fb271fec672a603ae7ba14d93725252317b90f081e"
-    },
-    {
-      "path": "skills/conference-survey",
-      "kind": "directory",
-      "mode": "0755"
-    },
-    {
-      "path": "skills/conference-survey/SKILL.md",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "416e63b9efd4052d36437937f4f69409c6e566d915af2b82bb29c62995127d1f"
-    },
-    {
-      "path": "skills/download-ref",
-      "kind": "directory",
-      "mode": "0755"
-    },
-    {
-      "path": "skills/download-ref/SKILL.md",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "e2ff496d67edc4fd0ecb16437cd3037e4b530a3b7ee8b388f6d2f7b9fb1b3f29"
-    },
-    {
-      "path": "skills/edit-topic-tree",
-      "kind": "directory",
-      "mode": "0755"
-    },
-    {
-      "path": "skills/edit-topic-tree/SKILL.md",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "f7dfff014e73c48fcfbb01ccbfc0b83d20af8dbcf6d747a24538ea4c329da11f"
-    },
-    {
-      "path": "skills/evidence-review",
-      "kind": "directory",
-      "mode": "0755"
-    },
-    {
-      "path": "skills/evidence-review/SKILL.md",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "a570a62520bf3d24c4ba6cfefa0dc9d65320e3aea4e5fe8b7b3cd6c6c2104cdb"
-    },
-    {
-      "path": "skills/expand-notes",
-      "kind": "directory",
-      "mode": "0755"
-    },
-    {
-      "path": "skills/expand-notes/SKILL.md",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "8487a89651a942db93c86054e8f5601a40af064f88b53697882f5e0ee745987a"
-    },
-    {
-      "path": "skills/generate-issues",
-      "kind": "directory",
-      "mode": "0755"
-    },
-    {
-      "path": "skills/generate-issues/SKILL.md",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "e659f24da943ec6b88660c25bf5cdaa67053a3aa1a1d4ec83359577bd43aa2c5"
-    },
-    {
-      "path": "skills/integrate-paper",
-      "kind": "directory",
-      "mode": "0755"
-    },
-    {
-      "path": "skills/integrate-paper/SKILL.md",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "5b10fa97090bb593c60688c0b302d203055a3232b08a9a8530614934f7c22d90"
-    },
-    {
-      "path": "skills/prepare-autoresearch",
-      "kind": "directory",
-      "mode": "0755"
-    },
-    {
-      "path": "skills/prepare-autoresearch/SKILL.md",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "85fcc00b2d5acf9e52bb3e6a0682060ea8a3c665ae7e5d46965c023d4d389a56"
-    },
-    {
-      "path": "skills/read-knowledge",
-      "kind": "directory",
-      "mode": "0755"
-    },
-    {
-      "path": "skills/read-knowledge/SKILL.md",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "ab53aba2f13ee30edbff1f7078f047c8fe84d2acd19378e4aca75fdb8ae25e73"
-    },
-    {
-      "path": "skills/render-site",
-      "kind": "directory",
-      "mode": "0755"
-    },
-    {
-      "path": "skills/render-site/SKILL.md",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "ef1b291dda04d0ac2ccebc76463273382af6be28a3e711e54e862fc0ddb0597d"
-    },
-    {
-      "path": "skills/review-draft",
-      "kind": "directory",
-      "mode": "0755"
-    },
-    {
-      "path": "skills/review-draft/SKILL.md",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "8b0babd13b59bb2616d83c06a059e8953a4ed0db3fa886393ceab1c1770a9ad4"
-    },
-    {
-      "path": "skills/screen-paper",
-      "kind": "directory",
-      "mode": "0755"
-    },
-    {
-      "path": "skills/screen-paper/SKILL.md",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "b4430aca71298e000c4894dc8001cc7c763195b755a4f50fc5fb0a10724e5ba5"
+      "digest": "4d6668a1b14aa2bae6c6d2805be239510a9618483a5265e6da685e9a5c2eed39"
     },
     {
       "path": "src",
@@ -487,790 +193,13 @@
       "path": "src/app/api/qlab/health/route.ts",
       "kind": "file",
       "mode": "0644",
-      "digest": "27aa896c1014fdc98adca2c96884e187d5e5252fcdd4ba435efde91c3147b83d"
-    },
-    {
-      "path": "src/app/chatgpt-auth.ts",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "17a965f8948b21510cdf8ecbd70c5fdf58100e10970463f6a8fd2cc4795f8044"
-    },
-    {
-      "path": "src/app/globals.css",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "cd78a8ffe24e65cfb797b259cd2b38339c661d0f99ad8d9ccfddae2c250c8b3d"
-    },
-    {
-      "path": "src/app/layout.tsx",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "472159274f374328ff0b2a4915b197c89a43e3658dbecef0604d7ba5fd86ae30"
-    },
-    {
-      "path": "src/app/page.tsx",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "d93c1edf0ce2179def543a43823c8b3815123e3f9f15acb8c483fd86be5b774b"
-    },
-    {
-      "path": "src/app/problem-console.tsx",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "8db9fb8f4b7b01dcd18cb5277dbe54a782639aec8fcb19b01fd1049537249374"
-    },
-    {
-      "path": "src/app/problems",
-      "kind": "directory",
-      "mode": "0755"
-    },
-    {
-      "path": "src/app/problems/[id]",
-      "kind": "directory",
-      "mode": "0755"
-    },
-    {
-      "path": "src/app/problems/[id]/assessment-panel.module.css",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "7e1013b7aaad8690af590011c083a0fff73bc345b7835d6cee2e36869b0fb2f2"
-    },
-    {
-      "path": "src/app/problems/[id]/assessment-panel.tsx",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "5d8922c403433558844f02e8a58e3d40a5a89cada06c0e3129b881d49a099066"
-    },
-    {
-      "path": "src/app/problems/[id]/attempts",
-      "kind": "directory",
-      "mode": "0755"
-    },
-    {
-      "path": "src/app/problems/[id]/attempts/[attemptId]",
-      "kind": "directory",
-      "mode": "0755"
-    },
-    {
-      "path": "src/app/problems/[id]/attempts/[attemptId]/page.tsx",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "7aeae49932aa1a0fdb2365ded0e1a314b94d73b79cdd24c9ee1b0f3e4857d22c"
-    },
-    {
-      "path": "src/app/problems/[id]/autoresearch",
-      "kind": "directory",
-      "mode": "0755"
-    },
-    {
-      "path": "src/app/problems/[id]/autoresearch-panel.module.css",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "dc836a099de2f820191f9ae5e7d7cb6754c3e4ac829eb58468b38ebcbff5aac7"
-    },
-    {
-      "path": "src/app/problems/[id]/autoresearch-panel.tsx",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "26a7e9b04131e44f9509f11ea922d020c3701ac5215163060712a5770556f058"
-    },
-    {
-      "path": "src/app/problems/[id]/autoresearch/page.tsx",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "902956779d99b67da24af9bb5bc8f9745203ac2748600f107b5c272697b63857"
-    },
-    {
-      "path": "src/app/problems/[id]/page.tsx",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "71f30704fc385b490aacfcfbbf18d57396d9425f1aa65820e830bc3a301303a6"
-    },
-    {
-      "path": "src/app/problems/[id]/research-detail.module.css",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "a4bd568584748cd0e92ddd7eb4355bf04e4d17fefd66f2d7e63e9680ca3b8a7a"
-    },
-    {
-      "path": "src/app/problems/[id]/static-assessment-panel.module.css",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "36a717181606f2a72b2425c0409e5f5fe93c8abae41cf92a9ed7ebe2b9795de4"
-    },
-    {
-      "path": "src/app/problems/[id]/static-assessment-panel.tsx",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "1d5ac7ed160552f3cabaad037de96944aec6da199f971890bc781fa31eb6fc51"
-    },
-    {
-      "path": "src/app/problems/[id]/static-autoresearch-panel.tsx",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "2faa7c726ad15deecd30c7708d32ddae4f50a8553c5c9f3cfc9310d1c6df71cd"
-    },
-    {
-      "path": "src/app/qec-portfolio",
-      "kind": "directory",
-      "mode": "0755"
-    },
-    {
-      "path": "src/app/qec-portfolio/page.tsx",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "700eaa519c1309583421c5146630b8108f89ceccc7628d362c516f36ec133a8d"
-    },
-    {
-      "path": "src/app/qec-portfolio/portfolio-panel.module.css",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "ddd25e1f9f9cf45fe6adcd15e905b75bc88b4dba321a55a7e476aa29ff8d33a0"
-    },
-    {
-      "path": "src/app/qec-portfolio/portfolio-panel.tsx",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "a2d42f9bf905802593fef245720018b9f106d6cf76f846b5ab66b32659444ce7"
-    },
-    {
-      "path": "src/lib",
-      "kind": "directory",
-      "mode": "0755"
-    },
-    {
-      "path": "src/lib/assessments",
-      "kind": "directory",
-      "mode": "0755"
-    },
-    {
-      "path": "src/lib/assessments/artifact-store.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "f230650999e082f2e07d7b67d8642beee630137d369a2e93bd9e673a5f9107eb"
-    },
-    {
-      "path": "src/lib/assessments/codex-adapter.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "8f2674a6e7bbf5aa9cd433f33024b044a5abbb8a03fc28b0da09d50e88af8ad2"
-    },
-    {
-      "path": "src/lib/assessments/contract.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "1f309ccb0e9f69dbade4ec29a2c8e0c29172062965b4de7ef984034ec217ba5b"
-    },
-    {
-      "path": "src/lib/assessments/html-report.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "bc1bf57f5aa2b7f8b4635c2c5944ef85f806a0afcefcabeb4f64bcc3460e4449"
-    },
-    {
-      "path": "src/lib/assessments/input-snapshot.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "72a39660a9671b920d3f47cc206298597fd61221d45ccb5fb1d3a7b9aca4f624"
-    },
-    {
-      "path": "src/lib/assessments/job-manager.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "f5349bc4a687a36d73061428f423e6ccab9a2e3c6a5d6fb13926616c595f062c"
-    },
-    {
-      "path": "src/lib/assessments/local-service.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "d2fa1d7343c8c99ed7a185d48d0e0e7809f3240ff87b61302c3143def0d09cad"
-    },
-    {
-      "path": "src/lib/assessments/paths.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "6d79ca49bc30839d343bf9324db1fd4731edd2740e932efcd7dfcb9faa6a5d2a"
-    },
-    {
-      "path": "src/lib/assessments/point-estimates.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "bb335d69dd4816224aab75208e568de08887900ee9575aca68de983b2391fa14"
-    },
-    {
-      "path": "src/lib/assessments/policy.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "005ad5e66b5164529d532a67badd70c74be3406e29cdafa2c6bca20b55768192"
-    },
-    {
-      "path": "src/lib/assessments/staleness.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "21e51ff92da2b356013c97cdd0db3efd948a8d080250515794885046ea38f75d"
-    },
-    {
-      "path": "src/lib/assessments/view-model.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "fe22f2b32a592ac15439c8a3bacb7198c2bcaeb54a4880fa3a3623e3b5847e5d"
-    },
-    {
-      "path": "src/lib/autoresearch",
-      "kind": "directory",
-      "mode": "0755"
-    },
-    {
-      "path": "src/lib/autoresearch/artifact-store.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "e392c17a60517bde30a8b9a05ecff0c2fb1232880275181dab826dc9636910e9"
-    },
-    {
-      "path": "src/lib/autoresearch/codex-preparation.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "5267d625c5ffeae9e65ec6da6004524f6abdd3a22b2afab41c04e43c6f1ed920"
-    },
-    {
-      "path": "src/lib/autoresearch/ids.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "1af6851f33dd393c9078ddb72a8a60918f066a67208b215c17d21eb0ca7d43d5"
-    },
-    {
-      "path": "src/lib/autoresearch/job-store.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "12a720edc8fb622cc3b537a9e058ed3e091c33da62323270acecaaa5a065fa8e"
-    },
-    {
-      "path": "src/lib/autoresearch/local-service.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "fa3d98713e837b201bcd61732e79f4e17da831b15a506cd86a570f4f10730901"
-    },
-    {
-      "path": "src/lib/autoresearch/oci-process.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "68fda57e756d1e2a90f9eeed068e9833588718e92413dae5d9163d01fb83a434"
-    },
-    {
-      "path": "src/lib/autoresearch/paths.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "7db67fac68bad37dd5415c1ec5770a3a405763d6bdedc2792122256bd4f59b0f"
-    },
-    {
-      "path": "src/lib/autoresearch/preflight.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "a5e448e5ca6006afddf1e907af53210aa77a4688721131251d0a1a0b13f4e634"
-    },
-    {
-      "path": "src/lib/autoresearch/preparation-contract.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "b5cd7aef0d1d60fcb7a4853b397632b5bfe5db3cc0741712bfa28629073dcc4a"
-    },
-    {
-      "path": "src/lib/autoresearch/preparation-worker.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "fcfdac0abe78897812e18a5b8a4b9dbce27f9583123fc58c7499afcf750a85a4"
-    },
-    {
-      "path": "src/lib/autoresearch/process.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "38bcffaa709d7e1e46906c077a3feab5c85569d31e2b2be35516ea4acbbd3769"
-    },
-    {
-      "path": "src/lib/autoresearch/scheduler.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "6525baa06f0826182b1045ec2c613b1fa1363e1c77bb0823ca979e7269c54794"
-    },
-    {
-      "path": "src/lib/autoresearch/view-model.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "ac9c27479aa5414362eff54e35967b5eb76f916ff875cb53f39b2b7f22c00a67"
-    },
-    {
-      "path": "src/lib/companion",
-      "kind": "directory",
-      "mode": "0755"
-    },
-    {
-      "path": "src/lib/drafts",
-      "kind": "directory",
-      "mode": "0755"
-    },
-    {
-      "path": "src/lib/drafts/check.ts",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "5ab86fb3eb17bdfcc300dff6e4617e9987034eb583da24bf138a50eef6e8bd65"
-    },
-    {
-      "path": "src/lib/drafts/preview.ts",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "2933711e88c6ff58c760e6254d1953dbc0d6e3143744369605658b6ec0f8550a"
-    },
-    {
-      "path": "src/lib/knowledge",
-      "kind": "directory",
-      "mode": "0755"
-    },
-    {
-      "path": "src/lib/knowledge/graph.ts",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "1ea2e7d525e6cfc6925e474d9e0a242d5aff9b90b57a0eb26e73510cb12b2a29"
-    },
-    {
-      "path": "src/lib/knowledge/index.ts",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "b6af1ff11193798593d722d02afd24fbe868589119f94518e9fa5b6dfc9c6aab"
-    },
-    {
-      "path": "src/lib/knowledge/parser.ts",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "dc87f49d0b9379517f9b0c197884aca324f627ffe91fbe4c777f4cfc2b1797fa"
-    },
-    {
-      "path": "src/lib/knowledge/quarto.ts",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "6aa775b7e0ea747c9bb6df6a0c251c345fa98181279d5c7d707a00e423ec14b5"
-    },
-    {
-      "path": "src/lib/knowledge/resolve.ts",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "50f78b8f9dceb51c5a2d8d31e14bd1e7e7640e9fedf128eb95797d278d2ffd2f"
-    },
-    {
-      "path": "src/lib/knowledge/site.ts",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "da910f8b0dab476639bef431122f94847f64a1d7e9b56862622574b8582fc253"
-    },
-    {
-      "path": "src/lib/knowledge/tree-runtime.js",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "a5d700f835eaa7cdac239f199dc994ce44f749803641b16117db82230234cfc6"
-    },
-    {
-      "path": "src/lib/knowledge/tree.ts",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "0f944546a4dd48ab002b44d56a01bc7826763ff7e16e0b9e7672810f513dfbd1"
-    },
-    {
-      "path": "src/lib/knowledge/types.ts",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "da068d291450498e1bf2209fb5081ac11ca95b630b3b1c5fabd9cc2289fb6434"
-    },
-    {
-      "path": "src/lib/knowledge/validate.ts",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "de764607cbb652a8d4dc9249691c5961d1d51cd8a1071176b2d5e93be46d5cea"
-    },
-    {
-      "path": "src/lib/literature",
-      "kind": "directory",
-      "mode": "0755"
-    },
-    {
-      "path": "src/lib/literature/archive.ts",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "2ae6ddd30e47fa299c037b0ae37180480177d101417cbb38fa60237b7427a458"
-    },
-    {
-      "path": "src/lib/literature/arxiv.ts",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "46093823532dced22c92cacc30b53eebce1654f5a6a8c6d8dec7a78d54b1f275"
-    },
-    {
-      "path": "src/lib/literature/bibliography.ts",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "1de66c8f4df0bbe312c5877645109b614ab200fcf916d07ee191e6f0d1aaef81"
-    },
-    {
-      "path": "src/lib/literature/fetch.ts",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "942cf3117eb1f82749d8d28bd05c6753618060a5eccb2e4c48aa15e686f6b5bc"
-    },
-    {
-      "path": "src/lib/literature/figures.ts",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "e57a45f30ddfa461cd40c2ea4965bf779a655943e15e07136c284f3669ce1082"
-    },
-    {
-      "path": "src/lib/literature/index.ts",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "ff9e42e9859a711ac1cac2d32b1b3bb524e38c0f8efd523a5198f6ed5c529622"
-    },
-    {
-      "path": "src/lib/literature/indexes.ts",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "0abe6b965760ba2430cb0a9320b0f6353f92cb1a7ad9a12c61e39d269e9296d7"
-    },
-    {
-      "path": "src/lib/literature/zotero-materialize.ts",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "cea3f3fa2d89c4779d3ef0615bddc5f480da344290587afb3574162b5d098790"
-    },
-    {
-      "path": "src/lib/literature/zotero.ts",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "d9e4fdbc422e9b1603edc03d8ecb49f1ccf0c9e286dec54c25be1996997fe257"
-    },
-    {
-      "path": "src/lib/migration",
-      "kind": "directory",
-      "mode": "0755"
-    },
-    {
-      "path": "src/lib/migration/harness.ts",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "69d4e08d7cbba2e6ee19595c78418bb79726aa5a05df212cbfa92be0da153669"
-    },
-    {
-      "path": "src/lib/pages-showcase",
-      "kind": "directory",
-      "mode": "0755"
-    },
-    {
-      "path": "src/lib/pages-showcase/challenge-catalog.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "7a6e286faa11d98394121332de4498c7881a648580182ae61bfb6cc2768ee652"
-    },
-    {
-      "path": "src/lib/pages-showcase/evaluation-scenarios.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "8a39fd255015343daf4783bcf4739af81acf192a56d63ca2b327e8dc66cde7f4"
-    },
-    {
-      "path": "src/lib/problems",
-      "kind": "directory",
-      "mode": "0755"
-    },
-    {
-      "path": "src/lib/problems/autoqec-css-distance",
-      "kind": "directory",
-      "mode": "0755"
-    },
-    {
-      "path": "src/lib/problems/autoqec-css-distance/git-source.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "040bc5981892ebfb91fa6ba40340c15bcc6c3218b1260dfd56ed120507900eed"
-    },
-    {
-      "path": "src/lib/problems/autoqec-css-distance/importer.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "39057d90899f110ebf2c46781869343042ea8036494df9378f8702f9a5b5446d"
-    },
-    {
-      "path": "src/lib/problems/autoqec-css-distance/infrastructure.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "4106167257b7002d113f060fb4339c80a4e26964436f562fa5d19c5d1b8767a5"
-    },
-    {
-      "path": "src/lib/problems/autoqec-css-distance/reports.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "f4a3c56e11a06603e408a5d24d8f819291b8a0d128a90c785fa30153e9485258"
-    },
-    {
-      "path": "src/lib/problems/codex-launch.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "03c6a132c8d6f30551b00f0fff942692c496486141fcc2e3055c2bf0803aac23"
-    },
-    {
-      "path": "src/lib/problems/draft-contract.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "94762f025bf986c5b186ab63460289dfb30f5af59b67f54f766e2c7e7bdb9296"
-    },
-    {
-      "path": "src/lib/problems/draft-publisher.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "3fdf181582b5bd342f973e0ac8476d8945339e329ab4f1d390bc826010d07d47"
-    },
-    {
-      "path": "src/lib/problems/example-presentation.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "11659608592718d22a0649aaaf6ad90130f4cd00334c1bde4dc047a8f4e87b74"
-    },
-    {
-      "path": "src/lib/problems/example-research.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "ed5b9c42fe953d3771be952b6c980eb32fe1d738ec80051f7e005f5805844337"
-    },
-    {
-      "path": "src/lib/problems/example-valuation-presentation.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "dacae95d168d0247a42943a19079675c997dec9d26d366b51e57f83d5e237846"
-    },
-    {
-      "path": "src/lib/problems/example-valuation.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "4d3a00ac07f6eca899dc61378cb748ed895bed802604af43da53edba07bf94a9"
-    },
-    {
-      "path": "src/lib/problems/indexer.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "0e256e369dba37aaaac2892c6575e45ebad4de39cba2723d4f3d0092f61c3ae6"
-    },
-    {
-      "path": "src/lib/problems/presentation.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "8849cca1a04e4b128745b1edfe044dbf86e9098650afb71fe2c3eea85ec375cd"
-    },
-    {
-      "path": "src/lib/problems/qh127-research.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "b8b8c0c0ae23d98c2788b5aa65b8475c818e8f5fd8abc20d981774057370e058"
-    },
-    {
-      "path": "src/lib/problems/repository.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "adad64ed6cf34bebbf86a93bc7d7c01d2da194f5a857ed42f4384ef24a76f30b"
-    },
-    {
-      "path": "src/lib/problems/research-indexer.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "f7847dda94b4d22e4532d431c075eafbc138661fe79cbe530d1e796044368154"
-    },
-    {
-      "path": "src/lib/problems/research-presentation.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "b41f99cb6f6ef927d45f6cfb6281010c690ca8e7ed337b5a847c1d5297c9eef7"
-    },
-    {
-      "path": "src/lib/problems/research-repository.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "344e08fccec3e803ef0143621c6e0e19352d329de477bcf7226ecd4b35c1891d"
-    },
-    {
-      "path": "src/lib/problems/research-route-data.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "7ce786ddffa341de1d207faa493d2cfa0770a6e328ca7bba59d81cea13f8c0a6"
-    },
-    {
-      "path": "src/lib/problems/research-schema.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "03e377a7c2bb07cfa8918a15b8ced8aa0da33569003834e66b10dcec6e2008d0"
-    },
-    {
-      "path": "src/lib/problems/schema.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "eb9899f10b2b1c53bfcb4c6f8e3a5186f776b51dc3dc830282967e024defec6b"
-    },
-    {
-      "path": "src/lib/problems/view-state.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "0007cdcb51236cfd6b0d1a9a4278e255c04b344871f3d8ee52895b82d4b490b0"
-    },
-    {
-      "path": "src/lib/qec-portfolio",
-      "kind": "directory",
-      "mode": "0755"
-    },
-    {
-      "path": "src/lib/qec-portfolio/batch-runner.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "4cf733ab7af38e4909f0d5a88f1f8545b49fc189eff196bc28559fbb28a5f2a5"
-    },
-    {
-      "path": "src/lib/qec-portfolio/catalog.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "57b2eea07392c89ea14e0075475c87d142d720fd01710f3ab792493449463d01"
-    },
-    {
-      "path": "src/lib/qec-portfolio/openalex-retry.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "09144f2152c459941316c01397aafe742a6c945ff01d3672335f614e6dd1c4d0"
-    },
-    {
-      "path": "src/lib/qec-portfolio/reader.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "fbb505bc945b93eacff2bf0e2447f601bcacfcd85f0e643300156e5d205cdb3b"
-    },
-    {
-      "path": "src/lib/qec-portfolio/registration.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "a9a7b1909d1ac043511fc381e7d51deba8bed82631ec86dc4c18a86ebbf0b545"
-    },
-    {
-      "path": "src/lib/qec-portfolio/valuation-only-refresh.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "ab3542f0ddbe51b01ddcca1fd32176fcfa922302b3c1e2797ba00f50e742ab21"
-    },
-    {
-      "path": "src/lib/qec-portfolio/valuation-researcher.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "3292e8204ad3bd679cc4e35be5defebeda268a8a5c511183763510a306fb33eb"
-    },
-    {
-      "path": "src/lib/qec-portfolio/view-model.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "503472731324967af61f99f7162c4348f25f5531ea5d20ff636ccb96c10ad4b4"
-    },
-    {
-      "path": "src/lib/skills",
-      "kind": "directory",
-      "mode": "0755"
-    },
-    {
-      "path": "src/lib/skills/sci-brain.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "4986c0723080c27ba397d7f3c7c1e7daf24b793da73af184a7a892ed7dc28830"
-    },
-    {
-      "path": "src/lib/valuations",
-      "kind": "directory",
-      "mode": "0755"
-    },
-    {
-      "path": "src/lib/valuations/citations.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "ffb183990b85dd9f5747aa610782568d4968b2188fdce14bfebe5eec45563d8d"
-    },
-    {
-      "path": "src/lib/valuations/codex-research-adapter.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "d2ead5517b02aa7e6530ebd7fa07da4c50a675f32f63037d619b1c7c4508c9ce"
-    },
-    {
-      "path": "src/lib/valuations/contract.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "2ff897b3ba206e3d4e7d55dcb3d55258c4354f8851985d0003056f61e7075b32"
-    },
-    {
-      "path": "src/lib/valuations/formulas.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "d8a71c597e9e1f34f69c29bd67415328838eecc7d7f44c4812ecc7b8f085534a"
-    },
-    {
-      "path": "src/lib/valuations/freshness.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "ba2c628d3c388f610f31a46d7a5cb574c64bad0656efe3b6669502ed9e7a06ba"
-    },
-    {
-      "path": "src/lib/valuations/job-manager.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "d7026314128ef7ae8f8d0d78a544fce5a5fae9b58c9c439265ec5551cd75920c"
-    },
-    {
-      "path": "src/lib/valuations/openalex-client.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "59d07c675289e327b8066b9e6b1446b8b7eec81769bc86b3d7d64e3ea86039e7"
-    },
-    {
-      "path": "src/lib/valuations/privacy.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "ef5d503dc9ea69032ecaf3d128c853d2fad556f7723f6db706aebdb780dd5838"
-    },
-    {
-      "path": "src/lib/valuations/snapshot-store.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "dc02c5097c37fe1539bd5d6970c2720918947965dd64d3dbb7e2aec6e6310764"
-    },
-    {
-      "path": "src/lib/valuations/types.mjs",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "f57913db5aaf86e3962b5990651ac46d7f6b3a2d4c96e7c208bdf7a057de335c"
-    },
-    {
-      "path": "src/worker",
-      "kind": "directory",
-      "mode": "0755"
-    },
-    {
-      "path": "src/worker/index.ts",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "40f2458bd347247725084a7ae875d0be3b79e74d808a4c653f791e424ef9e97d"
-    },
-    {
-      "path": "tsconfig.json",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "8cdc5beb0b0b3f6bcffa7ba62f93319394c75ce87f79056e4d9709e5ee9561cb"
+      "digest": "5000936ff6b1127e0245c8afc469fa2156561c80d62f97d015726d1d10b66bfa"
     },
     {
       "path": "vite.config.ts",
       "kind": "file",
       "mode": "0644",
-      "digest": "a2703320a699910cc68a2a75b45696659d3030bddf1116110b80b0e6de06c160"
-    },
-    {
-      "path": "worker-configuration.d.ts",
-      "kind": "file",
-      "mode": "0644",
-      "digest": "9879196f58ebde475b04c09aa0323c916039ecf23a86698172c4b8e046f9c4cf"
+      "digest": "97fcdb39d5566aec9d68fe3b14133835b61e5929438660d77c26555e78accf7e"
     }
   ]
 }

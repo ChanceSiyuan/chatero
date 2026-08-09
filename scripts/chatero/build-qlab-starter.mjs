@@ -37,24 +37,12 @@ export const STARTER_COPY_PATHS = Object.freeze([
 ]);
 
 export const STARTER_ARCHITECTURE_COPY_PATHS = Object.freeze([
-  ".research-loop/tooling/scripts/build-problem-index.mjs",
-  ".research-loop/tooling/scripts/dev-problem-index.mjs",
-  ".research-loop/tooling/scripts/draft-check.ts",
-  ".research-loop/tooling/scripts/draft-preview.ts",
-  ".research-loop/tooling/scripts/ensure-sci-brain.mjs",
-  ".research-loop/tooling/scripts/knowledge.ts",
-  ".research-loop/tooling/scripts/literature.ts",
-  ".research-loop/tooling/scripts/local-assessment-service.mjs",
-  ".research-loop/tooling/scripts/local-autoresearch-service.mjs",
   ".research-loop/tooling/scripts/qlab.ts",
 ]);
 
 const GENERATED_REPLACEMENTS = new Set([
-  ".gitignore",
-  "AGENTS.md",
-  "CLAUDE.md",
-  "vite.config.ts",
-  ".research-loop",
+  ...STARTER_COPY_PATHS,
+  ...STARTER_ARCHITECTURE_COPY_PATHS,
 ]);
 
 const bytewiseCompare = (left, right) => Buffer.compare(Buffer.from(left, "utf8"), Buffer.from(right, "utf8"));
@@ -146,6 +134,7 @@ export function buildDeterministicZip(files) {
 
 async function gatherSourcePath(sourceRoot, allowedPath, records) {
   if (!safeRelativePath(allowedPath)) fail(`unsafe allowlisted path ${JSON.stringify(allowedPath)}`);
+  await assertNoSymlinkAncestor(sourceRoot, allowedPath);
   const target = resolve(sourceRoot, allowedPath);
   if (!isWithin(sourceRoot, target)) fail(`allowlisted path escapes source root: ${allowedPath}`);
   let metadata;
@@ -171,8 +160,25 @@ async function gatherSourcePath(sourceRoot, allowedPath, records) {
   }
 }
 
+async function assertNoSymlinkAncestor(sourceRoot, allowedPath) {
+  let parent = sourceRoot;
+  const segments = allowedPath.split("/");
+  for (const segment of segments.slice(0, -1)) {
+    parent = join(parent, segment);
+    let metadata;
+    try {
+      metadata = await lstat(parent);
+    }
+    catch {
+      fail(`required source path is missing: ${allowedPath}`);
+    }
+    if (metadata.isSymbolicLink()) fail(`source symlink ancestor is not allowed: ${allowedPath}`);
+  }
+}
+
 async function assertSourcePathExists(sourceRoot, allowedPath) {
   if (!safeRelativePath(allowedPath)) fail(`unsafe allowlisted path ${JSON.stringify(allowedPath)}`);
+  await assertNoSymlinkAncestor(sourceRoot, allowedPath);
   const target = resolve(sourceRoot, allowedPath);
   if (!isWithin(sourceRoot, target)) fail(`allowlisted path escapes source root: ${allowedPath}`);
   let metadata;
@@ -226,7 +232,7 @@ export async function buildStarter({ source, output = outputRoot } = {}) {
     if (GENERATED_REPLACEMENTS.has(path)) await assertSourcePathExists(canonicalSource, path);
     else await gatherSourcePath(canonicalSource, path, records);
   }
-  for (const path of STARTER_ARCHITECTURE_COPY_PATHS) await gatherSourcePath(canonicalSource, path, records);
+  for (const path of STARTER_ARCHITECTURE_COPY_PATHS) await assertSourcePathExists(canonicalSource, path);
   addGeneratedRecords(records);
   validatePathSet(records);
 

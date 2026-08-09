@@ -1,12 +1,18 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { runInNewContext } from "node:vm";
 import test from "node:test";
-import { buildDeterministicZip } from "../build-qlab-starter.mjs";
+import {
+  buildDeterministicZip,
+  buildStarter,
+  STARTER_ARCHITECTURE_COPY_PATHS,
+  STARTER_COPY_PATHS,
+} from "../build-qlab-starter.mjs";
 import { loadQLab } from "../lib/load-qlab.mjs";
 
 const root = fileURLToPath(new URL("../../../", import.meta.url));
@@ -47,8 +53,30 @@ async function loadStarterAsset() {
 
 function textPayloads(files) {
   return [...files.entries()]
-    .filter(([path]) => /\.(?:md|qmd|ts|tsx|mjs|js|json|ya?ml|css|html|txt)$/i.test(path))
-    .map(([path, data]) => ({ path, text: data.toString("utf8") }));
+    .flatMap(([path, data]) => {
+      try {
+        return [{ path, text: new TextDecoder("utf-8", { fatal: true }).decode(data) }];
+      } catch {
+        return [];
+      }
+    });
+}
+
+async function extractStarter(t) {
+  const directory = await mkdtemp(join(tmpdir(), "chatero-public-starter-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const result = spawnSync("unzip", ["-q", archivePath, "-d", directory], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  return directory;
+}
+
+function run(repository, command, args) {
+  return spawnSync(command, args, {
+    cwd: repository,
+    encoding: "utf8",
+    timeout: 30_000,
+    env: { ...process.env, NODE_PATH: "" },
+  });
 }
 
 test("starter ZIP writer is byte-stable and bytewise orders payload paths", () => {
@@ -60,6 +88,67 @@ test("starter ZIP writer is byte-stable and bytewise orders payload paths", () =
   const second = buildDeterministicZip([...files].reverse());
   assert.deepEqual(first, second);
   assert.deepEqual([...storedArchiveFiles(first).keys()], ["a.txt", "z.txt"]);
+});
+
+test("starter Knowledge index satisfies the trusted-index contract", async () => {
+  const { files } = await loadStarterAsset();
+  const index = files.get("knowledge/index.qmd").toString("utf8");
+  assert.match(index, /^description:\s*["'][^"']+["']$/m);
+  assert.match(index, /^## Reading map$/m);
+});
+
+test("extracted public starter is dependency-closed and builds its Knowledge and local site", async (t) => {
+  const repository = await extractStarter(t);
+  const packageJSON = JSON.parse(await readFile(join(repository, "package.json"), "utf8"));
+  assert.deepEqual(packageJSON.dependencies ?? {}, {});
+  assert.deepEqual(packageJSON.devDependencies ?? {}, {});
+  for (const script of Object.values(packageJSON.scripts)) {
+    for (const target of String(script).matchAll(/\.research-loop\/[A-Za-z0-9_./-]+\.(?:mjs|js)/g)) {
+      const targetPath = join(repository, target[0]);
+      const targetResult = spawnSync("test", ["-f", targetPath], { encoding: "utf8" });
+      assert.equal(targetResult.status, 0, `missing retained package-script target ${target[0]}`);
+    }
+  }
+  for (const invocation of [
+    ["npm", ["ci", "--ignore-scripts"]],
+    ["npm", ["run", "knowledge:check"]],
+    ["npm", ["run", "knowledge:build"]],
+    ["npm", ["run", "build:app"]],
+    ["npm", ["run", "build"]],
+  ]) {
+    const result = run(repository, invocation[0], invocation[1]);
+    assert.equal(result.status, 0, `${invocation.join(" ")}\n${result.stderr || result.stdout}`);
+  }
+  assert.equal(spawnSync("test", ["-f", join(repository, "public", "knowledge", "index.html")]).status, 0);
+  assert.equal(spawnSync("test", ["-f", join(repository, "dist", "index.html")]).status, 0);
+});
+
+test("starter builder rejects a symbolic-link ancestor of an explicit source path", async (t) => {
+  const source = await mkdtemp(join(tmpdir(), "chatero-starter-source-"));
+  const output = await mkdtemp(join(tmpdir(), "chatero-starter-output-"));
+  const external = await mkdtemp(join(tmpdir(), "chatero-starter-external-"));
+  t.after(() => rm(source, { recursive: true, force: true }));
+  t.after(() => rm(output, { recursive: true, force: true }));
+  t.after(() => rm(external, { recursive: true, force: true }));
+  const directories = new Set([".research-loop", "schemas", "skills", "src"]);
+  for (const path of STARTER_COPY_PATHS) {
+    const target = join(source, path);
+    if (directories.has(path)) await mkdir(target, { recursive: true });
+    else {
+      await mkdir(dirname(target), { recursive: true });
+      await writeFile(target, "public fixture\n");
+    }
+  }
+  for (const path of STARTER_ARCHITECTURE_COPY_PATHS) {
+    const target = join(external, path.replace(/^\.research-loop\/tooling\//, ""));
+    await mkdir(dirname(target), { recursive: true });
+    await writeFile(target, "export {};\n");
+  }
+  await symlink(external, join(source, ".research-loop", "tooling"));
+  await assert.rejects(
+    () => buildStarter({ source, output }),
+    /symlink ancestor/,
+  );
 });
 
 test("starter manifest digest covers the canonical manifest payload", async () => {
@@ -86,7 +175,7 @@ test("starter text has no fixed hosting identity, credentials, or personal data 
   for (const { path, text } of textPayloads(files)) {
     assert.doesNotMatch(text, /\.openai\/hosting\.json|appgprj_[a-z0-9]+|Reuse the opaque Sites project ID/i, path);
     assert.doesNotMatch(text, /(?:^|[^A-Za-z])(?:sk|ghp)_[A-Za-z0-9_-]{16,}|AKIA[0-9A-Z]{16}|-----BEGIN (?:RSA |EC )?PRIVATE KEY-----/, path);
-    assert.doesNotMatch(text, /\/Users\/[A-Za-z0-9_.-]+\//, path);
+    assert.doesNotMatch(text, /(?:^|[\s"'=:(])(?:\/Users\/|\/home\/|[A-Za-z]:[\\/])/, path);
   }
   assert.deepEqual(
     [...files.keys()].filter(path => /\.(?:qmd|pdf)$/i.test(path)).sort(),
