@@ -10,6 +10,7 @@ const qlabRoot = join(repositoryRoot, "chrome/content/zotero/xpcom/qlab");
 const QLAB_SCRIPTS = [
 	"tabGroups.js",
 	"qlabWorkspace.js",
+	"qlabStarterManifest.js",
 	"researchActions.js",
 	"settings.js",
 	"arrangement.js",

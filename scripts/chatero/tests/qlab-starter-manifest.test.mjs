@@ -1,0 +1,112 @@
+import assert from "node:assert/strict";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { promises as fs } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import path from "node:path";
+import test from "node:test";
+import { loadQLab } from "../lib/load-qlab.mjs";
+
+const DIGEST_A = "a".repeat(64);
+const DIGEST_B = "b".repeat(64);
+const DIGEST_C = "c".repeat(64);
+
+function validManifest(entries = [
+	{ path: "AGENTS.md", kind: "file", mode: "0644", digest: DIGEST_A },
+	{ path: "qlab", kind: "file", mode: "0755", digest: DIGEST_B },
+	{ path: "drafts/index.qmd", kind: "file", mode: "0644", digest: DIGEST_C },
+]) {
+	return { schemaVersion: 1, digest: DIGEST_A, entries };
+}
+
+test("starter manifest accepts only immutable, safe file and directory records", async () => {
+	const QLab = await loadQLab();
+	const manifest = QLab.validateQLabStarterManifest(validManifest([
+		{ path: "AGENTS.md", kind: "file", mode: "0644", digest: DIGEST_A },
+		{ path: "drafts", kind: "directory", mode: "0755" },
+	]));
+	assert.equal(manifest.schemaVersion, 1);
+	assert.equal(Object.isFrozen(manifest), true);
+	assert.equal(Object.isFrozen(manifest.entries), true);
+	assert.equal(Object.isFrozen(manifest.entries[0]), true);
+
+	assert.throws(() => QLab.validateQLabStarterManifest({ ...validManifest(), digest: DIGEST_A.toUpperCase() }), /digest/);
+	assert.throws(() => QLab.validateQLabStarterManifest(validManifest([
+		{ path: "AGENTS.md", kind: "file", mode: "0644", digest: DIGEST_A },
+		{ path: "agents.md", kind: "file", mode: "0644", digest: DIGEST_B },
+	])), /duplicate/);
+	assert.throws(() => QLab.validateQLabStarterManifest(validManifest([
+		{ path: "../escape", kind: "file", mode: "0644", digest: DIGEST_A },
+	])), /path/);
+	assert.throws(() => QLab.validateQLabStarterManifest(validManifest([
+		{ path: "drafts/-option.qmd", kind: "file", mode: "0644", digest: DIGEST_A },
+	])), /path/);
+	assert.throws(() => QLab.validateQLabStarterManifest(validManifest([
+		{ path: "drafts", kind: "symlink", mode: "0755" },
+	])), /kind/);
+	assert.throws(() => QLab.validateQLabStarterManifest(validManifest([
+		{ path: "AGENTS.md", kind: "file", mode: "0777", digest: DIGEST_A },
+	])), /mode/);
+});
+
+test("starter install plan separates creates, preserves, and conflicts from an inspection", async () => {
+	const QLab = await loadQLab();
+	const host = QLab.createNodeQLabPathHost(fs, path);
+	const root = await mkdtemp(join(tmpdir(), "chatero-qlab-"));
+	try {
+		await mkdir(join(root, "drafts"));
+		await writeFile(join(root, "drafts/index.qmd"), "# Existing draft\n");
+		const inspection = await QLab.inspectQLabRepository(root, host);
+		const plan = await QLab.planQLabStarterInstall({
+			root,
+			inspection,
+			manifest: validManifest(),
+			host,
+		});
+		assert.deepEqual(Array.from(plan.create, entry => entry.path), ["AGENTS.md", "qlab"]);
+		assert.deepEqual(Array.from(plan.preserve, entry => entry.path), ["drafts/index.qmd"]);
+		assert.deepEqual(Array.from(plan.conflicts), []);
+		assert.match(plan.digest, /^[a-f0-9]{64}$/);
+		assert.equal(Object.isFrozen(plan), true);
+		assert.equal(Object.isFrozen(plan.create), true);
+		assert.equal(Object.isFrozen(plan.create[0]), true);
+		assert.equal(await QLab.isQLabStarterPlanCurrent(plan, inspection), true);
+
+		await writeFile(join(root, "README.md"), "unrelated\n");
+		const staleInspection = await QLab.inspectQLabRepository(root, host);
+		assert.equal(await QLab.isQLabStarterPlanCurrent(plan, staleInspection), false);
+
+		const conflictPlan = await QLab.planQLabStarterInstall({
+			root,
+			inspection: staleInspection,
+			manifest: validManifest(),
+			host,
+		});
+		assert.deepEqual(Array.from(conflictPlan.conflicts, entry => entry.path), ["README.md"]);
+	}
+	finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("starter install plan does not create through a dangling nested symlink", async () => {
+	const QLab = await loadQLab();
+	const host = QLab.createNodeQLabPathHost(fs, path);
+	const root = await mkdtemp(join(tmpdir(), "chatero-qlab-"));
+	try {
+		await mkdir(join(root, "drafts"));
+		await symlink(join(root, "missing.qmd"), join(root, "drafts/index.qmd"));
+		const inspection = await QLab.inspectQLabRepository(root, host);
+		const plan = await QLab.planQLabStarterInstall({
+			root,
+			inspection,
+			manifest: validManifest(),
+			host,
+		});
+		assert.deepEqual(Array.from(plan.conflicts, entry => entry.path), ["drafts/index.qmd"]);
+		assert.equal(plan.conflicts[0].reason, "symlink-target");
+	}
+	finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});

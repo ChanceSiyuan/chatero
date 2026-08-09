@@ -164,6 +164,7 @@ const xpcomFilesLocal = [
 	// Chatero QLab (disableable; failures must not block core startup)
 	'qlab/tabGroups',
 	'qlab/qlabWorkspace',
+	'qlab/qlabStarterManifest',
 	'qlab/researchActions',
 	'qlab/settings',
 	'qlab/arrangement',

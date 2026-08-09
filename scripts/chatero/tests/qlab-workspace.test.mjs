@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -31,6 +31,65 @@ test("qlabRepositoryState classifies empty / partial / ready / incompatible", as
 		finally {
 			await rm(other, { recursive: true, force: true });
 		}
+	}
+	finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("repository inspection rejects wrong required types and top-level symlinks", async () => {
+	const QLab = await loadQLab();
+	const host = QLab.createNodeQLabPathHost(fs, path);
+	const root = await mkdtemp(join(tmpdir(), "chatero-qlab-"));
+	const target = await mkdtemp(join(tmpdir(), "chatero-qlab-target-"));
+	try {
+		await Promise.all(["knowledge", "drafts", "literature"].map(name => mkdir(join(root, name))));
+		await writeFile(join(root, "AGENTS.md"), "# agents\n");
+		await mkdir(join(root, "qlab"));
+		assert.equal(await QLab.qlabRepositoryState(root, host), "incompatible");
+
+		await rm(join(root, "qlab"), { recursive: true });
+		await writeFile(join(root, "qlab"), "#!/bin/sh\n");
+		assert.equal(await QLab.qlabRepositoryState(root, host), "ready");
+
+		await rm(join(root, "knowledge"), { recursive: true });
+		await symlink(target, join(root, "knowledge"));
+		assert.equal(await QLab.qlabRepositoryState(root, host), "incompatible");
+	}
+	finally {
+		await Promise.all([
+			rm(root, { recursive: true, force: true }),
+			rm(target, { recursive: true, force: true }),
+		]);
+	}
+});
+
+test("repository inspection preserves content-only trees and reports conflicts without writes", async () => {
+	const QLab = await loadQLab();
+	const host = QLab.createNodeQLabPathHost(fs, path);
+	const root = await mkdtemp(join(tmpdir(), "chatero-qlab-"));
+	try {
+		await Promise.all(["knowledge", "drafts", "literature"].map(name => mkdir(join(root, name))));
+		const inspection = await QLab.inspectQLabRepository(root, host);
+		assert.equal(inspection.state, "partial");
+		assert.deepEqual(Array.from(inspection.preserved).sort(), ["drafts", "knowledge", "literature"]);
+		assert.deepEqual(Array.from(inspection.conflicts), []);
+		assert.equal(Object.isFrozen(inspection), true);
+		assert.equal(Object.isFrozen(inspection.preserved), true);
+		assert.equal(Object.isFrozen(inspection.conflicts), true);
+
+		await rm(join(root, "knowledge"), { recursive: true });
+		await writeFile(join(root, "knowledge"), "not a content tree\n");
+		assert.equal(await QLab.qlabRepositoryState(root, host), "incompatible");
+		await rm(join(root, "knowledge"));
+		await mkdir(join(root, "knowledge"));
+
+		await writeFile(join(root, "README.md"), "keep me\n");
+		const before = await readFile(join(root, "README.md"), "utf8");
+		const conflictInspection = await QLab.inspectQLabRepository(root, host);
+		assert.equal(conflictInspection.state, "incompatible");
+		assert.deepEqual(Array.from(conflictInspection.conflicts), ["README.md"]);
+		assert.equal(await readFile(join(root, "README.md"), "utf8"), before);
 	}
 	finally {
 		await rm(root, { recursive: true, force: true });
