@@ -54,6 +54,7 @@ Zotero.QLab = Zotero.QLab || {};
 
 	Zotero.QLab.createQmdPreviewSurface = function (document, host, {
 		onLoadError = () => {},
+		interactionBridge = null,
 	} = {}) {
 		let quick = host && host.querySelector('[data-qlab-preview-quick]');
 		let browserHost = host && host.querySelector('[data-qlab-preview-browser-host]');
@@ -62,6 +63,8 @@ Zotero.QLab = Zotero.QLab || {};
 		let exactURL = '';
 		let quickHTML = '';
 		let disposed = false;
+		let detachQuickInteraction = null;
+		let detachWebsiteInteraction = null;
 
 		if (document && typeof document.createXULElement === 'function' && browserHost) {
 			browser = document.createXULElement('browser');
@@ -97,6 +100,14 @@ Zotero.QLab = Zotero.QLab || {};
 		}
 
 		if (browser) browser.addEventListener('error', onBrowserError);
+		if (interactionBridge) {
+			detachQuickInteraction = interactionBridge.attachQuickPreview
+				? interactionBridge.attachQuickPreview(quick)
+				: null;
+			detachWebsiteInteraction = browser && interactionBridge.attachWebsitePreview
+				? interactionBridge.attachWebsitePreview(browser)
+				: null;
+		}
 
 		return {
 			showQuick,
@@ -129,6 +140,10 @@ Zotero.QLab = Zotero.QLab || {};
 			dispose() {
 				if (disposed) return;
 				disposed = true;
+				detachQuickInteraction && detachQuickInteraction();
+				detachWebsiteInteraction && detachWebsiteInteraction();
+				detachQuickInteraction = null;
+				detachWebsiteInteraction = null;
 				if (browser) {
 					browser.removeEventListener('error', onBrowserError);
 					browser.removeAttribute('src');
@@ -703,11 +718,15 @@ Zotero.QLab = Zotero.QLab || {};
 		if (host._qlabQmdWorkspace) return host._qlabQmdWorkspace;
 		let document = host.ownerDocument;
 		let view = document.defaultView;
+		let outsideInteractionBridge = view && view.Zotero_Tabs
+			&& view.Zotero_Tabs._qlab
+			&& view.Zotero_Tabs._qlab.chatOutsideInteraction;
 		let ioHost = Zotero.QLab.QmdDraftIO.createGeckoHost();
 		let explorerHost = Zotero.QLab.createGeckoQmdExplorerHost();
 		let frame = host.querySelector('[data-qlab-qmd-monaco]');
 		let visualHost = host.querySelector('[data-qlab-visual-editor-root]');
 		let previewSurface = Zotero.QLab.createQmdPreviewSurface(document, host, {
+			interactionBridge: outsideInteractionBridge,
 			onLoadError(url) {
 				setStatus(`Preview error · unable to load ${url}`, 'error');
 			},
@@ -773,6 +792,10 @@ Zotero.QLab = Zotero.QLab || {};
 			},
 		};
 		let monacoAdapter = Zotero.QLab.createQmdMonacoFrameAdapter(frame);
+		let detachMonacoInteraction = outsideInteractionBridge
+			&& outsideInteractionBridge.attachMonaco
+			? outsideInteractionBridge.attachMonaco(monacoAdapter)
+			: null;
 		monacoBridge = Zotero.QLab.createQmdMonacoBridge({
 			adapter: monacoAdapter,
 			session: sessionProxy,
@@ -1489,6 +1512,8 @@ Zotero.QLab = Zotero.QLab || {};
 					complianceTimer = null;
 				}
 				controller.quiesce();
+				detachMonacoInteraction && detachMonacoInteraction();
+				detachMonacoInteraction = null;
 				previewSurface.dispose();
 				let finish = async () => {
 					let timeoutID = null;

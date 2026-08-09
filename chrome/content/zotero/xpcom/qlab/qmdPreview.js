@@ -16,11 +16,35 @@ Zotero.QLab = Zotero.QLab || {};
 (function () {
 	const PREVIEW_PORT_MIN = 43000;
 	const PREVIEW_PORT_SPAN = 1500;
+	const PREVIEW_POINTER_MESSAGE = 'QLab:QmdPreviewPointerActivity';
 	const QUARTO_MAC_CANDIDATES = [
 		'/usr/local/bin/quarto',
 		'/opt/homebrew/bin/quarto',
 		'/Applications/quarto/bin/quarto',
 	];
+
+	Zotero.QLab.QMD_PREVIEW_POINTER_MESSAGE = PREVIEW_POINTER_MESSAGE;
+
+	/**
+	 * A delayed frame script runs in each remote Quarto content global and
+	 * reports pointer activity without cancelling or stopping the page event.
+	 */
+	Zotero.QLab.qmdPreviewPointerFrameScript = function () {
+		let source = `(() => {
+			const marker = '__qlabQmdPreviewPointerBridge';
+			if (content[marker]) return;
+			content[marker] = true;
+			content.addEventListener('pointerdown', event => {
+				sendAsyncMessage('${PREVIEW_POINTER_MESSAGE}', {
+					pointerId: event.pointerId,
+					pointerType: event.pointerType,
+					button: event.button,
+					isPrimary: event.isPrimary,
+				});
+			}, true);
+		})();`;
+		return `data:application/javascript;charset=utf-8,${encodeURIComponent(source)}`;
+	};
 	
 	function hash(value) {
 		let total = 5381;

@@ -66,6 +66,7 @@
 		let qmdLoadResolve = null;
 		let qmdWorkerObjectURL = '';
 		let qmdResizeListener = null;
+		let qmdPointerActivity = null;
 
 		function emitQmdMonaco(event) {
 			for (let listener of qmdListeners) {
@@ -82,6 +83,17 @@
 			qmdListeners.add(listener);
 			return () => qmdListeners.delete(listener);
 		}
+
+		qmdPointerActivity = event => {
+			emitQmdMonaco({
+				type: 'pointer-activity',
+				pointerId: event.pointerId,
+				pointerType: event.pointerType,
+				button: event.button,
+				isPrimary: event.isPrimary,
+			});
+		};
+		document.addEventListener && document.addEventListener('pointerdown', qmdPointerActivity, true);
 
 		function qmdWorkerURL() {
 			return URL.createObjectURL(new Blob([`
@@ -310,6 +322,11 @@
 		function disposeQmdMonaco() {
 			if (qmdDisposed) return;
 			qmdDisposed = true;
+			if (qmdPointerActivity) {
+				document.removeEventListener
+					&& document.removeEventListener('pointerdown', qmdPointerActivity, true);
+				qmdPointerActivity = null;
+			}
 			if (qmdLoadResolve) {
 				qmdLoadResolve({ disposed: true });
 				qmdLoadResolve = null;

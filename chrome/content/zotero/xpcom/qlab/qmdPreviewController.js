@@ -14,6 +14,48 @@
 Zotero.QLab = Zotero.QLab || {};
 
 (function () {
+	/**
+	 * Parent half of the remote Website Preview pointer bridge. Rebinding on
+	 * browser load covers remoteness changes without inspecting the web page.
+	 */
+	Zotero.QLab.bindQmdPreviewPointerBridge = function (browser, onPointer) {
+		if (!browser || typeof onPointer !== 'function') return () => {};
+		let messageName = Zotero.QLab.QMD_PREVIEW_POINTER_MESSAGE
+			|| 'QLab:QmdPreviewPointerActivity';
+		let manager = null;
+		let listener = message => onPointer(message && message.data || {});
+		let disposed = false;
+		let bind = () => {
+			if (disposed) return;
+			let next = null;
+			try {
+				next = browser.messageManager || null;
+			}
+			catch (e) {}
+			if (!next || next === manager) return;
+			if (manager && typeof manager.removeMessageListener === 'function') {
+				manager.removeMessageListener(messageName, listener);
+			}
+			manager = next;
+			manager.addMessageListener(messageName, listener);
+			if (typeof manager.loadFrameScript === 'function'
+					&& typeof Zotero.QLab.qmdPreviewPointerFrameScript === 'function') {
+				manager.loadFrameScript(Zotero.QLab.qmdPreviewPointerFrameScript(), true);
+			}
+		};
+		browser.addEventListener && browser.addEventListener('load', bind, true);
+		bind();
+		return () => {
+			if (disposed) return;
+			disposed = true;
+			browser.removeEventListener && browser.removeEventListener('load', bind, true);
+			if (manager && typeof manager.removeMessageListener === 'function') {
+				manager.removeMessageListener(messageName, listener);
+			}
+			manager = null;
+		};
+	};
+
 	function clone(value) {
 		return JSON.parse(JSON.stringify(value));
 	}

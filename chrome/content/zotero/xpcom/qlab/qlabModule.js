@@ -3005,10 +3005,15 @@ Zotero.QLab = Zotero.QLab || {};
 					&& tabsAPI._onChatUtilityChanged(state);
 			},
 		});
+		let chatOutsideInteraction = new Zotero.QLab.ChatOutsideInteractionBridge({
+			host: chatUtility,
+			document: doc,
+		});
 		
 		return {
 			groups,
 			chatUtility,
+			chatOutsideInteraction,
 			
 			isEnabled() {
 				return !Zotero.QLab.Settings || Zotero.QLab.Settings.isEnabled();
@@ -3220,6 +3225,7 @@ Zotero.QLab = Zotero.QLab || {};
 			},
 
 			destroy() {
+				chatOutsideInteraction.dispose();
 				chatUtility.destroy();
 			},
 		};

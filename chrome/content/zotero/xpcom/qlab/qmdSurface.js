@@ -19,6 +19,26 @@
 Zotero.QLab = Zotero.QLab || {};
 
 (function () {
+	/**
+	 * Resolve direct main-window QMD interactions for the window-scoped Chat
+	 * outside-interaction bridge. Embedded iframe/browser surfaces register
+	 * their own adapters because their pointer events do not bubble here.
+	 */
+	Zotero.QLab.qmdSurfaceInteractionSource = function (target) {
+		if (!target || typeof target.closest !== 'function') return null;
+		if (target.closest('[data-qlab-visual-surface]')
+				|| target.closest('[data-qlab-visual-editor-root]')) {
+			return 'visual-edit';
+		}
+		if (target.closest('[data-qlab-preview-surface]')) return 'website-preview';
+		if (target.closest('[data-qlab-source-surface]')
+				|| target.closest('[data-qlab-primary-surface]')
+				|| target.closest('.qlab-qmd-workspace')) {
+			return 'qmd';
+		}
+		return null;
+	};
+
 	const MODES = ['visual', 'website', 'source'];
 	
 	Zotero.QLab.QMD_SURFACE_MODES = MODES;

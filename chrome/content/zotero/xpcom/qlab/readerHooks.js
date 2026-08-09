@@ -33,11 +33,19 @@ Zotero.QLab = Zotero.QLab || {};
 			+ 'color:var(--fill-secondary, #555);';
 	}
 
-	function makeIconButton(doc, { title, iconSrc, onClick, size = 32, iconSize = 22 }) {
+	function makeIconButton(doc, {
+		title,
+		iconSrc,
+		onClick,
+		size = 32,
+		iconSize = 22,
+		opensChat = false,
+	}) {
 		let button = doc.createElement('button');
 		button.type = 'button';
 		button.title = title;
 		button.setAttribute('aria-label', title);
+		if (opensChat) button.setAttribute('data-qlab-chat-opening', 'true');
 		button.style.cssText = iconButtonCSS(size);
 		let icon = doc.createElement('img');
 		icon.src = iconSrc;
@@ -48,7 +56,7 @@ Zotero.QLab = Zotero.QLab || {};
 		button.addEventListener('click', (event) => {
 			event.preventDefault();
 			event.stopPropagation();
-			void onClick();
+			void onClick(event);
 		});
 		return button;
 	}
@@ -86,12 +94,22 @@ Zotero.QLab = Zotero.QLab || {};
 		}
 	}
 
-	async function askSelection(event) {
+	async function askSelection(event, activationEvent = null) {
 		try {
+			let win = (event.reader && event.reader._window) || Zotero.getMainWindow();
+			let interactionBridge = win && win.Zotero_Tabs && win.Zotero_Tabs._qlab
+				&& win.Zotero_Tabs._qlab.chatOutsideInteraction;
+			if (interactionBridge && activationEvent) {
+				let openingToken = interactionBridge.interactionToken(activationEvent);
+				win.Zotero_Tabs._qlab.showUtility('qlabchat', null, {
+					invocation: 'reader-selection',
+					openingToken,
+				});
+				interactionBridge.notify('reader', activationEvent, { invocationToken: openingToken });
+			}
 			if (Zotero.QLab.ReaderContextStore) {
 				await Zotero.QLab.ReaderContextStore.captureFromEvent(event);
 			}
-			let win = (event.reader && event.reader._window) || Zotero.getMainWindow();
 			if (Zotero.QLab.addCurrentContextToChat) {
 				await Zotero.QLab.addCurrentContextToChat(win, {
 					params: event.params || {},
@@ -230,6 +248,23 @@ Zotero.QLab = Zotero.QLab || {};
 		}, true);
 	}
 
+	function interactionBridgeFor(event) {
+		let win = event && event.reader && event.reader._window;
+		if (!win) {
+			try {
+				win = Zotero.getMainWindow();
+			}
+			catch (e) {}
+		}
+		return win && win.Zotero_Tabs && win.Zotero_Tabs._qlab
+			&& win.Zotero_Tabs._qlab.chatOutsideInteraction;
+	}
+
+	function attachReaderDocument(event, doc) {
+		let bridge = interactionBridgeFor(event);
+		bridge && bridge.attachReaderDocument && bridge.attachReaderDocument(doc);
+	}
+
 	/**
 	 * Also bind ⌘L on the main Zotero window (QMD shell / library focus).
 	 */
@@ -253,11 +288,13 @@ Zotero.QLab = Zotero.QLab || {};
 		let toolbarHandler = (event) => {
 			try {
 				let { doc, append } = event;
+				attachReaderDocument(event, doc);
 				installShortcuts(doc.defaultView);
 				append(makeIconButton(doc, {
 					title: 'Add to Chat (⌘L)',
 					iconSrc: icons.chat,
-					onClick: () => askSelection(event),
+					opensChat: true,
+					onClick: activationEvent => askSelection(event, activationEvent),
 				}));
 				append(makeIconButton(doc, {
 					title: 'Arrange PDF | Chat (⌘I)',
@@ -283,6 +320,7 @@ Zotero.QLab = Zotero.QLab || {};
 		let selectionHandler = (event) => {
 			try {
 				let { doc, append } = event;
+				attachReaderDocument(event, doc);
 				installShortcuts(doc.defaultView);
 				void Zotero.QLab.ReaderContextStore
 					&& Zotero.QLab.ReaderContextStore.captureFromEvent(event).catch(() => {});
@@ -293,7 +331,8 @@ Zotero.QLab = Zotero.QLab || {};
 					iconSrc: icons.chat,
 					size: 28,
 					iconSize: 20,
-					onClick: () => askSelection(event),
+					opensChat: true,
+					onClick: activationEvent => askSelection(event, activationEvent),
 				}));
 				group.append(makeIconButton(doc, {
 					title: 'Insert selection into QMD as quote (⌘⇧K)',

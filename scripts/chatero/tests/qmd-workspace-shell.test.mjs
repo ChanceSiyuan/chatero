@@ -122,6 +122,52 @@ test("preview surface uses a native Zotero browser for exact loopback content", 
 	assert.equal(browser.removed, true);
 });
 
+test("preview surface registers and disposes Quick and remote Website interaction adapters", async () => {
+	const QLab = await loadQLab();
+	let quick = fakeElement("iframe");
+	let browserHost = fakeElement("host");
+	let empty = fakeElement("empty");
+	let browser;
+	let calls = [];
+	let document = {
+		createXULElement(name) {
+			browser = fakeElement(name);
+			return browser;
+		},
+	};
+	let host = {
+		querySelector(selector) {
+			return {
+				"[data-qlab-preview-quick]": quick,
+				"[data-qlab-preview-browser-host]": browserHost,
+				"[data-qlab-preview-empty]": empty,
+			}[selector] || null;
+		},
+	};
+	let interactionBridge = {
+		attachQuickPreview(frame) {
+			calls.push(["attach-quick", frame]);
+			return () => calls.push(["detach-quick", frame]);
+		},
+		attachWebsitePreview(frame) {
+			calls.push(["attach-website", frame]);
+			return () => calls.push(["detach-website", frame]);
+		},
+	};
+	let surface = QLab.createQmdPreviewSurface(document, host, { interactionBridge });
+	assert.deepEqual(calls, [
+		["attach-quick", quick],
+		["attach-website", browser],
+	]);
+	surface.dispose();
+	assert.deepEqual(calls, [
+		["attach-quick", quick],
+		["attach-website", browser],
+		["detach-quick", quick],
+		["detach-website", browser],
+	]);
+});
+
 test("preview presentation distinguishes quick, exact, and last-good content", async () => {
 	const QLab = await loadQLab();
 	assert.deepEqual(JSON.parse(JSON.stringify(QLab.qmdPreviewPresentation({

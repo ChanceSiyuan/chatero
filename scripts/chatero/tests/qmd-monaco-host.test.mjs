@@ -31,6 +31,15 @@ test("QMD Monaco host provides save and AI keyboard commands", async () => {
 	assert.match(html, /command:\s*'ai'/);
 });
 
+test("QMD Monaco host publishes pointer activity without consuming editor input", async () => {
+	let html = await readFile(hostPath, "utf8");
+	assert.match(html, /type:\s*['"]pointer-activity['"]/);
+	assert.match(html, /document\.addEventListener\(['"]pointerdown['"]/);
+	assert.match(html, /document\.removeEventListener\(['"]pointerdown['"]/);
+	assert.doesNotMatch(html, /qmdPointerActivity[\s\S]{0,300}preventDefault/);
+	assert.doesNotMatch(html, /qmdPointerActivity[\s\S]{0,300}stopPropagation/);
+});
+
 test("QMD Monaco host boots in an always-light editing surface", async () => {
 	let html = await readFile(hostPath, "utf8");
 	assert.match(html, /color-scheme:\s*light/);
