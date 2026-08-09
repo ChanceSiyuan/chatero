@@ -7480,12 +7480,7 @@ var ZoteroPane = new function () {
 			if (runtime && runtime.setActiveProviderId) {
 				runtime.setActiveProviderId(chosen.id);
 			}
-			for (let tab of Zotero_Tabs._tabs) {
-				if (tab.type === 'qlabchat') {
-					let container = document.getElementById(tab.id);
-					await Zotero.QLab.mountShellTab(container, tab.type);
-				}
-			}
+			await Zotero_Tabs._qlab?.refreshChatProvider?.(chosen.id);
 			Zotero.alert(null, 'QLab', `Agent provider: ${chosen.label || chosen.id}`);
 		}
 		catch (e) {

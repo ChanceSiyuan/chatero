@@ -396,8 +396,7 @@ Zotero.QLab = Zotero.QLab || {};
 	};
 	
 	/**
-	 * Make the QMD pane visible without collapsing the pane the user is reading
-	 * in. Mirrors ensureChatPaneVisible, but docks into the center pane.
+	 * Make the QMD pane visible without changing floating Chat presentation.
 	 */
 	Zotero.QLab.ensureQmdPaneVisible = async function (win, { itemID } = {}) {
 		let tabs = win && win.Zotero_Tabs;
@@ -408,11 +407,7 @@ Zotero.QLab = Zotero.QLab || {};
 		if (qmd && tabs.isTabVisible && tabs.isTabVisible(qmd.id)) {
 			return qmd.id;
 		}
-		let hasChat = tabs._tabs.some(t => t.type === 'qlabchat');
-		if (Number.isFinite(itemID) && hasChat && tabs.arrangeResearchDesk) {
-			await tabs.arrangeResearchDesk(itemID);
-		}
-		else if (Number.isFinite(itemID) && tabs.arrangePDFEditor) {
+		if (Number.isFinite(itemID) && tabs.arrangePDFEditor) {
 			await tabs.arrangePDFEditor(itemID);
 		}
 		else if (tabs._qlab && tabs._qlab.dockShellTab) {

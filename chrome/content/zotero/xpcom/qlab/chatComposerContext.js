@@ -300,8 +300,8 @@ Zotero.QLab = Zotero.QLab || {};
 	};
 	
 	/**
-	 * Make the Chat pane visible without collapsing whatever the user is already
-	 * reading or writing in. A visible Chat pane is left exactly as it is.
+	 * Reveal the window-owned Chat utility without rearranging the PDF/QMD panes.
+	 * The historical name remains for action-call compatibility.
 	 */
 	Zotero.QLab.ensureChatPaneVisible = async function (win, { itemID } = {}) {
 		let tabs = win && win.Zotero_Tabs;
@@ -312,19 +312,15 @@ Zotero.QLab = Zotero.QLab || {};
 		if (chat && tabs.isTabVisible && tabs.isTabVisible(chat.id)) {
 			return chat.id;
 		}
-		let hasQmd = tabs._tabs.some(t => t.type === 'qlabqmd');
-		if (Number.isFinite(itemID)) {
-			if (hasQmd && tabs.arrangeResearchDesk) {
-				await tabs.arrangeResearchDesk(itemID);
-			}
-			else if (tabs.arrangePDFChat) {
-				await tabs.arrangePDFChat(itemID);
-			}
+		if (tabs._qlab && tabs._qlab.showUtility) {
+			await tabs._qlab.showUtility(
+				'qlabchat',
+				Number.isFinite(itemID) ? { primaryItemID: itemID } : null,
+				{ invocation: 'chat-context', focusComposer: false }
+			);
+			chat = tabs._tabs.find(t => t.type === 'qlabchat' || t.id === 'qlabchat');
+			return chat ? chat.id : 'qlabchat';
 		}
-		else if (tabs._qlab && tabs._qlab.dockShellTab) {
-			return tabs._qlab.dockShellTab('qlabchat', 'right', {});
-		}
-		chat = tabs._tabs.find(t => t.type === 'qlabchat' || t.id === 'qlabchat');
 		return chat ? chat.id : null;
 	};
 	
@@ -344,11 +340,14 @@ Zotero.QLab = Zotero.QLab || {};
 		}
 		let visible = windowRef.Zotero_Tabs.isTabVisible
 			&& windowRef.Zotero_Tabs.isTabVisible(chat.id);
-		if (!visible && options.select !== false) {
-			windowRef.Zotero_Tabs.select(chat.id);
+		if (!visible && options.select !== false
+				&& windowRef.Zotero_Tabs._qlab?.showUtility) {
+			void windowRef.Zotero_Tabs._qlab.showUtility('qlabchat', null, {
+				invocation: 'composer-focus',
+				focusComposer: options.focus === true,
+			});
 		}
-		let container = windowRef.document.getElementById('qlab-chat-utility-content')
-			|| windowRef.document.getElementById(chat.id);
+		let container = windowRef.document.getElementById('qlab-chat-utility-content');
 		let host = container && container.querySelector('.qlab-shell-host');
 		if (host) {
 			Zotero.QLab.refreshComposerTags(host);

@@ -3039,6 +3039,13 @@ Zotero.QLab = Zotero.QLab || {};
 						}
 					}
 					if (kind === 'qlabchat') {
+						if (!groups.tab(existing.id)) {
+							groups.openTab({
+								kind,
+								id: existing.id,
+								payload: payload || null,
+							});
+						}
 						void chatUtility.ensureMounted();
 						return existing.id;
 					}
@@ -3080,6 +3087,9 @@ Zotero.QLab = Zotero.QLab || {};
 				});
 				shellContainer = container;
 				if (kind === 'qlabchat') {
+					if (!groups.tab(id)) {
+						groups.openTab({ kind, id, payload: payload || null });
+					}
 					void chatUtility.ensureMounted();
 				}
 				else {
@@ -3200,6 +3210,23 @@ Zotero.QLab = Zotero.QLab || {};
 
 			setChatActivityStatus(status) {
 				return chatUtility.setActivityStatus(status);
+			},
+
+			async refreshChatProvider(providerID) {
+				await chatUtility.ensureMounted();
+				let content = doc && doc.getElementById('qlab-chat-utility-content');
+				let host = content && content.querySelector('.qlab-shell-host');
+				if (!host) {
+					return null;
+				}
+				let provider = host.querySelector('[data-qlab-provider]');
+				if (provider && providerID) {
+					provider.value = providerID;
+				}
+				if (Zotero.QLab.refreshChatProviderAvailability) {
+					await Zotero.QLab.refreshChatProviderAvailability(host);
+				}
+				return host;
 			},
 			
 			async arrangePDFChat(itemID, title) {
