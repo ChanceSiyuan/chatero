@@ -1,10 +1,10 @@
 /*
 	***** BEGIN LICENSE BLOCK *****
-	
+
 	Copyright © 2026 Chance Siyuan / Chatero contributors
-	
+
 	This file is part of Chatero (a Zotero fork).
-	
+
 	***** END LICENSE BLOCK *****
 */
 
@@ -86,7 +86,8 @@ Zotero.QLab = Zotero.QLab || {};
 	function statKind(stat) {
 		if (stat && typeof stat.isFile === 'function' && stat.isFile()) return 'file';
 		if (stat && typeof stat.isDirectory === 'function' && stat.isDirectory()) return 'directory';
-		return stat && (stat.type === 'file' || stat.type === 'directory') ? stat.type : '';
+		if (stat && (stat.type === 'file' || stat.type === 'regular')) return 'file';
+		return stat && stat.type === 'directory' ? 'directory' : '';
 	}
 
 	async function pathStatus(path, host) {
@@ -135,7 +136,7 @@ Zotero.QLab = Zotero.QLab || {};
 		if (typeof raw.digest !== 'string' || !SHA256.test(raw.digest)) fail('digest must be a lowercase SHA-256');
 		if (!Array.isArray(raw.entries)) fail('entries must be an array');
 		let paths = new Set();
-		let files = new Set();
+		let pathKinds = new Map();
 		let entries = raw.entries.map((rawEntry, index) => {
 			if (!rawEntry || typeof rawEntry !== 'object' || Array.isArray(rawEntry)) fail(`entry ${index} must be an object`);
 			let path = String(rawEntry.path || '');
@@ -147,6 +148,7 @@ Zotero.QLab = Zotero.QLab || {};
 			if (typeof rawEntry.mode !== 'string' || !MODES.has(rawEntry.mode)) fail(`entry ${index} has an invalid mode`);
 			if (rawEntry.kind === 'file' && (typeof rawEntry.digest !== 'string' || !SHA256.test(rawEntry.digest))) fail(`entry ${index} file digest must be a lowercase SHA-256`);
 			if (rawEntry.kind === 'directory' && rawEntry.digest !== undefined) fail(`entry ${index} directory must not have a digest`);
+			pathKinds.set(folded, rawEntry.kind);
 			let record = { path, kind: rawEntry.kind, mode: rawEntry.mode };
 			if (rawEntry.kind === 'file') record.digest = rawEntry.digest;
 			return record;
@@ -155,10 +157,9 @@ Zotero.QLab = Zotero.QLab || {};
 			let ancestors = entry.path.split('/');
 			ancestors.pop();
 			while (ancestors.length) {
-				if (files.has(ancestors.join('/').toLowerCase())) fail(`file target is a parent of ${entry.path}`);
+				if (pathKinds.get(ancestors.join('/').toLowerCase()) === 'file') fail(`file target is a parent of ${entry.path}`);
 				ancestors.pop();
 			}
-			if (entry.kind === 'file') files.add(entry.path.toLowerCase());
 		}
 		entries.sort((a, b) => a.path.localeCompare(b.path));
 		return freezeRecord({ schemaVersion: SCHEMA_VERSION, digest: raw.digest, entries: Object.freeze(entries.map(freezeRecord)) });

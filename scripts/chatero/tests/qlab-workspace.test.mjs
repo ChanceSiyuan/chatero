@@ -96,6 +96,26 @@ test("repository inspection preserves content-only trees and reports conflicts w
 	}
 });
 
+test("starter marker does not make an unknown root entry resumable", async () => {
+	const QLab = await loadQLab();
+	const host = QLab.createNodeQLabPathHost(fs, path);
+	const root = await mkdtemp(join(tmpdir(), "chatero-qlab-"));
+	try {
+		await mkdir(join(root, ".research-loop"));
+		await writeFile(join(root, ".research-loop/starter.json"), "{}\n");
+		await writeFile(join(root, "README.md"), "user content\n");
+		const inspection = await QLab.inspectQLabRepository(root, host);
+		assert.equal(inspection.state, "incompatible");
+		assert.deepEqual(Array.from(inspection.conflicts), ["README.md"]);
+
+		await rm(join(root, "README.md"));
+		assert.equal(await QLab.qlabRepositoryState(root, host), "partial");
+	}
+	finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
 test("agent writable paths reject knowledge and traversal", async () => {
 	const QLab = await loadQLab();
 	assert.equal(QLab.isAgentWritableRelativePath("drafts/a.qmd"), true);

@@ -47,8 +47,11 @@ Zotero.QLab = Zotero.QLab || {};
 		if (stat && typeof stat.isDirectory === 'function' && stat.isDirectory()) {
 			return 'directory';
 		}
-		if (stat && (stat.type === 'file' || stat.type === 'directory')) {
-			return stat.type;
+		if (stat && (stat.type === 'file' || stat.type === 'regular')) {
+			return 'file';
+		}
+		if (stat && stat.type === 'directory') {
+			return 'directory';
 		}
 		return '';
 	}
@@ -99,6 +102,27 @@ Zotero.QLab = Zotero.QLab || {};
 		return preserved.sort();
 	}
 
+	async function hasStarterMarker(root, host) {
+		let marker = host.join(root, QLAB_STARTER_MARKER);
+		return (await host.exists(marker))
+			&& !(await pathIsSymlink(marker, host))
+			&& (await pathKind(marker, host)) === 'file';
+	}
+
+	async function isRecognizedPartialEntry(entryPath, root, host) {
+		let entry = host.filename(entryPath);
+		let expectedKind = REQUIRED_ENTRY_KINDS[entry];
+		if (expectedKind
+			&& !(await pathIsSymlink(entryPath, host))
+			&& (await pathKind(entryPath, host)) === expectedKind) {
+			return true;
+		}
+		return entry === '.research-loop'
+			&& !(await pathIsSymlink(entryPath, host))
+			&& (await pathKind(entryPath, host)) === 'directory'
+			&& await hasStarterMarker(root, host);
+	}
+
 	async function repositoryConflicts(root, host) {
 		let conflicts = [];
 		for (let entryPath of await rootEntries(root, host)) {
@@ -106,20 +130,7 @@ Zotero.QLab = Zotero.QLab || {};
 			if (IGNORABLE_EMPTY.has(entry)) {
 				continue;
 			}
-			let expectedKind = REQUIRED_ENTRY_KINDS[entry];
-			if (expectedKind
-				&& !(await pathIsSymlink(entryPath, host))
-				&& (await pathKind(entryPath, host)) === expectedKind) {
-				continue;
-			}
-			if (SAFE_PARTIAL_TREES.has(entry)
-				&& !(await pathIsSymlink(entryPath, host))
-				&& (await pathKind(entryPath, host)) === 'directory') {
-				continue;
-			}
-			if (entry === '.research-loop'
-				&& !(await pathIsSymlink(entryPath, host))
-				&& (await pathKind(entryPath, host)) === 'directory') {
+			if (await isRecognizedPartialEntry(entryPath, root, host)) {
 				continue;
 			}
 			conflicts.push(entry);
@@ -184,24 +195,23 @@ Zotero.QLab = Zotero.QLab || {};
 		if (await Promise.all(entryPaths.map(entry => pathIsSymlink(entry, host))).then(checks => checks.some(Boolean))) {
 			return 'incompatible';
 		}
-		if (await host.exists(host.join(root, QLAB_STARTER_MARKER))) {
-			return 'partial';
-		}
 		let entries = entryPaths
 			.map(entry => host.filename(entry))
 			.filter(entry => !IGNORABLE_EMPTY.has(entry));
 		if (!entries.length) {
 			return 'empty';
 		}
-		if (!entries.every(entry => SAFE_PARTIAL_TREES.has(entry))) {
+		let recognized = await Promise.all(entryPaths.map(async entry => (
+			IGNORABLE_EMPTY.has(host.filename(entry))
+				|| await isRecognizedPartialEntry(entry, root, host)
+		)));
+		if (!recognized.every(Boolean)) {
 			return 'incompatible';
 		}
-		let contentTrees = await Promise.all(entries.map(async entry => {
-			let path = host.join(root, entry);
-			return !(await pathIsSymlink(path, host))
-				&& (await pathKind(path, host)) === 'directory';
-		}));
-		return contentTrees.every(Boolean) ? 'partial' : 'incompatible';
+		if (await hasStarterMarker(root, host)) {
+			return 'partial';
+		}
+		return entries.every(entry => SAFE_PARTIAL_TREES.has(entry)) ? 'partial' : 'incompatible';
 	};
 
 	Zotero.QLab.inspectQLabRepository = async function (root, host) {

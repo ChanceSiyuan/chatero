@@ -36,6 +36,10 @@ test("starter manifest accepts only immutable, safe file and directory records",
 		{ path: "agents.md", kind: "file", mode: "0644", digest: DIGEST_B },
 	])), /duplicate/);
 	assert.throws(() => QLab.validateQLabStarterManifest(validManifest([
+		{ path: "drafts/file.qmd", kind: "file", mode: "0644", digest: DIGEST_A },
+		{ path: "drafts", kind: "file", mode: "0644", digest: DIGEST_B },
+	])), /file target is a parent/);
+	assert.throws(() => QLab.validateQLabStarterManifest(validManifest([
 		{ path: "../escape", kind: "file", mode: "0644", digest: DIGEST_A },
 	])), /path/);
 	assert.throws(() => QLab.validateQLabStarterManifest(validManifest([
@@ -47,6 +51,56 @@ test("starter manifest accepts only immutable, safe file and directory records",
 	assert.throws(() => QLab.validateQLabStarterManifest(validManifest([
 		{ path: "AGENTS.md", kind: "file", mode: "0777", digest: DIGEST_A },
 	])), /mode/);
+});
+
+test("Gecko regular stats classify ready repositories and preserve starter files", async () => {
+	const QLab = await loadQLab();
+	const nodeHost = QLab.createNodeQLabPathHost(fs, path);
+	const host = {
+		...nodeHost,
+		stat: async target => {
+			const stat = await nodeHost.stat(target);
+			return {
+				type: stat.isDirectory() ? "directory" : "regular",
+				size: stat.size,
+				lastModified: stat.mtimeMs,
+			};
+		},
+	};
+	const root = await mkdtemp(join(tmpdir(), "chatero-qlab-"));
+	try {
+		await Promise.all(["knowledge", "drafts", "literature"].map(name => mkdir(join(root, name))));
+		await writeFile(join(root, "AGENTS.md"), "# Agents\n");
+		await writeFile(join(root, "qlab"), "#!/bin/sh\n");
+		await writeFile(join(root, "drafts/index.qmd"), "# Draft\n");
+		const inspection = await QLab.inspectQLabRepository(root, host);
+		assert.equal(inspection.state, "ready");
+		const plan = await QLab.planQLabStarterInstall({ root, inspection, manifest: validManifest(), host });
+		assert.deepEqual(Array.from(plan.preserve, entry => entry.path), ["AGENTS.md", "drafts/index.qmd", "qlab"]);
+		assert.deepEqual(Array.from(plan.conflicts), []);
+	}
+	finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("incompatible marker inspection cannot plan starter writes", async () => {
+	const QLab = await loadQLab();
+	const host = QLab.createNodeQLabPathHost(fs, path);
+	const root = await mkdtemp(join(tmpdir(), "chatero-qlab-"));
+	try {
+		await mkdir(join(root, ".research-loop"));
+		await writeFile(join(root, ".research-loop/starter.json"), "{}\n");
+		await writeFile(join(root, "README.md"), "user content\n");
+		const inspection = await QLab.inspectQLabRepository(root, host);
+		const plan = await QLab.planQLabStarterInstall({ root, inspection, manifest: validManifest(), host });
+		assert.equal(inspection.state, "incompatible");
+		assert.deepEqual(Array.from(plan.create), []);
+		assert.deepEqual(Array.from(plan.conflicts, entry => entry.path), ["README.md"]);
+	}
+	finally {
+		await rm(root, { recursive: true, force: true });
+	}
 });
 
 test("starter install plan separates creates, preserves, and conflicts from an inspection", async () => {
