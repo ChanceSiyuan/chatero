@@ -175,6 +175,7 @@ const xpcomFilesLocal = [
 	'qlab/agentRuntime',
 	'qlab/codexDiscovery',
 	'qlab/processRunner',
+	'qlab/mainSiteService',
 	'qlab/qmdCompliance',
 	'qlab/codexExecProvider',
 	'qlab/agentProviders',

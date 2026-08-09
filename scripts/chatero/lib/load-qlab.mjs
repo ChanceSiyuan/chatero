@@ -21,6 +21,7 @@ const QLAB_SCRIPTS = [
 	"agentRuntime.js",
 	"codexDiscovery.js",
 	"processRunner.js",
+	"mainSiteService.js",
 	"qmdCompliance.js",
 	"codexExecProvider.js",
 	"agentProviders.js",

@@ -31,16 +31,66 @@ Zotero.QLab = Zotero.QLab || {};
 			throw new Error('ProcessRunner requires spawn()');
 		}
 		return {
-			async *run(command, args, options = {}) {
-				for await (let event of impl.spawn({
-					command,
-					args: Array.isArray(args) ? args : [],
-					cwd: options.cwd,
-					env: options.env,
-					registerKill: options.registerKill,
-				})) {
-					yield event;
+			run(command, args, options = {}) {
+				let kill = null;
+				let killCalled = false;
+				let cancelRequested = false;
+				let exitSettled = false;
+				let resolveExit;
+				let exited = new Promise(resolve => { resolveExit = resolve; });
+
+				function settleExit(exitCode) {
+					if (exitSettled) return;
+					exitSettled = true;
+					resolveExit(typeof exitCode === 'number' ? exitCode : null);
 				}
+
+				function cancel() {
+					cancelRequested = true;
+					if (!kill || killCalled) return;
+					killCalled = true;
+					kill();
+				}
+
+				function registerKill(fn) {
+					if (typeof fn !== 'function') return;
+					kill = fn;
+					if (typeof options.registerKill === 'function') {
+						options.registerKill(cancel);
+					}
+					if (cancelRequested) cancel();
+				}
+
+				async function* events() {
+					for await (let event of impl.spawn({
+						command,
+						args: Array.isArray(args) ? args : [],
+						cwd: options.cwd,
+						env: options.env,
+						registerKill,
+					})) {
+						if (event && event.type === 'exit') settleExit(event.exitCode);
+						yield event;
+					}
+				}
+
+				return {
+					[Symbol.asyncIterator]: events,
+					cancel,
+					waitForExit(timeoutMs = 10000) {
+						let timeout = Number(timeoutMs);
+						if (!Number.isFinite(timeout) || timeout <= 0) return exited;
+						let timer;
+						return Promise.race([
+							exited,
+							new Promise((_resolve, reject) => {
+								timer = setTimeout(() => reject(
+									new Error(`Process exit timed out after ${timeout}ms`)
+								), timeout);
+							}),
+						]).finally(() => clearTimeout(timer));
+					},
+				};
 			},
 		};
 	};
@@ -77,43 +127,60 @@ Zotero.QLab = Zotero.QLab || {};
 						catch (e) {}
 					});
 				}
-				let buffer = '';
-				while (true) {
-					let chunk = await proc.stdout.readString();
-					if (!chunk) {
-						break;
-					}
-					buffer += chunk;
-					let parts = buffer.split(/\r?\n/);
-					buffer = parts.pop() || '';
-					for (let line of parts) {
-						yield { type: 'stdout', data: line };
-					}
+				let queue = [];
+				let waiters = [];
+				let closed = false;
+				function push(event) {
+					if (waiters.length) waiters.shift()(event);
+					else queue.push(event);
 				}
-				if (buffer) {
-					yield { type: 'stdout', data: buffer };
+				function next() {
+					if (queue.length) return Promise.resolve(queue.shift());
+					if (closed) return Promise.resolve(null);
+					return new Promise(resolve => waiters.push(resolve));
 				}
-				let stderr = '';
-				try {
-					while (true) {
-						let chunk = await proc.stderr.readString();
-						if (!chunk) {
-							break;
+				async function pump(stream, type) {
+					let buffer = '';
+					try {
+						while (true) {
+							let chunk = await stream.readString();
+							if (!chunk) break;
+							buffer += chunk;
+							let parts = buffer.split(/\r?\n/);
+							buffer = parts.pop() || '';
+							for (let line of parts) push({ type, data: line });
 						}
-						stderr += chunk;
+						if (buffer) push({ type, data: buffer });
+					}
+					catch (error) {
+						if (type === 'stdout') throw error;
 					}
 				}
-				catch (e) {}
-				if (stderr.trim()) {
-					for (let line of stderr.split(/\r?\n/).filter(Boolean)) {
-						yield { type: 'stderr', data: line };
+				(async () => {
+					try {
+						let waiting = proc.wait();
+						await Promise.all([pump(proc.stdout, 'stdout'), pump(proc.stderr, 'stderr')]);
+						let result = await waiting;
+						push({
+							type: 'exit',
+							exitCode: typeof result.exitCode === 'number' ? result.exitCode : null,
+						});
 					}
+					catch (error) {
+						push({ type: 'stderr', data: error.message || String(error) });
+						push({ type: 'exit', exitCode: 1 });
+					}
+					finally {
+						closed = true;
+						while (waiters.length) waiters.shift()(null);
+					}
+				})();
+				while (true) {
+					let event = await next();
+					if (!event) break;
+					yield event;
+					if (event.type === 'exit') break;
 				}
-				let result = await proc.wait();
-				yield {
-					type: 'exit',
-					exitCode: typeof result.exitCode === 'number' ? result.exitCode : null,
-				};
 			},
 		});
 	};
@@ -164,6 +231,19 @@ Zotero.QLab = Zotero.QLab || {};
 				}
 				
 				let stdoutBuf = '';
+				let stderrBuf = '';
+				let finished = false;
+				function finish(code) {
+					if (finished) return;
+					finished = true;
+					if (stdoutBuf) push({ type: 'stdout', data: stdoutBuf });
+					if (stderrBuf) push({ type: 'stderr', data: stderrBuf });
+					stdoutBuf = '';
+					stderrBuf = '';
+					push({ type: 'exit', exitCode: code });
+					closed = true;
+					while (waiters.length) waiters.shift()(null);
+				}
 				proc.stdout.setEncoding('utf8');
 				proc.stdout.on('data', (chunk) => {
 					stdoutBuf += chunk;
@@ -175,28 +255,17 @@ Zotero.QLab = Zotero.QLab || {};
 				});
 				proc.stderr.setEncoding('utf8');
 				proc.stderr.on('data', (chunk) => {
-					for (let line of String(chunk).split(/\r?\n/).filter(Boolean)) {
-						push({ type: 'stderr', data: line });
-					}
+					stderrBuf += chunk;
+					let parts = stderrBuf.split(/\r?\n/);
+					stderrBuf = parts.pop() || '';
+					for (let line of parts) push({ type: 'stderr', data: line });
 				});
 				proc.on('error', (error) => {
 					push({ type: 'stderr', data: error.message || String(error) });
-					push({ type: 'exit', exitCode: 1 });
-					closed = true;
-					while (waiters.length) {
-						waiters.shift()(null);
-					}
+					finish(1);
 				});
 				proc.on('close', (code) => {
-					if (stdoutBuf) {
-						push({ type: 'stdout', data: stdoutBuf });
-						stdoutBuf = '';
-					}
-					push({ type: 'exit', exitCode: code });
-					closed = true;
-					while (waiters.length) {
-						waiters.shift()(null);
-					}
+					finish(code);
 				});
 				
 				while (true) {
