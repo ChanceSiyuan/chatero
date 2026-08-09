@@ -312,11 +312,15 @@ test("Reader Command-K attaches the exact PDF selection once and focuses floatin
 	QLab.ChatComposerContext.clear();
 	const calls = [];
 	const prompt = { focusCount: 0, focus() { this.focusCount++; } };
+	const runningTurn = { cancelCount: 0, cancel() { this.cancelCount++; } };
+	const send = { clickCount: 0, click() { this.clickCount++; } };
 	const chatHost = {
+		_qlabTurnHandle: runningTurn,
 		ownerDocument: { createElement: () => ({ firstElementChild: null }) },
 		querySelector(selector) {
 			if (selector === "[data-qlab-context-tags]") return null;
 			if (selector === "[data-qlab-prompt]") return prompt;
+			if (selector === "[data-qlab-send]") return send;
 			return null;
 		},
 	};
@@ -342,6 +346,8 @@ test("Reader Command-K attaches the exact PDF selection once and focuses floatin
 			ensureShellTab(kind, payload) { calls.push(["ensure", kind, payload]); },
 		},
 		arrangePDFChat() { calls.push(["arrange"]); },
+		arrangePDFEditor() { calls.push(["arrange"]); },
+		arrangeResearchDesk() { calls.push(["arrange"]); },
 	};
 	mainWindow = {
 		Zotero_Tabs: tabs,
@@ -354,6 +360,12 @@ test("Reader Command-K attaches the exact PDF selection once and focuses floatin
 	const readerWindow = new LifecycleTarget("reader-shortcut-window");
 	const doc = lifecycleReaderDocument("reader-shortcut-document");
 	doc.defaultView = readerWindow;
+	QLab.ensureQmdPaneVisible = async (windowRef, options) => {
+		calls.push(["quote-visible", windowRef, options]);
+	};
+	QLab.insertIntoQmd = (windowRef, snippet, options) => {
+		calls.push(["quote", windowRef, snippet, options]);
+	};
 	QLab.registerReaderHooks();
 	registered.get("renderTextSelectionPopup")({
 		doc,
@@ -362,12 +374,12 @@ test("Reader Command-K attaches the exact PDF selection once and focuses floatin
 		append() {},
 	});
 	await new Promise(resolve => setTimeout(resolve, 0));
-	function commandK() {
+	function shortcut(key, { shiftKey = false } = {}) {
 		const event = {
-			key: "k",
+			key,
 			metaKey: true,
 			ctrlKey: false,
-			shiftKey: false,
+			shiftKey,
 			altKey: false,
 			isComposing: false,
 			target: {},
@@ -379,9 +391,9 @@ test("Reader Command-K attaches the exact PDF selection once and focuses floatin
 		readerWindow.dispatch("keydown", event);
 		return event;
 	}
-	const first = commandK();
+	const first = shortcut("k");
 	await new Promise(resolve => setTimeout(resolve, 0));
-	const second = commandK();
+	const second = shortcut("k");
 	await new Promise(resolve => setTimeout(resolve, 0));
 
 	const tags = QLab.ChatComposerContext.list();
@@ -396,5 +408,85 @@ test("Reader Command-K attaches the exact PDF selection once and focuses floatin
 	assert.equal(second.stopped, 1);
 	assert.equal(calls.filter(call => call[0] === "show").length, 1);
 	assert.equal(calls.some(call => call[0] === "arrange"), false);
+	assert.equal(send.clickCount, 0);
+	assert.equal(runningTurn.cancelCount, 0);
+	assert.equal(chatHost._qlabTurnHandle, runningTurn);
+	assert.equal(tabs.selectedID, "qlabqmd");
+
+	QLab.ChatComposerContext.clear();
+	const pin = shortcut("l");
+	await new Promise(resolve => setTimeout(resolve, 0));
+	assert.equal(pin.prevented, 1);
+	assert.equal(pin.stopped, 1);
+	assert.equal(QLab.ChatComposerContext.list().length, 1);
+	assert.equal(QLab.ChatComposerContext.list()[0].text, exact);
+
+	const quote = shortcut("k", { shiftKey: true });
+	await new Promise(resolve => setTimeout(resolve, 0));
+	assert.equal(quote.prevented, 1);
+	assert.equal(quote.stopped, 1);
+	const quoteCall = calls.find(call => call[0] === "quote");
+	assert.ok(quoteCall, "Command-Shift-K still reaches the quote-to-QMD action");
+	assert.equal(quoteCall[1], mainWindow);
+	assert.match(quoteCall[2], /exact PDF selection/);
+	assert.equal(send.clickCount, 0);
+	assert.equal(runningTurn.cancelCount, 0);
+	assert.equal(calls.some(call => call[0] === "arrange"), false);
 	QLab.unregisterReaderHooks();
+});
+
+test("Reader Command-K does not consume the shortcut or open Chat without a captured selection", async () => {
+	const hooks = await readFile(join(qlabRoot, "readerHooks.js"), "utf8");
+	const registered = new Map();
+	const calls = [];
+	const readerWindow = new LifecycleTarget("reader-without-selection-window");
+	const mainWindow = { Zotero_Tabs: { selectedID: "reader-empty", _tabs: [] } };
+	const reader = { itemID: 99, _window: mainWindow };
+	const doc = lifecycleReaderDocument("reader-without-selection-document");
+	doc.defaultView = readerWindow;
+	const Zotero = {
+		QLab: {
+			ReaderIcons: { chat: "chat", quote: "quote", chatLayout: "layout", editorSplit: "edit", desk: "desk" },
+			ReaderContextStore: {
+				captureFromEvent: async () => {},
+				get: () => ({ attachment: { id: 99 }, selection: null }),
+			},
+			addCurrentContextToChat: async () => calls.push("context"),
+		},
+		Reader: {
+			registerEventListener(type, listener) { registered.set(type, listener); },
+			unregisterEventListener() {},
+			getByTabID: () => reader,
+		},
+		getMainWindow: () => mainWindow,
+		logError(error) { throw error; },
+	};
+	runInNewContext(hooks, { Zotero }, { filename: "readerHooks.js" });
+	Zotero.QLab.registerReaderHooks();
+	registered.get("renderTextSelectionPopup")({
+		doc,
+		reader,
+		params: {},
+		append() {},
+	});
+	const event = {
+		key: "k",
+		metaKey: true,
+		ctrlKey: false,
+		shiftKey: false,
+		altKey: false,
+		isComposing: false,
+		target: {},
+		prevented: 0,
+		stopped: 0,
+		preventDefault() { this.prevented++; },
+		stopPropagation() { this.stopped++; },
+	};
+	readerWindow.dispatch("keydown", event);
+	await new Promise(resolve => setTimeout(resolve, 0));
+
+	assert.equal(event.prevented, 0);
+	assert.equal(event.stopped, 0);
+	assert.deepEqual(calls, []);
+	Zotero.QLab.unregisterReaderHooks();
 });

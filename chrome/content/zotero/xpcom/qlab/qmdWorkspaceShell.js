@@ -705,6 +705,7 @@ Zotero.QLab = Zotero.QLab || {};
 			return Zotero.QLab.addCurrentContextToChat(view, {
 				preference: 'selection',
 				focus: true,
+				qmdHost: host,
 			});
 		}
 		onInlineWrite();

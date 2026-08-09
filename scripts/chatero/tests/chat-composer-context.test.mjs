@@ -70,6 +70,24 @@ test("createQmdComposerTag pins selection or whole live draft", async () => {
 	assert.equal(sel.origin.type, "qmd");
 });
 
+test("createQmdComposerTag preserves a non-empty whitespace-only source range", async () => {
+	const QLab = await loadQLab();
+	const exact = " \n\t  ";
+	const tag = QLab.createQmdComposerTag({
+		relativePath: "drafts/notes/spacing.qmd",
+		source: `before${exact}after`,
+		selection: exact,
+		selectionStart: 6,
+		selectionEnd: 6 + exact.length,
+		surfaceMode: "source",
+	});
+
+	assert.equal(tag.kind, "qmd-selection");
+	assert.equal(tag.text, exact);
+	assert.equal(tag.origin.start, 6);
+	assert.equal(tag.origin.end, 6 + exact.length);
+});
+
 test("ChatComposerContext upserts stableKey and formats prompt", async () => {
 	const QLab = await loadQLab();
 	QLab.ChatComposerContext.clear();
@@ -124,7 +142,10 @@ test("QMD Source selection is attached exactly once and focused in resident Chat
 	QLab.ChatComposerContext.clear();
 	const exact = "  $f(x)$ is selected\nwith both edges preserved  ";
 	const prompt = { focusCount: 0, focus() { this.focusCount++; } };
+	const runningTurn = { cancelCount: 0, cancel() { this.cancelCount++; } };
+	const send = { clickCount: 0, click() { this.clickCount++; } };
 	const qmdHost = {
+		_qlabMountTabID: "qlabqmd",
 		_qlabSurfaceMode: "source",
 		_qlabBuffer: `# Draft\n\n${exact}\n`,
 		_qlabMonacoSelection: { start: 9, end: 9 + exact.length, text: exact },
@@ -133,10 +154,12 @@ test("QMD Source selection is attached exactly once and focused in resident Chat
 		querySelector: () => null,
 	};
 	const chatHost = {
+		_qlabTurnHandle: runningTurn,
 		ownerDocument: { createElement: () => ({ firstElementChild: null }) },
 		querySelector(selector) {
 			if (selector === "[data-qlab-context-tags]") return null;
 			if (selector === "[data-qlab-prompt]") return prompt;
+			if (selector === "[data-qlab-send]") return send;
 			return null;
 		},
 	};
@@ -145,8 +168,11 @@ test("QMD Source selection is attached exactly once and focused in resident Chat
 	let chatVisible = false;
 	const calls = [];
 	const tabs = {
-		_tabs: [{ id: "qlabqmd", type: "qlabqmd", data: { primaryItemID: 41 } }],
-		selectedID: "qlabqmd",
+		_tabs: [
+			{ id: "qlabqmd", type: "qlabqmd", data: { primaryItemID: 41 } },
+			{ id: "reader-41", type: "reader" },
+		],
+		selectedID: "reader-41",
 		isTabVisible: id => id === "qlabchat" && chatVisible,
 		_qlab: {
 			async showUtility(kind, payload, options) {
@@ -158,6 +184,9 @@ test("QMD Source selection is attached exactly once and focused in resident Chat
 			},
 			ensureShellTab(kind, payload) { calls.push(["ensure", kind, payload]); },
 		},
+		arrangePDFChat() { calls.push(["arrange"]); },
+		arrangePDFEditor() { calls.push(["arrange"]); },
+		arrangeResearchDesk() { calls.push(["arrange"]); },
 	};
 	const windowRef = {
 		Zotero_Tabs: tabs,
@@ -171,8 +200,16 @@ test("QMD Source selection is attached exactly once and focused in resident Chat
 	};
 	QLab.getQmdShellBuffer = host => host._qlabBuffer;
 
-	await QLab.addCurrentContextToChat(windowRef, { preference: "selection", focus: true });
-	await QLab.addCurrentContextToChat(windowRef, { preference: "selection", focus: true });
+	await QLab.addCurrentContextToChat(windowRef, {
+		preference: "selection",
+		focus: true,
+		qmdHost,
+	});
+	await QLab.addCurrentContextToChat(windowRef, {
+		preference: "selection",
+		focus: true,
+		qmdHost,
+	});
 
 	const tags = QLab.ChatComposerContext.list();
 	assert.equal(tags.length, 1, "the existing stable-key semantics deduplicate the selection tag");
@@ -183,4 +220,8 @@ test("QMD Source selection is attached exactly once and focused in resident Chat
 	assert.equal(prompt.focusCount, 2);
 	assert.equal(calls.filter(call => call[0] === "show").length, 1);
 	assert.equal(calls.some(call => ["send", "cancel", "arrange"].includes(call[0])), false);
+	assert.equal(send.clickCount, 0);
+	assert.equal(runningTurn.cancelCount, 0);
+	assert.equal(chatHost._qlabTurnHandle, runningTurn);
+	assert.equal(tabs.selectedID, "reader-41");
 });

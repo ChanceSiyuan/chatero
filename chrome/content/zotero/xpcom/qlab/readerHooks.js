@@ -174,6 +174,35 @@ Zotero.QLab = Zotero.QLab || {};
 			|| /^(INPUT|TEXTAREA|SELECT)$/i.test(target.tagName)));
 	}
 
+	function shortcutReader(win) {
+		let shortcutContext = win && win._qlabReaderShortcutContext;
+		if (shortcutContext && shortcutContext.reader) return shortcutContext.reader;
+		return Zotero.Reader.getByTabID
+			&& win && win.Zotero_Tabs
+			&& Zotero.Reader.getByTabID(win.Zotero_Tabs.selectedID);
+	}
+
+	function shortcutMainWindow(win, reader) {
+		return (reader && reader._window) || (win && win.Zotero_Tabs ? win : Zotero.getMainWindow());
+	}
+
+	function hasCapturedReaderSelection(win, reader) {
+		let params = win && win._qlabReaderShortcutContext
+			&& win._qlabReaderShortcutContext.params;
+		let annotationText = params && params.annotation && params.annotation.text;
+		if (String(annotationText || '').length > 0) return true;
+		try {
+			let context = Zotero.QLab.ReaderContextStore && Zotero.QLab.ReaderContextStore.get();
+			return !!(context && context.attachment && reader
+				&& context.attachment.id === reader.itemID
+				&& context.selection
+				&& String(context.selection.text || '').length > 0);
+		}
+		catch (e) {
+			return false;
+		}
+	}
+
 	function installShortcuts(win, readerEvent = null) {
 		if (!win) {
 			return;
@@ -199,10 +228,18 @@ Zotero.QLab = Zotero.QLab || {};
 				event.preventDefault();
 				event.stopPropagation();
 				let opts = { preference: 'auto' };
+				let reader = shortcutReader(win);
+				if (reader) {
+					opts.reader = reader;
+					opts.params = (win._qlabReaderShortcutContext
+						&& win._qlabReaderShortcutContext.params) || {};
+				}
 				if (event.shiftKey) {
 					opts.focus = false;
 				}
-				void Zotero.QLab.addCurrentContextToChat(win, opts).catch((e) => {
+				void Zotero.QLab.addCurrentContextToChat(
+					shortcutMainWindow(win, reader), opts
+				).catch((e) => {
 					Zotero.logError(e);
 					try {
 						Zotero.alert(null, 'QLab', e.message || String(e));
@@ -216,10 +253,10 @@ Zotero.QLab = Zotero.QLab || {};
 			if (key === 'k' && event.shiftKey) {
 				event.preventDefault();
 				event.stopPropagation();
-				let reader = Zotero.Reader.getByTabID
-					&& win.Zotero_Tabs
-					&& Zotero.Reader.getByTabID(win.Zotero_Tabs.selectedID);
-				void quoteSelectionIntoQmd({ reader, params: {} });
+				let reader = shortcutReader(win);
+				let params = (win._qlabReaderShortcutContext
+					&& win._qlabReaderShortcutContext.params) || {};
+				void quoteSelectionIntoQmd({ reader, params });
 				return;
 			}
 
@@ -228,16 +265,11 @@ Zotero.QLab = Zotero.QLab || {};
 			// writes into the QMD Draft.
 			if (key === 'k' && !event.shiftKey && !isEditableTarget(event.target)) {
 				let shortcutContext = win._qlabReaderShortcutContext || {};
-				let reader = shortcutContext.reader;
-				if (!reader) {
-					reader = Zotero.Reader.getByTabID
-						&& win.Zotero_Tabs
-						&& Zotero.Reader.getByTabID(win.Zotero_Tabs.selectedID);
-				}
-				if (!reader) return;
+				let reader = shortcutReader(win);
+				if (!reader || !hasCapturedReaderSelection(win, reader)) return;
 				event.preventDefault();
 				event.stopPropagation();
-				let mainWindow = reader._window || (win.Zotero_Tabs ? win : Zotero.getMainWindow());
+				let mainWindow = shortcutMainWindow(win, reader);
 				void Zotero.QLab.addCurrentContextToChat(mainWindow, {
 					reader,
 					params: shortcutContext.params || {},

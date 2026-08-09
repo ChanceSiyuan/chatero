@@ -636,11 +636,12 @@ test("Monaco selection command opens focused Chat context without starting an in
 		end: 11 + exact.length,
 		text: exact,
 	});
-	assert.deepEqual(JSON.parse(JSON.stringify(calls)), [[
-		"chat",
-		view,
-		{ preference: "selection", focus: true },
-	]]);
+	assert.equal(calls.length, 1);
+	assert.equal(calls[0][0], "chat");
+	assert.equal(calls[0][1], view);
+	assert.equal(calls[0][2].preference, "selection");
+	assert.equal(calls[0][2].focus, true);
+	assert.equal(calls[0][2].qmdHost, host, "the emitting QMD host remains authoritative");
 });
 
 test("empty Monaco Command-K still opens the existing inline-write bar", async () => {

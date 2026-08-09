@@ -40,7 +40,7 @@ Zotero.QLab = Zotero.QLab || {};
 	
 	Zotero.QLab.ChatComposerContext = {
 		_tags: [],
-		
+
 		list() {
 			return this._tags.slice();
 		},
@@ -210,7 +210,7 @@ Zotero.QLab = Zotero.QLab || {};
 		let path = relativePath || 'draft.qmd';
 		let short = truncate(path.replace(/^drafts\//, ''), 32);
 		let exactSelection = String(selection || '');
-		if (exactSelection && exactSelection.trim()) {
+		if (exactSelection.length > 0) {
 			let text = exactSelection.slice(0, MAX_TEXT);
 			let origin = {
 				type: 'qmd',
@@ -642,11 +642,21 @@ Zotero.QLab = Zotero.QLab || {};
 		let selected = tabs._tabs.find(t => t.id === tabs.selectedID);
 		let tag = null;
 		let anchorItemID = null;
-		
-		// Prefer QMD shell when it is the selected tab (live Quarto draft).
-		if (selected && selected.type === 'qlabqmd' && !options.reader) {
+		let qmdHost = options.qmdHost || null;
+		let qmdTab = null;
+		if (qmdHost) {
+			qmdTab = tabs._tabs.find(tab => tab.id === qmdHost._qlabMountTabID) || null;
+		}
+		else if (selected && selected.type === 'qlabqmd') {
+			qmdTab = selected;
 			let container = windowRef.document.getElementById(selected.id);
-			let host = container && container.querySelector('.qlab-shell-host');
+			qmdHost = container && container.querySelector('.qlab-shell-host');
+		}
+
+		// An explicit originating QMD host wins even when Zotero's selectedID
+		// still names the other visible pane in a split workspace.
+		if (qmdHost && !options.reader) {
+			let host = qmdHost;
 			let state = host && host._qlabDraftState;
 			let path = state
 				? (state.viewingWorking && state.workingPath
@@ -662,7 +672,7 @@ Zotero.QLab = Zotero.QLab || {};
 			let monacoSelection = host && host._qlabSurfaceMode === 'source'
 				? host._qlabMonacoSelection
 				: null;
-			if (monacoSelection && String(monacoSelection.text || '').trim()
+			if (monacoSelection && String(monacoSelection.text || '').length > 0
 					&& Number(monacoSelection.end) > Number(monacoSelection.start)) {
 				selection = String(monacoSelection.text);
 				selectionStart = Number(monacoSelection.start);
@@ -698,7 +708,7 @@ Zotero.QLab = Zotero.QLab || {};
 				selectionEnd,
 				surfaceMode: (host && host._qlabSurfaceMode) || 'source',
 			});
-			let primary = selected.data && selected.data.primaryItemID;
+			let primary = qmdTab && qmdTab.data && qmdTab.data.primaryItemID;
 			anchorItemID = Number.isFinite(primary) ? primary : null;
 		}
 		else {
