@@ -11,6 +11,8 @@ const QLAB_SCRIPTS = [
 	"tabGroups.js",
 	"qlabWorkspace.js",
 	"qlabStarterManifest.js",
+	"qlabRepositoryIdentity.js",
+	"qlabRepositoryInitializer.js",
 	"researchActions.js",
 	"settings.js",
 	"arrangement.js",
