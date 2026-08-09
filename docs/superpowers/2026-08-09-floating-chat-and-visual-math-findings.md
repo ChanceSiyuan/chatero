@@ -61,10 +61,12 @@ RED evidence before the integration correction:
 - the focused composer test separately failed because it selected `qlabchat`
   instead of revealing the utility.
 
-GREEN evidence after the correction:
+GREEN evidence after the correction and review fixes:
 
-- `scripts/chatero/tests/floating-chat-integration.test.mjs`: `7/7` passed;
-- affected integration set: `81/81` passed.
+- `scripts/chatero/tests/floating-chat-integration.test.mjs`: `8/8` passed;
+- final approval-policy focused set: `45/45` passed;
+- affected integration set before the final focused correction: `81/81`
+  passed.
 
 ## Fix Round 1
 
@@ -88,6 +90,26 @@ Focused follow-up verification passed 61 tests across Chat utility, native tab
 lifecycle, workspace refresh, Reader hooks, restored identities, tab groups,
 and split layout. The full build evidence below was rerun after these fixes.
 
+The late restore audit at `c0a43a771` also confirmed that unavailable Reader
+and Note tabs must not survive restoration. The reconciler now drops those
+entries, removes their pane and group references, and chooses a valid active
+fallback. The complete suite passed `418/418` after that correction.
+
+## Fix Round 2
+
+A final review of `c0a43a771` found that refreshing the resident Chat utility
+into another QLab workspace preserved the previous workspace's cached approval
+policy. Commit `961f8952b` now clears and reloads the policy whenever the root
+changes. The asynchronous loader is guarded by both the current mount
+generation and root identity, so a late result from the old workspace cannot
+replace the new policy. The existing transcript and live Agent turn remain in
+place.
+
+The regression first failed because the new workspace policy was never loaded
+(`loadedRoots` was empty). It then passed with the production correction. The
+focused Chat/Agent set passed `45/45`, and the complete Chatero suite passed
+`419/419`.
+
 ## Automated Verification
 
 All commands below ran from the repository root after the integration
@@ -95,7 +117,7 @@ correction.
 
 | Check | Result | Evidence |
 |---|---|---|
-| Full Chatero tests | PASS | `NODE_OPTIONS=--openssl-legacy-provider npm run test:chatero` — 417 passed, 0 failed, exit 0 |
+| Full Chatero tests | PASS | `NODE_OPTIONS=--openssl-legacy-provider npm run test:chatero` — 419 passed, 0 failed, exit 0 |
 | Application build | PASS | `NODE_OPTIONS=--openssl-legacy-provider npm run build` — JavaScript, Sass, Reader, document worker, and note editor build completed, exit 0 |
 | macOS directory staging | PASS | `app/scripts/dir_build -f -p m` — `Chatero.app` built, ad-hoc signed, valid on disk, and satisfies its Designated Requirement, exit 0 |
 | Staged bundle verification | PASS | `NODE_OPTIONS=--openssl-legacy-provider npm run test:chatero:staged` — staged `Chatero.app` deep validation completed, exit 0 |
