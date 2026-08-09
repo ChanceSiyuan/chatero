@@ -126,6 +126,29 @@ cache. Draft review and Research Action streams use the same root-bound path.
 The final focused Chat/Agent set passed `46/46`, and the complete Chatero suite
 passed `420/420`.
 
+## Fix Round 4
+
+The final interaction pass added selection-driven Chat without changing the
+existing writing shortcuts:
+
+- `Command+K` on an exact PDF selection reveals the resident Chat utility,
+  attaches the selected passage as composer context, and focuses the composer
+  without sending a message;
+- `Command+K` on an exact Monaco selection does the same for QMD source, while
+  an empty Monaco selection retains the existing inline-write action;
+- PDF `Command+Shift+K` quote-to-QMD and `Command+L` context behavior remain
+  unchanged;
+- shortcut delivery stays bound to the originating Zotero window even if a
+  different window becomes active before the event is handled;
+- selections are preserved exactly, including whitespace, tabs, CRLF line
+  endings, UTF-16 text, and passages longer than 8,000 characters;
+- Reader Chat launchers now mirror idle, running, hidden-completion, and error
+  state without creating a second Chat surface.
+
+The same pass hardened native Reader restoration so a native tab restored by
+Zotero is neither recreated nor duplicated if later group restoration fails.
+The final complete Chatero suite passed `437/437` at commit `e0e06a52f`.
+
 ## Automated Verification
 
 All commands below ran from the repository root after the integration
@@ -133,12 +156,13 @@ correction.
 
 | Check | Result | Evidence |
 |---|---|---|
-| Full Chatero tests | PASS | `NODE_OPTIONS=--openssl-legacy-provider npm run test:chatero` — 420 passed, 0 failed, exit 0 |
+| Final product-code tip | PASS | `e0e06a52f` on `feat/cursor-qmd-workspace`; the following commit only records this verification evidence |
+| Full Chatero tests | PASS | `NODE_OPTIONS=--openssl-legacy-provider npm run test:chatero` — 437 passed, 0 failed, exit 0 |
 | Application build | PASS | `NODE_OPTIONS=--openssl-legacy-provider npm run build` — JavaScript, Sass, Reader, document worker, and note editor build completed, exit 0 |
-| macOS directory staging | PASS | `app/scripts/dir_build -f -p m` — `Chatero.app` built, ad-hoc signed, valid on disk, and satisfies its Designated Requirement, exit 0 |
+| macOS directory staging | PASS | `app/scripts/dir_build -f -p m` — `Chatero.app` version `11.0.SOURCE.e0e06a52f` built, ad-hoc signed, valid on disk, and satisfies its Designated Requirement, exit 0 |
 | Staged bundle verification | PASS | `NODE_OPTIONS=--openssl-legacy-provider npm run test:chatero:staged` — staged `Chatero.app` deep validation completed, exit 0 |
-| Patch whitespace | PASS | `git diff --check` — no findings, exit 0 |
-| Personal-data boundary | PASS | status contained only implementation/test/documentation paths; no `knowledge/`, `drafts/`, `literature/`, chat-history, or proposal path was modified |
+| Patch whitespace | PASS | `git diff --check dfa122f3d235b2795a20ced36224d61b7807175a..HEAD` and `git diff --check` — no findings, exit 0 |
+| Personal-data boundary | PASS | the implementation range contains no `knowledge/`, `drafts/`, `literature/`, chat-history, or proposal path |
 | Generated-artifact boundary | PASS | staged/build products are ignored generated outputs and are not included in the source commit |
 
 The automated suite includes the exact Definition title/body fixture, LF and
@@ -171,6 +195,12 @@ in this task.
    formulas, including `$r$` in the Definition title, render correctly.
 10. **NOT RUN** — Click title and body formulas, edit LaTeX, leave the field,
     and verify the exact QMD source is saved and rerendered.
+11. **NOT RUN** — Select text in a PDF, press `Command+K`, and verify Chat opens
+    with the exact passage attached while the composer remains unsent and
+    focused.
+12. **NOT RUN** — Select QMD source in Monaco, press `Command+K`, and verify the
+    same context-first flow; then repeat without a selection and verify the
+    existing inline-write action still opens.
 
 ## Remaining Manual Risk
 
@@ -182,4 +212,5 @@ in this task.
 - Dragging, resizing, focus return, Pin, and Reader popup geometry require
   direct visual inspection at normal and constrained window sizes.
 
-No claim of packaged UI acceptance is made until the ten checks above are run.
+No claim of packaged UI acceptance is made until the twelve checks above are
+run.
