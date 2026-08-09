@@ -14,6 +14,7 @@ function eventStream(events, controls = {}) {
 	let exitResolve;
 	let exited = new Promise(resolve => { exitResolve = resolve; });
 	let cancelled = false;
+	let waitIndex = 0;
 	return {
 		async *[Symbol.asyncIterator]() {
 			for (let event of events) {
@@ -30,11 +31,20 @@ function eventStream(events, controls = {}) {
 			}
 		},
 		cancel() {
+			if (cancelled) return;
 			cancelled = true;
 			controls.cancelled = (controls.cancelled || 0) + 1;
 			controls.release?.();
 		},
 		waitForExit(timeoutMs) {
+			controls.waits = (controls.waits || 0) + 1;
+			if (typeof controls.waitForExit === "function") {
+				return controls.waitForExit(timeoutMs);
+			}
+			if (Array.isArray(controls.waitResults) && waitIndex < controls.waitResults.length) {
+				let result = controls.waitResults[waitIndex++];
+				return result instanceof Error ? Promise.reject(result) : Promise.resolve(result);
+			}
 			if (controls.neverExits) {
 				return Promise.reject(new Error(`Process exit timed out after ${timeoutMs}ms`));
 			}
@@ -47,6 +57,7 @@ function runtimeFixture(options = {}) {
 	let spawnCalls = [];
 	let startControls = options.startControls || { hold: true, exitOnRelease: true };
 	let started = false;
+	let serverStarts = 0;
 	let serviceIdentity = options.identity || IDENTITY;
 	let runtime = {
 		spawnCalls,
@@ -56,7 +67,7 @@ function runtimeFixture(options = {}) {
 		maxDiagnosticChars: options.maxDiagnosticChars ?? 240,
 		canonicalizeRoot: async root => root,
 		fetchHealth: async url => {
-			if (options.fetchHealth) return options.fetchHealth(url, { started });
+			if (options.fetchHealth) return options.fetchHealth(url, { started, serverStarts });
 			if (started) return { ok: true, repositoryIdentity: serviceIdentity };
 			return null;
 		},
@@ -93,9 +104,13 @@ function runtimeFixture(options = {}) {
 					]);
 				}
 				started = true;
+				serverStarts++;
+				let controls = typeof options.startControlsFactory === "function"
+					? options.startControlsFactory(serverStarts)
+					: startControls;
 				return eventStream(options.startEvents || [
 					{ type: "stdout", data: "server starting" },
-				], startControls);
+				], controls);
 			},
 		},
 	};
@@ -264,6 +279,30 @@ test("stop during target resolution cancels the pending start before any process
 	assert.equal(service.snapshot(IDENTITY).state, "idle");
 });
 
+test("stop during rebuild retains and confirms exit of the old owned server", async () => {
+	const QLab = await loadQLab();
+	let serverControls = { hold: true, exitOnRelease: true };
+	let buildControls = { hold: true, exitOnRelease: true };
+	const { runtime } = runtimeFixture({ startControls: serverControls });
+	const service = QLab.createMainSiteService(runtime);
+	await service.start(target());
+	const originalRun = runtime.processRunner.run;
+	runtime.processRunner.run = (command, args, options) => args.join(" ") === "ci"
+		? eventStream([{ type: "stdout", data: "installing" }], buildControls)
+		: originalRun(command, args, options);
+
+	const rebuilding = service.rebuild(target());
+	while (!buildControls.release) await new Promise(resolve => setTimeout(resolve, 0));
+	const stopping = service.stop(IDENTITY);
+
+	await assert.rejects(rebuilding, /cancelled/i);
+	await stopping;
+	assert.equal(buildControls.cancelled, 1);
+	assert.equal(serverControls.cancelled, 1);
+	assert.equal(serverControls.waits, 1);
+	assert.equal(service.snapshot(IDENTITY).state, "idle");
+});
+
 test("dependency validation rejects old Node and unavailable Quarto before spawning", async () => {
 	const QLab = await loadQLab();
 	for (let dependencies of [
@@ -386,7 +425,8 @@ test("shutdown cancels only owned processes and bounds exit waiting", async () =
 	await service.shutdown();
 
 	assert.equal(controls.cancelled, 1);
-	assert.equal(service.snapshot(IDENTITY).state, "idle");
+	assert.equal(service.snapshot(IDENTITY).state, "error");
+	assert.equal(service.snapshot(IDENTITY).ownership, "owned");
 	assert.match(service.snapshot(IDENTITY).diagnosticTail, /timed out/i);
 });
 
@@ -407,6 +447,259 @@ test("a failed health check never loses ownership of a live Chatero process", as
 	assert.equal(checked.ownership, "owned");
 	await service.shutdown();
 	assert.equal(startControls.cancelled, 1);
+});
+
+test("start retires an unhealthy owned server before launching its replacement", async () => {
+	const QLab = await loadQLab();
+	let firstHealthy = true;
+	let firstControls = { hold: true, exitOnRelease: true };
+	let secondControls = { hold: true, exitOnRelease: true };
+	const { runtime } = runtimeFixture({
+		startControlsFactory: generation => generation === 1 ? firstControls : secondControls,
+		fetchHealth: async (_url, { serverStarts }) => {
+			if (serverStarts === 1 && firstHealthy) return { ok: true, repositoryIdentity: IDENTITY };
+			if (serverStarts >= 2) return { ok: true, repositoryIdentity: IDENTITY };
+			return null;
+		},
+	});
+	const service = QLab.createMainSiteService(runtime);
+	await service.start(target());
+	firstHealthy = false;
+
+	await service.start(target());
+
+	assert.equal(firstControls.cancelled, 1);
+	assert.equal(firstControls.waits, 1);
+	assert.equal(runtime.spawnCalls.filter(call => call.args.includes("start")).length, 2);
+	assert.equal(service.snapshot(IDENTITY).ownership, "owned");
+});
+
+test("rebuild retires an unhealthy owned server before launching its replacement", async () => {
+	const QLab = await loadQLab();
+	let firstHealthy = true;
+	let firstControls = { hold: true, exitOnRelease: true };
+	let secondControls = { hold: true, exitOnRelease: true };
+	const { runtime } = runtimeFixture({
+		startControlsFactory: generation => generation === 1 ? firstControls : secondControls,
+		fetchHealth: async (_url, { serverStarts }) => {
+			if (serverStarts === 1 && firstHealthy) return { ok: true, repositoryIdentity: IDENTITY };
+			if (serverStarts >= 2) return { ok: true, repositoryIdentity: IDENTITY };
+			return null;
+		},
+	});
+	const service = QLab.createMainSiteService(runtime);
+	await service.start(target());
+	firstHealthy = false;
+
+	await service.rebuild(target());
+
+	assert.equal(firstControls.cancelled, 1);
+	assert.equal(firstControls.waits, 1);
+	assert.equal(runtime.spawnCalls.filter(call => call.args.includes("start")).length, 2);
+	assert.equal(service.snapshot(IDENTITY).ownership, "owned");
+});
+
+test("owned-process retirement timeout retains ownership and blocks a replacement launch", async () => {
+	const QLab = await loadQLab();
+	let healthy = true;
+	let oldControls = {
+		hold: true,
+		exitOnRelease: true,
+		waitResults: [new Error("Process exit timed out after 5ms"), 0],
+	};
+	const { runtime } = runtimeFixture({
+		startControls: oldControls,
+		fetchHealth: async (_url, { serverStarts }) => healthy && serverStarts === 1
+			? { ok: true, repositoryIdentity: IDENTITY }
+			: null,
+	});
+	const service = QLab.createMainSiteService(runtime);
+	await service.start(target());
+	healthy = false;
+	const before = runtime.spawnCalls.length;
+
+	await assert.rejects(service.start(target()), /timed out/i);
+
+	assert.equal(runtime.spawnCalls.length, before, "no install, build, or replacement start may run");
+	assert.equal(service.snapshot(IDENTITY).ownership, "owned");
+	await service.stop(IDENTITY);
+	assert.equal(oldControls.waits, 2);
+	assert.equal(service.snapshot(IDENTITY).state, "idle");
+});
+
+test("a direct stop timeout retains the owned handle for a later successful stop", async () => {
+	const QLab = await loadQLab();
+	let controls = {
+		hold: true,
+		exitOnRelease: true,
+		waitResults: [new Error("Process exit timed out after 5ms"), 0],
+	};
+	const { runtime } = runtimeFixture({ startControls: controls });
+	const service = QLab.createMainSiteService(runtime);
+	await service.start(target());
+	const before = runtime.spawnCalls.length;
+
+	await assert.rejects(service.stop(IDENTITY), /timed out/i);
+	assert.equal(service.snapshot(IDENTITY).ownership, "owned");
+	assert.equal(runtime.spawnCalls.length, before);
+
+	await service.stop(IDENTITY);
+	assert.equal(controls.waits, 2);
+	assert.equal(service.snapshot(IDENTITY).state, "idle");
+});
+
+test("stop while retiring an old owned server prevents every replacement stage", async () => {
+	const QLab = await loadQLab();
+	let healthy = true;
+	let releaseExit;
+	let oldControls = {
+		hold: true,
+		exitOnRelease: true,
+		waitForExit: () => new Promise(resolve => { releaseExit = resolve; }),
+	};
+	const { runtime } = runtimeFixture({
+		startControls: oldControls,
+		fetchHealth: async (_url, { serverStarts }) => healthy && serverStarts === 1
+			? { ok: true, repositoryIdentity: IDENTITY }
+			: null,
+	});
+	const service = QLab.createMainSiteService(runtime);
+	await service.start(target());
+	healthy = false;
+	const before = runtime.spawnCalls.length;
+	const restarting = service.start(target());
+	while (!releaseExit) await new Promise(resolve => setTimeout(resolve, 0));
+	const stopping = service.stop(IDENTITY);
+	releaseExit(0);
+
+	await assert.rejects(restarting, /cancelled/i);
+	await stopping;
+	assert.equal(runtime.spawnCalls.length, before);
+	assert.equal(service.snapshot(IDENTITY).state, "idle");
+});
+
+test("an unhealthy external server is not killed and forces bounded fallback allocation", async () => {
+	const QLab = await loadQLab();
+	let externalHealthy = true;
+	let replacementControls = { hold: true, exitOnRelease: true };
+	const { runtime } = runtimeFixture({
+		availablePorts: [4181],
+		startControls: replacementControls,
+		fetchHealth: async (url, { serverStarts }) => {
+			if (url.endsWith(":4180/") && externalHealthy) {
+				return { ok: true, repositoryIdentity: IDENTITY };
+			}
+			if (url.endsWith(":4181/") && serverStarts === 1) {
+				return { ok: true, repositoryIdentity: IDENTITY };
+			}
+			return null;
+		},
+	});
+	runtime.isPortAvailable = async port => port === 4181;
+	const service = QLab.createMainSiteService(runtime);
+	await service.start(target());
+	externalHealthy = false;
+
+	const restarted = await service.start(target());
+
+	assert.equal(restarted.url, "http://127.0.0.1:4181/");
+	assert.equal(replacementControls.cancelled || 0, 0);
+	assert.deepEqual(runtime.spawnCalls.at(-1).args.slice(-2), ["--port", "4181"]);
+});
+
+test("rebuild also allocates a fallback instead of overwriting an unhealthy external port", async () => {
+	const QLab = await loadQLab();
+	let externalHealthy = true;
+	let replacementControls = { hold: true, exitOnRelease: true };
+	const { runtime } = runtimeFixture({
+		availablePorts: [4181],
+		startControls: replacementControls,
+		fetchHealth: async (url, { serverStarts }) => {
+			if (url.endsWith(":4180/") && externalHealthy) {
+				return { ok: true, repositoryIdentity: IDENTITY };
+			}
+			if (url.endsWith(":4181/") && serverStarts === 1) {
+				return { ok: true, repositoryIdentity: IDENTITY };
+			}
+			return null;
+		},
+	});
+	runtime.isPortAvailable = async port => port === 4181;
+	const service = QLab.createMainSiteService(runtime);
+	await service.start(target());
+	externalHealthy = false;
+
+	const rebuilt = await service.rebuild(target());
+
+	assert.equal(rebuilt.url, "http://127.0.0.1:4181/");
+	assert.equal(replacementControls.cancelled || 0, 0);
+	assert.deepEqual(runtime.spawnCalls.at(-1).args.slice(-2), ["--port", "4181"]);
+});
+
+test("check rejects a different canonical root during an in-flight identity operation", async () => {
+	const QLab = await loadQLab();
+	let releaseDependencies;
+	const { runtime } = runtimeFixture();
+	runtime.resolveDependencies = () => new Promise(resolve => { releaseDependencies = resolve; });
+	const service = QLab.createMainSiteService(runtime);
+	const starting = service.start(target());
+	while (!releaseDependencies) await new Promise(resolve => setTimeout(resolve, 0));
+
+	await assert.rejects(service.check(target(IDENTITY, "/tmp/other-repository")), /different.*root|identity.*root/i);
+	assert.equal(service.snapshot(IDENTITY).root, ROOT);
+
+	releaseDependencies({
+		node: { command: "/opt/chatero/bin/node", version: "22.13.0" },
+		npm: { command: "/opt/chatero/bin/npm" },
+		quarto: { command: "/opt/chatero/bin/quarto" },
+	});
+	await starting;
+	assert.ok(runtime.spawnCalls.every(call => call.options.cwd === ROOT));
+});
+
+test("start and rebuild cannot coalesce a different root under the same identity", async () => {
+	const QLab = await loadQLab();
+	let releaseDependencies;
+	const { runtime } = runtimeFixture();
+	runtime.resolveDependencies = () => new Promise(resolve => { releaseDependencies = resolve; });
+	const service = QLab.createMainSiteService(runtime);
+	const starting = service.start(target());
+	while (!releaseDependencies) await new Promise(resolve => setTimeout(resolve, 0));
+
+	const conflictingStart = service.start(target(IDENTITY, "/tmp/other-repository"));
+	const conflictingRebuild = service.rebuild(target(IDENTITY, "/tmp/other-repository"));
+
+	releaseDependencies({
+		node: { command: "/opt/chatero/bin/node", version: "22.13.0" },
+		npm: { command: "/opt/chatero/bin/npm" },
+		quarto: { command: "/opt/chatero/bin/quarto" },
+	});
+	await starting;
+	await assert.rejects(conflictingStart, /different.*root|identity.*root/i);
+	await assert.rejects(conflictingRebuild, /different.*root|identity.*root/i);
+	assert.equal(service.snapshot(IDENTITY).root, ROOT);
+	assert.ok(runtime.spawnCalls.every(call => call.options.cwd === ROOT));
+});
+
+test("a completed identity binding rejects rebuild from another root before mutation", async () => {
+	const QLab = await loadQLab();
+	const { runtime } = runtimeFixture({
+		fetchHealth: async () => ({ ok: true, repositoryIdentity: IDENTITY }),
+	});
+	const service = QLab.createMainSiteService(runtime);
+	await service.start(target());
+	const before = runtime.spawnCalls.length;
+	const beforeSnapshot = service.snapshot(IDENTITY);
+
+	await assert.rejects(service.rebuild(target(IDENTITY, "/tmp/other-repository")), /different.*root|identity.*root/i);
+
+	const afterSnapshot = service.snapshot(IDENTITY);
+	assert.equal(afterSnapshot.root, ROOT);
+	assert.equal(afterSnapshot.state, beforeSnapshot.state);
+	assert.equal(afterSnapshot.url, beforeSnapshot.url);
+	assert.equal(afterSnapshot.ownership, beforeSnapshot.ownership);
+	assert.equal(afterSnapshot.updatedAt, beforeSnapshot.updatedAt);
+	assert.equal(runtime.spawnCalls.length, before);
 });
 
 test("no free port in 4180 through 4199 fails without guessing or spawning", async () => {

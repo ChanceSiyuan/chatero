@@ -114,6 +114,8 @@ Zotero.QLab = Zotero.QLab || {};
 					updatedAt: now(),
 					listeners: new Set(),
 					inFlight: null,
+					operationTargetPromise: null,
+					requestedRoot: '',
 					process: null,
 					processPump: null,
 					processExit: undefined,
@@ -148,6 +150,10 @@ Zotero.QLab = Zotero.QLab || {};
 			publish(record);
 		}
 
+		function assertNotCancelled(record) {
+			if (record.cancelRequested) throw new Error('Main Site operation was cancelled');
+		}
+
 		async function resolveTarget(input) {
 			let identity = String(input && input.identity || '').toLowerCase();
 			if (!IDENTITY_PATTERN.test(identity)) {
@@ -162,6 +168,36 @@ Zotero.QLab = Zotero.QLab || {};
 				throw new Error('Main Site cwd must be an absolute canonical path');
 			}
 			return Object.freeze({ identity, root });
+		}
+
+		function pinTarget(record, target) {
+			if (record.root && record.root !== target.root) {
+				let error = new Error('A repository identity cannot be used with a different canonical root');
+				error.code = 'QLAB_TARGET_CONFLICT';
+				throw error;
+			}
+			if (!record.root) record.root = target.root;
+			return target;
+		}
+
+		function joinInFlight(record, input) {
+			if (record.requestedRoot === String(input && input.root || '')) {
+				return record.inFlight;
+			}
+			let activeTarget = record.operationTargetPromise;
+			let activeOperation = record.inFlight;
+			return (async () => {
+				let [candidate, pinned] = await Promise.all([
+					resolveTarget(input),
+					activeTarget,
+				]);
+				if (!pinned || candidate.identity !== pinned.identity || candidate.root !== pinned.root) {
+					let error = new Error('A repository identity cannot be used with a different canonical root');
+					error.code = 'QLAB_TARGET_CONFLICT';
+					throw error;
+				}
+				return activeOperation;
+			})();
 		}
 
 		async function probe(url) {
@@ -198,6 +234,7 @@ Zotero.QLab = Zotero.QLab || {};
 		}
 
 		async function runFiniteStage(record, state, command, args, options) {
+			assertNotCancelled(record);
 			transition(record, state, { error: null });
 			let stream = runtime.processRunner.run(command, args, options);
 			record.activeStream = stream;
@@ -223,6 +260,36 @@ Zotero.QLab = Zotero.QLab || {};
 				let detail = record.diagnosticTail.trim();
 				throw new Error(detail || `Main Site process exited with code ${exitCode ?? 'unknown'}`);
 			}
+		}
+
+		async function retireOwnedProcess(record) {
+			if (record.ownership !== 'owned') return;
+			let process = record.process;
+			if (!process || typeof process.cancel !== 'function'
+					|| typeof process.waitForExit !== 'function') {
+				throw new Error('Owned Main Site process cannot be safely stopped');
+			}
+			transition(record, 'stopping', { error: null });
+			process.cancel();
+			try {
+				await process.waitForExit(shutdownTimeoutMs);
+			}
+			catch (error) {
+				appendDiagnostic(record, 'stderr', error.message || String(error));
+				transition(record, 'error', {
+					error: error && error.message ? error.message : String(error),
+				});
+				throw error;
+			}
+			if (record.process !== process) {
+				throw new Error('Owned Main Site process changed while it was stopping');
+			}
+			record.process = null;
+			record.processPump = null;
+			record.processExit = undefined;
+			record.port = null;
+			record.ownership = null;
+			publish(record);
 		}
 
 		function pumpServer(record, stream) {
@@ -253,6 +320,7 @@ Zotero.QLab = Zotero.QLab || {};
 		}
 
 		async function launch(record, target, npm, port) {
+			assertNotCancelled(record);
 			transition(record, 'starting', {
 				port,
 				url: siteURL(port),
@@ -283,10 +351,9 @@ Zotero.QLab = Zotero.QLab || {};
 			throw new Error('Main Site startup timed out before repository health became ready');
 		}
 
-		async function performStart(record, input) {
-			let target = await resolveTarget(input);
-			record.root = target.root;
-			if (record.cancelRequested) throw new Error('Main Site operation was cancelled');
+		async function performStart(record, targetPromise) {
+			let target = pinTarget(record, await targetPromise);
+			assertNotCancelled(record);
 			transition(record, 'checking', { error: null });
 			if (record.url) {
 				let knownHealth = await probe(record.url);
@@ -295,8 +362,11 @@ Zotero.QLab = Zotero.QLab || {};
 					return transition(record, 'ready', { error: null });
 				}
 			}
+			if (record.ownership === 'owned') await retireOwnedProcess(record);
+			assertNotCancelled(record);
 			let preferredURL = siteURL(PREFERRED_PORT);
 			let preferredHealth = await probe(preferredURL);
+			assertNotCancelled(record);
 			if (healthMatches(preferredHealth, target.identity)) {
 				record.lastGoodURL = preferredURL;
 				return transition(record, 'ready', {
@@ -307,26 +377,29 @@ Zotero.QLab = Zotero.QLab || {};
 				});
 			}
 			let port = await selectPort(preferredHealth);
+			assertNotCancelled(record);
 			let resolved = await dependencies();
+			assertNotCancelled(record);
 			await runFiniteStage(record, 'installing', resolved.npm, ['ci'], { cwd: target.root });
 			await runFiniteStage(record, 'building', resolved.npm, ['run', 'build'], { cwd: target.root });
 			return launch(record, target, resolved.npm, port);
 		}
 
-		function trackedOperation(record, operation) {
+		function trackedOperation(record, operation, targetPromise, requestedRoot) {
 			let promise = (async () => {
 				try {
 					return await operation();
 				}
 				catch (error) {
+					if (error && error.code === 'QLAB_TARGET_CONFLICT') throw error;
 					if (record.process && record.state === 'starting'
 							&& typeof record.process.cancel === 'function') {
 						record.process.cancel();
 					}
 					if (record.cancelRequested) {
 						transition(record, 'idle', {
-							ownership: null,
-							port: null,
+							ownership: record.process ? 'owned' : null,
+							port: record.process ? record.port : null,
 							url: record.lastGoodURL || '',
 							error: null,
 						});
@@ -341,9 +414,21 @@ Zotero.QLab = Zotero.QLab || {};
 				}
 			})();
 			record.inFlight = promise;
+			record.operationTargetPromise = targetPromise;
+			record.requestedRoot = requestedRoot;
 			promise.then(
-				() => { if (record.inFlight === promise) record.inFlight = null; },
-				() => { if (record.inFlight === promise) record.inFlight = null; }
+				() => {
+					if (record.inFlight !== promise) return;
+					record.inFlight = null;
+					record.operationTargetPromise = null;
+					record.requestedRoot = '';
+				},
+				() => {
+					if (record.inFlight !== promise) return;
+					record.inFlight = null;
+					record.operationTargetPromise = null;
+					record.requestedRoot = '';
+				}
 			);
 			return promise;
 		}
@@ -362,8 +447,14 @@ Zotero.QLab = Zotero.QLab || {};
 			async check(input) {
 				let target = await resolveTarget(input);
 				let record = get(target.identity);
-				record.root = target.root;
-				if (record.inFlight) return plainSnapshot(record);
+				if (record.inFlight) {
+					let active = await record.operationTargetPromise;
+					if (!active || active.root !== target.root) {
+						throw new Error('A repository identity cannot be used with a different canonical root');
+					}
+					return plainSnapshot(record);
+				}
+				pinTarget(record, target);
 				transition(record, 'checking', { error: null });
 				if (record.url) {
 					let knownHealth = await probe(record.url);
@@ -391,32 +482,62 @@ Zotero.QLab = Zotero.QLab || {};
 			start(input) {
 				let identity = String(input && input.identity || '').toLowerCase();
 				let record = get(identity);
-				if (record.inFlight) return record.inFlight;
+				if (record.inFlight) return joinInFlight(record, input);
 				if (shuttingDown) return Promise.reject(new Error('Main Site service is shutting down'));
 				record.cancelRequested = false;
-				return trackedOperation(record, () => performStart(record, input));
+				let requestedRoot = String(input && input.root || '');
+				let targetPromise = resolveTarget(input);
+				return trackedOperation(
+					record,
+					() => performStart(record, targetPromise),
+					targetPromise,
+					requestedRoot
+				);
 			},
 			rebuild(input) {
 				let identity = String(input && input.identity || '').toLowerCase();
 				let record = get(identity);
-				if (record.inFlight) return record.inFlight;
+				if (record.inFlight) return joinInFlight(record, input);
 				if (shuttingDown) return Promise.reject(new Error('Main Site service is shutting down'));
 				record.cancelRequested = false;
+				let requestedRoot = String(input && input.root || '');
+				let targetPromise = resolveTarget(input);
 				return trackedOperation(record, async () => {
-					let target = await resolveTarget(input);
-					record.root = target.root;
-					if (record.cancelRequested) throw new Error('Main Site operation was cancelled');
+					let target = pinTarget(record, await targetPromise);
+					assertNotCancelled(record);
 					transition(record, 'stale', { error: null });
+					let currentHealth = record.url ? await probe(record.url) : null;
+					if (!healthMatches(currentHealth, target.identity)
+							&& record.ownership === 'owned') {
+						await retireOwnedProcess(record);
+					}
+					assertNotCancelled(record);
 					let resolved = await dependencies();
+					assertNotCancelled(record);
 					await runFiniteStage(record, 'installing', resolved.npm, ['ci'], { cwd: target.root });
 					await runFiniteStage(record, 'building', resolved.npm, ['run', 'build'], { cwd: target.root });
 					let url = record.lastGoodURL || siteURL(PREFERRED_PORT);
 					if (healthMatches(await probe(url), target.identity)) {
 						return transition(record, 'ready', { url, error: null });
 					}
-					let port = record.port || PREFERRED_PORT;
+					if (record.ownership === 'owned') await retireOwnedProcess(record);
+					assertNotCancelled(record);
+					let preferredURL = siteURL(PREFERRED_PORT);
+					let preferredHealth = await probe(preferredURL);
+					assertNotCancelled(record);
+					if (healthMatches(preferredHealth, target.identity)) {
+						record.lastGoodURL = preferredURL;
+						return transition(record, 'ready', {
+							url: preferredURL,
+							port: PREFERRED_PORT,
+							ownership: 'external',
+							error: null,
+						});
+					}
+					let port = await selectPort(preferredHealth);
+					assertNotCancelled(record);
 					return launch(record, target, resolved.npm, port);
-				});
+				}, targetPromise, requestedRoot);
 			},
 			async stop(identity) {
 				let record = get(identity);
@@ -433,12 +554,9 @@ Zotero.QLab = Zotero.QLab || {};
 						&& typeof record.process.cancel === 'function') {
 					record.process.cancel();
 				}
-				if (record.process && typeof record.process.waitForExit === 'function') {
-					try { await record.process.waitForExit(shutdownTimeoutMs); }
-					catch (error) { appendDiagnostic(record, 'stderr', error.message || String(error)); }
+				if (record.ownership === 'owned') {
+					await retireOwnedProcess(record);
 				}
-				record.process = null;
-				record.processPump = null;
 				record.activeStream = null;
 				return transition(record, 'idle', {
 					url: record.lastGoodURL || '',
@@ -451,7 +569,8 @@ Zotero.QLab = Zotero.QLab || {};
 				shuttingDown = true;
 				for (let record of records.values()) {
 					if (record.ownership === 'owned' || record.inFlight) {
-						await service.stop(record.identity);
+						try { await service.stop(record.identity); }
+						catch (error) {}
 					}
 				}
 			},
