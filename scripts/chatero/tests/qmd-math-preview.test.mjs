@@ -2,12 +2,64 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { loadQLab } from "../lib/load-qlab.mjs";
 
+function styleDocument({ withHead = true } = {}) {
+	const links = [];
+	const head = withHead ? {
+		querySelector(selector) {
+			return selector === "[data-qlab-katex-css]" ? links[0] || null : null;
+		},
+		appendChild(node) {
+			links.push(node);
+			node.parentNode = this;
+			return node;
+		},
+	} : null;
+	return {
+		head,
+		links,
+		querySelector(selector) {
+			return selector === "head" ? head : null;
+		},
+		createElementNS(namespace, name) {
+			assert.equal(namespace, "http://www.w3.org/1999/xhtml");
+			assert.equal(name, "link");
+			return {
+				attributes: new Map(),
+				setAttribute(key, value) { this.attributes.set(key, String(value)); },
+			};
+		},
+	};
+}
+
 test("inlineQmdFormatHTML renders inline math with KaTeX", async () => {
 	const QLab = await loadQLab();
 	const html = QLab.inlineQmdFormatHTML("Energy is $E = mc^2$ here.");
 	assert.match(html, /katex/);
 	assert.match(html, /qlab-qmd-math-inline/);
 	assert.ok(!html.includes("$E = mc^2$"));
+});
+
+test("invalid inline LaTeX stays source-visible and carries its editable expression", async () => {
+	const QLab = await loadQLab();
+	const html = QLab.inlineQmdFormatHTML("Broken $\\definitelynotacommand{x}$ remains visible.");
+
+	assert.match(html, /class="qlab-qmd-math-error"/);
+	assert.match(html, /data-latex="\\definitelynotacommand\{x\}"/);
+	assert.match(html, />\$\\definitelynotacommand\{x\}\$<\/span>/);
+});
+
+test("ensureKatexStyles idempotently loads HTML documents and declines headless XUL", async () => {
+	const QLab = await loadQLab();
+	const html = styleDocument();
+
+	assert.equal(QLab.ensureKatexStyles(html), true);
+	assert.equal(html.links.length, 1);
+	assert.equal(html.links[0].rel, "stylesheet");
+	assert.equal(html.links[0].href, "resource://zotero/katex.min.css");
+	assert.equal(html.links[0].attributes.get("data-qlab-katex-css"), "true");
+	assert.equal(QLab.ensureKatexStyles(html), true);
+	assert.equal(html.links.length, 1);
+	assert.equal(QLab.ensureKatexStyles(styleDocument({ withHead: false })), false);
 });
 
 test("Visual QMD links allow only navigable research schemes and safe relative targets", async () => {

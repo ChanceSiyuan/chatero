@@ -68,3 +68,14 @@ test("QLab visual tokens include light and dark XPI palette", async () => {
 	assert.match(workspaceSource, /\.qlab-qmd-preview-quick/);
 	assert.match(workspaceSource, /\.qlab-qmd-preview-browser-host/);
 });
+
+test("the main XUL window loads KaTeX styling before Visual Edit mounts", async () => {
+	const source = await readFile(
+		new URL("../../../chrome/content/zotero/zoteroPane.xhtml", import.meta.url),
+		"utf8",
+	);
+	assert.match(
+		source,
+		/<\?xml-stylesheet href="resource:\/\/zotero\/katex\.min\.css" type="text\/css"\?>/,
+	);
+});

@@ -21,20 +21,24 @@ Zotero.QLab = Zotero.QLab || {};
 			.replace(/"/g, '&quot;');
 	}
 	
-	function ensureKatexStyles(doc) {
+	Zotero.QLab.ensureKatexStyles = function (doc) {
 		if (!doc || !Zotero.QLab.katexStylesheetHref) {
-			return;
+			return false;
 		}
 		let head = doc.head || doc.querySelector('head');
-		if (!head || head.querySelector('[data-qlab-katex-css]')) {
-			return;
+		if (!head) {
+			return false;
+		}
+		if (head.querySelector('[data-qlab-katex-css]')) {
+			return true;
 		}
 		let link = doc.createElementNS('http://www.w3.org/1999/xhtml', 'link');
 		link.rel = 'stylesheet';
 		link.href = Zotero.QLab.katexStylesheetHref();
 		link.setAttribute('data-qlab-katex-css', 'true');
 		head.appendChild(link);
-	}
+		return true;
+	};
 	
 	/**
 	 * XUL windows are XML documents, so assigning ordinary HTML containing
@@ -604,7 +608,7 @@ Zotero.QLab = Zotero.QLab || {};
 			drafts,
 			contextSummary,
 		}));
-		ensureKatexStyles(host.ownerDocument);
+		Zotero.QLab.ensureKatexStyles(host.ownerDocument);
 		host._qlabMountedKind = kind;
 		host._qlabMountRoot = root;
 		host._qlabMountWorkspaceState = workspaceState;

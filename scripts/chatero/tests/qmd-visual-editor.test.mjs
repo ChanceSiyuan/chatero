@@ -170,9 +170,15 @@ class TestElement {
 }
 
 class TestDocument {
-	constructor() {
+	constructor({ katexStyled = true } = {}) {
 		this.activeElement = null;
 		this.body = this.createElement("body");
+		this.documentElement = this.body;
+		this.defaultView = {
+			getComputedStyle() {
+				return { fontFamily: katexStyled ? '"KaTeX_Main", serif' : "serif" };
+			},
+		};
 	}
 	createElement(name) {
 		return new TestElement(name, this);
@@ -196,7 +202,7 @@ function installTestHTML(QLab) {
 	QLab.setHTML = (element, html) => {
 		element.replaceChildren();
 		element._textContent = decodeHTML(String(html).replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim();
-		for (const match of String(html).matchAll(/<span class="([^"]*qlab-qmd-math-(?:inline|display)[^"]*)" data-latex="([^"]*)"/g)) {
+		for (const match of String(html).matchAll(/<span class="([^"]*qlab-qmd-math-(?:inline|display|error)[^"]*)" data-latex="([^"]*)"/g)) {
 			const math = element.ownerDocument.createElement("span");
 			math.className = match[1];
 			math.dataset.latex = decodeHTML(match[2]);
@@ -229,7 +235,7 @@ $$
 async function createVisualEditor(options = {}) {
 	const QLab = await loadQLab();
 	installTestHTML(QLab);
-	const document = new TestDocument();
+	const document = new TestDocument({ katexStyled: options.katexStyled !== false });
 	const saves = [];
 	let source = options.source ?? VISUAL_SOURCE;
 	let revision = "r1";
@@ -457,6 +463,103 @@ test("createQmdVisualEditor renders semantic cards and nested formulas", async (
 	});
 });
 
+test("Visual Edit renders and maps formal-title and body formulas from exact block-local ranges", async () => {
+	const source = `::: {#def-r-local-function .callout-note icon="false"}
+## ($r$-local function)
+
+A function $f(u,G,x)$ is $r$-local iff
+$f(u,G,x)=F\\!\\left(\\mathcal V_r(u,G,x)\\right).$
+:::`;
+	const mounted = await createVisualEditor({ source });
+	const card = mounted.editor.root.querySelector(".zc-qmd-visual-card.is-def");
+	const title = card.querySelector(".zc-qmd-visual-card-title");
+	const titleFormula = title.querySelector(".qlab-qmd-math-inline");
+	const bodyFormulas = card.querySelector(".zc-qmd-visual-card-body")
+		.querySelectorAll(".qlab-qmd-math-inline");
+
+	assert.equal(card.querySelector(".zc-qmd-visual-card-label").textContent, "Definition 1");
+	assert.equal(title.textContent.includes("$r$"), false);
+	assert.ok(titleFormula);
+	assert.equal(Number(titleFormula.dataset.qlabSourceStart), source.indexOf("$r$") + 1);
+	assert.equal(Number(titleFormula.dataset.qlabSourceEnd), source.indexOf("$r$") + 2);
+	assert.equal(bodyFormulas.length, 3);
+	for (const formula of [titleFormula, ...bodyFormulas]) {
+		const start = Number(formula.dataset.qlabSourceStart);
+		const end = Number(formula.dataset.qlabSourceEnd);
+		assert.equal(source.slice(start, end), formula.dataset.latex);
+	}
+});
+
+test("Visual Edit edits only the title LaTeX body and leaves every other QMD byte intact", async () => {
+	const source = [
+		"::: {#def-title-math .callout-note}",
+		"## The $r$-local condition",
+		"",
+		"Body $r$ remains unchanged.",
+		":::",
+		"",
+	].join("\n");
+	const mounted = await createVisualEditor({ source });
+	const card = mounted.editor.root.querySelector(".zc-qmd-visual-card.is-def");
+	const formulas = card.querySelectorAll(".qlab-qmd-math-inline");
+	assert.equal(formulas.length, 2);
+
+	formulas[0].click();
+	const input = card.querySelector(".zc-qmd-visual-math-editor");
+	assert.equal(input.value, "r");
+	input.value = "R";
+	input.event("input", { bubbles: false });
+	input.blur();
+	await settle();
+
+	assert.equal(mounted.source(), source.replace("The $r$-local", "The $R$-local"));
+});
+
+test("clicking non-formula formal-title text opens the complete source card", async () => {
+	const mounted = await createVisualEditor();
+	const card = mounted.editor.root.querySelector(".zc-qmd-visual-card.is-thm");
+	card.querySelector(".zc-qmd-visual-card-title").click();
+
+	const textarea = card.querySelector(".zc-qmd-visual-source-editor");
+	assert.ok(textarea);
+	assert.equal(textarea.value, mounted.QLab.visualQmdBlocks(VISUAL_SOURCE)
+		.find(block => block.semantic === "theorem").source);
+});
+
+test("Visual Edit replaces unstyled KaTeX with delimited source that remains editable", async () => {
+	const source = "The value is $x+y$.\n";
+	const mounted = await createVisualEditor({ source, katexStyled: false });
+	const fallback = mounted.editor.root.querySelector(".qlab-qmd-math-style-error");
+
+	assert.ok(fallback);
+	assert.equal(fallback.textContent, "$x+y$");
+	assert.equal(fallback.dataset.latex, "x+y");
+	fallback.click();
+	const input = mounted.editor.root.querySelector(".zc-qmd-visual-math-editor");
+	assert.equal(input.value, "x+y");
+	input.value = "z";
+	input.event("input", { bubbles: false });
+	input.blur();
+	await settle();
+	assert.equal(mounted.source(), "The value is $z$.\n");
+});
+
+test("Visual Edit lets an invalid source-visible formula be corrected in place", async () => {
+	const source = "Broken $\\definitelynotacommand{x}$ here.\n";
+	const mounted = await createVisualEditor({ source });
+	const error = mounted.editor.root.querySelector(".qlab-qmd-math-error");
+
+	assert.ok(error);
+	error.click();
+	const input = mounted.editor.root.querySelector(".zc-qmd-visual-math-editor");
+	assert.equal(input.value, "\\definitelynotacommand{x}");
+	input.value = "x";
+	input.event("input", { bubbles: false });
+	input.blur();
+	await settle();
+	assert.equal(mounted.source(), "Broken $x$ here.\n");
+});
+
 test("Visual Edit changes one theorem formula without flattening its card", async () => {
 	const { editor, saves, source } = await createVisualEditor();
 	const card = editor.root.querySelector(".zc-qmd-visual-card.is-thm");
@@ -498,7 +601,7 @@ test("Visual Edit binds the only rendered inline formula after literal dollars t
 	assert.equal(mounted.source(), "literal $ not math $ and $y$\n");
 });
 
-test("a repeated formula in a theorem body edits the body range, not its title", async () => {
+test("a repeated formula in a theorem title and body maps each rendered node to its own range", async () => {
 	const source = [
 		"::: {#thm-repeat}",
 		"## Equality $x$",
@@ -509,9 +612,13 @@ test("a repeated formula in a theorem body edits the body range, not its title",
 	].join("\n");
 	const mounted = await createVisualEditor({ source });
 	const card = mounted.editor.root.querySelector(".zc-qmd-visual-card.is-thm");
-	const formula = card.querySelector(".qlab-qmd-math-inline");
-	assert.equal(Number(formula.dataset.qlabSourceStart), source.lastIndexOf("$x$") + 1);
-	assert.equal(Number(formula.dataset.qlabSourceEnd), source.lastIndexOf("$x$") + 2);
+	const formulas = card.querySelectorAll(".qlab-qmd-math-inline");
+	assert.equal(formulas.length, 2);
+	assert.equal(Number(formulas[0].dataset.qlabSourceStart), source.indexOf("$x$") + 1);
+	assert.equal(Number(formulas[0].dataset.qlabSourceEnd), source.indexOf("$x$") + 2);
+	assert.equal(Number(formulas[1].dataset.qlabSourceStart), source.lastIndexOf("$x$") + 1);
+	assert.equal(Number(formulas[1].dataset.qlabSourceEnd), source.lastIndexOf("$x$") + 2);
+	const formula = formulas[1];
 	formula.click();
 	const input = card.querySelector(".zc-qmd-visual-math-editor");
 	input.value = "y";

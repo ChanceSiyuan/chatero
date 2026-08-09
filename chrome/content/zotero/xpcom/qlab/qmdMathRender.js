@@ -163,7 +163,9 @@ Zotero.QLab = Zotero.QLab || {};
 		let katex = getKatex();
 		let closing = opening === '\\[' ? '\\]' : opening === '\\(' ? '\\)' : opening;
 		if (!katex) {
-			return `<span class="qlab-qmd-math-error">${escapeHTML(`${opening}${expression}${closing}`)}</span>`;
+			return `<span class="qlab-qmd-math-error${displayMode ? ' qlab-qmd-math-display' : ''}" `
+				+ `data-latex="${escapeHTML(expression)}">`
+				+ `${escapeHTML(`${opening}${expression}${closing}`)}</span>`;
 		}
 		try {
 			let html = katex.renderToString(expression, {
@@ -180,7 +182,9 @@ Zotero.QLab = Zotero.QLab || {};
 			return `<span class="${className}" data-latex="${escapeHTML(expression)}">${html}</span>`;
 		}
 		catch (e) {
-			return `<span class="qlab-qmd-math-error">${escapeHTML(`${opening}${expression}${closing}`)}</span>`;
+			return `<span class="qlab-qmd-math-error${displayMode ? ' qlab-qmd-math-display' : ''}" `
+				+ `data-latex="${escapeHTML(expression)}">`
+				+ `${escapeHTML(`${opening}${expression}${closing}`)}</span>`;
 		}
 	}
 	

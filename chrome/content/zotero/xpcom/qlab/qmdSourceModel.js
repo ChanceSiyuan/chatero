@@ -101,17 +101,29 @@ Zotero.QLab = Zotero.QLab || {};
 	}
 	
 	function fenceTitle(source) {
-		let body = String(source).split(/\r?\n/).slice(1, -1);
-		for (let line of body) {
-			let heading = /^#{1,6}\s+(.+?)(?:\s+\{[^}]*\})?\s*$/.exec(line.trim());
-			if (heading && heading[1]) {
-				return heading[1].trim();
+		let lines = sourceLines(String(source));
+		for (let index = 1; index < lines.length - 1; index++) {
+			let line = lines[index];
+			let heading = /^(\s*#{1,6}[ \t]+)(.*?)(?:[ \t]+\{[^}]*\})?[ \t]*$/.exec(line.text);
+			if (heading && heading[2]) {
+				let leading = /^\s*/.exec(heading[2])[0].length;
+				let trailing = /\s*$/.exec(heading[2])[0].length;
+				let title = heading[2].slice(leading, heading[2].length - trailing);
+				let start = line.start + heading[1].length + leading;
+				return {
+					title,
+					titleRange: {
+						source: title,
+						start,
+						end: start + title.length,
+					},
+				};
 			}
-			if (line.trim()) {
+			if (line.text.trim()) {
 				break;
 			}
 		}
-		return undefined;
+		return { title: undefined, titleRange: undefined };
 	}
 	
 	/**
@@ -155,9 +167,11 @@ Zotero.QLab = Zotero.QLab || {};
 					let end = lines[closing].end;
 					let raw = text.slice(start, end);
 					let semantic = semanticFence(div[1] || '');
+					let titleInfo = fenceTitle(raw);
 					result.push(visualBlock(semantic ? 'theorem' : 'callout', raw, start, end, {
 						semantic: semantic || undefined,
-						title: fenceTitle(raw),
+						title: titleInfo.title,
+						titleRange: titleInfo.titleRange,
 					}));
 					index = closing + 1;
 					continue;

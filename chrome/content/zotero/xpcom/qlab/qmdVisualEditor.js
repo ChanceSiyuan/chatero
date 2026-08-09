@@ -156,6 +156,33 @@ Zotero.QLab = Zotero.QLab || {};
 		return blocks.map(block => Zotero.QLab.renderQmdBlockHTML(block)).join('');
 	}
 
+	function katexStylesAvailable(doc) {
+		let view = doc && doc.defaultView;
+		let host = doc && (doc.body || doc.documentElement);
+		if (!view || typeof view.getComputedStyle !== 'function'
+				|| !host || typeof host.appendChild !== 'function') {
+			return false;
+		}
+		let probe = typeof doc.createElementNS === 'function'
+			? doc.createElementNS('http://www.w3.org/1999/xhtml', 'span')
+			: doc.createElement('span');
+		probe.className = 'katex';
+		probe.setAttribute('aria-hidden', 'true');
+		probe.style && (probe.style.cssText = 'position:absolute;visibility:hidden;pointer-events:none');
+		host.appendChild(probe);
+		let fontFamily = '';
+		try {
+			fontFamily = String(view.getComputedStyle(probe).fontFamily || '');
+		}
+		catch (e) {
+			return false;
+		}
+		finally {
+			probe.remove();
+		}
+		return /KaTeX_Main/i.test(fontFamily);
+	}
+
 	function frontmatterSummary(doc, source) {
 		let fragment = doc.createDocumentFragment();
 		let values = new Map();
@@ -190,6 +217,7 @@ Zotero.QLab = Zotero.QLab || {};
 		let active = null;
 		let selectedBlockId = null;
 		let inserting = false;
+		let mathStylesReady = false;
 
 		function reportStatus(edit, message, state) {
 			if (disposed || active !== edit || edit.generation !== generation) {
@@ -426,6 +454,31 @@ Zotero.QLab = Zotero.QLab || {};
 			}
 		}
 
+		function replaceUnstyledMath(container, region) {
+			if (mathStylesReady) {
+				return;
+			}
+			let spans = Zotero.QLab.qmdMathSpans(region.source);
+			let rendered = Array.from(container.querySelectorAll(
+				'.qlab-qmd-math-inline,.qlab-qmd-math-display,.qlab-qmd-math-error'));
+			let used = new Set();
+			for (let element of rendered) {
+				let latex = element.dataset && typeof element.dataset.latex === 'string'
+					? element.dataset.latex.trim()
+					: '';
+				let display = element.classList.contains('qlab-qmd-math-display');
+				let index = spans.findIndex((span, candidateIndex) => !used.has(candidateIndex)
+					&& span.display === display && span.latex.trim() === latex);
+				if (index < 0) {
+					continue;
+				}
+				used.add(index);
+				let span = spans[index];
+				element.classList.add('qlab-qmd-math-error', 'qlab-qmd-math-style-error');
+				element.textContent = span.source;
+			}
+		}
+
 		function renderBlock(block, counters) {
 			if (block.kind === 'frontmatter') {
 				let card = doc.createElement('section');
@@ -442,14 +495,31 @@ Zotero.QLab = Zotero.QLab || {};
 				let next = (counters.get(key) || 0) + 1;
 				counters.set(key, next);
 				let label = SEMANTIC_LABELS[key] || 'Callout';
-				header.textContent = `${label}${key === 'proof' ? '' : ` ${next}`}`
-					+ `${block.title ? `: ${block.title}` : ''}`;
+				let labelElement = doc.createElement('span');
+				labelElement.className = 'zc-qmd-visual-card-label';
+				labelElement.textContent = `${label}${key === 'proof' ? '' : ` ${next}`}`;
+				header.appendChild(labelElement);
+				let titleElement = null;
+				if (block.title) {
+					header.appendChild(doc.createTextNode
+						? doc.createTextNode(': ')
+						: Object.assign(doc.createElement('span'), { textContent: ': ' }));
+					titleElement = doc.createElement('span');
+					titleElement.className = 'zc-qmd-visual-card-title';
+					setSafeHTML(titleElement, Zotero.QLab.inlineQmdFormatHTML(block.title));
+					header.appendChild(titleElement);
+				}
 				let body = doc.createElement('div');
 				body.className = 'zc-qmd-visual-card-body';
 				let bodyRegion = theoremBodyRegion(block.source);
 				setSafeHTML(body, renderBodyHTML(bodyRegion.source));
+				if (titleElement && block.titleRange) {
+					replaceUnstyledMath(titleElement, block.titleRange);
+					bindFormulaEditors(titleElement, block, block.titleRange);
+				}
+				replaceUnstyledMath(body, bodyRegion);
 				card.append(header, body);
-				bindFormulaEditors(card, block, bodyRegion);
+				bindFormulaEditors(body, block, bodyRegion);
 				return card;
 			}
 
@@ -462,6 +532,7 @@ Zotero.QLab = Zotero.QLab || {};
 			}
 			else {
 				setSafeHTML(wrapper, Zotero.QLab.renderQmdBlockHTML(block));
+				replaceUnstyledMath(wrapper, { source: block.source, start: 0 });
 				bindFormulaEditors(wrapper, block);
 			}
 			return wrapper;
@@ -471,6 +542,7 @@ Zotero.QLab = Zotero.QLab || {};
 			if (disposed) {
 				return;
 			}
+			mathStylesReady = katexStylesAvailable(doc);
 			root.replaceChildren();
 			let counters = new Map();
 			for (let block of Zotero.QLab.visualQmdBlocks(source)) {

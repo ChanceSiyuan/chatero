@@ -21,6 +21,13 @@ Proof body.
 :::
 `;
 
+const FORMAL_MATH_SOURCE = `::: {#def-r-local-function .callout-note icon="false"}
+## ($r$-local function)
+
+A function $f(u,G,x)$ is $r$-local iff
+$f(u,G,x)=F\\!\\left(\\mathcal V_r(u,G,x)\\right).$
+:::`;
+
 test("visualQmdBlocks splits frontmatter heading paragraph code theorem", async () => {
 	const QLab = await loadQLab();
 	const blocks = QLab.visualQmdBlocks(SAMPLE);
@@ -31,6 +38,32 @@ test("visualQmdBlocks splits frontmatter heading paragraph code theorem", async 
 	assert.ok(kinds.includes("code"));
 	assert.ok(kinds.includes("theorem"));
 });
+
+for (const [label, source] of [
+	["LF", FORMAL_MATH_SOURCE],
+	["CRLF", FORMAL_MATH_SOURCE.replace(/\n/g, "\r\n")],
+]) {
+	test(`visualQmdBlocks exposes the exact block-local formal title range for ${label}`, async () => {
+		const QLab = await loadQLab();
+		const original = `Before.${label === "CRLF" ? "\r\n\r\n" : "\n\n"}${source}`;
+		const block = QLab.visualQmdBlocks(original).find(candidate => candidate.semantic === "definition");
+
+		assert.ok(block);
+		assert.equal(block.title, "($r$-local function)");
+		assert.deepEqual(JSON.parse(JSON.stringify(block.titleRange)), {
+			source: "($r$-local function)",
+			start: block.source.indexOf("($r$-local function)"),
+			end: block.source.indexOf("($r$-local function)") + "($r$-local function)".length,
+		});
+		assert.equal(
+			original.slice(
+				block.start + block.titleRange.start,
+				block.start + block.titleRange.end,
+			),
+			block.titleRange.source,
+		);
+	});
+}
 
 test("applyQmdVisualBlock updates source losslessly", async () => {
 	const QLab = await loadQLab();
