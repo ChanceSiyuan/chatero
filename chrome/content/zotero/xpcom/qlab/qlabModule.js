@@ -2094,6 +2094,7 @@ Zotero.QLab = Zotero.QLab || {};
 
 	async function processAgentStream(host, turn, reply, chunks, status, {
 		failClosed = false,
+		approvalRoot,
 	} = {}) {
 		let cancelled = false;
 		for await (let event of turn) {
@@ -2108,23 +2109,17 @@ Zotero.QLab = Zotero.QLab || {};
 				if (failClosed) throw new Error(message);
 			}
 			else if (event.type === 'approval-needed') {
-				let approvalRoot = host._qlabMountRoot || '';
-				let policy = host._qlabApprovalPolicy;
-				if (policy && host._qlabApprovalPolicyRoot !== undefined
-						&& host._qlabApprovalPolicyRoot !== approvalRoot) {
-					policy = null;
-				}
-				if (!policy && approvalRoot && Zotero.QLab.loadApprovalPolicy) {
-					let loaded = await Zotero.QLab.loadApprovalPolicy(approvalRoot);
-					if (host._qlabMountRoot === approvalRoot) {
-						policy = loaded;
-						host._qlabApprovalPolicy = loaded;
-						host._qlabApprovalPolicyRoot = approvalRoot;
-					}
-					else {
-						policy = host._qlabApprovalPolicyRoot === host._qlabMountRoot
-							? host._qlabApprovalPolicy
-							: null;
+				let policyRoot = approvalRoot !== undefined
+					? approvalRoot
+					: (host._qlabMountRoot || '');
+				let policy = host._qlabApprovalPolicyRoot === policyRoot
+					? host._qlabApprovalPolicy
+					: null;
+				if (!policy && policyRoot && Zotero.QLab.loadApprovalPolicy) {
+					policy = await Zotero.QLab.loadApprovalPolicy(policyRoot);
+					if (host._qlabMountRoot === policyRoot
+							&& host._qlabApprovalPolicyRoot === policyRoot) {
+						host._qlabApprovalPolicy = policy;
 					}
 				}
 				let decision = Zotero.QLab.evaluateApproval(policy, event);
@@ -2259,6 +2254,7 @@ Zotero.QLab = Zotero.QLab || {};
 	};
 	
 	Zotero.QLab.runShellFreeform = async function (host, root, workspaceState) {
+		let turnRoot = root || '';
 		let textarea = host.querySelector('[data-qlab-prompt]');
 		let status = host.querySelector('.qlab-shell-status');
 		try {
@@ -2315,7 +2311,7 @@ Zotero.QLab = Zotero.QLab || {};
 			}
 			let context = composerContextBlock(host, { chatMode });
 			let rules = Zotero.QLab.loadChatRulesPreamble
-				? await Zotero.QLab.loadChatRulesPreamble(root)
+				? await Zotero.QLab.loadChatRulesPreamble(turnRoot)
 				: '';
 			let maxChars = Zotero.QLab.Settings && Zotero.QLab.Settings.getChatTranscriptMaxChars
 				? Zotero.QLab.Settings.getChatTranscriptMaxChars()
@@ -2338,7 +2334,7 @@ Zotero.QLab = Zotero.QLab || {};
 			
 			let turn = runtime.startTurn({
 				mode: chatMode === 'agent' ? 'agent' : 'ask',
-				workspaceRoot: root,
+				workspaceRoot: turnRoot,
 				prompt,
 				providerId,
 				model: model || undefined,
@@ -2349,7 +2345,9 @@ Zotero.QLab = Zotero.QLab || {};
 			});
 			host._qlabTurnHandle = turn;
 			
-			cancelled = await processAgentStream(host, turn, reply, chunks, status);
+			cancelled = await processAgentStream(host, turn, reply, chunks, status, {
+				approvalRoot: turnRoot,
+			});
 			
 			let finalText = chunks.join('');
 			if (!finalText.trim()) {
@@ -2362,9 +2360,9 @@ Zotero.QLab = Zotero.QLab || {};
 				status.textContent = cancelled ? 'Cancelled' : 'Done';
 			}
 			if (!cancelled && chatMode === 'agent') {
-				await Zotero.QLab.maybeShowAgentDraftBanner(host, root);
+				await Zotero.QLab.maybeShowAgentDraftBanner(host, turnRoot);
 			}
-			void Zotero.QLab.persistChatHost(host, root);
+			void Zotero.QLab.persistChatHost(host, turnRoot);
 		}
 		catch (e) {
 			Zotero.logError && Zotero.logError(e);
@@ -2528,7 +2526,7 @@ Zotero.QLab = Zotero.QLab || {};
 				reply,
 				chunks,
 				status,
-				{ failClosed: true }
+				{ failClosed: true, approvalRoot: root }
 			);
 			Zotero.QLab.updateChatMessage(targetHost, reply.id, chunks.join('') || '(empty)', {
 				status: cancelled ? 'cancelled' : '',
@@ -2965,7 +2963,9 @@ Zotero.QLab = Zotero.QLab || {};
 				attachments: readOnly ? [{ kind: 'policy', readOnly: true }] : [],
 			});
 			host._qlabTurnHandle = turn;
-			cancelled = await processAgentStream(host, turn, reply, chunks, status);
+			cancelled = await processAgentStream(host, turn, reply, chunks, status, {
+				approvalRoot: root,
+			});
 			Zotero.QLab.updateChatMessage(host, reply.id, chunks.join('') || '(empty)', {
 				status: cancelled ? 'cancelled' : '',
 			});

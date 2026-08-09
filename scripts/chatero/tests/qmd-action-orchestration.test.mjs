@@ -140,6 +140,7 @@ test("Draft review fails closed when an Agent approval is denied", async () => {
 		allow: [],
 		deny: ["read-only review requested"],
 	};
+	host._qlabApprovalPolicyRoot = "/tmp/qlab";
 	QLab.renderChatMessages = () => {};
 	QLab.updateChatContextMeter = () => {};
 	QLab.persistChatHost = async () => {};

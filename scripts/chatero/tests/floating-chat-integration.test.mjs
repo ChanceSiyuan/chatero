@@ -627,6 +627,90 @@ test("workspace refresh replaces the previous root's approval policy in place", 
 	fixture.controller.destroy();
 });
 
+test("an in-flight turn keeps the approval policy of the workspace where it started", async () => {
+	const QLab = await loadQLab();
+	const oldRoot = "/workspaces/old";
+	const newRoot = "/workspaces/new";
+	const oldPolicy = { defaultAction: "ask", allow: [], deny: ["workspace_write"] };
+	const newPolicy = { defaultAction: "ask", allow: ["workspace_write"], deny: [] };
+	const prompt = { value: "Update the old workspace", focus() {} };
+	const status = { textContent: "" };
+	const send = { disabled: false };
+	const stop = { hidden: true };
+	const controls = new Map([
+		["[data-qlab-prompt]", prompt],
+		[".qlab-shell-status", status],
+		["[data-qlab-send]", send],
+		["[data-qlab-stop]", stop],
+	]);
+	const host = {
+		_qlabMountRoot: oldRoot,
+		_qlabMountWorkspaceState: "ready",
+		_qlabMessages: [],
+		_qlabApprovalPolicy: oldPolicy,
+		_qlabApprovalPolicyRoot: oldRoot,
+		querySelector(selector) {
+			return controls.get(selector) || null;
+		},
+	};
+
+	let streamStartedResolve;
+	let releaseApprovalResolve;
+	const streamStarted = new Promise(resolve => { streamStartedResolve = resolve; });
+	const releaseApproval = new Promise(resolve => { releaseApprovalResolve = resolve; });
+	let cancellations = 0;
+	let turnInput;
+	const turn = {
+		cancel() {
+			cancellations++;
+		},
+		async *[Symbol.asyncIterator]() {
+			streamStartedResolve();
+			await releaseApproval;
+			yield {
+				type: "approval-needed",
+				tool: "workspace_write",
+				reason: "Write the requested Draft change",
+			};
+			yield { type: "done", status: "ok" };
+		},
+	};
+	QLab.Settings.getAgentProviderId = () => "test-provider";
+	QLab.Settings.getAgentModel = () => "";
+	QLab.Settings.getChatMode = () => "agent";
+	QLab.Settings.getChatTranscriptMaxChars = () => 24_000;
+	QLab.getAgentRuntime = () => ({
+		startTurn(input) {
+			turnInput = input;
+			return turn;
+		},
+	});
+	QLab.loadChatRulesPreamble = async () => "";
+	QLab.renderChatMessages = () => {};
+	QLab.updateChatContextMeter = () => {};
+	QLab.persistChatHost = async () => {};
+	QLab.hideComposerAtPicker = () => {};
+	QLab.refreshChatProviderAvailability = async () => {};
+	const loadedRoots = [];
+	QLab.loadApprovalPolicy = async root => {
+		loadedRoots.push(root);
+		return root === oldRoot ? oldPolicy : newPolicy;
+	};
+
+	const run = QLab.runShellFreeform(host, oldRoot, "ready");
+	await streamStarted;
+	assert.equal(turnInput.workspaceRoot, oldRoot);
+	host._qlabMountRoot = newRoot;
+	host._qlabApprovalPolicy = newPolicy;
+	host._qlabApprovalPolicyRoot = newRoot;
+	releaseApprovalResolve();
+	await run;
+
+	assert.deepEqual(loadedRoots, [oldRoot]);
+	assert.equal(cancellations, 1, "the old workspace deny rule must cancel the turn");
+	assert.match(host._qlabMessages.at(-1).text, /\[denied\]/i);
+});
+
 test("Chat Pin and bounds restore only into their own window session", async () => {
 	const preference = new Map();
 	const QLab = await loadQLab({
