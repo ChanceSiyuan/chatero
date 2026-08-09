@@ -7430,20 +7430,15 @@ var ZoteroPane = new function () {
 			let selected = await this.qlabPickWorkspaceFolder();
 			if (!selected) return;
 			let host = Zotero.QLab.createGeckoQLabPathHost();
-			let root = await Zotero.QLab.normalizeQLabRoot(selected, host);
-			let inspection = await Zotero.QLab.inspectQLabRepository(root, host);
-			if (inspection.state === 'empty' || inspection.state === 'partial' || inspection.state === 'incompatible') {
-				await Zotero_Tabs._qlab.openWorkspaceSetup(root, inspection);
-				return;
+			let result = await Zotero.QLab.selectQLabWorkspace({
+				path: selected,
+				host,
+				coordinator: Zotero_Tabs._qlab,
+			});
+			if (result && result.state === 'blocked') {
+				await Zotero_Tabs._qlab.openWorkspaceSetup(result.root);
+				Zotero_Tabs._qlab.getWorkspaceSetupController(result.root).reportError(result.reason);
 			}
-			let blocker = Zotero_Tabs._qlab.workspaceSwitchBlocker();
-			if (!blocker.ok) {
-				await Zotero_Tabs._qlab.openWorkspaceSetup(root, inspection);
-				Zotero_Tabs._qlab.getWorkspaceSetupController(root).reportError(blocker.reason);
-				return;
-			}
-			await Zotero.QLab.Settings.setRoot(root, host);
-			await Zotero_Tabs._qlab.refreshWorkspace();
 		}
 		catch (e) {
 			Zotero.logError(e);

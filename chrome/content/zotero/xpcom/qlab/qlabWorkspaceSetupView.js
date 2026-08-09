@@ -275,6 +275,39 @@ Zotero.QLab = Zotero.QLab || {};
 		});
 	};
 
+	Zotero.QLab.resolveReadyQLabRepository = async function (root, options = {}) {
+		let host = options.host || Zotero.QLab.createGeckoQLabInitializerHost();
+		let git = options.git || Zotero.QLab.createGeckoQLabGitService();
+		let uuid = options.uuid || (() => String(Services.uuid.generateUUID()).replace(/[{}]/g, ''));
+		let canonical = await host.realPath(root);
+		canonical = host.normalize(canonical).replace(/[\\/]+$/, '');
+		let inspected = await Zotero.QLab.inspectQLabRepository(canonical, host);
+		if (inspected.state !== 'ready') throw new Error('Selected folder is not a ready Research Loop repository');
+		if (!await git.isRepository(canonical)) {
+			let gitPath = host.join(canonical, '.git');
+			if (await host.kind(gitPath) !== 'missing') {
+				throw new Error('Existing .git path is not a valid repository');
+			}
+			await git.initialize({ executable: '/usr/bin/git', argv: ['init'], cwd: canonical });
+			if (!await git.isRepository(canonical)) throw new Error('Git initialization did not produce a repository');
+		}
+		let identity = await Zotero.QLab.createQLabRepositoryIdentity({ root: canonical, host, uuid });
+		return Object.freeze({
+			state: 'ready',
+			root: canonical,
+			repositoryIdentity: identity.identity,
+		});
+	};
+
+	Zotero.QLab.selectQLabWorkspace = async function ({ path, host, coordinator }) {
+		if (!host || !coordinator) throw new Error('Workspace selection requires a path host and coordinator');
+		let root = await Zotero.QLab.normalizeQLabRoot(path, host);
+		let inspection = await Zotero.QLab.inspectQLabRepository(root, host);
+		let select = coordinator.selectWorkspace || coordinator.select;
+		if (typeof select !== 'function') throw new Error('Workspace coordinator cannot select a repository');
+		return select.call(coordinator, root, inspection);
+	};
+
 	/**
 	 * Window-independent setup coordination. Native tabs supply a few small
 	 * callbacks; this module owns switching guards, controller reuse, epochs,
@@ -284,8 +317,15 @@ Zotero.QLab = Zotero.QLab || {};
 		let controllers = new Map();
 		let targetEpoch = 0;
 		let activeRepositoryIdentity = null;
+		let controllerOptions = options.controllerOptions || {};
 		let hosts = typeof options.hosts === 'function' ? options.hosts : () => [];
 		let showSetupTab = typeof options.showSetupTab === 'function' ? options.showSetupTab : () => null;
+		let replaceSetupTabRoot = typeof options.replaceSetupTabRoot === 'function'
+			? options.replaceSetupTabRoot
+			: async () => {};
+		let resolveReadyRepository = typeof options.resolveReadyRepository === 'function'
+			? options.resolveReadyRepository
+			: async root => ({ state: 'ready', root, repositoryIdentity: null });
 		let activateRepository = typeof options.activateRepository === 'function'
 			? options.activateRepository
 			: async result => result.root;
@@ -308,7 +348,7 @@ Zotero.QLab = Zotero.QLab || {};
 			return { ok: true };
 		}
 
-		async function activateInitializedWorkspace(result) {
+		async function activateInitializedWorkspace(result, { openExample = true } = {}) {
 			let blocker = workspaceSwitchBlocker();
 			if (!blocker.ok) throw new Error(blocker.reason);
 			if (!result || !result.root) throw new Error('Initialized workspace is missing its root');
@@ -316,19 +356,24 @@ Zotero.QLab = Zotero.QLab || {};
 			activeRepositoryIdentity = result.repositoryIdentity || null;
 			targetEpoch += 1;
 			await refreshTargets(targetEpoch);
-			await openReadyTabs({ root, repositoryIdentity: activeRepositoryIdentity, targetEpoch });
+			await openReadyTabs({ root, repositoryIdentity: activeRepositoryIdentity, targetEpoch, openExample });
 			return Object.freeze({ root, repositoryIdentity: activeRepositoryIdentity, targetEpoch });
+		}
+
+		function createController() {
+			return Zotero.QLab.createQLabWorkspaceSetupController({
+				...controllerOptions,
+				canActivate: workspaceSwitchBlocker,
+				onActivate: activateInitializedWorkspace,
+				reveal,
+			});
 		}
 
 		function get(root) {
 			let key = String(root || '');
 			let existing = controllers.get(key);
 			if (existing) return existing;
-			let controller = Zotero.QLab.createQLabWorkspaceSetupController({
-				canActivate: workspaceSwitchBlocker,
-				onActivate: activateInitializedWorkspace,
-				reveal,
-			});
+			let controller = createController();
 			controllers.set(key, controller);
 			return controller;
 		}
@@ -342,6 +387,49 @@ Zotero.QLab = Zotero.QLab || {};
 				let controller = get(root);
 				if (!inspection || controller.snapshot().root !== root) await controller.choose(root);
 				return showSetupTab(root);
+			},
+			async restore(root) {
+				let controller = get(root);
+				if (controller.snapshot().root !== root || controller.snapshot().state === 'missing') {
+					await controller.resume(root);
+				}
+				return controller;
+			},
+			async replaceRoot(currentController, root) {
+				let nextKey = String(root || '');
+				if (!nextKey) return currentController;
+				let currentEntry = Array.from(controllers.entries())
+					.find(([, value]) => value === currentController);
+				let currentKey = currentEntry && currentEntry[0];
+				if (currentKey === nextKey) {
+					await currentController.review();
+					return currentController;
+				}
+				let nextController = controllers.get(nextKey) || createController();
+				await nextController.resume(nextKey);
+				await replaceSetupTabRoot(nextKey, nextController, currentController);
+				controllers.set(nextKey, nextController);
+				if (currentKey !== undefined) controllers.delete(currentKey);
+				if (currentController !== nextController) currentController.dispose();
+				return nextController;
+			},
+			async select(root, inspection = null) {
+				let currentInspection = inspection;
+				if (!currentInspection) {
+					let inspector = controllerOptions.inspect;
+					if (typeof inspector !== 'function') throw new Error('Workspace inspection is unavailable');
+					currentInspection = await inspector(root);
+				}
+				if (currentInspection.state !== 'ready') {
+					await this.open(root, currentInspection);
+					return get(root).snapshot();
+				}
+				let blocker = workspaceSwitchBlocker();
+				if (!blocker.ok) {
+					return Object.freeze({ state: 'blocked', root, reason: blocker.reason });
+				}
+				let result = await resolveReadyRepository(root, currentInspection);
+				return activateInitializedWorkspace(result, { openExample: false });
 			},
 			activateInitializedWorkspace,
 			dispose() {
@@ -381,8 +469,15 @@ Zotero.QLab = Zotero.QLab || {};
 		return `<main class="qlab-setup" data-qlab-setup-state="${escapeHTML(presentation.state)}"><div class="qlab-setup-card"><div class="qlab-setup-mark">R</div><p class="qlab-setup-kicker">Research Loop</p><h1>${escapeHTML(presentation.title)}</h1><p class="qlab-setup-message">${escapeHTML(presentation.message)}</p>${root}${sections}${steps}<p class="qlab-setup-error" ${presentation.state === 'failed' ? '' : 'hidden'}>${escapeHTML(presentation.diagnostics.error || '')}</p><div class="qlab-setup-actions">${actions}</div><div class="qlab-setup-links"><button type="button" data-qlab-setup-copy>Copy Diagnostics</button></div></div></main>`;
 	};
 
-	Zotero.QLab.mountQLabWorkspaceSetupView = function (container, { controller, choose, openEditor, clipboard } = {}) {
+	Zotero.QLab.mountQLabWorkspaceSetupView = function (container, {
+		controller,
+		choose,
+		replaceRoot,
+		openEditor,
+		clipboard,
+	} = {}) {
 		if (!container || !controller) return null;
+		let activeController = controller;
 		let host = container.querySelector('.qlab-workspace-setup-host');
 		if (!host) {
 			host = container.ownerDocument.createElementNS('http://www.w3.org/1999/xhtml', 'div');
@@ -390,28 +485,36 @@ Zotero.QLab = Zotero.QLab || {};
 			container.replaceChildren(host);
 		}
 		let render = () => {
-			let presentation = controller.presentation();
+			let presentation = activeController.presentation();
 			setHTML(host, Zotero.QLab.renderQLabWorkspaceSetupHTML(presentation));
 			let announcer = container.ownerDocument.getElementById('qlab-workspace-setup-announcer');
 			if (announcer) announcer.textContent = `${presentation.title}. ${presentation.message}`;
 		};
-		let unsubscribe = controller.subscribe(render);
+		let unsubscribe = activeController.subscribe(render);
 		let onClick = async event => {
 			let action = event.target.closest('[data-qlab-setup-action]');
 			if (action) {
 				let id = action.dataset.qlabSetupAction;
 				if (id === 'choose' && typeof choose === 'function') {
 					let root = await choose();
-					if (root) await controller.choose(root);
+					if (root && typeof replaceRoot === 'function') {
+						let replacement = await replaceRoot(activeController, root);
+						if (replacement && replacement !== activeController) {
+							unsubscribe();
+							activeController = replacement;
+							unsubscribe = activeController.subscribe(render);
+						}
+					}
+					else if (root) await activeController.choose(root);
 				}
-				else if (id === 'review') await controller.review();
-				else if (id === 'initialize') await controller.initialize();
-				else if (id === 'reveal') await controller.reveal();
+				else if (id === 'review') await activeController.review();
+				else if (id === 'initialize') await activeController.initialize();
+				else if (id === 'reveal') await activeController.reveal();
 				else if (id === 'open' && typeof openEditor === 'function') openEditor();
 				return;
 			}
 			if (event.target.closest('[data-qlab-setup-copy]')) {
-				let text = controller.copyDiagnostics();
+				let text = activeController.copyDiagnostics();
 				try { await (clipboard || container.ownerDocument.defaultView.navigator.clipboard).writeText(text); }
 				catch (error) { Zotero.logError && Zotero.logError(error); }
 			}
@@ -419,7 +522,7 @@ Zotero.QLab = Zotero.QLab || {};
 		host.addEventListener('click', onClick);
 		return Object.freeze({
 			dispose() { host.removeEventListener('click', onClick); unsubscribe(); },
-			controller,
+			get controller() { return activeController; },
 		});
 	};
 })();
