@@ -2,6 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { loadQLab } from "../lib/load-qlab.mjs";
 
+const assertJSON = (actual, expected) => {
+	assert.equal(JSON.stringify(actual), JSON.stringify(expected));
+};
+
 test("applyArrangement updates groups and invokes bridge hooks", async () => {
 	const QLab = await loadQLab();
 	const groups = new QLab.TabGroups();
@@ -16,13 +20,30 @@ test("applyArrangement updates groups and invokes bridge hooks", async () => {
 			calls.push(["shell", kind, payload]);
 			return kind;
 		},
+		showUtility: async (kind, payload) => calls.push(["show", kind, payload]),
 		select: (id) => calls.push(["select", id]),
 	});
-	assert.ok(snapshot.groups.right);
+	assert.equal(snapshot.groups.right, null);
+	assertJSON(snapshot.utilityTabs.map((tab) => tab.id), ["qlabchat"]);
 	assert.deepEqual(calls[0], ["reader", 11]);
 	assert.equal(calls[1][0], "shell");
 	assert.equal(calls[1][1], "qlabchat");
+	assert.equal(calls[2][0], "show");
+	assert.equal(calls[2][1], "qlabchat");
 	assert.equal(calls.some((call) => call[0] === "select"), true);
+});
+
+test("arrangement builders expose floating Chat intent without making it a pane", async () => {
+	const QLab = await loadQLab();
+	const pdfChat = QLab.buildPDFChatArrangement({ itemID: 5 });
+	assertJSON(QLab.arrangementPanes(pdfChat).map((spec) => spec.kind), ["reader"]);
+	assertJSON(QLab.arrangementUtilities(pdfChat).map((spec) => spec.kind), ["qlabchat"]);
+	assertJSON(pdfChat.showUtilities, ["qlabchat"]);
+	const desk = QLab.buildResearchDeskArrangement({ itemID: 5, draftPath: "drafts/a.qmd" });
+	assertJSON(QLab.arrangementPanes(desk).map((spec) => spec.kind), ["reader", "qlabqmd"]);
+	assertJSON(QLab.arrangementUtilities(desk).map((spec) => spec.kind), ["qlabchat"]);
+	assertJSON(desk.showUtilities, ["qlabchat"]);
+	assert.equal(desk.right.kind, "qlabqmd");
 });
 
 test("buildPDF*Arrangement rejects non-numeric itemIDs", async () => {

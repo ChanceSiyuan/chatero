@@ -22,14 +22,16 @@
  *
  *   1 pane  -> left
  *   2 panes -> left, right
- *   3 panes -> left, center, right   (PDF · Notes · Chat)
+ *   3 panes -> left, center, right   (content only)
  *
  * Tab kinds are Zotero-native peers: library, reader, note, plus QLab shells.
+ * Chat is a window utility launcher and therefore never belongs to a pane.
  */
 Zotero.QLab = Zotero.QLab || {};
 
 (function () {
 	const SINGLETON_KINDS = new Set(['qlabchat', 'qlabqmd', 'qlabsite']);
+	const UTILITY_KINDS = new Set(['qlabchat']);
 	const ALL_KINDS = new Set([
 		'library', 'reader', 'note', 'qlabchat', 'qlabqmd', 'qlabsite'
 	]);
@@ -104,6 +106,7 @@ Zotero.QLab = Zotero.QLab || {};
 	Zotero.QLab.TabGroups = function (onChange) {
 		this._onChange = typeof onChange === 'function' ? onChange : () => {};
 		this._tabs = new Map();
+		this._utilityTabIDs = new Set();
 		this._panes = [createPane()];
 		this._focusedIndex = 0;
 		this._splitRatios = DEFAULT_RATIOS[2].slice();
@@ -130,11 +133,20 @@ Zotero.QLab = Zotero.QLab || {};
 					? this.splitRatios()[0]
 					: DEFAULT_RATIOS[2][0],
 				splitRatios: this.splitRatios(),
+				utilityTabs: this.utilityTabs(),
 			};
 		},
 		
 		tabs() {
 			return Array.from(this._tabs.values()).map(tab => ({ ...tab }));
+		},
+
+		contentTabs() {
+			return this.tabs().filter(tab => !this._utilityTabIDs.has(tab.id));
+		},
+
+		utilityTabs() {
+			return this.tabs().filter(tab => this._utilityTabIDs.has(tab.id));
 		},
 		
 		tab(id) {
@@ -198,7 +210,12 @@ Zotero.QLab = Zotero.QLab || {};
 				let existing = this._tabs.get(id);
 				if (existing) {
 					this._applyRequest(existing, request);
-					this._activateInPlace(id);
+					if (this._isUtilityID(id)) {
+						this._removeFromPanes(id);
+					}
+					else {
+						this._activateInPlace(id);
+					}
 					return;
 				}
 				let title = request.title
@@ -210,6 +227,11 @@ Zotero.QLab = Zotero.QLab || {};
 					title,
 					payload: request.payload ? { ...request.payload } : null,
 				});
+				if (UTILITY_KINDS.has(request.kind)) {
+					this._utilityTabIDs.add(id);
+					this._removeFromPanes(id);
+					return;
+				}
 				let index = group
 					? this._ensurePaneForRole(group)
 					: this._focusedIndex;
@@ -230,6 +252,7 @@ Zotero.QLab = Zotero.QLab || {};
 					return;
 				}
 				this._tabs.delete(id);
+				this._utilityTabIDs.delete(id);
 				this._removeFromPanes(id);
 				this._normalize();
 			});
@@ -255,6 +278,9 @@ Zotero.QLab = Zotero.QLab || {};
 				this._tabs.delete(oldID);
 				tab.id = newID;
 				this._tabs.set(newID, tab);
+				if (this._utilityTabIDs.delete(oldID)) {
+					this._utilityTabIDs.add(newID);
+				}
 				for (let pane of this._panes) {
 					pane.tabIDs = pane.tabIDs.map(id => (id === oldID ? newID : id));
 					if (pane.activeTabID === oldID) {
@@ -267,7 +293,7 @@ Zotero.QLab = Zotero.QLab || {};
 		
 		activateTab(id) {
 			this._mutate(() => {
-				if (!this._tabs.has(id)) {
+				if (!this._tabs.has(id) || this._isUtilityID(id)) {
 					return;
 				}
 				this._activateInPlace(id);
@@ -280,6 +306,11 @@ Zotero.QLab = Zotero.QLab || {};
 			}
 			this._mutate(() => {
 				if (!this._tabs.has(id)) {
+					return;
+				}
+				if (this._isUtilityID(id)) {
+					this._removeFromPanes(id);
+					this._normalize();
 					return;
 				}
 				let paneIndex = this._ensurePaneForRole(group, id);
@@ -300,14 +331,19 @@ Zotero.QLab = Zotero.QLab || {};
 		/**
 		 * Idempotent left-to-right arrangement.
 		 *
-		 * arrange(left, right)          -> PDF | Chat, PDF | Editor
-		 * arrange(left, center, right)  -> PDF | Notes | Chat
+		 * arrange(left, right)          -> PDF | Editor
+		 * arrange(left, utility)        -> PDF + floating Chat
+		 * arrange(left, right, utility) -> PDF | Editor + floating Chat
 		 *
 		 * @param {...{ kind: string, id?: string, title?: string, payload?: object }} specs
 		 */
 		arrange(...specs) {
-			let requests = specs.filter(Boolean).slice(0, MAX_PANES);
-			if (!requests.length) {
+			let allRequests = specs.filter(Boolean);
+			let requests = allRequests
+				.filter(request => !UTILITY_KINDS.has(request.kind))
+				.slice(0, MAX_PANES);
+			let utilityRequests = allRequests.filter(request => UTILITY_KINDS.has(request.kind));
+			if (!requests.length && !utilityRequests.length) {
 				return;
 			}
 			// Validate before mutating so a rejected arrangement leaves no residue.
@@ -322,6 +358,9 @@ Zotero.QLab = Zotero.QLab || {};
 				throw new Error('Library tab cannot leave the left group');
 			}
 			this._mutate(() => {
+				for (let request of utilityRequests) {
+					this._ensureTab(request);
+				}
 				let ids = [];
 				for (let request of requests) {
 					let id = this._ensureTab(request);
@@ -329,9 +368,14 @@ Zotero.QLab = Zotero.QLab || {};
 						ids.push(id);
 					}
 				}
+				if (!ids.length) {
+					this._normalize();
+					return;
+				}
 				if (ids.length === 1) {
 					this._activateInPlace(ids[0]);
-					this._focusedIndex = 0;
+					this._focusedIndex = Math.max(0, this._paneIndexOf(ids[0]));
+					this._normalize();
 					return;
 				}
 				while (this._panes.length < ids.length) {
@@ -359,45 +403,69 @@ Zotero.QLab = Zotero.QLab || {};
 		},
 		
 		serialize() {
+			let snapshot = this.snapshot();
 			return {
-				version: 2,
-				tabs: this.tabs().map(tab => ({
+				version: 3,
+				contentTabs: this.contentTabs().map(tab => ({
 					id: tab.id,
 					kind: tab.kind,
 					title: tab.title,
 					...(tab.payload ? { payload: { ...tab.payload } } : {}),
 				})),
-				...this.snapshot(),
+				utilityTabs: this.utilityTabs().map(tab => ({
+					id: tab.id,
+					kind: tab.kind,
+					title: tab.title,
+					...(tab.payload ? { payload: { ...tab.payload } } : {}),
+				})),
+				groups: snapshot.groups,
+				panes: snapshot.panes,
+				paneCount: snapshot.paneCount,
+				focusedGroup: snapshot.focusedGroup,
+				splitRatio: snapshot.splitRatio,
+				// Keep dormant divider positions so a migrated PDF | Chat layout
+				// regains its old ratio when a QMD content pane is opened later.
+				splitRatios: this._ratiosTouched
+					? clampRatios(this._splitRatios, MAX_PANES)
+					: snapshot.splitRatios,
 			};
 		},
 		
 		restore(data) {
 			this._mutate(() => {
 				this._tabs = new Map();
+				this._utilityTabIDs = new Set();
 				this._panes = [createPane()];
 				this._focusedIndex = 0;
 				this._splitRatios = DEFAULT_RATIOS[2].slice();
 				this._ratiosTouched = false;
 				
-				if (!data || typeof data !== 'object' || !Array.isArray(data.tabs)) {
+				let serializedTabs = this._serializedTabs(data);
+				if (!data || typeof data !== 'object' || !serializedTabs) {
 					this._tabs.set('zotero-pane', libraryTab());
 					this._panes[0].tabIDs.push('zotero-pane');
 					this._panes[0].activeTabID = 'zotero-pane';
 					return;
 				}
 				
-				for (let entry of data.tabs) {
+				for (let entry of serializedTabs) {
 					let tab = this._reviveTab(entry);
-					if (tab && !this._tabs.has(tab.id)) {
+					let duplicateUtility = tab && UTILITY_KINDS.has(tab.kind)
+						&& this.utilityTabs().some(existing => existing.kind === tab.kind);
+					if (tab && !duplicateUtility && !this._tabs.has(tab.id)) {
 						this._tabs.set(tab.id, tab);
+						if (UTILITY_KINDS.has(tab.kind)) {
+							this._utilityTabIDs.add(tab.id);
+						}
 					}
 				}
 				if (!this._tabs.has('zotero-pane')) {
 					this._tabs.set('zotero-pane', libraryTab());
 				}
 				
+				let serializedPanes = this._serializedPanes(data);
 				let revived = [];
-				for (let raw of this._serializedPanes(data)) {
+				for (let raw of serializedPanes) {
 					let pane = this._revivePane(raw, revived);
 					if (pane) {
 						revived.push(pane);
@@ -406,7 +474,7 @@ Zotero.QLab = Zotero.QLab || {};
 				this._panes = revived.length ? revived.slice(0, MAX_PANES) : [createPane()];
 				
 				for (let id of this._tabs.keys()) {
-					if (!this.groupOf(id)) {
+					if (!this._isUtilityID(id) && !this.groupOf(id)) {
 						this._panes[0].tabIDs.push(id);
 					}
 				}
@@ -414,8 +482,16 @@ Zotero.QLab = Zotero.QLab || {};
 					this._panes[0].tabIDs.unshift('zotero-pane');
 				}
 				
-				let roles = this._roles();
-				let focusedIndex = roles.indexOf(data.focusedGroup);
+				let originalRoles = ROLE_LAYOUTS[Math.min(serializedPanes.length, MAX_PANES)] || [];
+				let originalFocus = originalRoles.indexOf(data.focusedGroup);
+				let focusedID = originalFocus >= 0 && serializedPanes[originalFocus]
+					? serializedPanes[originalFocus].activeTabID
+					: null;
+				let focusedIndex = focusedID ? this._paneIndexOf(focusedID) : -1;
+				if (focusedIndex < 0) {
+					let roles = this._roles();
+					focusedIndex = roles.indexOf(data.focusedGroup);
+				}
 				this._focusedIndex = focusedIndex < 0 ? 0 : focusedIndex;
 				
 				if (Array.isArray(data.splitRatios) && data.splitRatios.length) {
@@ -483,6 +559,12 @@ Zotero.QLab = Zotero.QLab || {};
 		},
 		
 		_idFor(request) {
+			if (UTILITY_KINDS.has(request.kind)) {
+				let existing = this.utilityTabs().find(tab => tab.kind === request.kind);
+				if (existing) {
+					return existing.id;
+				}
+			}
 			if (request.id) {
 				return request.id;
 			}
@@ -524,7 +606,12 @@ Zotero.QLab = Zotero.QLab || {};
 				title,
 				payload: request.payload ? { ...request.payload } : null,
 			});
-			this._panes[0].tabIDs.push(id);
+			if (UTILITY_KINDS.has(request.kind)) {
+				this._utilityTabIDs.add(id);
+			}
+			else {
+				this._panes[0].tabIDs.push(id);
+			}
 			return id;
 		},
 		
@@ -551,6 +638,9 @@ Zotero.QLab = Zotero.QLab || {};
 		},
 		
 		_normalize() {
+			for (let id of this._utilityTabIDs) {
+				this._removeFromPanes(id);
+			}
 			let kept = this._panes.filter(pane => pane.tabIDs.length);
 			this._panes = kept.length ? kept.slice(0, MAX_PANES) : [createPane()];
 			
@@ -597,6 +687,23 @@ Zotero.QLab = Zotero.QLab || {};
 			let groups = data.groups && typeof data.groups === 'object' ? data.groups : {};
 			return [groups.left, groups.center, groups.right].filter(Boolean);
 		},
+
+		_serializedTabs(data) {
+			if (!data || typeof data !== 'object') {
+				return null;
+			}
+			if (Number(data.version) >= 3) {
+				let content = Array.isArray(data.contentTabs) ? data.contentTabs : [];
+				let utilities = Array.isArray(data.utilityTabs) ? data.utilityTabs : [];
+				return [...content, ...utilities];
+			}
+			return Array.isArray(data.tabs) ? data.tabs : null;
+		},
+
+		_isUtilityID(id) {
+			return this._utilityTabIDs.has(id)
+				|| (this._tabs.has(id) && UTILITY_KINDS.has(this._tabs.get(id).kind));
+		},
 		
 		_reviveTab(entry) {
 			if (!entry || typeof entry !== 'object') {
@@ -634,7 +741,7 @@ Zotero.QLab = Zotero.QLab || {};
 			}
 			let tabIDs = [];
 			for (let id of raw.tabIDs) {
-				if (typeof id === 'string' && this._tabs.has(id) && !taken.has(id)
+				if (typeof id === 'string' && this._tabs.has(id) && !this._isUtilityID(id) && !taken.has(id)
 						&& !tabIDs.includes(id)) {
 					tabIDs.push(id);
 				}

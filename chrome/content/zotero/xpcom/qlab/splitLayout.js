@@ -47,10 +47,21 @@ Zotero.QLab = Zotero.QLab || {};
 	/**
 	 * Accepts both the ordered `panes` array and the legacy left/right groups.
 	 */
+	function utilityIDsFrom(snapshot) {
+		let ids = new Set(['qlabchat']);
+		for (let tab of (snapshot && snapshot.utilityTabs) || []) {
+			if (tab && typeof tab.id === 'string') {
+				ids.add(tab.id);
+			}
+		}
+		return ids;
+	}
+
 	function panesFrom(snapshot) {
 		if (!snapshot) {
 			return [];
 		}
+		let utilityIDs = utilityIDsFrom(snapshot);
 		let source = Array.isArray(snapshot.panes)
 			? snapshot.panes
 			: [
@@ -58,7 +69,19 @@ Zotero.QLab = Zotero.QLab || {};
 				snapshot.groups && snapshot.groups.center,
 				snapshot.groups && snapshot.groups.right,
 			];
-		return source.filter(pane => pane && pane.activeTabID);
+		return source.map(pane => {
+			if (!pane || !Array.isArray(pane.tabIDs)) {
+				return null;
+			}
+			let tabIDs = pane.tabIDs.filter(id => !utilityIDs.has(id));
+			if (!tabIDs.length) {
+				return null;
+			}
+			let activeTabID = tabIDs.includes(pane.activeTabID)
+				? pane.activeTabID
+				: tabIDs[tabIDs.length - 1];
+			return { tabIDs, activeTabID };
+		}).filter(Boolean);
 	}
 	
 	/**
@@ -66,6 +89,9 @@ Zotero.QLab = Zotero.QLab || {};
 	 * @param {string} selectedID Zotero_Tabs selection identity
 	 */
 	Zotero.QLab.resolveSplitVisibility = function (snapshot, selectedID) {
+		if (utilityIDsFrom(snapshot).has(selectedID)) {
+			selectedID = null;
+		}
 		let paneIDs = panesFrom(snapshot).map(pane => pane.activeTabID);
 		if (!paneIDs.length && selectedID) {
 			paneIDs = [selectedID];

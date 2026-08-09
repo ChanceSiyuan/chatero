@@ -2,6 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { loadQLab } from "../lib/load-qlab.mjs";
 
+const assertJSON = (actual, expected) => {
+	assert.equal(JSON.stringify(actual), JSON.stringify(expected));
+};
+
 test("resolveSplitVisibility is single-pane when no right group", async () => {
 	const QLab = await loadQLab();
 	const visibility = QLab.resolveSplitVisibility({
@@ -15,7 +19,7 @@ test("resolveSplitVisibility is single-pane when no right group", async () => {
 	assert.equal(JSON.stringify(visibility.visibleIDs), JSON.stringify(["zotero-pane"]));
 });
 
-test("resolveSplitVisibility shows left and right active hosts together", async () => {
+test("resolveSplitVisibility ignores legacy utility-only panes", async () => {
 	const QLab = await loadQLab();
 	const visibility = QLab.resolveSplitVisibility({
 		groups: {
@@ -24,15 +28,13 @@ test("resolveSplitVisibility shows left and right active hosts together", async 
 		},
 		focusedGroup: "left",
 		splitRatio: 0.4,
+		utilityTabs: [{ id: "qlabchat", kind: "qlabchat" }],
 	}, "tab-reader");
-	assert.equal(visibility.split, true);
+	assert.equal(visibility.split, false);
 	assert.equal(visibility.leftID, "tab-reader");
-	assert.equal(visibility.rightID, "qlabchat");
+	assert.equal(visibility.rightID, null);
 	assert.equal(visibility.splitRatio, 0.4);
-	assert.equal(
-		JSON.stringify(visibility.visibleIDs),
-		JSON.stringify(["tab-reader", "qlabchat"]),
-	);
+	assertJSON(visibility.visibleIDs, ["tab-reader"]);
 });
 
 test("paneClassForTab marks both hosts deck-selected in split mode", async () => {
@@ -56,21 +58,18 @@ test("paneClassForTab marks both hosts deck-selected in split mode", async () =>
 	assert.equal(JSON.stringify(QLab.paneClassForTab("c", visibility)), JSON.stringify([]));
 });
 
-test("resolveSplitVisibility exposes three panes for the research desk", async () => {
+test("resolveSplitVisibility exposes PDF and QMD only for the research desk", async () => {
 	const QLab = await loadQLab();
 	const groups = new QLab.TabGroups();
 	const desk = QLab.buildResearchDeskArrangement({ itemID: 6 });
-	groups.arrange(desk.left, desk.center, desk.right);
+	groups.arrange(...QLab.arrangementPanes(desk), ...QLab.arrangementUtilities(desk));
 	const visibility = QLab.resolveSplitVisibility(groups.snapshot(), "reader:6");
 	assert.equal(visibility.split, true);
-	assert.equal(visibility.paneCount, 3);
+	assert.equal(visibility.paneCount, 2);
 	assert.equal(visibility.leftID, "reader:6");
-	assert.equal(visibility.centerID, "qlabqmd");
-	assert.equal(visibility.rightID, "qlabchat");
-	assert.equal(
-		JSON.stringify(visibility.visibleIDs),
-		JSON.stringify(["reader:6", "qlabqmd", "qlabchat"]),
-	);
+	assert.equal(visibility.centerID, null);
+	assert.equal(visibility.rightID, "qlabqmd");
+	assertJSON(visibility.visibleIDs, ["reader:6", "qlabqmd"]);
 });
 
 test("paneClassForTab marks the center host in a three-pane deck", async () => {
@@ -94,18 +93,20 @@ test("isTabVisible reports panes that are on screen right now", async () => {
 	const QLab = await loadQLab();
 	const groups = new QLab.TabGroups();
 	const desk = QLab.buildResearchDeskArrangement({ itemID: 2 });
-	groups.arrange(desk.left, desk.center, desk.right);
+	groups.arrange(...QLab.arrangementPanes(desk), ...QLab.arrangementUtilities(desk));
 	const visibility = QLab.resolveSplitVisibility(groups.snapshot(), "reader:2");
-	assert.equal(QLab.isTabVisible(visibility, "qlabchat"), true);
+	assert.equal(QLab.isTabVisible(visibility, "qlabchat"), false);
+	assert.equal(QLab.isTabVisible(visibility, "qlabqmd"), true);
 	assert.equal(QLab.isTabVisible(visibility, "zotero-pane"), false);
 });
 
-test("arrange PDF|Chat yields a split snapshot for chrome", async () => {
+test("arrange PDF + floating Chat yields one content pane for chrome", async () => {
 	const QLab = await loadQLab();
 	const groups = new QLab.TabGroups();
 	const arrangement = QLab.buildPDFChatArrangement({ itemID: 5, title: "P" });
-	groups.arrange(arrangement.left, arrangement.right);
+	groups.arrange(...QLab.arrangementPanes(arrangement), ...QLab.arrangementUtilities(arrangement));
 	const visibility = QLab.resolveSplitVisibility(groups.snapshot(), "reader:5");
-	assert.equal(visibility.split, true);
-	assert.equal(visibility.rightID, "qlabchat");
+	assert.equal(visibility.split, false);
+	assert.equal(visibility.rightID, null);
+	assertJSON(visibility.visibleIDs, ["reader:5"]);
 });

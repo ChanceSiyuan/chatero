@@ -12,9 +12,10 @@ Zotero.QLab = Zotero.QLab || {};
 
 (function () {
 	const SHELL_KINDS = new Set(['qlabchat', 'qlabqmd', 'qlabsite']);
+	const UTILITY_KINDS = new Set(['qlabchat']);
 	
 	/**
-	 * Build idempotent arrangement requests for PDF | Chat and PDF | Editor.
+	 * Build idempotent arrangement requests for PDF + Chat and PDF | Editor.
 	 * Pure: does not touch the DOM or Zotero_Tabs.
 	 */
 	Zotero.QLab.buildPDFChatArrangement = function ({ itemID, title } = {}) {
@@ -28,11 +29,12 @@ Zotero.QLab = Zotero.QLab || {};
 				title: title || 'PDF',
 				payload: { itemID },
 			},
-			right: {
+			utilities: [{
 				kind: 'qlabchat',
 				title: 'Chat',
 				payload: { primaryItemID: itemID },
-			},
+			}],
+			showUtilities: ['qlabchat'],
 		};
 	};
 	
@@ -56,7 +58,7 @@ Zotero.QLab = Zotero.QLab || {};
 	};
 	
 	/**
-	 * Research desk: PDF (evidence) | QMD (authority) | Chat (assistant).
+	 * Research desk: PDF (evidence) | QMD (authority) + floating Chat.
 	 */
 	Zotero.QLab.buildResearchDeskArrangement = function ({ itemID, title, draftPath } = {}) {
 		if (!Number.isFinite(itemID)) {
@@ -70,16 +72,17 @@ Zotero.QLab = Zotero.QLab || {};
 				title: title || 'PDF',
 				payload: { itemID },
 			},
-			center: {
+			right: {
 				kind: 'qlabqmd',
 				title: 'QMD Editor',
 				payload: draftPath ? { ...payload, draftPath } : payload,
 			},
-			right: {
+			utilities: [{
 				kind: 'qlabchat',
 				title: 'Chat',
 				payload,
-			},
+			}],
+			showUtilities: ['qlabchat'],
 		};
 	};
 	
@@ -91,18 +94,45 @@ Zotero.QLab = Zotero.QLab || {};
 			return [];
 		}
 		if (Array.isArray(arrangement.panes)) {
-			return arrangement.panes.filter(Boolean);
+			return arrangement.panes.filter(spec => spec && !UTILITY_KINDS.has(spec.kind));
 		}
 		return ['left', 'center', 'right']
 			.map(role => arrangement[role])
-			.filter(Boolean);
+			.filter(spec => spec && !UTILITY_KINDS.has(spec.kind));
+	};
+
+	/**
+	 * Normalize utility launcher requests independently from content panes.
+	 * Legacy arrangements that put Chat in `right` are accepted during migration.
+	 */
+	Zotero.QLab.arrangementUtilities = function (arrangement) {
+		if (!arrangement) {
+			return [];
+		}
+		let candidates = Array.isArray(arrangement.utilities)
+			? arrangement.utilities.slice()
+			: [];
+		for (let role of ['left', 'center', 'right']) {
+			let spec = arrangement[role];
+			if (spec && UTILITY_KINDS.has(spec.kind)) {
+				candidates.push(spec);
+			}
+		}
+		let seen = new Set();
+		return candidates.filter(spec => {
+			if (!spec || !UTILITY_KINDS.has(spec.kind) || seen.has(spec.kind)) {
+				return false;
+			}
+			seen.add(spec.kind);
+			return true;
+		});
 	};
 	
 	/**
 	 * Apply an arrangement to a TabGroups model and optionally to a window tabs API.
 	 *
 	 * @param {Zotero.QLab.TabGroups} groups
-	 * @param {{ left: object, right: object }} arrangement
+	 * @param {{ left?: object, right?: object, utilities?: object[], showUtilities?: string[] }} arrangement
 	 * @param {{
 	 *   ensureReader?: (itemID: number) => Promise<string|null>|string|null,
 	 *   ensureShellTab?: (kind: string, payload?: object) => Promise<string|null>|string|null,
@@ -111,10 +141,11 @@ Zotero.QLab = Zotero.QLab || {};
 	 */
 	Zotero.QLab.applyArrangement = async function (groups, arrangement, bridge = {}) {
 		let specs = Zotero.QLab.arrangementPanes(arrangement).map(spec => ({ ...spec }));
-		if (!specs.length) {
+		let utilities = Zotero.QLab.arrangementUtilities(arrangement).map(spec => ({ ...spec }));
+		if (!specs.length && !utilities.length) {
 			return groups.snapshot();
 		}
-		groups.arrange(...specs);
+		groups.arrange(...specs, ...utilities);
 		
 		let remapped = false;
 		if (bridge.ensureReader) {
@@ -131,7 +162,7 @@ Zotero.QLab = Zotero.QLab || {};
 			}
 		}
 		if (bridge.ensureShellTab) {
-			for (let spec of specs) {
+			for (let spec of [...specs, ...utilities]) {
 				if (!SHELL_KINDS.has(spec.kind)) {
 					continue;
 				}
@@ -142,7 +173,9 @@ Zotero.QLab = Zotero.QLab || {};
 				// Session restore historically minted random ids for shell tabs.
 				// Without this remap the deck goes is-split but no host gets
 				// qlab-visible-right -- an empty gray column.
-				if (shellTabID && shellTabID !== spec.id) {
+				let current = groups.tabs().find(tab => tab.kind === spec.kind);
+				if (shellTabID && current && shellTabID !== current.id) {
+					groups.rekeyTab(current.id, shellTabID);
 					spec.id = shellTabID;
 					remapped = true;
 				}
@@ -153,7 +186,16 @@ Zotero.QLab = Zotero.QLab || {};
 			}
 		}
 		if (remapped) {
-			groups.arrange(...specs);
+			groups.arrange(...specs, ...utilities);
+		}
+
+		if (bridge.showUtility && Array.isArray(arrangement.showUtilities)) {
+			for (let kind of arrangement.showUtilities) {
+				let spec = utilities.find(candidate => candidate.kind === kind);
+				if (spec) {
+					await bridge.showUtility(kind, spec.payload || null);
+				}
+			}
 		}
 		
 		let snapshot = groups.snapshot();
