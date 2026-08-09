@@ -15,9 +15,9 @@ Zotero.QLab = Zotero.QLab || {};
 
 (function () {
 	const ROOTS = [
-		{ name: 'drafts', writable: true, extensions: ['.qmd'] },
-		{ name: 'knowledge', writable: false, extensions: ['.qmd'] },
-		{ name: 'literature', writable: false, extensions: ['.qmd', '.bib', '.pdf'] },
+		{ name: 'drafts', authority: 'draft', writable: true, extensions: ['.qmd'] },
+		{ name: 'knowledge', authority: 'knowledge', writable: false, extensions: ['.qmd'] },
+		{ name: 'literature', authority: 'literature', writable: false, extensions: ['.qmd', '.md', '.bib', '.pdf'] },
 	];
 	
 	function normalizePath(value) {
@@ -38,9 +38,17 @@ Zotero.QLab = Zotero.QLab || {};
 	function fileKind(name) {
 		let lower = String(name || '').toLowerCase();
 		if (lower.endsWith('.qmd')) return 'qmd';
+		if (lower.endsWith('.md')) return 'markdown';
 		if (lower.endsWith('.bib')) return 'bib';
 		if (lower.endsWith('.pdf')) return 'pdf';
 		return 'file';
+	}
+
+	function openMode(authority, kind) {
+		if (authority === 'draft') return 'edit';
+		if (authority === 'knowledge') return 'site';
+		if (kind === 'pdf') return 'reader';
+		return 'readonly';
 	}
 	
 	async function safeRealPath(path, host) {
@@ -76,6 +84,8 @@ Zotero.QLab = Zotero.QLab || {};
 			path: definition.name,
 			name: definition.name,
 			kind: 'root',
+			authority: definition.authority,
+			openMode: 'browse',
 			writable: definition.writable,
 			children: [],
 			revision: '',
@@ -127,6 +137,8 @@ Zotero.QLab = Zotero.QLab || {};
 							path: relativePath,
 							name,
 							kind: 'directory',
+							authority: definition.authority,
+							openMode: 'browse',
 							writable: definition.writable,
 							children: nested,
 							revision: nested.map(item => item.revision).join('|'),
@@ -137,10 +149,13 @@ Zotero.QLab = Zotero.QLab || {};
 				if (!extensionAllowed(name, definition.extensions)) {
 					continue;
 				}
+				let kind = fileKind(name);
 				children.push({
 					path: relativePath,
 					name,
-					kind: fileKind(name),
+					kind,
+					authority: definition.authority,
+					openMode: openMode(definition.authority, kind),
 					writable: definition.writable && name.toLowerCase().endsWith('.qmd'),
 					children: [],
 					revision: await fileRevision(canonicalChild, host),

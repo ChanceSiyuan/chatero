@@ -203,6 +203,7 @@ const xpcomFilesLocal = [
 	'qlab/qmdExternalEditor',
 	'qlab/qmdLanguage',
 	'qlab/qmdExplorer',
+	'qlab/workspaceDocumentRouter',
 	'qlab/qmdMonacoBridge',
 	'qlab/qmdMathRender',
 	'qlab/qmdMarkdownLite',

@@ -49,6 +49,7 @@ const QLAB_SCRIPTS = [
 	"qmdExternalEditor.js",
 	"qmdLanguage.js",
 	"qmdExplorer.js",
+	"workspaceDocumentRouter.js",
 	"qmdMonacoBridge.js",
 	"qmdMathRender.js",
 	"qmdMarkdownLite.js",
