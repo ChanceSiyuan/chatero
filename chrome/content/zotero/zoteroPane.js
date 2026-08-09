@@ -685,10 +685,7 @@ var ZoteroPane = new function () {
 		try {
 			let state = Zotero.Session.state.windows.find(x => x.type == 'pane');
 			if (state) {
-				Zotero_Tabs.restoreState(state.tabs);
-				if (state.qlabGroups && Zotero_Tabs.restoreQLabGroupsState) {
-					Zotero_Tabs.restoreQLabGroupsState(state.qlabGroups);
-				}
+				await Zotero.QLab.restoreNativeAndQLabTabState(Zotero_Tabs, state);
 			}
 		}
 		catch (e) {

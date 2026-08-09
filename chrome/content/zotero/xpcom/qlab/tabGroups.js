@@ -40,6 +40,102 @@ Zotero.QLab = Zotero.QLab || {};
 		'qlabqmd': 'QMD Editor',
 		'qlabsite': 'Knowledge Site',
 	};
+
+	function restoredContentKind(type) {
+		return String(type || '').replace(/-(?:unloaded|loading)$/, '');
+	}
+
+	function clonePaneWithIDs(pane, idMap) {
+		if (!pane || typeof pane !== 'object') {
+			return pane;
+		}
+		return {
+			...pane,
+			tabIDs: Array.isArray(pane.tabIDs)
+				? pane.tabIDs.map(id => idMap.get(id) || id)
+				: pane.tabIDs,
+			activeTabID: idMap.get(pane.activeTabID) || pane.activeTabID,
+		};
+	}
+
+	/**
+	 * Native session restore mints new Reader/Note tab ids. Rebind persisted
+	 * QLab pane membership by stable item identity after native tabs exist.
+	 */
+	Zotero.QLab.reconcileRestoredTabGroupState = function (data, liveTabs = []) {
+		if (!data || typeof data !== 'object') {
+			return data;
+		}
+		let result = { ...data };
+		let tabKey = Number(data.version) >= 3 ? 'contentTabs' : 'tabs';
+		let entries = Array.isArray(data[tabKey]) ? data[tabKey] : [];
+		let candidates = new Map();
+		for (let tab of Array.isArray(liveTabs) ? liveTabs : []) {
+			let kind = restoredContentKind(tab && tab.type);
+			if ((kind !== 'reader' && kind !== 'note') || !tab?.data) {
+				continue;
+			}
+			let key = `${kind}:${String(tab.data.itemID)}`;
+			let values = candidates.get(key) || [];
+			values.push(tab);
+			candidates.set(key, values);
+		}
+		let used = new Set();
+		let idMap = new Map();
+		result[tabKey] = entries.map(entry => {
+			let next = {
+				...entry,
+				payload: entry?.payload && typeof entry.payload === 'object'
+					? { ...entry.payload }
+					: entry?.payload,
+			};
+			if ((entry?.kind !== 'reader' && entry?.kind !== 'note')
+					|| !entry.payload) {
+				return next;
+			}
+			let key = `${entry.kind}:${String(entry.payload.itemID)}`;
+			let values = candidates.get(key) || [];
+			let live = values.find(tab => tab.id === entry.id && !used.has(tab.id))
+				|| values.find(tab => !used.has(tab.id));
+			if (!live) {
+				return next;
+			}
+			used.add(live.id);
+			idMap.set(entry.id, live.id);
+			next.id = live.id;
+			return next;
+		});
+		if (Array.isArray(data.panes)) {
+			result.panes = data.panes.map(pane => clonePaneWithIDs(pane, idMap));
+		}
+		if (data.groups && typeof data.groups === 'object') {
+			result.groups = {};
+			for (let role of ['left', 'center', 'right']) {
+				if (Object.prototype.hasOwnProperty.call(data.groups, role)) {
+					result.groups[role] = clonePaneWithIDs(data.groups[role], idMap);
+				}
+			}
+		}
+		return result;
+	};
+
+	Zotero.QLab.restoreNativeAndQLabTabState = async function (tabsAPI, state) {
+		if (!tabsAPI || !state) {
+			return null;
+		}
+		if (typeof tabsAPI.restoreState === 'function') {
+			await tabsAPI.restoreState(Array.isArray(state.tabs) ? state.tabs : []);
+		}
+		if (state.qlabGroups && typeof tabsAPI.restoreQLabGroupsState === 'function') {
+			let reconciled = Zotero.QLab.reconcileRestoredTabGroupState(
+				state.qlabGroups,
+				tabsAPI._tabs || []
+			);
+			tabsAPI.restoreQLabGroupsState(reconciled);
+			return reconciled;
+		}
+		return null;
+	};
 	const MAX_PANES = 3;
 	const ROLE_LAYOUTS = {
 		1: ['left'],
