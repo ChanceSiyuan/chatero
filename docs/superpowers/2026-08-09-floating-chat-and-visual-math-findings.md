@@ -63,7 +63,7 @@ RED evidence before the integration correction:
 
 GREEN evidence after the correction and review fixes:
 
-- `scripts/chatero/tests/floating-chat-integration.test.mjs`: `8/8` passed;
+- `scripts/chatero/tests/floating-chat-integration.test.mjs`: `9/9` passed;
 - final approval-policy focused set: `46/46` passed;
 - affected integration set before the final focused correction: `81/81`
   passed.
