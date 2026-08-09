@@ -378,6 +378,38 @@ test("Chat launcher exposes running, completed, and error status without remount
 	utility.destroy();
 });
 
+test("Chat launcher subscribers receive live state, late replay, read acknowledgement, and cleanup", async () => {
+	const QLab = await loadQLab();
+	const elements = utilityElements();
+	const utility = new QLab.ChatUtilityHost({
+		elements,
+		viewport: () => ({ width: 1200, height: 800 }),
+		mountChat: async () => ({}),
+	});
+	const first = [];
+	const second = [];
+
+	const unsubscribeFirst = utility.subscribeLauncher(state => first.push(state.activityStatus));
+	assert.deepEqual(first, ["idle"], "an existing Reader launcher reads the current state immediately");
+	utility.setActivityStatus("running");
+	utility.setActivityStatus("completed");
+	assert.deepEqual(first, ["idle", "running", "completed"]);
+
+	const unsubscribeSecond = utility.subscribeLauncher(state => second.push(state.activityStatus));
+	assert.deepEqual(second, ["completed"], "a newly rendered popup launcher replays unread state");
+	await utility.show();
+	assert.equal(utility.snapshot().activityStatus, "idle");
+	assert.equal(first.at(-1), "idle", "viewing Chat clears completed for existing launchers");
+	assert.equal(second.at(-1), "idle", "viewing Chat clears completed for new launchers");
+
+	unsubscribeFirst();
+	utility.setActivityStatus("error");
+	assert.equal(first.at(-1), "idle", "a released Reader document no longer receives updates");
+	assert.equal(second.at(-1), "error");
+	unsubscribeSecond();
+	utility.destroy();
+});
+
 test("completed Agent replies are unread only while Chat is hidden and clear on reveal", async () => {
 	const QLab = await loadQLab();
 	const elements = utilityElements();

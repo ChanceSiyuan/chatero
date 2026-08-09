@@ -220,6 +220,180 @@ function lifecyclePointer(target) {
 	};
 }
 
+function activityReaderDocument(name) {
+	const document = new LifecycleTarget(name);
+	const observers = new Set();
+	function setConnected(node, connected) {
+		if (!node) return;
+		node.isConnected = connected;
+		for (const child of node.children || []) setConnected(child, connected);
+	}
+	function element(tagName) {
+		const node = new LifecycleTarget(tagName);
+		node.tagName = tagName.toUpperCase();
+		node.children = [];
+		node.attributes = new Map();
+		node.style = { cssText: "" };
+		node.className = "";
+		node.textContent = "";
+		node.isConnected = false;
+		node.setAttribute = (key, value) => node.attributes.set(key, String(value));
+		node.getAttribute = key => node.attributes.get(key) ?? null;
+		node.append = child => {
+			node.children.push(child);
+			setConnected(child, node.isConnected);
+		};
+		return node;
+	}
+	const documentElement = element("html");
+	documentElement.isConnected = true;
+	const head = element("head");
+	documentElement.append(head);
+	document.documentElement = documentElement;
+	document.head = head;
+	document.createElement = element;
+	document.getElementById = id => {
+		const pending = [documentElement];
+		while (pending.length) {
+			const node = pending.shift();
+			if (node.getAttribute?.("id") === id) return node;
+			pending.push(...(node.children || []));
+		}
+		return null;
+	};
+	document.connect = node => setConnected(node, true);
+	document.disconnect = node => {
+		setConnected(node, false);
+		for (const callback of [...observers]) callback([]);
+	};
+	document.defaultView = new LifecycleTarget(`${name}-window`);
+	document.defaultView.MutationObserver = class {
+		constructor(callback) {
+			this.callback = callback;
+		}
+		observe() {
+			observers.add(this.callback);
+		}
+		disconnect() {
+			observers.delete(this.callback);
+		}
+	};
+	document.activeObserverCount = () => observers.size;
+	return document;
+}
+
+test("every Reader Chat launcher follows resident activity and releases with popup or document", async () => {
+	const registered = new Map();
+	const Reader = {
+		registerEventListener(type, listener) { registered.set(type, listener); },
+		unregisterEventListener(type, listener) {
+			if (registered.get(type) === listener) registered.delete(type);
+		},
+	};
+	let mainWindow;
+	const QLab = await loadQLab({
+		Reader,
+		getMainWindow: () => mainWindow,
+	});
+	const utility = new QLab.ChatUtilityHost({
+		elements: {},
+		viewport: () => ({ width: 1200, height: 800 }),
+		mountChat: async () => ({}),
+	});
+	mainWindow = {
+		Zotero_Tabs: {
+			_qlab: { chatUtility: utility },
+		},
+	};
+	QLab.registerReaderHooks();
+	utility.setActivityStatus("running");
+
+	const doc = activityReaderDocument("reader-activity");
+	const reader = { _window: mainWindow };
+	const toolbar = [];
+	registered.get("renderToolbar")({
+		doc,
+		reader,
+		append(button) {
+			doc.connect(button);
+			toolbar.push(button);
+		},
+	});
+	const toolbarLaunchers = toolbar.filter(button => (
+		button.getAttribute("data-qlab-chat-opening") === "true"
+	));
+	assert.equal(toolbarLaunchers.length, 3, "Add, PDF | Chat, and Research Desk all launch Chat");
+	for (const button of toolbarLaunchers) {
+		assert.equal(button.getAttribute("data-activity-status"), "running");
+		assert.equal(button.getAttribute("aria-label"), button.title,
+			"activity localization must not replace the launcher's action name");
+		assert.equal(button.children.at(-1).getAttribute("data-l10n-id"),
+			"qlab-chat-launcher-running");
+	}
+
+	utility.setActivityStatus("completed");
+	assert.ok(toolbarLaunchers.every(button => (
+		button.getAttribute("data-activity-status") === "completed"
+	)));
+	let popupGroup;
+	registered.get("renderTextSelectionPopup")({
+		doc,
+		reader,
+		params: {},
+		append(group) {
+			doc.connect(group);
+			popupGroup = group;
+		},
+	});
+	const popupLauncher = popupGroup.children[0];
+	assert.equal(popupLauncher.getAttribute("data-activity-status"), "completed",
+		"a newly rendered selection launcher reads the current unread state");
+	assert.equal(doc.activeObserverCount(), 1,
+		"the transient popup owns one disconnect observer while it is mounted");
+	await utility.show();
+	assert.ok(toolbarLaunchers.every(button => button.getAttribute("data-activity-status") === "idle"),
+		"viewing Chat clears completed on every Reader toolbar launcher");
+	assert.equal(popupLauncher.getAttribute("data-activity-status"), "idle");
+	utility.hide();
+
+	utility.setActivityStatus("error");
+	assert.ok(toolbarLaunchers.every(button => button.getAttribute("data-activity-status") === "error"));
+	assert.equal(popupLauncher.getAttribute("data-activity-status"), "error");
+	doc.disconnect(popupGroup);
+	assert.equal(doc.activeObserverCount(), 0,
+		"removing the transient popup disconnects its observer");
+	utility.setActivityStatus("running");
+	assert.ok(toolbarLaunchers.every(button => button.getAttribute("data-activity-status") === "running"));
+	assert.equal(popupLauncher.getAttribute("data-activity-status"), "error",
+		"a removed selection popup no longer receives resident activity updates");
+	registered.get("renderTextSelectionPopup")({
+		doc,
+		reader,
+		params: {},
+		append(group) { doc.connect(group); },
+	});
+	assert.equal(doc.activeObserverCount(), 1,
+		"a later popup also owns one disconnect observer while it is mounted");
+
+	doc.defaultView.dispatch("pagehide");
+	assert.equal(doc.activeObserverCount(), 0,
+		"closing the Reader document leaves no popup observer behind");
+	utility.setActivityStatus("completed");
+	assert.ok(toolbarLaunchers.every(button => button.getAttribute("data-activity-status") === "running"),
+		"closing the Reader document releases its toolbar subscriptions");
+
+	const style = doc.getElementById("qlab-reader-chat-activity-style");
+	assert.ok(style, "Reader-scoped indicator styles are installed in the rendered document");
+	assert.match(style.textContent, /qlab-reader-chat-launcher\[data-activity-status="running"\]/);
+	assert.match(style.textContent, /border[^;]*#007aff/i, "running uses an animated blue ring");
+	assert.match(style.textContent, /data-activity-status="completed"[^}]*#007aff/is);
+	assert.match(style.textContent, /data-activity-status="error"[^}]*#ff3b30/is);
+	assert.match(style.textContent, /prefers-reduced-motion:\s*reduce/);
+
+	QLab.unregisterReaderHooks();
+	utility.destroy();
+});
+
 test("closing one Reader document releases only its adapter while the other Reader and window stay active", async () => {
 	const registered = new Map();
 	const Reader = {

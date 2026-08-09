@@ -152,6 +152,7 @@ Zotero.QLab = Zotero.QLab || {};
 		this._disposed = false;
 		this._mountError = false;
 		this._activityStatus = 'idle';
+		this._launcherSubscribers = new Set();
 		this._bindings = [];
 		this._activeGestureCleanup = null;
 
@@ -308,6 +309,25 @@ Zotero.QLab = Zotero.QLab || {};
 			return this._activityStatus;
 		},
 
+		subscribeLauncher(listener) {
+			if (this._destroyed || typeof listener !== 'function') {
+				return () => {};
+			}
+			this._launcherSubscribers.add(listener);
+			try {
+				listener(this._launcherState());
+			}
+			catch (e) {
+				Zotero.logError && Zotero.logError(e);
+			}
+			let released = false;
+			return () => {
+				if (released) return;
+				released = true;
+				this._launcherSubscribers.delete(listener);
+			};
+		},
+
 		handleInteraction(interaction) {
 			let result = this._controller.handleInteraction(interaction);
 			if (result.focusReturn) {
@@ -325,6 +345,7 @@ Zotero.QLab = Zotero.QLab || {};
 			for (let binding of this._bindings.splice(0)) {
 				binding.target.removeEventListener(binding.type, binding.listener, binding.options);
 			}
+			this._launcherSubscribers.clear();
 			let content = this._elements.content;
 			try {
 				let resident = content && content.querySelector
@@ -486,12 +507,25 @@ Zotero.QLab = Zotero.QLab || {};
 			this._notifyLauncher();
 		},
 
-		_notifyLauncher() {
-			this._onLauncherChange({
+		_launcherState() {
+			return {
 				pressed: this._controller.snapshot().visibility === 'visible',
 				activityStatus: this._activityStatus,
 				mounted: this._mounted,
-			});
+			};
+		},
+
+		_notifyLauncher() {
+			let state = this._launcherState();
+			this._onLauncherChange(state);
+			for (let listener of [...this._launcherSubscribers]) {
+				try {
+					listener(state);
+				}
+				catch (e) {
+					Zotero.logError && Zotero.logError(e);
+				}
+			}
 		},
 	};
 })();

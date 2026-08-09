@@ -24,6 +24,8 @@ Zotero.QLab = Zotero.QLab || {};
 
 (function () {
 	const PLUGIN_ID = 'chatero-qlab@local';
+	const CHAT_ACTIVITY_STYLE_ID = 'qlab-reader-chat-activity-style';
+	const CHAT_ACTIVITY_STATES = new Set(['idle', 'running', 'completed', 'error']);
 	let _registered = false;
 	let _handlers = [];
 	let _readerDocumentAdapters = new Map();
@@ -32,6 +34,50 @@ Zotero.QLab = Zotero.QLab || {};
 		return `display:grid;place-items:center;width:${size}px;height:${size}px;border:0;`
 			+ 'border-radius:8px;background:transparent;cursor:pointer;padding:5px;'
 			+ 'color:var(--fill-secondary, #555);';
+	}
+
+	function ensureReaderChatActivityStyles(doc) {
+		if (!doc || !doc.createElement || doc.getElementById?.(CHAT_ACTIVITY_STYLE_ID)) {
+			return;
+		}
+		let target = doc.head || doc.documentElement;
+		if (!target || !target.append) return;
+		let style = doc.createElement('style');
+		style.setAttribute('id', CHAT_ACTIVITY_STYLE_ID);
+		style.textContent = `
+.qlab-reader-chat-launcher { position: relative; }
+.qlab-reader-chat-launcher > .qlab-reader-chat-activity {
+	display: none;
+	position: absolute;
+	top: 1px;
+	right: 1px;
+	width: 7px;
+	height: 7px;
+	box-sizing: border-box;
+	border-radius: 50%;
+	pointer-events: none;
+}
+.qlab-reader-chat-launcher[data-activity-status="running"] > .qlab-reader-chat-activity {
+	display: block;
+	width: 9px;
+	height: 9px;
+	border: 2px solid #007aff;
+	border-top-color: transparent;
+	animation: qlab-reader-chat-activity-spin 1s linear infinite;
+}
+.qlab-reader-chat-launcher[data-activity-status="completed"] > .qlab-reader-chat-activity {
+	display: block;
+	background: #007aff;
+}
+.qlab-reader-chat-launcher[data-activity-status="error"] > .qlab-reader-chat-activity {
+	display: block;
+	background: #ff3b30;
+}
+@keyframes qlab-reader-chat-activity-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+	.qlab-reader-chat-launcher > .qlab-reader-chat-activity { animation: none !important; }
+}`;
+		target.append(style);
 	}
 
 	function makeIconButton(doc, {
@@ -324,14 +370,29 @@ Zotero.QLab = Zotero.QLab || {};
 			&& win.Zotero_Tabs._qlab.chatOutsideInteraction;
 	}
 
+	function chatUtilityFor(event) {
+		let win = event && event.reader && event.reader._window;
+		if (!win) {
+			try {
+				win = Zotero.getMainWindow();
+			}
+			catch (e) {}
+		}
+		return win && win.Zotero_Tabs && win.Zotero_Tabs._qlab
+			&& win.Zotero_Tabs._qlab.chatUtility;
+	}
+
 	function attachReaderDocument(event, doc) {
 		let bridge = interactionBridgeFor(event);
-		if (!doc || !bridge || !bridge.attachReaderDocument) return;
+		if (!doc) return null;
 		let existing = _readerDocumentAdapters.get(doc);
-		if (existing && existing.bridge === bridge) return;
+		if (existing && existing.bridge === bridge) return existing;
 		existing && existing.release();
-		let detach = bridge.attachReaderDocument(doc);
+		let detach = bridge && bridge.attachReaderDocument
+			? bridge.attachReaderDocument(doc)
+			: null;
 		let lifecycleTarget = doc.defaultView || doc;
+		let cleanups = new Set();
 		let released = false;
 		let release = () => {
 			if (released) return;
@@ -346,15 +407,90 @@ Zotero.QLab = Zotero.QLab || {};
 			catch (e) {
 				Zotero.logError && Zotero.logError(e);
 			}
+			for (let cleanup of [...cleanups]) {
+				try {
+					cleanup();
+				}
+				catch (e) {
+					Zotero.logError && Zotero.logError(e);
+				}
+			}
+			cleanups.clear();
 			if (_readerDocumentAdapters.get(doc)?.release === release) {
 				_readerDocumentAdapters.delete(doc);
 			}
 		};
-		_readerDocumentAdapters.set(doc, { bridge, release });
+		let adapter = {
+			bridge,
+			release,
+			addCleanup(cleanup) {
+				if (released || typeof cleanup !== 'function') {
+					cleanup && cleanup();
+					return () => {};
+				}
+				cleanups.add(cleanup);
+				let active = true;
+				return () => {
+					if (!active) return;
+					active = false;
+					if (cleanups.delete(cleanup)) cleanup();
+				};
+			},
+		};
+		_readerDocumentAdapters.set(doc, adapter);
 		if (lifecycleTarget && lifecycleTarget.addEventListener) {
 			lifecycleTarget.addEventListener('pagehide', release, true);
 			lifecycleTarget.addEventListener('unload', release, true);
 		}
+		return adapter;
+	}
+
+	function bindReaderChatLauncher(event, button, { popup = false } = {}) {
+		let doc = event && event.doc;
+		if (!doc || !button) return () => {};
+		ensureReaderChatActivityStyles(doc);
+		button.className = `${button.className || ''} qlab-reader-chat-launcher`.trim();
+		let indicator = doc.createElement('span');
+		indicator.className = 'qlab-reader-chat-activity';
+		indicator.setAttribute('role', 'status');
+		indicator.setAttribute('aria-live', 'polite');
+		indicator.setAttribute('aria-atomic', 'true');
+		button.append(indicator);
+		let update = state => {
+			let status = CHAT_ACTIVITY_STATES.has(state && state.activityStatus)
+				? state.activityStatus
+				: 'idle';
+			button.setAttribute('data-activity-status', status);
+			indicator.setAttribute('data-l10n-id', `qlab-chat-launcher-${status}`);
+		};
+		let utility = chatUtilityFor(event);
+		let unsubscribe = utility && utility.subscribeLauncher
+			? utility.subscribeLauncher(update)
+			: (() => {
+				update(utility && utility.snapshot ? utility.snapshot() : { activityStatus: 'idle' });
+				return () => {};
+			})();
+		let observer = null;
+		let released = false;
+		let release = () => {
+			if (released) return;
+			released = true;
+			observer && observer.disconnect();
+			observer = null;
+			unsubscribe();
+		};
+		let adapter = attachReaderDocument(event, doc);
+		let releaseSubscription = adapter && adapter.addCleanup
+			? adapter.addCleanup(release)
+			: release;
+		if (popup && doc.defaultView && doc.defaultView.MutationObserver && doc.documentElement) {
+			observer = new doc.defaultView.MutationObserver(() => {
+				if (button.isConnected) return;
+				releaseSubscription();
+			});
+			observer.observe(doc.documentElement, { childList: true, subtree: true });
+		}
+		return releaseSubscription;
 	}
 
 	/**
@@ -382,27 +518,35 @@ Zotero.QLab = Zotero.QLab || {};
 				let { doc, append } = event;
 				attachReaderDocument(event, doc);
 				installShortcuts(doc.defaultView, event);
-				append(makeIconButton(doc, {
+				let addToChat = makeIconButton(doc, {
 					title: 'Add to Chat (⌘L)',
 					iconSrc: icons.chat,
 					opensChat: true,
 					onClick: activationEvent => askSelection(event, activationEvent),
-				}));
-				append(makeIconButton(doc, {
+				});
+				append(addToChat);
+				bindReaderChatLauncher(event, addToChat);
+				let pdfChat = makeIconButton(doc, {
 					title: 'Arrange PDF | Chat (⌘I)',
 					iconSrc: icons.chatLayout,
+					opensChat: true,
 					onClick: () => arrangeFromReader(event, 'pdf-chat'),
-				}));
+				});
+				append(pdfChat);
+				bindReaderChatLauncher(event, pdfChat);
 				append(makeIconButton(doc, {
 					title: 'Arrange PDF | QMD Editor (⌘⇧E)',
 					iconSrc: icons.editorSplit,
 					onClick: () => arrangeFromReader(event, 'pdf-editor'),
 				}));
-				append(makeIconButton(doc, {
+				let desk = makeIconButton(doc, {
 					title: 'Research Desk: PDF | QMD | Chat (⌘⇧D)',
 					iconSrc: icons.desk,
+					opensChat: true,
 					onClick: () => arrangeFromReader(event, 'desk'),
-				}));
+				});
+				append(desk);
+				bindReaderChatLauncher(event, desk);
 			}
 			catch (e) {
 				Zotero.logError(e);
@@ -418,14 +562,15 @@ Zotero.QLab = Zotero.QLab || {};
 					&& Zotero.QLab.ReaderContextStore.captureFromEvent(event).catch(() => {});
 				let group = doc.createElement('div');
 				group.style.cssText = 'display:flex;gap:4px;padding:2px 4px 0;margin-top:6px;';
-				group.append(makeIconButton(doc, {
+				let addSelectionToChat = makeIconButton(doc, {
 					title: 'Add selection to Chat (⌘L)',
 					iconSrc: icons.chat,
 					size: 28,
 					iconSize: 20,
 					opensChat: true,
 					onClick: activationEvent => askSelection(event, activationEvent),
-				}));
+				});
+				group.append(addSelectionToChat);
 				group.append(makeIconButton(doc, {
 					title: 'Insert selection into QMD as quote (⌘⇧K)',
 					iconSrc: icons.quote,
@@ -434,6 +579,7 @@ Zotero.QLab = Zotero.QLab || {};
 					onClick: () => quoteSelectionIntoQmd(event),
 				}));
 				append(group);
+				bindReaderChatLauncher(event, addSelectionToChat, { popup: true });
 			}
 			catch (e) {
 				Zotero.logError(e);
