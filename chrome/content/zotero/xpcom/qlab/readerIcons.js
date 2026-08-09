@@ -60,9 +60,11 @@ Zotero.QLab = Zotero.QLab || {};
 		`),
 		quote: svgDataUrl(`
 			<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 22 22" fill="none"
-				stroke="#5a5a5f" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-				<path d="M5.5 8.5c0-1.4 1-2.5 2.5-2.5s2.5 1.1 2.5 2.5v4c0 1.4-1 2.5-2.5 2.5H5v-3"/>
-				<path d="M13.5 8.5c0-1.4 1-2.5 2.5-2.5s2.5 1.1 2.5 2.5v4c0 1.4-1 2.5-2.5 2.5H13v-3"/>
+				stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+				<line x1="5" y1="4" x2="5" y2="18"/>
+				<line x1="9" y1="6" x2="18" y2="6"/>
+				<line x1="9" y1="11" x2="16" y2="11"/>
+				<line x1="9" y1="16" x2="18" y2="16"/>
 			</svg>
 		`),
 	};
