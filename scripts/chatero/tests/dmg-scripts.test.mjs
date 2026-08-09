@@ -3,13 +3,14 @@ import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 const root = fileURLToPath(new URL("../../../", import.meta.url));
 const packageScript = join(root, "app/scripts/package_chatero_dmg");
 const verifierScript = join(root, "app/scripts/verify_chatero_bundle");
+const starterRoot = join(root, "resource", "chatero", "qlab-starter");
 const digest = (value) => createHash("sha256").update(value).digest("hex");
 const checksum = (name, value) => `${digest(value)}  ${name}\n`;
 const assertFinished = (result) => {
@@ -404,6 +405,8 @@ async function verifierFixture(t, ini = "[App]\nName=Chatero\nID=zotero@zotero.o
   const entitlements = join(dir, "entitlements.plist");
   const preferences = join(dir, "zotero.js");
   const provenance = join(dir, "chatero-build.mjs");
+  const starterManifest = join(dir, "qlab-starter-manifest.json");
+  const starterArchive = join(dir, "research-loop-starter.zip");
   const sourceCommit = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
   const upstreamBase = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
   await mkdir(join(app, "Contents", "MacOS"), { recursive: true });
@@ -417,6 +420,8 @@ async function verifierFixture(t, ini = "[App]\nName=Chatero\nID=zotero@zotero.o
   await writeFile(entitlements, "fixture");
   await writeFile(preferences, 'pref("app.update.enabled", false);\n');
   await writeFile(provenance, `export const CHATERO_BUILD = Object.freeze({\n  "sourceCommit": "${sourceCommit}",\n  "upstreamBase": "${upstreamBase}"\n});\n`);
+  await writeFile(starterManifest, await readFile(join(starterRoot, "manifest.json")));
+  await writeFile(starterArchive, await readFile(join(starterRoot, "research-loop-starter.zip")));
   await writeExecutable(join(bin, "PlistBuddy"), `#!/bin/bash
 case "$2" in
   *CFBundleName*) printf '%s\\n' "\${TEST_BUNDLE_NAME:-Chatero}" ;;
@@ -462,11 +467,13 @@ exit 1
       CHATER0_VERIFY_TEST_BUILD_PROVENANCE: provenance,
       CHATER0_VERIFY_TEST_SOURCE_COMMIT: sourceCommit,
       CHATER0_VERIFY_TEST_UPSTREAM_BASE: upstreamBase,
+      CHATER0_VERIFY_TEST_STARTER_MANIFEST: starterManifest,
+      CHATER0_VERIFY_TEST_STARTER_ARCHIVE: starterArchive,
       TEST_ENTITLEMENTS: entitlements,
       ...extra,
     },
   });
-  return { provenance, preferences, run, sourceCommit, upstreamBase };
+  return { provenance, preferences, run, sourceCommit, starterArchive, starterManifest, upstreamBase };
 }
 
 test("bundle verifier accepts a complete isolated fixture", async (t) => {
@@ -474,6 +481,19 @@ test("bundle verifier accepts a complete isolated fixture", async (t) => {
   const result = fixture.run();
   assertFinished(result);
   assert.equal(result.status, 0, result.stderr || result.stdout);
+});
+
+test("bundle verifier requires a complete starter payload and rejects an archive whose digest changes", async (t) => {
+  const fixture = await verifierFixture(t);
+  await writeFile(fixture.starterArchive, "tampered starter archive");
+  let result = fixture.run();
+  assertFinished(result);
+  assert.notEqual(result.status, 0, "tampered public starter archive unexpectedly verified");
+
+  const missingManifest = join(dirname(fixture.starterManifest), "missing-manifest.json");
+  result = fixture.run({ CHATER0_VERIFY_TEST_STARTER_MANIFEST: missingManifest });
+  assertFinished(result);
+  assert.notEqual(result.status, 0, "missing public starter manifest unexpectedly verified");
 });
 
 test("bundle verifier rejects non-ad-hoc metadata, active UpdateURL, wrong executable, and missing Word entitlement", async (t) => {

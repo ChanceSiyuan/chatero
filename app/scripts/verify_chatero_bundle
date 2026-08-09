@@ -19,6 +19,8 @@ if [ "${CHATER0_VERIFY_TEST_MODE:-0}" = "1" ]; then
 	BUILD_PROVENANCE="${CHATER0_VERIFY_TEST_BUILD_PROVENANCE:?test build provenance is required}"
 	EXPECTED_SOURCE_COMMIT="${CHATER0_VERIFY_TEST_SOURCE_COMMIT:?test source commit is required}"
 	EXPECTED_UPSTREAM_BASE="${CHATER0_VERIFY_TEST_UPSTREAM_BASE:?test upstream base is required}"
+	STARTER_MANIFEST="${CHATER0_VERIFY_TEST_STARTER_MANIFEST:?test starter manifest is required}"
+	STARTER_ARCHIVE="${CHATER0_VERIFY_TEST_STARTER_ARCHIVE:?test starter archive is required}"
 else
 	PLIST_BUDDY="/usr/libexec/PlistBuddy"
 	PLUTIL="/usr/bin/plutil"
@@ -46,8 +48,12 @@ trap cleanup EXIT
 if [ "${CHATER0_VERIFY_TEST_MODE:-0}" != "1" ]; then
 	DEFAULT_PREFS="$TEMP_DIR/zotero.js"
 	BUILD_PROVENANCE="$TEMP_DIR/chatero-build.mjs"
+	STARTER_MANIFEST="$TEMP_DIR/qlab-starter-manifest.json"
+	STARTER_ARCHIVE="$TEMP_DIR/research-loop-starter.zip"
 	/usr/bin/unzip -p "$OMNI_JA" defaults/preferences/zotero.js > "$DEFAULT_PREFS"
 	/usr/bin/unzip -p "$OMNI_JA" resource/chatero-build.mjs > "$BUILD_PROVENANCE"
+	/usr/bin/unzip -p "$OMNI_JA" resource/chatero/qlab-starter/manifest.json > "$STARTER_MANIFEST"
+	/usr/bin/unzip -p "$OMNI_JA" resource/chatero/qlab-starter/research-loop-starter.zip > "$STARTER_ARCHIVE"
 fi
 
 [ -f "$PLIST" ]
@@ -56,6 +62,17 @@ fi
 [ -f "$WORD_DYLIB" ]
 [ -f "$DEFAULT_PREFS" ]
 [ -f "$BUILD_PROVENANCE" ]
+[ -f "$STARTER_MANIFEST" ]
+[ -f "$STARTER_ARCHIVE" ]
+
+"$NODE" -e '
+const crypto = require("crypto");
+const fs = require("fs");
+const manifest = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+if (!manifest || !/^[a-f0-9]{64}$/.test(manifest.archiveSha256 || "")) process.exit(1);
+const actual = crypto.createHash("sha256").update(fs.readFileSync(process.argv[2])).digest("hex");
+if (actual !== manifest.archiveSha256) process.exit(1);
+' "$STARTER_MANIFEST" "$STARTER_ARCHIVE"
 
 test "$("$PLIST_BUDDY" -c 'Print :CFBundleName' "$PLIST")" = "Chatero"
 test "$("$PLIST_BUDDY" -c 'Print :CFBundleIdentifier' "$PLIST")" \
