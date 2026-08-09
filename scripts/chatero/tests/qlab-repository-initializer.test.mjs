@@ -21,6 +21,81 @@ function receiptDigest(receipt) {
 	return sha256(JSON.stringify(canonical));
 }
 
+function geckoFilesystemDependencies(hooks = {}) {
+	class LocalFile {
+		initWithPath(value) { this.path = value; }
+		normalize() { this.path = fsSync.realpathSync(this.path); }
+		isSymlink() {
+			try { return fsSync.lstatSync(this.path).isSymbolicLink(); }
+			catch { return false; }
+		}
+		create(type, mode) {
+			if (type === 1) fsSync.mkdirSync(this.path, { mode });
+			else fsSync.closeSync(fsSync.openSync(this.path, "wx", mode));
+		}
+	}
+	class FileOutputStream {
+		init(file, _flags, mode) {
+			this.fd = fsSync.openSync(file.path, "wx", mode);
+			this.position = 0;
+		}
+		QueryInterface() { return this; }
+		seek(whence, offset) {
+			assert.equal(whence, 0);
+			this.position = offset;
+		}
+		setEOF() { fsSync.ftruncateSync(this.fd, this.position); }
+	}
+	class BinaryOutputStream {
+		setOutputStream(stream) { this.stream = stream; }
+		writeByteArray(bytes) {
+			const value = Buffer.from(bytes);
+			fsSync.writeSync(this.stream.fd, value, 0, value.length, this.stream.position);
+			this.stream.position += value.length;
+		}
+		flush() { fsSync.fsyncSync(this.stream.fd); }
+		close() { fsSync.closeSync(this.stream.fd); }
+	}
+	return {
+		Components: {
+			classes: {
+				"@mozilla.org/file/local;1": { createInstance: () => new LocalFile() },
+				"@mozilla.org/network/file-output-stream;1": { createInstance: () => new FileOutputStream() },
+				"@mozilla.org/binaryoutputstream;1": { createInstance: () => new BinaryOutputStream() },
+			},
+			interfaces: {
+				nsIFile: { DIRECTORY_TYPE: 1, NORMAL_FILE_TYPE: 0 },
+				nsIFileOutputStream: {}, nsIBinaryOutputStream: {}, nsISeekableStream: { NS_SEEK_SET: 0 },
+			},
+			results: {},
+		},
+		IOUtils: {
+			stat: async value => {
+				const stat = await fs.stat(value);
+				return { type: stat.isDirectory() ? "directory" : "regular", size: stat.size, lastModified: stat.mtimeMs };
+			},
+			getChildren: async value => (await fs.readdir(value)).map(name => join(value, name)),
+			read: value => fs.readFile(value),
+			move: (from, to) => fs.rename(from, to),
+			remove: async (value, options) => {
+				if (!options?.recursive && await fs.stat(value).then(stat => stat.isDirectory(), () => false)) {
+					return fs.rmdir(value);
+				}
+				return fs.rm(value, { force: options?.ignoreAbsent, recursive: options?.recursive });
+			},
+		},
+		PathUtils: {
+			join: (...parts) => path.join(...parts), parent: value => path.dirname(value),
+			filename: value => path.basename(value), normalize: value => path.normalize(value),
+			isAbsolute: value => path.isAbsolute(value),
+		},
+		crypto: globalThis.crypto,
+		TextEncoder: globalThis.TextEncoder,
+		TextDecoder: globalThis.TextDecoder,
+		...hooks,
+	};
+}
+
 function storedArchiveFiles(archive) {
 	const files = new Map();
 	let offset = 0;
@@ -794,63 +869,14 @@ test("Gecko initializer host cleans escaped leaves after final-operation parent 
 		await mkdir(parent, { recursive: true });
 		await writeFile(sentinel, "do not touch\n");
 		let attacked = false;
-		class LocalFile {
-			initWithPath(value) { this.path = value; }
-			normalize() { this.path = fsSync.realpathSync(this.path); }
-			isSymlink() {
-				try { return fsSync.lstatSync(this.path).isSymbolicLink(); }
-				catch { return false; }
-			}
-			create(type, mode) {
-				if (type === 1) fsSync.mkdirSync(this.path, { mode });
-				else fsSync.closeSync(fsSync.openSync(this.path, "wx", mode));
-			}
-		}
-		class FileOutputStream {
-			init(file, _flags, mode) { this.fd = fsSync.openSync(file.path, "wx", mode); }
-		}
-		class BinaryOutputStream {
-			setOutputStream(stream) { this.stream = stream; }
-			writeByteArray(bytes) { fsSync.writeSync(this.stream.fd, Buffer.from(bytes)); }
-			flush() { fsSync.fsyncSync(this.stream.fd); }
-			close() { fsSync.closeSync(this.stream.fd); }
-		}
-		const Components = {
-			classes: {
-				"@mozilla.org/file/local;1": { createInstance: () => new LocalFile() },
-				"@mozilla.org/network/file-output-stream;1": { createInstance: () => new FileOutputStream() },
-				"@mozilla.org/binaryoutputstream;1": { createInstance: () => new BinaryOutputStream() },
-			},
-			interfaces: {
-				nsIFile: { DIRECTORY_TYPE: 1, NORMAL_FILE_TYPE: 0 },
-				nsIFileOutputStream: {}, nsIBinaryOutputStream: {},
-			},
-			results: {},
-		};
-		const IOUtils = {
-			stat: async value => {
-				const stat = await fs.stat(value);
-				return { type: stat.isDirectory() ? "directory" : "regular", size: stat.size, lastModified: stat.mtimeMs };
-			},
-			getChildren: async value => (await fs.readdir(value)).map(name => join(value, name)),
-			read: value => fs.readFile(value),
-			move: (from, to) => fs.rename(from, to),
-			remove: (value, options) => fs.rm(value, { force: options?.ignoreAbsent }),
-		};
-		const PathUtils = {
-			join: (...parts) => path.join(...parts), parent: value => path.dirname(value),
-			filename: value => path.basename(value), normalize: value => path.normalize(value),
-			isAbsolute: value => path.isAbsolute(value),
-		};
-		const host = QLab.createGeckoQLabInitializerHost({
-			IOUtils, PathUtils, Components, crypto: globalThis.crypto,
+		const host = QLab.createGeckoQLabInitializerHost(geckoFilesystemDependencies({
 			beforeCreate: async () => {
 				if (attacked) return;
 				attacked = true;
 				await rm(parent, { recursive: true });
 				await symlink(outside, parent);
 			},
-		});
+		}));
 
 		let operationPromise = operation === "directory"
 			? host.createDirectoryIfAbsent(root, target, 0o700)
@@ -868,4 +894,106 @@ test("Gecko initializer host cleans escaped leaves after final-operation parent 
 		assert.equal(await readFile(sentinel, "utf8"), "do not touch\n");
 		assert.equal(await fs.access(join(outside, leaf)).then(() => true, () => false), false);
 	}
+});
+
+test("Gecko private identity tracks a missing parent across a final Git-directory swap", async (t) => {
+	const QLab = await loadQLab();
+	let root = await mkdtemp(join(tmpdir(), "chatero-gecko-private-parent-race-"));
+	let outside = await mkdtemp(join(tmpdir(), "chatero-gecko-private-parent-outside-"));
+	t.after(() => rm(root, { recursive: true, force: true }));
+	t.after(() => rm(outside, { recursive: true, force: true }));
+	root = await fs.realpath(root);
+	outside = await fs.realpath(outside);
+	const gitDirectory = join(root, ".git");
+	const privateParent = join(gitDirectory, "qlab");
+	const target = join(privateParent, "repository-id");
+	const sentinel = join(outside, "user-sentinel.txt");
+	await mkdir(gitDirectory);
+	await writeFile(sentinel, "do not touch\n");
+	let attacked = false;
+	const host = QLab.createGeckoQLabInitializerHost(geckoFilesystemDependencies({
+		beforeCreate: async ({ target: createTarget, kind }) => {
+			if (attacked || createTarget !== privateParent || kind !== "directory") return;
+			attacked = true;
+			await rm(gitDirectory, { recursive: true });
+			await symlink(outside, gitDirectory);
+		},
+	}));
+
+	await assert.rejects(
+		host.createPrivateIfAbsent(root, target, `${UUID}\n`, 0o600, 0o700),
+		/symbolic|outside|escaped|parent/i,
+	);
+	assert.equal(attacked, true);
+	assert.equal(await readFile(sentinel, "utf8"), "do not touch\n");
+	assert.equal(await fs.access(join(outside, "qlab")).then(() => true, () => false), false);
+});
+
+test("Gecko escaped cleanup preserves unrelated same-type substitutes without its create proof", async (t) => {
+	const QLab = await loadQLab();
+	for (const operation of ["file", "directory"]) {
+		let root = await mkdtemp(join(tmpdir(), `chatero-gecko-proof-${operation}-`));
+		let outside = await mkdtemp(join(tmpdir(), `chatero-gecko-proof-outside-${operation}-`));
+		t.after(() => rm(root, { recursive: true, force: true }));
+		t.after(() => rm(outside, { recursive: true, force: true }));
+		root = await fs.realpath(root);
+		outside = await fs.realpath(outside);
+		const parent = join(root, "nested");
+		const leaf = operation === "file" ? "note.qmd" : "child";
+		const target = join(parent, leaf);
+		const resolvedTarget = join(outside, leaf);
+		await mkdir(parent);
+		let attacked = false;
+		let substituted = false;
+		const host = QLab.createGeckoQLabInitializerHost(geckoFilesystemDependencies({
+			beforeCreate: async ({ target: createTarget }) => {
+				if (attacked || createTarget !== target) return;
+				attacked = true;
+				await rm(parent, { recursive: true });
+				await symlink(outside, parent);
+			},
+			beforeEscapedCleanup: async event => {
+				if (substituted || event.target !== target || event.kind !== operation) return;
+				substituted = true;
+				await rm(resolvedTarget, { recursive: true, force: true });
+				if (operation === "file") {
+					await writeFile(resolvedTarget, "unrelated file\n");
+				}
+				else {
+					await mkdir(resolvedTarget);
+					await writeFile(join(resolvedTarget, "unrelated.txt"), "unrelated directory\n");
+				}
+			},
+		}));
+
+		await assert.rejects(
+			operation === "file"
+				? host.createFileIfAbsent(root, target, Buffer.from("starter bytes\n"), 0o600)
+				: host.createDirectoryIfAbsent(root, target, 0o700),
+			/escaped|proof|outside|symbolic|parent/i,
+		);
+		assert.equal(attacked, true, operation);
+		assert.equal(substituted, true, operation);
+		if (operation === "file") {
+			assert.equal(await readFile(resolvedTarget, "utf8"), "unrelated file\n");
+		}
+		else {
+			assert.equal(await readFile(join(resolvedTarget, "unrelated.txt"), "utf8"), "unrelated directory\n");
+		}
+	}
+});
+
+test("Gecko proven file creation replaces the nonce with the exact original bytes on the held stream", async (t) => {
+	const QLab = await loadQLab();
+	let root = await mkdtemp(join(tmpdir(), "chatero-gecko-proof-finalize-"));
+	t.after(() => rm(root, { recursive: true, force: true }));
+	root = await fs.realpath(root);
+	const parent = join(root, "nested");
+	const target = join(parent, "payload.bin");
+	const expected = Buffer.from([0x00, 0xff, 0x41, 0x80, 0x0a]);
+	await mkdir(parent);
+	const host = QLab.createGeckoQLabInitializerHost(geckoFilesystemDependencies());
+
+	assert.equal(await host.createFileIfAbsent(root, target, expected, 0o600), "created");
+	assert.deepEqual(await readFile(target), expected);
 });

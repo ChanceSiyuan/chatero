@@ -496,20 +496,7 @@ Zotero.QLab = Zotero.QLab || {};
 			throw new Error('Created target escaped the repository root');
 		}
 		async function createDirectoryIfAbsent(root, target, mode) {
-			await base.assertNoSymlinkComponents(root, target, { allowMissingLeaf: true });
-			await revalidateParent(root, target);
-			if (typeof options.beforeCreate === 'function') {
-				await options.beforeCreate(Object.freeze({ root, target, kind: 'directory' }));
-			}
-			try {
-				await fs.mkdir(target, { mode });
-				await removeEscapedCreatedLeaf(root, target, await fs.lstat(target), true);
-				return 'created';
-			}
-			catch (error) {
-				if (error && error.code === 'EEXIST' && await base.kind(target) === 'directory') return 'exists';
-				throw error;
-			}
+			return base.createDirectoryIfAbsent(root, target, mode);
 		}
 		async function createFileIfAbsent(root, target, bytes, mode) {
 			await base.assertNoSymlinkComponents(root, target, { allowMissingLeaf: true });
@@ -587,6 +574,18 @@ Zotero.QLab = Zotero.QLab || {};
 		let paths = dependencies.PathUtils || (typeof PathUtils !== 'undefined' ? PathUtils : null);
 		let xpcom = dependencies.Components || (typeof Components !== 'undefined' ? Components : null);
 		let cryptoAPI = dependencies.crypto || (typeof crypto !== 'undefined' ? crypto : null);
+		let TextEncoderClass = dependencies.TextEncoder || (typeof TextEncoder !== 'undefined' ? TextEncoder : null);
+		let TextDecoderClass = dependencies.TextDecoder || (typeof TextDecoder !== 'undefined' ? TextDecoder : null);
+
+		function encodeText(value) {
+			if (!TextEncoderClass) throw new Error('UTF-8 encoder is unavailable');
+			return new TextEncoderClass().encode(String(value));
+		}
+
+		function decodeText(value) {
+			if (!TextDecoderClass) throw new Error('UTF-8 decoder is unavailable');
+			return new TextDecoderClass().decode(value);
+		}
 
 		function localFile(path) {
 			let file = xpcom.classes['@mozilla.org/file/local;1']
@@ -636,6 +635,15 @@ Zotero.QLab = Zotero.QLab || {};
 			}
 		}
 
+		function isAlreadyExists(error) {
+			return Boolean(error && (
+				error.code === 'EEXIST'
+				|| error.name === 'AlreadyExistsError'
+				|| (xpcom.results.NS_ERROR_FILE_ALREADY_EXISTS !== undefined
+					&& error.result === xpcom.results.NS_ERROR_FILE_ALREADY_EXISTS)
+			));
+		}
+
 		async function assertNoSymlinkComponents(root, target, options = {}) {
 			let canonicalRoot = normalized(root).replace(/[\\/]+$/, '');
 			let candidate = normalized(target);
@@ -677,36 +685,117 @@ Zotero.QLab = Zotero.QLab || {};
 			await assertNoSymlinkComponents(root, parent);
 		}
 
-		async function removeEscapedCreatedLeaf(root, target, directory = false) {
-			let resolved = await host.realPath(target);
-			if (isInside(root, resolved)) return;
-			let current = await kind(resolved);
-			if ((directory && current === 'directory') || (!directory && current === 'file')) {
-				await io.remove(resolved, { ignoreAbsent: true, recursive: false });
+		function createProof() {
+			if (!cryptoAPI || typeof cryptoAPI.getRandomValues !== 'function') {
+				throw new Error('Secure create proof source is unavailable');
 			}
+			let random = new Uint8Array(32);
+			cryptoAPI.getRandomValues(random);
+			let token = Array.from(random, byte => byte.toString(16).padStart(2, '0')).join('');
+			return Object.freeze({
+				token,
+				bytes: encodeText(`chatero-qlab-create:${token}\n`),
+			});
+		}
+
+		function bytesEqual(left, right) {
+			return left.length === right.length && left.every((byte, index) => byte === right[index]);
+		}
+
+		function writeBytes(binary, bytes) {
+			binary.writeByteArray(Array.from(bytes), bytes.length);
+			binary.flush();
+		}
+
+		async function requireFileProof(target, proof) {
+			if (await kind(target) !== 'file') throw new Error('Created file proof is unavailable');
+			let stat = await io.stat(target);
+			if (Number(stat.size) !== proof.bytes.length) throw new Error('Created file proof does not match');
+			let actual = await readBytesNoFollow(target, proof.bytes.length);
+			if (!bytesEqual(actual, proof.bytes)) throw new Error('Created file proof does not match');
+		}
+
+		async function cleanEscapedFile(root, target, resolved, proof, kindLabel) {
+			if (typeof dependencies.beforeEscapedCleanup === 'function') {
+				await dependencies.beforeEscapedCleanup(Object.freeze({ root, target, resolved, kind: kindLabel }));
+			}
+			await requireFileProof(resolved, proof);
+			await io.remove(resolved, { ignoreAbsent: false, recursive: false });
 			throw new Error('Created target escaped the repository root');
 		}
 
-		async function writeExclusive(target, bytes, mode, root, kind = 'file') {
+		async function writeRawExclusive(target, bytes, mode) {
 			let file = localFile(target);
-			if (typeof file.isSymlink === 'function' && file.isSymlink()) throw new Error(`Symbolic link refused at ${target}`);
-			if (root) await revalidateParent(root, target);
-			if (root && typeof dependencies.beforeCreate === 'function') {
-				await dependencies.beforeCreate(Object.freeze({ root, target, kind }));
-			}
-			if (root) await assertNoSymlinkComponents(root, target, { allowMissingLeaf: true });
 			let stream = xpcom.classes['@mozilla.org/network/file-output-stream;1']
 				.createInstance(xpcom.interfaces.nsIFileOutputStream);
 			stream.init(file, 0x02 | 0x08 | 0x80, mode, 0);
 			let binary = xpcom.classes['@mozilla.org/binaryoutputstream;1']
 				.createInstance(xpcom.interfaces.nsIBinaryOutputStream);
 			binary.setOutputStream(stream);
-			try {
-				let data = bytes instanceof Uint8Array ? bytes : new TextEncoder().encode(String(bytes));
-				binary.writeByteArray(Array.from(data), data.length);
-				binary.flush();
-			}
+			try { writeBytes(binary, bytes); }
 			finally { binary.close(); }
+		}
+
+		async function writeExclusive(target, bytes, mode, root, kindLabel = 'file') {
+			let file = localFile(target);
+			if (typeof file.isSymlink === 'function' && file.isSymlink()) throw new Error(`Symbolic link refused at ${target}`);
+			if (root) await revalidateParent(root, target);
+			if (root && typeof dependencies.beforeCreate === 'function') {
+				await dependencies.beforeCreate(Object.freeze({ root, target, kind: kindLabel }));
+			}
+			let proof = createProof();
+			let stream = xpcom.classes['@mozilla.org/network/file-output-stream;1']
+				.createInstance(xpcom.interfaces.nsIFileOutputStream);
+			stream.init(file, 0x02 | 0x08 | 0x80, mode, 0);
+			let binary = xpcom.classes['@mozilla.org/binaryoutputstream;1']
+				.createInstance(xpcom.interfaces.nsIBinaryOutputStream);
+			binary.setOutputStream(stream);
+			let closed = false;
+			try {
+				let data = typeof bytes !== 'string' && bytes && Number.isSafeInteger(bytes.length)
+					? Uint8Array.from(bytes)
+					: encodeText(bytes);
+				writeBytes(binary, proof.bytes);
+				let resolved = await host.realPath(target);
+				if (!isInside(root, resolved)) {
+					binary.close();
+					closed = true;
+					return cleanEscapedFile(root, target, resolved, proof, kindLabel);
+				}
+				let seekable = typeof stream.QueryInterface === 'function'
+					? stream.QueryInterface(xpcom.interfaces.nsISeekableStream)
+					: stream;
+				if (typeof seekable.seek !== 'function' || typeof seekable.setEOF !== 'function') {
+					throw new Error('Exclusive stream cannot finalize a proven create');
+				}
+				seekable.seek(xpcom.interfaces.nsISeekableStream.NS_SEEK_SET, 0);
+				seekable.setEOF();
+				writeBytes(binary, data);
+			}
+			finally { if (!closed) binary.close(); }
+		}
+
+		async function requireDirectoryProof(directory, markerName, proof) {
+			if (await kind(directory) !== 'directory') throw new Error('Created directory proof is unavailable');
+			let entries = await io.getChildren(directory);
+			if (entries.length !== 1 || paths.filename(entries[0]) !== markerName) {
+				throw new Error('Created directory proof does not match');
+			}
+			await requireFileProof(entries[0], proof);
+			return entries[0];
+		}
+
+		async function removeProvenDirectory(root, target, resolved, markerName, proof, escaped) {
+			if (escaped && typeof dependencies.beforeEscapedCleanup === 'function') {
+				await dependencies.beforeEscapedCleanup(Object.freeze({ root, target, resolved, kind: 'directory' }));
+			}
+			let marker = await requireDirectoryProof(resolved, markerName, proof);
+			await io.remove(marker, { ignoreAbsent: false, recursive: false });
+			if ((await io.getChildren(resolved)).length) throw new Error('Created directory proof does not match');
+			if (escaped) {
+				await io.remove(resolved, { ignoreAbsent: false, recursive: false });
+				throw new Error('Created target escaped the repository root');
+			}
 		}
 
 		async function createDirectoryIfAbsent(root, target, mode) {
@@ -715,14 +804,18 @@ Zotero.QLab = Zotero.QLab || {};
 			if (typeof dependencies.beforeCreate === 'function') {
 				await dependencies.beforeCreate(Object.freeze({ root, target, kind: 'directory' }));
 			}
-			await assertNoSymlinkComponents(root, target, { allowMissingLeaf: true });
+			let proof = createProof();
+			let markerName = `.chatero-create-${proof.token}.proof`;
 			let file = localFile(target);
 			try { file.create(xpcom.interfaces.nsIFile.DIRECTORY_TYPE, mode); }
 			catch (error) {
-				if (await kind(target) === 'directory') return 'exists';
+				if (isAlreadyExists(error) && await kind(target) === 'directory') return 'exists';
 				throw error;
 			}
-			await removeEscapedCreatedLeaf(root, target, true);
+			let marker = paths.join(target, markerName);
+			await writeRawExclusive(marker, proof.bytes, 0o600);
+			let resolved = await host.realPath(target);
+			await removeProvenDirectory(root, target, resolved, markerName, proof, !isInside(root, resolved));
 			await assertNoSymlinkComponents(root, target);
 			return 'created';
 		}
@@ -732,10 +825,9 @@ Zotero.QLab = Zotero.QLab || {};
 			await revalidateParent(root, target);
 			try { await writeExclusive(target, bytes, mode, root, 'file'); }
 			catch (error) {
-				if (await kind(target) !== 'missing') return 'exists';
+				if (isAlreadyExists(error) && await kind(target) === 'file') return 'exists';
 				throw error;
 			}
-			await removeEscapedCreatedLeaf(root, target, false);
 			await assertNoSymlinkComponents(root, target);
 			return 'created';
 		}
@@ -759,9 +851,9 @@ Zotero.QLab = Zotero.QLab || {};
 			join: (...parts) => paths.join(...parts),
 			kind,
 			assertNoSymlinkComponents,
-			readTextNoFollow: async (target, maxBytes) => new TextDecoder().decode(await readBytesNoFollow(target, maxBytes)),
+			readTextNoFollow: async (target, maxBytes) => decodeText(await readBytesNoFollow(target, maxBytes)),
 			readPrivateNoFollow: async (target, maxBytes) => {
-				try { return new TextDecoder().decode(await readBytesNoFollow(target, maxBytes)); }
+				try { return decodeText(await readBytesNoFollow(target, maxBytes)); }
 				catch (error) {
 					if (await kind(target) === 'missing') return null;
 					throw error;
@@ -771,10 +863,7 @@ Zotero.QLab = Zotero.QLab || {};
 				let parent = paths.parent(target);
 				let parentKind = await kind(parent);
 				if (parentKind === 'missing') {
-					let ancestor = paths.parent(parent);
-					if (await kind(ancestor) !== 'directory' || await isSymlink(ancestor)) throw new Error('Private identity parent is unsafe');
-					let file = localFile(parent);
-					file.create(xpcom.interfaces.nsIFile.DIRECTORY_TYPE, directoryMode);
+					await createDirectoryIfAbsent(root, parent, directoryMode);
 				}
 				else if (parentKind !== 'directory') throw new Error('Private identity parent is unsafe');
 				await assertNoSymlinkComponents(root, parent);
@@ -785,16 +874,15 @@ Zotero.QLab = Zotero.QLab || {};
 				await assertNoSymlinkComponents(root, parent);
 				try {
 					await writeExclusive(target, value, mode, root, 'private');
-					await removeEscapedCreatedLeaf(root, target, false);
 					return 'created';
 				}
 				catch (error) {
-					if (await kind(target) !== 'missing') return 'exists';
+					if (isAlreadyExists(error) && await kind(target) === 'file') return 'exists';
 					throw error;
 				}
 			},
 			sha256: async bytes => {
-				let input = typeof bytes === 'string' ? new TextEncoder().encode(bytes) : bytes;
+				let input = typeof bytes === 'string' ? encodeText(bytes) : bytes;
 				let digest = new Uint8Array(await cryptoAPI.subtle.digest('SHA-256', input));
 				return Array.from(digest, byte => byte.toString(16).padStart(2, '0')).join('');
 			},
@@ -815,7 +903,7 @@ Zotero.QLab = Zotero.QLab || {};
 					try {
 						candidates.push({
 							path,
-							text: new TextDecoder().decode(await readBytesNoFollow(path)),
+							text: decodeText(await readBytesNoFollow(path)),
 							bootstrap: name === bootstrap,
 							revision: match ? Number(match[1]) : 0,
 							digest: match ? match[2] : '',
@@ -832,7 +920,7 @@ Zotero.QLab = Zotero.QLab || {};
 			writeReceipt: async (target, text, { exclusive } = {}) => {
 				let root = paths.parent(paths.parent(target));
 				if (!exclusive) throw new Error('Receipt updates must be immutable');
-				let outcome = await createFileIfAbsent(root, target, new TextEncoder().encode(text), 0o600);
+				let outcome = await createFileIfAbsent(root, target, encodeText(text), 0o600);
 				if (outcome !== 'created') throw new Error('Initialization receipt generation already exists');
 			},
 		};

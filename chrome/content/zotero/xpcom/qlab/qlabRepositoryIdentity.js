@@ -193,6 +193,32 @@ Zotero.QLab = Zotero.QLab || {};
 			}
 			throw new Error('Created private target escaped the repository root');
 		}
+		async function revalidateParent(root, target) {
+			let parent = pathModule.dirname(target);
+			await assertNoSymlinkComponents(root, parent);
+			let resolvedParent = normalized(await fs.realpath(parent));
+			if (resolvedParent !== normalized(parent) || !isInside(root, resolvedParent)) {
+				throw new Error('Target parent escaped the repository root');
+			}
+			await assertNoSymlinkComponents(root, parent);
+		}
+		async function createDirectoryIfAbsent(root, target, mode) {
+			await assertNoSymlinkComponents(root, target, { allowMissingLeaf: true });
+			await revalidateParent(root, target);
+			if (typeof options.beforeCreate === 'function') {
+				await options.beforeCreate(Object.freeze({ root, target, kind: 'directory' }));
+			}
+			try {
+				await fs.mkdir(target, { mode });
+				let createdStat = await fs.lstat(target);
+				await removeEscapedCreatedLeaf(root, target, createdStat, true);
+				return 'created';
+			}
+			catch (error) {
+				if (error && error.code === 'EEXIST' && await kind(target) === 'directory') return 'exists';
+				throw error;
+			}
+		}
 		return {
 			exists: async p => (await kind(p)) !== 'missing',
 			existsNoFollow: async p => (await kind(p)) !== 'missing',
@@ -204,6 +230,7 @@ Zotero.QLab = Zotero.QLab || {};
 			join: (...parts) => pathModule.join(...parts),
 			kind,
 			assertNoSymlinkComponents,
+			createDirectoryIfAbsent,
 			readTextNoFollow,
 			readPrivateNoFollow: async (p, maxBytes) => {
 				try {
@@ -217,7 +244,13 @@ Zotero.QLab = Zotero.QLab || {};
 			},
 			createPrivateIfAbsent: async (root, p, value, mode, directoryMode) => {
 				let parent = pathModule.dirname(p);
-				await fs.mkdir(parent, { recursive: true, mode: directoryMode });
+				let parentKind = await kind(parent);
+				if (parentKind === 'missing') {
+					await createDirectoryIfAbsent(root, parent, directoryMode);
+				}
+				else if (parentKind !== 'directory') {
+					throw new Error('Private identity parent is unsafe');
+				}
 				await assertNoSymlinkComponents(root, parent);
 				let resolvedParent = normalized(await fs.realpath(parent));
 				if (resolvedParent !== normalized(parent) || !isInside(root, resolvedParent)) {

@@ -164,11 +164,84 @@ test("repository identity creation revalidates its private parent after a race",
 
 	await assert.rejects(
 		QLab.createQLabRepositoryIdentity({ root, host, uuid: () => FIXED_UUID }),
-		/symbolic|outside|ancestor|parent/i,
+		/symbolic|outside|escaped|ancestor|parent/i,
 	);
 	assert.equal(attacked, true);
 	assert.equal(
 		await fs.access(join(outside, "repository-id")).then(() => true, () => false),
 		false,
 	);
+});
+
+test("repository identity tracks and removes a missing private parent created through a swapped Git directory", async (t) => {
+	const QLab = await loadQLab();
+	const root = await repository(t);
+	const outside = await mkdtemp(join(tmpdir(), "chatero-identity-parent-race-outside-"));
+	t.after(() => rm(outside, { recursive: true, force: true }));
+	const gitDirectory = join(root, ".git");
+	const privateParent = join(gitDirectory, "qlab");
+	const sentinel = join(outside, "user-sentinel.txt");
+	await writeFile(sentinel, "do not touch\n");
+	let attacked = false;
+	const host = QLab.createNodeQLabRepositoryHost(fs, path, {
+		beforeCreate: async ({ target, kind }) => {
+			if (attacked || target !== privateParent || kind !== "directory") return;
+			attacked = true;
+			await rm(gitDirectory, { recursive: true });
+			await symlink(outside, gitDirectory);
+		},
+	});
+
+	await assert.rejects(
+		QLab.createQLabRepositoryIdentity({ root, host, uuid: () => FIXED_UUID }),
+		/symbolic|outside|escaped|parent/i,
+	);
+	assert.equal(attacked, true);
+	assert.equal(await readFile(sentinel, "utf8"), "do not touch\n");
+	assert.equal(await fs.access(join(outside, "qlab")).then(() => true, () => false), false);
+});
+
+test("repository identity never removes a substituted private directory whose inode differs", async (t) => {
+	const QLab = await loadQLab();
+	const root = await repository(t);
+	const outside = await mkdtemp(join(tmpdir(), "chatero-identity-parent-substitute-outside-"));
+	t.after(() => rm(outside, { recursive: true, force: true }));
+	const gitDirectory = join(root, ".git");
+	const privateParent = join(gitDirectory, "qlab");
+	const unrelated = join(outside, "qlab", "unrelated.txt");
+	let createBoundaryReached = false;
+	let substituted = false;
+	const racingFs = new Proxy(fs, {
+		get(source, property) {
+			if (property === "realpath") {
+				return async target => {
+					const resolved = await fs.realpath(target);
+					if (createBoundaryReached && !substituted && target === privateParent) {
+						substituted = true;
+						await rm(resolved, { recursive: true });
+						await mkdir(resolved);
+						await writeFile(unrelated, "belongs to someone else\n");
+					}
+					return fs.realpath(target);
+				};
+			}
+			const value = Reflect.get(source, property);
+			return typeof value === "function" ? value.bind(source) : value;
+		},
+	});
+	const host = QLab.createNodeQLabRepositoryHost(racingFs, path, {
+		beforeCreate: async ({ target, kind }) => {
+			if (target !== privateParent || kind !== "directory") return;
+			createBoundaryReached = true;
+			await rm(gitDirectory, { recursive: true });
+			await symlink(outside, gitDirectory);
+		},
+	});
+
+	await assert.rejects(
+		QLab.createQLabRepositoryIdentity({ root, host, uuid: () => FIXED_UUID }),
+		/symbolic|outside|escaped|parent/i,
+	);
+	assert.equal(substituted, true);
+	assert.equal(await readFile(unrelated, "utf8"), "belongs to someone else\n");
 });
