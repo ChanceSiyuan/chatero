@@ -68,17 +68,24 @@ const GENERATED_REPLACEMENTS = new Set([
 const bytewiseCompare = (left, right) => Buffer.compare(Buffer.from(left, "utf8"), Buffer.from(right, "utf8"));
 const sha256 = (value) => createHash("sha256").update(value).digest("hex");
 const isWithin = (root, target) => target === root || target.startsWith(`${root}${sep}`);
+const PROHIBITED_SOURCE_EXTENSIONS = /\.(?:7z|avi|bin|blob|bmp|bz2|class|dmg|dll|docx?|exe|gif|gz|ico|jar|jpe?g|mov|mp[34]|otf|pdf|png|rar|so|tar|tiff?|ttf|wasm|webm|webp|woff2?|xpi|zip)$/i;
 
 function fail(message) {
   throw new Error(`QLab starter build failed: ${message}`);
 }
 
 function assertPublicPayload(path, data) {
+  if (PROHIBITED_SOURCE_EXTENSIONS.test(path)) {
+    fail(`public source has a prohibited binary payload extension: ${path}`);
+  }
   let source;
   try {
     source = new TextDecoder("utf-8", { fatal: true }).decode(data);
   } catch {
-    return;
+    fail(`public source payload is not valid UTF-8: ${path}`);
+  }
+  if (source.includes("\0")) {
+    fail(`public source contains a binary NUL payload: ${path}`);
   }
   if (/(?:^|[\s"'=:(])(?:\/Users\/|\/home\/|[A-Za-z]:[\\/])/.test(source)) {
     fail(`public source contains an absolute user path: ${path}`);

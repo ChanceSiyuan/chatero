@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -102,6 +102,25 @@ async function waitForSite(url, child) {
     }
   }
   throw lastError ?? new Error("site did not become ready");
+}
+
+async function writeRequiredStarterSourceFixture(source) {
+  const directories = new Set([".research-loop", "schemas", "skills", "src"]);
+  for (const path of STARTER_COPY_PATHS) {
+    const target = join(source, path);
+    if (directories.has(path)) await mkdir(target, { recursive: true });
+    else {
+      await mkdir(dirname(target), { recursive: true });
+      await writeFile(target, "public fixture\n");
+    }
+  }
+  for (const path of STARTER_CURATED_COPY_PATHS) {
+    const target = join(source, path);
+    if (path.includes("/scripts/") || /\.[A-Za-z0-9]+$/.test(path)) {
+      await mkdir(dirname(target), { recursive: true });
+      await writeFile(target, "public fixture\n");
+    } else await mkdir(target, { recursive: true });
+  }
 }
 
 test("starter ZIP writer is byte-stable and bytewise orders payload paths", () => {
@@ -259,6 +278,30 @@ test("starter builder rejects a symbolic-link ancestor of an explicit source pat
     () => buildStarter({ source, output }),
     /symlink ancestor/,
   );
+});
+
+test("starter builder rejects binary and invalid-UTF-8 payloads beneath recursive public trees before writing an archive", async (t) => {
+  const fixtures = [
+    ["skills/unexpected.pdf", Buffer.from([0x25, 0x50, 0x44, 0x46, 0x2d, 0x00, 0xff])],
+    ["schemas/unexpected.bin", Buffer.from([0x00, 0xff, 0x80, 0x41])],
+    ["skills/credential.blob", Buffer.concat([Buffer.from("sk_should_never_be_archived_"), Buffer.from([0xff, 0x80])])],
+  ];
+  for (const [relativePath, payload] of fixtures) {
+    const source = await mkdtemp(join(tmpdir(), "chatero-binary-source-"));
+    const output = await mkdtemp(join(tmpdir(), "chatero-binary-output-"));
+    t.after(() => rm(source, { recursive: true, force: true }));
+    t.after(() => rm(output, { recursive: true, force: true }));
+    await writeRequiredStarterSourceFixture(source);
+    const target = join(source, relativePath);
+    await mkdir(dirname(target), { recursive: true });
+    await writeFile(target, payload);
+    await assert.rejects(
+      () => buildStarter({ source, output }),
+      /binary|UTF-8|payload/i,
+      relativePath,
+    );
+    await assert.rejects(() => lstat(join(output, "research-loop-starter.zip")), /ENOENT/);
+  }
 });
 
 test("starter manifest digest covers the canonical manifest payload", async () => {
