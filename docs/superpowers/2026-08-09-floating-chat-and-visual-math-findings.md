@@ -64,7 +64,7 @@ RED evidence before the integration correction:
 GREEN evidence after the correction and review fixes:
 
 - `scripts/chatero/tests/floating-chat-integration.test.mjs`: `8/8` passed;
-- final approval-policy focused set: `45/45` passed;
+- final approval-policy focused set: `46/46` passed;
 - affected integration set before the final focused correction: `81/81`
   passed.
 
@@ -108,7 +108,23 @@ place.
 The regression first failed because the new workspace policy was never loaded
 (`loadedRoots` was empty). It then passed with the production correction. The
 focused Chat/Agent set passed `45/45`, and the complete Chatero suite passed
-`419/419`.
+`419/419` at that point.
+
+## Fix Round 3
+
+The final re-review then exercised an Agent turn that started in workspace A,
+switched the resident utility to workspace B, and delivered an approval event
+after the switch. Although future turns correctly used B's policy, the
+in-flight turn could also read B's mutable cache. The RED regression therefore
+observed no reload of A's policy and would have allowed an operation that A
+denied.
+
+Commit `e1d394a1a` captures the immutable workspace root at turn start and
+passes it through stream approval evaluation. A delayed approval now reads A's
+policy locally even while the resident host displays B; it never replaces B's
+cache. Draft review and Research Action streams use the same root-bound path.
+The final focused Chat/Agent set passed `46/46`, and the complete Chatero suite
+passed `420/420`.
 
 ## Automated Verification
 
@@ -117,7 +133,7 @@ correction.
 
 | Check | Result | Evidence |
 |---|---|---|
-| Full Chatero tests | PASS | `NODE_OPTIONS=--openssl-legacy-provider npm run test:chatero` — 419 passed, 0 failed, exit 0 |
+| Full Chatero tests | PASS | `NODE_OPTIONS=--openssl-legacy-provider npm run test:chatero` — 420 passed, 0 failed, exit 0 |
 | Application build | PASS | `NODE_OPTIONS=--openssl-legacy-provider npm run build` — JavaScript, Sass, Reader, document worker, and note editor build completed, exit 0 |
 | macOS directory staging | PASS | `app/scripts/dir_build -f -p m` — `Chatero.app` built, ad-hoc signed, valid on disk, and satisfies its Designated Requirement, exit 0 |
 | Staged bundle verification | PASS | `NODE_OPTIONS=--openssl-legacy-provider npm run test:chatero:staged` — staged `Chatero.app` deep validation completed, exit 0 |
