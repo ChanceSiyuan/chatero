@@ -26,6 +26,7 @@ Zotero.QLab = Zotero.QLab || {};
 	const PLUGIN_ID = 'chatero-qlab@local';
 	let _registered = false;
 	let _handlers = [];
+	let _readerDocumentAdapters = new Map();
 
 	function iconButtonCSS(size = 32) {
 		return `display:grid;place-items:center;width:${size}px;height:${size}px;border:0;`
@@ -262,7 +263,35 @@ Zotero.QLab = Zotero.QLab || {};
 
 	function attachReaderDocument(event, doc) {
 		let bridge = interactionBridgeFor(event);
-		bridge && bridge.attachReaderDocument && bridge.attachReaderDocument(doc);
+		if (!doc || !bridge || !bridge.attachReaderDocument) return;
+		let existing = _readerDocumentAdapters.get(doc);
+		if (existing && existing.bridge === bridge) return;
+		existing && existing.release();
+		let detach = bridge.attachReaderDocument(doc);
+		let lifecycleTarget = doc.defaultView || doc;
+		let released = false;
+		let release = () => {
+			if (released) return;
+			released = true;
+			if (lifecycleTarget && lifecycleTarget.removeEventListener) {
+				lifecycleTarget.removeEventListener('pagehide', release, true);
+				lifecycleTarget.removeEventListener('unload', release, true);
+			}
+			try {
+				detach && detach();
+			}
+			catch (e) {
+				Zotero.logError && Zotero.logError(e);
+			}
+			if (_readerDocumentAdapters.get(doc)?.release === release) {
+				_readerDocumentAdapters.delete(doc);
+			}
+		};
+		_readerDocumentAdapters.set(doc, { bridge, release });
+		if (lifecycleTarget && lifecycleTarget.addEventListener) {
+			lifecycleTarget.addEventListener('pagehide', release, true);
+			lifecycleTarget.addEventListener('unload', release, true);
+		}
 	}
 
 	/**
@@ -357,6 +386,10 @@ Zotero.QLab = Zotero.QLab || {};
 	};
 
 	Zotero.QLab.unregisterReaderHooks = function () {
+		for (let adapter of [..._readerDocumentAdapters.values()]) {
+			adapter.release();
+		}
+		_readerDocumentAdapters.clear();
 		if (!_registered || !Zotero.Reader) {
 			return;
 		}

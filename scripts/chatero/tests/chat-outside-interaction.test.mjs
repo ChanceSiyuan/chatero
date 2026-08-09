@@ -76,6 +76,71 @@ function controllerHost(QLab) {
 	};
 }
 
+function chromeElement() {
+	const element = new FakeEventTarget("chrome-element");
+	element.hidden = true;
+	element.attributes = new Map();
+	element.style = { setProperty() {} };
+	element.setAttribute = (name, value) => element.attributes.set(name, String(value));
+	element.toggleAttribute = (name, force) => {
+		if (force) element.attributes.set(name, "");
+		else element.attributes.delete(name);
+	};
+	element.querySelector = () => null;
+	element.contains = target => target === element;
+	element.getBoundingClientRect = () => ({ width: 1200, height: 800 });
+	return element;
+}
+
+function windowControllerFixture(QLab) {
+	const document = new FakeEventTarget("window-document");
+	const defaultView = new FakeEventTarget("window");
+	defaultView.innerWidth = 1200;
+	defaultView.innerHeight = 800;
+	document.defaultView = defaultView;
+	document.activeElement = null;
+	const elements = {
+		"qlab-chat-utility-layer": chromeElement(),
+		"qlab-chat-utility-dialog": chromeElement(),
+		"qlab-chat-utility-content": chromeElement(),
+	};
+	const selectors = new Map([
+		["[data-qlab-chat-drag-handle]", chromeElement()],
+		["[data-qlab-chat-pin]", chromeElement()],
+		["[data-qlab-chat-hide]", chromeElement()],
+		["[data-qlab-chat-resize]", chromeElement()],
+	]);
+	document.getElementById = id => elements[id] || null;
+	document.querySelector = selector => selectors.get(selector) || null;
+	const tabsAPI = {
+		deck: { ownerDocument: document },
+		_tabs: [{ id: "qlabchat", type: "qlabchat", data: {} }],
+		setTabData() {},
+		_onChatUtilityChanged() {},
+	};
+	QLab.mountShellTab = async () => ({});
+	QLab.cancelShellTurn = () => {};
+	QLab.cancelShellTabMount = () => {};
+	const windowController = QLab.createWindowController(tabsAPI);
+	tabsAPI._qlab = windowController;
+	return { document, windowController };
+}
+
+test("ordinary tokenless window-controller show dismisses on the first outside interaction", async () => {
+	const QLab = await loadQLab();
+	const { document, windowController } = windowControllerFixture(QLab);
+
+	await windowController.showUtility("qlabchat", null, { invocation: "native-tab" });
+	assert.equal(windowController.chatUtility.snapshot().visibility, "visible");
+	document.dispatch("pointerdown", pointerEvent(
+		nodeWithClosest("[data-qlab-visual-surface]"),
+		101,
+	));
+	assert.equal(windowController.chatUtility.snapshot().visibility, "hidden",
+		"a tokenless show must not manufacture an undefined opening token");
+	windowController.destroy();
+});
+
 test("main XUL Visual Edit activity dismisses only an unpinned Chat without consuming the click", async () => {
 	const QLab = await loadQLab();
 	const document = new FakeEventTarget("main-document");

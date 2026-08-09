@@ -190,6 +190,8 @@ Zotero.QLab = Zotero.QLab || {};
 				this._state.focusReturn = options.focusReturn;
 			}
 			this._openingToken = Object.prototype.hasOwnProperty.call(options, 'openingToken')
+					&& options.openingToken !== undefined
+					&& options.openingToken !== null
 				? options.openingToken
 				: null;
 			return this._emit({ focusComposer: this._state.focusComposer });

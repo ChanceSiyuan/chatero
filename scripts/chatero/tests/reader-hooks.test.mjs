@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runInNewContext } from "node:vm";
+import { loadQLab } from "../lib/load-qlab.mjs";
 
 const root = fileURLToPath(new URL("../../../", import.meta.url));
 const qlabRoot = join(root, "chrome/content/zotero/xpcom/qlab");
@@ -161,4 +162,113 @@ test("Reader selection Chat action opens with and consumes only its own invocati
 	});
 	assert.equal(calls.filter(call => call[0] === "notify").length, 1);
 	assert.ok(calls.some(call => call[0] === "context"));
+});
+
+class LifecycleTarget {
+	constructor(name) {
+		this.name = name;
+		this.listeners = new Map();
+	}
+
+	addEventListener(type, listener) {
+		let values = this.listeners.get(type) || [];
+		values.push(listener);
+		this.listeners.set(type, values);
+	}
+
+	removeEventListener(type, listener) {
+		let values = this.listeners.get(type) || [];
+		this.listeners.set(type, values.filter(value => value !== listener));
+	}
+
+	dispatch(type, event = {}) {
+		event.type = type;
+		event.target ||= this;
+		for (let listener of [...(this.listeners.get(type) || [])]) listener(event);
+	}
+}
+
+function lifecycleReaderDocument(name) {
+	const document = new LifecycleTarget(name);
+	document.defaultView = new LifecycleTarget(`${name}-window`);
+	document.createElement = tagName => {
+		const element = new LifecycleTarget(tagName);
+		element.children = [];
+		element.style = {};
+		element.setAttribute = () => {};
+		element.append = child => element.children.push(child);
+		return element;
+	};
+	return document;
+}
+
+function lifecyclePointer(target) {
+	return {
+		target,
+		button: 0,
+		pointerId: 1,
+		composedPath: () => [target],
+	};
+}
+
+test("closing one Reader document releases only its adapter while the other Reader and window stay active", async () => {
+	const registered = new Map();
+	const Reader = {
+		registerEventListener(type, listener) { registered.set(type, listener); },
+		unregisterEventListener(type, listener) {
+			if (registered.get(type) === listener) registered.delete(type);
+		},
+	};
+	let mainWindow = null;
+	const QLab = await loadQLab({
+		Reader,
+		getMainWindow: () => mainWindow,
+	});
+	const controller = new QLab.ChatPresentationController({
+		viewport: { width: 1200, height: 800 },
+	});
+	const mainDocument = new LifecycleTarget("main-document");
+	const bridge = new QLab.ChatOutsideInteractionBridge({
+		host: { handleInteraction: value => controller.handleInteraction(value) },
+		document: mainDocument,
+	});
+	mainWindow = {
+		Zotero_Tabs: { _qlab: { chatOutsideInteraction: bridge } },
+	};
+	QLab.registerReaderHooks();
+	const first = lifecycleReaderDocument("reader-one");
+	const second = lifecycleReaderDocument("reader-two");
+	registered.get("renderToolbar")({
+		doc: first,
+		reader: { _window: mainWindow },
+		append() {},
+	});
+	registered.get("renderToolbar")({
+		doc: second,
+		reader: { _window: mainWindow },
+		append() {},
+	});
+
+	first.defaultView.dispatch("pagehide");
+	controller.show();
+	first.dispatch("pointerdown", lifecyclePointer(first));
+	assert.equal(controller.snapshot().visibility, "visible",
+		"the closed Reader no longer owns a pointer listener");
+	second.dispatch("pointerdown", lifecyclePointer(second));
+	assert.equal(controller.snapshot().visibility, "hidden",
+		"the other Reader remains registered");
+
+	controller.show();
+	mainDocument.dispatch("pointerdown", lifecyclePointer({
+		closest: selector => selector === "[data-qlab-visual-surface]" ? {} : null,
+	}));
+	assert.equal(controller.snapshot().visibility, "hidden",
+		"the containing Zotero window remains registered");
+
+	QLab.unregisterReaderHooks();
+	controller.show();
+	second.dispatch("pointerdown", lifecyclePointer(second));
+	assert.equal(controller.snapshot().visibility, "visible",
+		"plugin teardown releases remaining Reader document adapters");
+	bridge.dispose();
 });

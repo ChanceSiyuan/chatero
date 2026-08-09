@@ -121,15 +121,20 @@ Zotero.QLab = Zotero.QLab || {};
 			}
 			let insideChat = extra.insideChat === true || isChatOwnedEvent(event);
 			let path = insideChat ? ['chat-owned'] : [];
-			return this._host.handleInteraction({
+			let interaction = {
 				source: insideChat ? 'chat' : source,
 				workspace: !insideChat,
 				insideChat,
 				path,
 				pointerId: extra.pointerId ?? (event && event.pointerId),
 				button: extra.button ?? (event && event.button),
-				invocationToken: extra.invocationToken,
-			});
+			};
+			if (Object.prototype.hasOwnProperty.call(extra, 'invocationToken')
+					&& extra.invocationToken !== undefined
+					&& extra.invocationToken !== null) {
+				interaction.invocationToken = extra.invocationToken;
+			}
+			return this._host.handleInteraction(interaction);
 		},
 
 		attachMainDocument(document) {

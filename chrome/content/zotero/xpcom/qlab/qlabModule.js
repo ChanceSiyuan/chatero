@@ -3155,8 +3155,12 @@ Zotero.QLab = Zotero.QLab || {};
 				let showOptions = {
 					invocation: options.invocation || 'workspace',
 					focusComposer: options.focusComposer === true,
-					openingToken: options.openingToken,
 				};
+				if (Object.prototype.hasOwnProperty.call(options, 'openingToken')
+						&& options.openingToken !== undefined
+						&& options.openingToken !== null) {
+					showOptions.openingToken = options.openingToken;
+				}
 				if (Object.prototype.hasOwnProperty.call(options, 'focusReturn')) {
 					showOptions.focusReturn = options.focusReturn;
 				}
