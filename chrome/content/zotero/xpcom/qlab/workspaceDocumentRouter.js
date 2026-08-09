@@ -158,18 +158,18 @@ Zotero.QLab = Zotero.QLab || {};
 		return routeAvailability(input, relativePath) ? relativePath : null;
 	};
 
-	function hasOpaqueAccess(capability) {
+	function opaqueAccess(capability) {
 		for (let name of ['access', 'handle', 'token']) {
 			let value = capability && capability[name];
 			if ((typeof value === 'object' && value !== null)
-					|| typeof value === 'function' || typeof value === 'symbol') return true;
+					|| typeof value === 'function') return value;
 		}
-		return false;
+		return null;
 	}
 
 	function verifiedCapabilityMatches(capability, request) {
 		if (!capability || typeof capability !== 'object' || !Object.isFrozen(capability)
-				|| !hasOpaqueAccess(capability)) return false;
+				|| !opaqueAccess(capability)) return false;
 		let expectedPath = `${request.root}/${request.relativePath}`;
 		return capability.root === request.root
 			&& capability.relativePath === request.relativePath
@@ -180,31 +180,40 @@ Zotero.QLab = Zotero.QLab || {};
 	}
 
 	/**
-	 * `withVerifiedDocument` is the mandatory trusted-host boundary. It must
+	 * `acquireVerifiedDocument` is the mandatory trusted-host boundary. It must
 	 * realpath root, authority boundary, and target; reject symlink/containment
-	 * mismatches; and keep its opaque access/handle/token valid until the awaited
-	 * callback finishes. Write bridges must use that access or repeat no-follow
-	 * verification at the actual open/write operation. The router never returns
-	 * the capability to its request caller.
+	 * mismatches; and return a frozen, host-owned access/handle/token lease.
+	 * Each capability is consumed once and may be released after its fixed bridge
+	 * returns. Write bridges must use that access or repeat no-follow verification
+	 * at the actual open/write operation. The router never returns the capability
+	 * to its request caller.
 	 */
 	Zotero.QLab.createWorkspaceDocumentRouter = function (bridges = {}) {
+		let consumedCapabilities = new WeakSet();
+		let consumedAccess = new WeakSet();
+
 		async function canonicalize(value) {
 			if (typeof bridges.canonicalizeRoot !== 'function') return '';
 			try { return canonicalRoot(await bridges.canonicalizeRoot(value)); }
 			catch (error) { return ''; }
 		}
 
+		function validSelectionEpoch(value) {
+			return (Number.isSafeInteger(value) && value >= 0)
+				|| (typeof value === 'string' && value.trim().length > 0);
+		}
+
 		async function selectedState() {
-			if (typeof bridges.getSelectedRoot !== 'function') return null;
+			if (typeof bridges.getSelectedRoot !== 'function'
+					|| typeof bridges.getSelectionEpoch !== 'function') return null;
 			let selectedValue;
-			let epoch = null;
+			let epoch;
 			try {
 				selectedValue = await bridges.getSelectedRoot();
-				if (typeof bridges.getSelectionEpoch === 'function') {
-					epoch = await bridges.getSelectionEpoch();
-				}
+				epoch = await bridges.getSelectionEpoch();
 			}
 			catch (error) { return null; }
+			if (!validSelectionEpoch(epoch)) return null;
 			let root = await canonicalize(selectedValue);
 			if (!root) return null;
 			return Object.freeze({ root, epoch });
@@ -212,14 +221,19 @@ Zotero.QLab = Zotero.QLab || {};
 
 		function sameSelection(initial, current) {
 			if (!initial || !current || initial.root !== current.root) return false;
-			return initial.epoch === null || initial.epoch === undefined
-				|| current.epoch === initial.epoch;
+			return current.epoch === initial.epoch;
+		}
+
+		async function releaseCapability(capability) {
+			if (typeof bridges.releaseVerifiedDocument !== 'function') return;
+			try { await bridges.releaseVerifiedDocument(capability); }
+			catch (error) {}
 		}
 
 		return Object.freeze({
 			async open(input = {}) {
-				if (typeof bridges.withVerifiedDocument !== 'function') {
-					return refuse('verified-document-guard-unavailable');
+				if (typeof bridges.acquireVerifiedDocument !== 'function') {
+					return refuse('verified-document-lease-unavailable');
 				}
 				let initialSelection = await selectedState();
 				if (!initialSelection) return refuse('selected-repository-unavailable');
@@ -261,71 +275,51 @@ Zotero.QLab = Zotero.QLab || {};
 					kind: document.kind,
 					writable: document.writable,
 				});
-				let callbackCount = 0;
-				let callbackFinished = false;
-				let guardActive = true;
-				let result = refuse('document-verification-refused');
+				let capability;
 				try {
-					await bridges.withVerifiedDocument(verificationRequest, async capability => {
-						callbackCount++;
-						if (callbackCount !== 1 || !guardActive
-								|| !verifiedCapabilityMatches(capability, verificationRequest)) {
-							result = refuse('verified-document-capability-mismatch');
-							callbackFinished = true;
-							return result;
-						}
-						let attachmentID = null;
-						if (document.kind === 'pdf' && typeof bridges.findAttachment === 'function') {
-							let match = await bridges.findAttachment(capability);
-							attachmentID = typeof match === 'object' && match ? match.id : match;
-						}
-						if (!guardActive) {
-							result = refuse('document-verification-scope-ended');
-							callbackFinished = true;
-							return result;
-						}
-						let currentSelection = await selectedState();
-						if (!guardActive || !sameSelection(initialSelection, currentSelection)) {
-							result = refuse('selected-repository-changed');
-							callbackFinished = true;
-							return result;
-						}
-						let normalizedInput = {
-							root: currentSelection.root,
-							selectedRoot: currentSelection.root,
-							relativePath: document.path,
-							source,
-							placement: input.placement || 'current',
-							explicitSource,
-							attachmentID,
-						};
-						let decision = Zotero.QLab.workspaceDocumentOpenDecision(normalizedInput);
-						if (decision.action === 'refuse') {
-							result = decision;
-							callbackFinished = true;
-							return result;
-						}
-						let bridgeName = ACTION_BRIDGES[decision.action];
-						let bridge = bridgeName && bridges[bridgeName];
-						if (typeof bridge !== 'function') {
-							result = refuse('routing-bridge-unavailable');
-							callbackFinished = true;
-							return result;
-						}
-						await bridge(decision, capability);
-						result = decision;
-						callbackFinished = true;
-						return result;
-					});
+					capability = await bridges.acquireVerifiedDocument(verificationRequest);
 				}
-				catch (error) {
-					result = refuse('document-verification-failed');
+				catch (error) { return refuse('document-verification-failed'); }
+				if (!verifiedCapabilityMatches(capability, verificationRequest)) {
+					if (capability && typeof capability === 'object') await releaseCapability(capability);
+					return refuse('verified-document-capability-mismatch');
 				}
-				finally { guardActive = false; }
-				if (callbackCount !== 1 || !callbackFinished) {
-					return refuse('document-verification-refused');
+				let access = opaqueAccess(capability);
+				if (consumedCapabilities.has(capability) || consumedAccess.has(access)) {
+					return refuse('verified-document-capability-reused');
 				}
-				return result;
+				consumedCapabilities.add(capability);
+				consumedAccess.add(access);
+				try {
+					let attachmentID = null;
+					if (document.kind === 'pdf' && typeof bridges.findAttachment === 'function') {
+						let match = await bridges.findAttachment(capability);
+						attachmentID = typeof match === 'object' && match ? match.id : match;
+					}
+					let currentSelection = await selectedState();
+					if (!sameSelection(initialSelection, currentSelection)) {
+						return refuse('selected-repository-changed');
+					}
+					let normalizedInput = {
+						root: currentSelection.root,
+						selectedRoot: currentSelection.root,
+						relativePath: document.path,
+						source,
+						placement: input.placement || 'current',
+						explicitSource,
+						attachmentID,
+					};
+					let decision = Zotero.QLab.workspaceDocumentOpenDecision(normalizedInput);
+					if (decision.action === 'refuse') return decision;
+					let bridgeName = ACTION_BRIDGES[decision.action];
+					let bridge = bridgeName && bridges[bridgeName];
+					if (typeof bridge !== 'function') return refuse('routing-bridge-unavailable');
+					let bridgeResult = await bridge(decision, capability);
+					if (bridgeResult !== true) return refuse('routing-bridge-refused');
+					return decision;
+				}
+				catch (error) { return refuse('document-lease-operation-failed'); }
+				finally { await releaseCapability(capability); }
 			},
 		});
 	};

@@ -121,12 +121,12 @@ test("router canonicalizes roots, resolves PDF matches, and calls only fixed act
 		getSelectedRoot: async () => "/selected-link",
 		canonicalizeRoot: async root => root === "/selected-link" || root === ROOT ? ROOT : root,
 		findAttachment: async capability => capability.relativePath.endsWith("matched.pdf") ? 77 : null,
-		openDraft: input => calls.push(["draft", input]),
-		openReadonlyQmd: input => calls.push(["readonly-qmd", input]),
-		openReadonlyBib: input => calls.push(["readonly-bib", input]),
-		openKnowledgeSite: input => calls.push(["site", input]),
-		openNativeReader: input => calls.push(["reader", input]),
-		reviewPDFLink: input => calls.push(["review", input]),
+		openDraft: input => { calls.push(["draft", input]); return true; },
+		openReadonlyQmd: input => { calls.push(["readonly-qmd", input]); return true; },
+		openReadonlyBib: input => { calls.push(["readonly-bib", input]); return true; },
+		openKnowledgeSite: input => { calls.push(["site", input]); return true; },
+		openNativeReader: input => { calls.push(["reader", input]); return true; },
+		reviewPDFLink: input => { calls.push(["review", input]); return true; },
 	});
 	const router = QLab.createWorkspaceDocumentRouter(bridges);
 	assert.equal((await router.open({ root: "/selected-link", relativePath: "drafts/a.qmd" })).action, "open-draft");
@@ -146,7 +146,7 @@ test("unmatched PDF review never silently imports or opens a generic file URL", 
 	let reviews = 0;
 	const router = QLab.createWorkspaceDocumentRouter(securityBridges({
 		findAttachment: async () => null,
-		reviewPDFLink: () => { reviews++; },
+		reviewPDFLink: () => { reviews++; return true; },
 		importAttachment: () => { throw new Error("must not import silently"); },
 		openExternal: () => { throw new Error("must not open PDF generically"); },
 	}));
@@ -175,35 +175,42 @@ function securityBridges(overrides = {}) {
 		canonicalizeRoot: async root => root,
 		getCurrentSiteOrigin: async () => ORIGIN,
 		getKnowledgePaths: async () => ["knowledge/index.qmd", "knowledge/topic.qmd"],
+		acquireVerifiedDocument: async request => verifiedCapability(request),
+		releaseVerifiedDocument: async () => {},
+		// Deliberately retain the obsolete bridge while running RED against the
+		// previous router; the remediated router must ignore it completely.
 		withVerifiedDocument: async (request, callback) => callback(verifiedCapability(request)),
 		...overrides,
 	};
 }
 
-test("router refuses every action when the trusted document guard is missing", async () => {
+test("router rejects the obsolete callback guard and requires document lease acquisition", async () => {
 	const QLab = await loadQLab();
 	let opens = 0;
 	const router = QLab.createWorkspaceDocumentRouter({
 		getSelectedRoot: async () => ROOT,
+		getSelectionEpoch: async () => 7,
 		canonicalizeRoot: async root => root,
 		validateDocument: async () => true,
-		openDraft: () => { opens++; },
+		withVerifiedDocument: async (request, callback) => callback(verifiedCapability(request)),
+		openDraft: () => { opens++; return true; },
 	});
 	const result = await router.open({ root: ROOT, relativePath: "drafts/a.qmd" });
 	assert.equal(result.action, "refuse");
-	assert.equal(result.reason, "verified-document-guard-unavailable");
+	assert.equal(result.reason, "verified-document-lease-unavailable");
 	assert.equal(opens, 0);
 });
 
-test("guard refusal or omission of its callback cannot dispatch", async () => {
+test("null, false, and throwing lease acquisition cannot dispatch", async () => {
 	const QLab = await loadQLab();
-	for (const guard of [
+	for (const acquire of [
+		async () => null,
 		async () => false,
-		async () => undefined,
+		async () => { throw new Error("verification failed"); },
 	]) {
 		let opens = 0;
 		const router = QLab.createWorkspaceDocumentRouter(securityBridges({
-			withVerifiedDocument: guard,
+			acquireVerifiedDocument: acquire,
 			openDraft: () => { opens++; },
 		}));
 		assert.equal((await router.open({ root: ROOT, relativePath: "drafts/a.qmd" })).action, "refuse");
@@ -217,10 +224,11 @@ test("mismatched or non-opaque verified capabilities refuse symlink and canonica
 		request => verifiedCapability(request, { canonicalPath: "/tmp/outside/note.qmd" }),
 		request => verifiedCapability(request, { root: "/tmp/outside" }),
 		request => Object.freeze({ ...verifiedCapability(request), access: null }),
+		request => Object.freeze({ ...verifiedCapability(request), access: null, token: Symbol("not-weak") }),
 	]) {
 		let opens = 0;
 		const router = QLab.createWorkspaceDocumentRouter(securityBridges({
-			withVerifiedDocument: async (request, callback) => callback(capability(request)),
+			acquireVerifiedDocument: async request => capability(request),
 			openDraft: () => { opens++; },
 		}));
 		const result = await router.open({ root: ROOT, relativePath: "drafts/a.qmd" });
@@ -255,7 +263,7 @@ test("site routing ignores request-supplied origin and availability evidence", a
 	assert.equal(opens, 0);
 });
 
-test("root or selection epoch changes during verification refuse before dispatch", async () => {
+test("root or selection epoch changes during lease acquisition refuse before dispatch", async () => {
 	const QLab = await loadQLab();
 	for (const changed of ["root", "epoch"]) {
 		let reads = 0;
@@ -271,24 +279,106 @@ test("root or selection epoch changes during verification refuse before dispatch
 	}
 });
 
+test("selection epoch is mandatory and must be a valid nonempty scalar", async () => {
+	const QLab = await loadQLab();
+	for (const epoch of [undefined, null, "", "   ", -1, 1.5, Number.NaN, true, {}]) {
+		let opens = 0;
+		const bridges = securityBridges({ openDraft: () => { opens++; } });
+		if (epoch === undefined) delete bridges.getSelectionEpoch;
+		else bridges.getSelectionEpoch = async () => epoch;
+		const result = await QLab.createWorkspaceDocumentRouter(bridges)
+			.open({ root: ROOT, relativePath: "drafts/a.qmd" });
+		assert.equal(result.action, "refuse", String(epoch));
+		assert.equal(opens, 0);
+	}
+});
+
+test("same-root A to B to A selection change is detected by mandatory epoch", async () => {
+	const QLab = await loadQLab();
+	let epochReads = 0;
+	let opens = 0;
+	const router = QLab.createWorkspaceDocumentRouter(securityBridges({
+		getSelectedRoot: async () => ROOT,
+		getSelectionEpoch: async () => (++epochReads === 1 ? "repo-A:1" : "repo-A:3"),
+		openDraft: () => { opens++; return true; },
+	}));
+	const result = await router.open({ root: ROOT, relativePath: "drafts/a.qmd" });
+	assert.equal(result.action, "refuse");
+	assert.equal(opens, 0);
+});
+
+test("a verified capability is single-use and a repeated lease cannot dispatch twice", async () => {
+	const QLab = await loadQLab();
+	let opens = 0;
+	const request = {
+		root: ROOT, relativePath: "drafts/a.qmd", authority: "draft", kind: "qmd", writable: true,
+	};
+	const repeated = verifiedCapability(request);
+	const router = QLab.createWorkspaceDocumentRouter(securityBridges({
+		acquireVerifiedDocument: async () => repeated,
+		openDraft: () => { opens++; return true; },
+	}));
+	assert.equal((await router.open({ root: ROOT, relativePath: "drafts/a.qmd" })).action, "open-draft");
+	assert.equal((await router.open({ root: ROOT, relativePath: "drafts/a.qmd" })).action, "refuse");
+	assert.equal(opens, 1);
+});
+
+test("a host-owned access token cannot be reused through a fresh capability wrapper", async () => {
+	const QLab = await loadQLab();
+	let opens = 0;
+	const access = Object.freeze({ lease: "same-host-handle" });
+	const router = QLab.createWorkspaceDocumentRouter(securityBridges({
+		acquireVerifiedDocument: async request => verifiedCapability(request, { access }),
+		openDraft: () => { opens++; return true; },
+	}));
+	assert.equal((await router.open({ root: ROOT, relativePath: "drafts/a.qmd" })).action, "open-draft");
+	assert.equal((await router.open({ root: ROOT, relativePath: "drafts/a.qmd" })).action, "refuse");
+	assert.equal(opens, 1);
+});
+
+test("fixed action bridges must resolve true and every refusal still releases the lease", async () => {
+	const QLab = await loadQLab();
+	for (const bridgeResult of [false, undefined, null, { action: "refuse" }]) {
+		let releases = 0;
+		const router = QLab.createWorkspaceDocumentRouter(securityBridges({
+			openDraft: async () => bridgeResult,
+			releaseVerifiedDocument: async () => { releases++; },
+		}));
+		const result = await router.open({ root: ROOT, relativePath: "drafts/a.qmd" });
+		assert.equal(result.action, "refuse");
+		assert.equal(result.reason, "routing-bridge-refused");
+		assert.equal(releases, 1);
+	}
+	let releases = 0;
+	const throwing = QLab.createWorkspaceDocumentRouter(securityBridges({
+		openDraft: async () => { throw new Error("open failed"); },
+		releaseVerifiedDocument: async () => { releases++; },
+	}));
+	const failed = await throwing.open({ root: ROOT, relativePath: "drafts/a.qmd" });
+	assert.equal(failed.action, "refuse");
+	assert.equal(failed.reason, "document-lease-operation-failed");
+	assert.equal(releases, 1);
+});
+
 test("the complete fixed action table dispatches only inside the guard with its capability", async () => {
 	const QLab = await loadQLab();
 	const order = [];
 	const calls = [];
 	const bridges = securityBridges({
 		findAttachment: async (capability) => capability.relativePath.endsWith("matched.pdf") ? 77 : null,
-		withVerifiedDocument: async (request, callback) => {
-			order.push(`guard-enter:${request.relativePath}`);
-			const result = await callback(verifiedCapability(request));
-			order.push(`guard-exit:${request.relativePath}`);
-			return result;
+		acquireVerifiedDocument: async request => {
+			order.push(`acquire:${request.relativePath}`);
+			return verifiedCapability(request);
 		},
-		openDraft: (...args) => { order.push("bridge:draft"); calls.push(["draft", ...args]); },
-		openReadonlyQmd: (...args) => { order.push("bridge:readonly-qmd"); calls.push(["readonly-qmd", ...args]); },
-		openReadonlyBib: (...args) => { order.push("bridge:readonly-bib"); calls.push(["readonly-bib", ...args]); },
-		openKnowledgeSite: (...args) => { order.push("bridge:site"); calls.push(["site", ...args]); },
-		openNativeReader: (...args) => { order.push("bridge:reader"); calls.push(["reader", ...args]); },
-		reviewPDFLink: (...args) => { order.push("bridge:review"); calls.push(["review", ...args]); },
+		releaseVerifiedDocument: async capability => {
+			order.push(`release:${capability.relativePath}`);
+		},
+		openDraft: (...args) => { order.push("bridge:draft"); calls.push(["draft", ...args]); return true; },
+		openReadonlyQmd: (...args) => { order.push("bridge:readonly-qmd"); calls.push(["readonly-qmd", ...args]); return true; },
+		openReadonlyBib: (...args) => { order.push("bridge:readonly-bib"); calls.push(["readonly-bib", ...args]); return true; },
+		openKnowledgeSite: (...args) => { order.push("bridge:site"); calls.push(["site", ...args]); return true; },
+		openNativeReader: (...args) => { order.push("bridge:reader"); calls.push(["reader", ...args]); return true; },
+		reviewPDFLink: (...args) => { order.push("bridge:review"); calls.push(["review", ...args]); return true; },
 	});
 	const router = QLab.createWorkspaceDocumentRouter(bridges);
 	const requests = [
@@ -320,8 +410,8 @@ test("the complete fixed action table dispatches only inside the guard with its 
 	}
 	assert.equal(order.length, (requests.length + 1) * 3);
 	for (let index = 0; index < order.length; index += 3) {
-		assert.match(order[index], /^guard-enter:/);
+		assert.match(order[index], /^acquire:/);
 		assert.match(order[index + 1], /^bridge:/);
-		assert.match(order[index + 2], /^guard-exit:/);
+		assert.match(order[index + 2], /^release:/);
 	}
 });
