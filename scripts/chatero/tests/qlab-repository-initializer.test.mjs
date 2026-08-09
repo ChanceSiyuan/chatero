@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { execFile as execFileCallback } from "node:child_process";
 import { chmod, lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { promises as fs } from "node:fs";
 import fsSync from "node:fs";
@@ -7,10 +8,12 @@ import { tmpdir } from "node:os";
 import path, { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { loadQLab } from "../lib/load-qlab.mjs";
 
 const UUID = "11111111-2222-4333-8444-555555555555";
 const sha256 = value => createHash("sha256").update(value).digest("hex");
+const execFile = promisify(execFileCallback);
 
 function receiptDigest(receipt) {
 	const canonical = { ...receipt };
@@ -48,15 +51,22 @@ function canonicalManifestDigest(entries) {
 	return sha256(JSON.stringify({ schemaVersion: 1, entries: canonicalEntries }));
 }
 
-function starterAsset({ corruptArchive = false, corruptPayload = false, includeReceiptDirectory = true } = {}) {
+function starterAsset({
+	corruptArchive = false,
+	corruptPayload = false,
+	includeReceiptDirectory = true,
+	includeDraftEntry = false,
+} = {}) {
 	const payloads = new Map([
 		["AGENTS.md", Buffer.from("# Public agent contract\n")],
 		["qlab", Buffer.from("#!/bin/sh\n")],
+		...(includeDraftEntry ? [["drafts/index.qmd", Buffer.from("# Starter draft\n")]] : []),
 	]);
 	const entries = [
 		...(includeReceiptDirectory ? [{ path: ".research-loop", kind: "directory", mode: "0700" }] : []),
 		{ path: "AGENTS.md", kind: "file", mode: "0644", digest: sha256(payloads.get("AGENTS.md")) },
 		{ path: "drafts", kind: "directory", mode: "0755" },
+		...(includeDraftEntry ? [{ path: "drafts/index.qmd", kind: "file", mode: "0644", digest: sha256(payloads.get("drafts/index.qmd")) }] : []),
 		{ path: "knowledge", kind: "directory", mode: "0755" },
 		{ path: "literature", kind: "directory", mode: "0755" },
 		{ path: "qlab", kind: "file", mode: "0755", digest: sha256(payloads.get("qlab")) },
@@ -281,6 +291,77 @@ test("initializer never runs Git when a repository already exists", async (t) =>
 	assert.deepEqual(f.gitCalls, []);
 });
 
+test("initializer creates a local Git repository when the selected root is nested inside a parent worktree", async (t) => {
+	const QLab = await loadQLab();
+	const parent = await mkdtemp(join(tmpdir(), "chatero-parent-worktree-"));
+	const root = join(parent, "selected-qlab");
+	t.after(() => rm(parent, { recursive: true, force: true }));
+	await execFile("/usr/bin/git", ["init", parent]);
+	await mkdir(root);
+	const canonicalRoot = await fs.realpath(root);
+	const host = QLab.createNodeQLabInitializerHost(fs, path, createHash);
+	const asset = starterAsset();
+	const inspection = await QLab.inspectQLabRepository(canonicalRoot, host);
+	const plan = await QLab.planQLabStarterInstall({ root: canonicalRoot, inspection, manifest: asset.manifest, host });
+	const gitCalls = [];
+	const git = {
+		// Deliberately mirrors the old weak implementation: Git reports true in a
+		// parent worktree even when this selected root owns no local .git.
+		isRepository: async target => {
+			const { stdout } = await execFile("/usr/bin/git", ["-C", target, "rev-parse", "--is-inside-work-tree"]);
+			return stdout.trim() === "true";
+		},
+		initialize: async options => {
+			gitCalls.push(options);
+			await execFile(options.executable, ["-C", options.cwd, ...options.argv]);
+		},
+	};
+	const initializer = QLab.createQLabRepositoryInitializer({
+		host,
+		assetReader: asset.reader,
+		git,
+		now: () => "2026-08-10T00:00:00.000Z",
+		uuid: () => UUID,
+	});
+
+	const result = await initializer.execute(plan);
+	assert.equal(result.state, "ready");
+	assert.equal(await host.kind(join(canonicalRoot, ".git")), "directory");
+	assert.deepEqual(JSON.parse(JSON.stringify(gitCalls)), [{ executable: "/usr/bin/git", argv: ["init"], cwd: canonicalRoot }]);
+});
+
+test("Gecko Git service accepts only the selected top-level with an in-root common directory", async () => {
+	const QLab = await loadQLab();
+	const calls = [];
+	const responses = [
+		"true\n", // Parent worktree: old is-inside-work-tree check alone is insufficient.
+		"true\n/selected\n/outside/.git\n",
+		"true\n/selected\n/selected/.git\n",
+	];
+	const git = QLab.createGeckoQLabGitService({
+		Subprocess: {
+			call: async options => {
+				calls.push(options);
+				const output = responses.shift();
+				return {
+					stdout: { readString: async () => output },
+					wait: async () => ({ exitCode: 0 }),
+				};
+			},
+		},
+	});
+	assert.equal(await git.isRepository("/selected"), false);
+	assert.equal(await git.isRepository("/selected"), false);
+	assert.equal(await git.isRepository("/selected"), true);
+	for (const call of calls) {
+		assert.equal(call.command, "/usr/bin/git");
+		assert.equal(call.workdir, "/selected");
+		assert.deepEqual(Array.from(call.arguments), [
+			"rev-parse", "--is-inside-work-tree", "--show-toplevel", "--path-format=absolute", "--git-common-dir",
+		]);
+	}
+});
+
 test("initializer rejects a non-repository .git target before writing starter files", async (t) => {
 	const f = await fixture(t);
 	await mkdir(join(f.root, ".git"));
@@ -353,6 +434,31 @@ test("initializer persists a receipt before attempting the first ordinary starte
 	assert.equal(receipt.state, "failed");
 	assert.deepEqual(receipt.completed, []);
 	assert.equal(await fs.access(join(f.root, "AGENTS.md")).then(() => true, () => false), false);
+});
+
+test("a receipt write failure after its directory bootstrap can be safely retried", async (t) => {
+	const f = await fixture(t);
+	const writeReceipt = f.host.writeReceipt;
+	let failFirstReceipt = true;
+	f.host.writeReceipt = async (target, text, options) => {
+		if (failFirstReceipt && options?.exclusive) {
+			failFirstReceipt = false;
+			throw new Error("simulated receipt write failure");
+		}
+		return writeReceipt(target, text, options);
+	};
+
+	await assert.rejects(f.initializer.execute(f.plan), /simulated receipt write failure/);
+	assert.equal(await f.QLab.qlabRepositoryState(f.root, f.host), "partial");
+	assert.equal(await fs.access(join(f.root, ".research-loop", "starter.json")).then(() => true, () => false), false);
+	assert.deepEqual((await fs.readdir(f.root)).sort(), [".research-loop"]);
+
+	f.host.writeReceipt = writeReceipt;
+	const inspection = await f.QLab.inspectQLabRepository(f.root, f.host);
+	const plan = await f.QLab.planQLabStarterInstall({ root: f.root, inspection, manifest: f.asset.manifest, host: f.host });
+	const result = await f.initializer.execute(plan);
+	assert.equal(result.state, "ready");
+	assert.equal(f.gitCalls.length, 1);
 });
 
 test("Gecko initializer construction binds packaged starter resources and a complete host", async () => {
@@ -465,6 +571,46 @@ test("initializer fingerprints preserved nested content and makes zero writes af
 	for (const target of ["AGENTS.md", "qlab", "knowledge", "literature", ".research-loop"]) {
 		assert.equal(await fs.access(join(f.root, target)).then(() => true, () => false), false, target);
 	}
+	assert.deepEqual(f.gitCalls, []);
+});
+
+test("partial repositories exclude planned starter descendants but retain nested user-content fingerprints", async (t) => {
+	const f = await fixture(t, { includeDraftEntry: true });
+	await mkdir(join(f.root, "drafts", "topic"), { recursive: true });
+	const note = join(f.root, "drafts", "topic", "private.qmd");
+	await writeFile(note, "private alpha\n", { mode: 0o640 });
+	await chmod(note, 0o640);
+	let inspection = await f.QLab.inspectQLabRepository(f.root, f.host);
+	let plan = await f.QLab.planQLabStarterInstall({ root: f.root, inspection, manifest: f.asset.manifest, host: f.host });
+	const first = await f.initializer.execute(plan);
+	assert.equal(first.state, "ready");
+
+	inspection = await f.QLab.inspectQLabRepository(f.root, f.host);
+	plan = await f.QLab.planQLabStarterInstall({ root: f.root, inspection, manifest: f.asset.manifest, host: f.host });
+	const second = await f.initializer.execute(plan);
+	assert.equal(second.state, "ready");
+	assert.equal(f.gitCalls.length, 1);
+
+	await writeFile(note, "private omega\n", { mode: 0o640 });
+	await assert.rejects(f.initializer.resume(f.root), /preserved|changed|fingerprint|receipt/i);
+	assert.equal(await readFile(note, "utf8"), "private omega\n");
+});
+
+test("chmod-only mutations of preserved content reject before starter writes", async (t) => {
+	const f = await fixture(t);
+	await mkdir(join(f.root, "drafts", "topic"), { recursive: true });
+	const note = join(f.root, "drafts", "topic", "private.qmd");
+	await writeFile(note, "private note\n", { mode: 0o640 });
+	await chmod(note, 0o640);
+	const inspection = await f.QLab.inspectQLabRepository(f.root, f.host);
+	const plan = await f.QLab.planQLabStarterInstall({ root: f.root, inspection, manifest: f.asset.manifest, host: f.host });
+	await chmod(note, 0o600);
+
+	await assert.rejects(f.initializer.execute(plan), /changed|stale|snapshot|fingerprint/i);
+	for (const target of ["AGENTS.md", "qlab", "knowledge", "literature", ".research-loop"]) {
+		assert.equal(await fs.access(join(f.root, target)).then(() => true, () => false), false, target);
+	}
+	assert.equal((await lstat(note)).mode & 0o777, 0o600);
 	assert.deepEqual(f.gitCalls, []);
 });
 

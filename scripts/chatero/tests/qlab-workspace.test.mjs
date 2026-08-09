@@ -116,6 +116,24 @@ test("starter marker does not make an unknown root entry resumable", async () =>
 	}
 });
 
+test("an empty private receipt directory is a recoverable partial bootstrap only with known content", async () => {
+	const QLab = await loadQLab();
+	const host = QLab.createNodeQLabPathHost(fs, path);
+	const root = await mkdtemp(join(tmpdir(), "chatero-qlab-empty-receipt-"));
+	try {
+		await mkdir(join(root, ".research-loop"));
+		assert.equal(await QLab.qlabRepositoryState(root, host), "partial");
+
+		await writeFile(join(root, "personal.txt"), "user content\n");
+		const inspection = await QLab.inspectQLabRepository(root, host);
+		assert.equal(inspection.state, "incompatible");
+		assert.deepEqual(Array.from(inspection.conflicts), ["personal.txt"]);
+	}
+	finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
 test("starter marker recognizes known bundled top-level targets while unknown targets fail closed", async () => {
 	const QLab = await loadQLab();
 	const host = QLab.createNodeQLabPathHost(fs, path);

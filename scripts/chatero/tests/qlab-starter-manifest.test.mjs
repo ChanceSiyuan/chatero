@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -112,6 +112,37 @@ test("Gecko regular stats classify ready repositories and preserve starter files
 		const plan = await QLab.planQLabStarterInstall({ root, inspection, manifest: validManifest(), host });
 		assert.deepEqual(Array.from(plan.preserve, entry => entry.path), ["AGENTS.md", "drafts/index.qmd", "qlab"]);
 		assert.deepEqual(Array.from(plan.conflicts), []);
+	}
+	finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("preserved fingerprints include normalized Gecko permissions", async () => {
+	const QLab = await loadQLab();
+	const nodeHost = QLab.createNodeQLabPathHost(fs, path);
+	const root = await mkdtemp(join(tmpdir(), "chatero-qlab-mode-fingerprint-"));
+	try {
+		await mkdir(join(root, "drafts"));
+		const note = join(root, "drafts", "private.qmd");
+		await writeFile(note, "private note\n", { mode: 0o640 });
+		await chmod(note, 0o640);
+		const geckoHost = {
+			...nodeHost,
+			stat: async target => {
+				const stat = await nodeHost.stat(target);
+				return {
+					type: stat.isDirectory() ? "directory" : "regular",
+					size: stat.size,
+					lastModified: stat.mtimeMs,
+					permissions: stat.mode & 0o777,
+				};
+			},
+		};
+		const before = await QLab.fingerprintQLabPreservedTarget(root, "drafts", geckoHost);
+		await chmod(note, 0o600);
+		const after = await QLab.fingerprintQLabPreservedTarget(root, "drafts", geckoHost);
+		assert.notEqual(after, before);
 	}
 	finally {
 		await rm(root, { recursive: true, force: true });

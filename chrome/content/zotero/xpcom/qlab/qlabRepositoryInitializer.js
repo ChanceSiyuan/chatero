@@ -111,14 +111,18 @@ Zotero.QLab = Zotero.QLab || {};
 		return true;
 	}
 
-	async function verifyPreservedEntries(root, entries, host) {
+	async function verifyPreservedEntries(root, entries, create, host) {
+		let excluded = [
+			...(create || []).map(entry => entry.path),
+			'.research-loop/starter.json',
+		];
 		for (let entry of entries) {
 			let { kind } = await targetStatus(root, entry, host);
 			if (kind !== entry.kind) {
 				throw new Error(`Preserved starter target changed: ${entry.path}`);
 			}
 			if (!SHA256.test(String(entry.fingerprint || ''))
-				|| await Zotero.QLab.fingerprintQLabPreservedTarget(root, entry.path, host) !== entry.fingerprint) {
+				|| await Zotero.QLab.fingerprintQLabPreservedTarget(root, entry.path, host, { exclude: excluded }) !== entry.fingerprint) {
 				throw new Error(`Preserved starter target fingerprint changed: ${entry.path}`);
 			}
 		}
@@ -228,12 +232,16 @@ Zotero.QLab = Zotero.QLab || {};
 		}
 
 		async function initializeGit(root) {
-			if (await git.isRepository(root)) return;
 			let dotGit = host.join(root, '.git');
 			let kind = await host.kind(dotGit);
-			if (kind !== 'missing') throw new Error('Existing .git target is not a valid Git repository');
-			await git.initialize({ executable: '/usr/bin/git', argv: ['init'], cwd: root });
-			if (!await git.isRepository(root)) throw new Error('Git initialization did not produce a repository');
+			if (kind === 'missing') {
+				await git.initialize({ executable: '/usr/bin/git', argv: ['init'], cwd: root });
+				if (!await git.isRepository(root)) throw new Error('Git initialization did not produce a repository');
+				return;
+			}
+			if (kind === 'symlink' || !await git.isRepository(root)) {
+				throw new Error('Existing .git target is not a valid Git repository');
+			}
 		}
 
 		async function verifyGitTarget(root) {
@@ -345,7 +353,7 @@ Zotero.QLab = Zotero.QLab || {};
 					let receipt = await validateReceipt(existing, plan.root, verified, host);
 					if (receipt.state !== 'ready') throw new Error('Interrupted initialization must be resumed explicitly');
 					await assertNoUnplannedTopLevel(plan.root, receipt, host);
-					await verifyPreservedEntries(plan.root, receipt.preserve, host);
+					await verifyPreservedEntries(plan.root, receipt.preserve, receipt.create, host);
 					for (let entry of receipt.create) {
 						if (!await verifyEntry(plan.root, entry, verified.payloads, host)) {
 							throw new Error(`Created starter target changed: ${entry.path}`);
@@ -378,7 +386,7 @@ Zotero.QLab = Zotero.QLab || {};
 				let verified = await verifyAssets(assetReader, host);
 				let receipt = await validateReceipt(stored, canonical, verified, host);
 				await assertNoUnplannedTopLevel(canonical, receipt, host);
-				await verifyPreservedEntries(canonical, receipt.preserve, host);
+				await verifyPreservedEntries(canonical, receipt.preserve, receipt.create, host);
 				await verifyGitTarget(canonical);
 				let createByPath = new Map(receipt.create.map(entry => [entry.path, entry]));
 				let completed = new Set(receipt.completed);
@@ -711,6 +719,26 @@ Zotero.QLab = Zotero.QLab || {};
 	};
 
 	Zotero.QLab.createGeckoQLabGitService = function (dependencies = {}) {
+		function normalizeAbsolutePath(value) {
+			let raw = String(value || '').trim().replace(/\\/g, '/');
+			if (!raw.startsWith('/')) return '';
+			let segments = [];
+			for (let segment of raw.split('/')) {
+				if (!segment || segment === '.') continue;
+				if (segment === '..') {
+					if (!segments.length) return '';
+					segments.pop();
+					continue;
+				}
+				segments.push(segment);
+			}
+			return `/${segments.join('/')}`;
+		}
+
+		function commonDirectoryIsOwnedBy(root, common) {
+			return common === root || common.startsWith(`${root}/`);
+		}
+
 		function subprocess() {
 			if (dependencies.Subprocess) return dependencies.Subprocess;
 			return ChromeUtils.importESModule('resource://gre/modules/Subprocess.sys.mjs').Subprocess;
@@ -729,8 +757,20 @@ Zotero.QLab = Zotero.QLab || {};
 		}
 		return Object.freeze({
 			isRepository: async root => {
-				let result = await call(root, ['rev-parse', '--is-inside-work-tree']);
-				return result.exitCode === 0 && result.output.trim() === 'true';
+				let canonicalRoot = normalizeAbsolutePath(root);
+				if (!canonicalRoot) return false;
+				let result = await call(root, [
+					'rev-parse', '--is-inside-work-tree', '--show-toplevel',
+					'--path-format=absolute', '--git-common-dir',
+				]);
+				let lines = result.output.replace(/\r\n/g, '\n').split('\n');
+				if (lines[lines.length - 1] === '') lines.pop();
+				if (result.exitCode !== 0 || lines.length !== 3 || lines[0] !== 'true') return false;
+				let topLevel = normalizeAbsolutePath(lines[1]);
+				let commonDirectory = normalizeAbsolutePath(lines[2]);
+				return topLevel === canonicalRoot
+					&& Boolean(commonDirectory)
+					&& commonDirectoryIsOwnedBy(canonicalRoot, commonDirectory);
 			},
 			initialize: async ({ executable, argv, cwd }) => {
 				if (executable !== '/usr/bin/git' || !Array.isArray(argv) || argv.length !== 1 || argv[0] !== 'init') {

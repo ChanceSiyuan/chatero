@@ -15,6 +15,10 @@ Zotero.QLab = Zotero.QLab || {};
 	const SHA256 = /^[a-f0-9]{64}$/;
 	const MODES = new Set(['0600', '0644', '0700', '0755']);
 	const KINDS = new Set(['file', 'directory']);
+	// This private receipt is verified separately by the initializer. It must not
+	// make a preserved .research-loop directory look user-modified after a
+	// recoverable bootstrap.
+	const RUNTIME_MUTABLE_PATHS = Object.freeze(['.research-loop/starter.json']);
 
 	function fail(message) {
 		throw new Error(`Invalid QLab starter manifest: ${message}`);
@@ -104,6 +108,12 @@ Zotero.QLab = Zotero.QLab || {};
 		return stat && stat.type === 'directory' ? 'directory' : '';
 	}
 
+	function normalizedMode(stat) {
+		let value = stat && (stat.mode !== undefined ? stat.mode : stat.permissions);
+		value = Number(value);
+		return Number.isFinite(value) ? (value & 0o7777) : 0;
+	}
+
 	async function pathStatus(path, host) {
 		let symlink = false;
 		try {
@@ -144,9 +154,14 @@ Zotero.QLab = Zotero.QLab || {};
 		return freezeRecord({ path: entry.path, kind: entry.kind, mode: entry.mode, ...(entry.digest ? { digest: entry.digest } : {}), ...extra });
 	}
 
-	async function preservedTargetFingerprint(root, relativePath, host) {
+	function isExcludedFingerprintPath(relativePath, excludedPaths) {
+		return excludedPaths.some(path => relativePath === path || relativePath.startsWith(`${path}/`));
+	}
+
+	async function preservedTargetFingerprint(root, relativePath, host, { exclude = [] } = {}) {
 		let records = [];
 		async function visit(target, relative) {
+			if (isExcludedFingerprintPath(relative, exclude)) return;
 			let status = await pathStatus(target, host);
 			if (!status.exists || status.symlink || !status.kind) {
 				throw new Error(`Preserved starter target is unsafe: ${relative}`);
@@ -155,11 +170,14 @@ Zotero.QLab = Zotero.QLab || {};
 			let record = {
 				path: relative,
 				kind: status.kind,
-				size: Number(stat && stat.size) || 0,
-				modified: Number(stat && (stat.mtimeMs || stat.lastModified)) || 0,
+				mode: normalizedMode(stat),
 			};
-			if (status.kind === 'file' && typeof host.readBytesNoFollow === 'function' && typeof host.sha256 === 'function') {
-				record.digest = await host.sha256(await host.readBytesNoFollow(target));
+			if (status.kind === 'file') {
+				record.size = Number(stat && stat.size) || 0;
+				record.modified = Number(stat && (stat.mtimeMs || stat.lastModified)) || 0;
+				if (typeof host.readBytesNoFollow === 'function' && typeof host.sha256 === 'function') {
+					record.digest = await host.sha256(await host.readBytesNoFollow(target));
+				}
 			}
 			records.push(record);
 			if (status.kind !== 'directory') return;
@@ -232,6 +250,7 @@ Zotero.QLab = Zotero.QLab || {};
 		let create = [];
 		let preserve = [];
 		let conflicts = [];
+		let preserveEntries = [];
 		for (let path of inspection.conflicts || []) conflicts.push(freezeRecord({ path, reason: 'repository-conflict' }));
 		if (inspection.state !== 'incompatible') {
 			for (let entry of validated.entries) {
@@ -244,8 +263,12 @@ Zotero.QLab = Zotero.QLab || {};
 				if (!status.exists) create.push(planRecord(entry));
 				else if (status.symlink) conflicts.push(planRecord(entry, { reason: 'symlink-target' }));
 				else if (status.kind !== entry.kind) conflicts.push(planRecord(entry, { reason: 'existing-kind' }));
-				else preserve.push(planRecord(entry, {
-					fingerprint: await preservedTargetFingerprint(canonicalRoot, entry.path, host),
+				else preserveEntries.push(entry);
+			}
+			let excluded = [...create.map(entry => entry.path), ...RUNTIME_MUTABLE_PATHS];
+			for (let entry of preserveEntries) {
+				preserve.push(planRecord(entry, {
+					fingerprint: await preservedTargetFingerprint(canonicalRoot, entry.path, host, { exclude: excluded }),
 				}));
 			}
 		}
