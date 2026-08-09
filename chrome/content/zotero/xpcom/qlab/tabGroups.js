@@ -138,11 +138,25 @@ Zotero.QLab = Zotero.QLab || {};
 		return result;
 	};
 
-	Zotero.QLab.restoreNativeAndQLabTabState = async function (tabsAPI, state) {
+	/**
+	 * Restore native tabs before reconciling the QLab presentation state.
+	 *
+	 * `progress.claimNativeRestore()` transfers responsibility for native tab
+	 * restoration to this helper. The pane startup fallback must not repeat a
+	 * non-idempotent Reader restore if a later QLab-only step fails.
+	 *
+	 * @param {object} tabsAPI
+	 * @param {object} state
+	 * @param {{ claimNativeRestore?: Function }} [progress]
+	 */
+	Zotero.QLab.restoreNativeAndQLabTabState = async function (tabsAPI, state, progress) {
 		if (!tabsAPI || !state) {
 			return null;
 		}
 		if (typeof tabsAPI.restoreState === 'function') {
+			if (typeof progress?.claimNativeRestore === 'function') {
+				progress.claimNativeRestore();
+			}
 			await tabsAPI.restoreState(Array.isArray(state.tabs) ? state.tabs : []);
 		}
 		let reconciled = null;

@@ -84,6 +84,33 @@ test("native tab restoration finishes before legacy groups reconcile onto the mi
 	);
 });
 
+test("QLab restore claims native ownership before restore and keeps it across later failure", async () => {
+	const QLab = await loadQLab();
+	const events = [];
+	const failure = new Error("group restore failed");
+	const tabsAPI = {
+		_tabs: [{ id: "zotero-pane", type: "library", data: {} }],
+		async restoreState() {
+			events.push("native");
+		},
+		restoreQLabGroupsState() {
+			events.push("groups");
+			throw failure;
+		},
+	};
+	const progress = {
+		claimNativeRestore() {
+			events.push("claimed");
+		},
+	};
+
+	await assert.rejects(
+		QLab.restoreNativeAndQLabTabState(tabsAPI, legacyState(), progress),
+		failure,
+	);
+	assert.deepEqual(events, ["claimed", "native", "groups"]);
+});
+
 test("restored duplicate Reader and Note identities reconcile one-to-one in session order", async () => {
 	const QLab = await loadQLab();
 	const reconciled = QLab.reconcileRestoredTabGroupState({

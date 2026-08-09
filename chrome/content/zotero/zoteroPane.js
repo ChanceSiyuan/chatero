@@ -686,18 +686,23 @@ var ZoteroPane = new function () {
 			let state = Zotero.Session.state.windows.find(x => x.type == 'pane');
 			if (state) {
 				let restoredByQLab = false;
+				let nativeRestoreOwnedByQLab = false;
 				let qlabRestore = Zotero.QLab
 					&& Zotero.QLab.restoreNativeAndQLabTabState;
 				if (typeof qlabRestore === 'function') {
 					try {
-						await qlabRestore.call(Zotero.QLab, Zotero_Tabs, state);
+						await qlabRestore.call(Zotero.QLab, Zotero_Tabs, state, {
+							claimNativeRestore() {
+								nativeRestoreOwnedByQLab = true;
+							},
+						});
 						restoredByQLab = true;
 					}
 					catch (e) {
 						Zotero.logError(e);
 					}
 				}
-				if (!restoredByQLab) {
+				if (!restoredByQLab && !nativeRestoreOwnedByQLab) {
 					await Zotero_Tabs.restoreState(state.tabs);
 				}
 			}

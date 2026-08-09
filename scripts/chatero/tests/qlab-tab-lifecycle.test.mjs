@@ -209,3 +209,28 @@ test("pane startup falls back to native restore when the QLab helper throws befo
 	assert.equal(result.restored[0], result.stateTabs);
 	assert.equal(result.errors.includes(failure), true);
 });
+
+test("pane startup does not repeat native restore after the QLab helper takes ownership", async () => {
+	const failure = new Error("QLab group restore failed after native tabs were restored");
+	let receivedOwnershipContract = false;
+	const result = await exercisePaneStartupRestore({
+		qlab: {
+			restoreNativeAndQLabTabState: async (tabsAPI, state, progress) => {
+				if (typeof progress?.claimNativeRestore === "function") {
+					receivedOwnershipContract = true;
+					progress.claimNativeRestore();
+				}
+				await tabsAPI.restoreState(state.tabs);
+				throw failure;
+			},
+		},
+		state: {
+			type: "pane",
+			tabs: [{ type: "reader", data: { itemID: 9 } }],
+		},
+	});
+	assert.equal(receivedOwnershipContract, true);
+	assert.equal(result.restored.length, 1, "native Reader restore must not be retried");
+	assert.equal(result.restored[0], result.stateTabs);
+	assert.equal(result.errors.includes(failure), true);
+});
