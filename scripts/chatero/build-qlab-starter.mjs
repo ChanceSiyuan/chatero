@@ -40,6 +40,26 @@ export const STARTER_ARCHITECTURE_COPY_PATHS = Object.freeze([
   ".research-loop/tooling/scripts/qlab.ts",
 ]);
 
+/** Public product protocols that are copied exactly after no-follow and privacy checks. */
+export const STARTER_CURATED_COPY_PATHS = Object.freeze([
+  "package-lock.json",
+  "schemas",
+  "skills",
+  "src/lib/knowledge",
+  "src/lib/drafts",
+  "src/lib/literature",
+  "src/lib/skills/sci-brain.mjs",
+  "src/worker/index.ts",
+  "knowledge/_quarto.yml",
+  "drafts/_quarto.yml",
+  ".research-loop/tooling/scripts/knowledge.ts",
+  ".research-loop/tooling/scripts/draft-check.ts",
+  ".research-loop/tooling/scripts/draft-preview.ts",
+  ".research-loop/tooling/scripts/literature.ts",
+  ".research-loop/tooling/scripts/qlab.ts",
+  ".research-loop/tooling/scripts/ensure-sci-brain.mjs",
+]);
+
 const GENERATED_REPLACEMENTS = new Set([
   ...STARTER_COPY_PATHS,
   ...STARTER_ARCHITECTURE_COPY_PATHS,
@@ -51,6 +71,21 @@ const isWithin = (root, target) => target === root || target.startsWith(`${root}
 
 function fail(message) {
   throw new Error(`QLab starter build failed: ${message}`);
+}
+
+function assertPublicPayload(path, data) {
+  let source;
+  try {
+    source = new TextDecoder("utf-8", { fatal: true }).decode(data);
+  } catch {
+    return;
+  }
+  if (/(?:^|[\s"'=:(])(?:\/Users\/|\/home\/|[A-Za-z]:[\\/])/.test(source)) {
+    fail(`public source contains an absolute user path: ${path}`);
+  }
+  if (/\.openai\/hosting\.json|appgprj_[a-z0-9]+|(?:^|[^A-Za-z])(?:sk|ghp)_[A-Za-z0-9_-]{16,}|AKIA[0-9A-Z]{16}|-----BEGIN (?:RSA |EC )?PRIVATE KEY-----/i.test(source)) {
+    fail(`public source contains private hosting or credential data: ${path}`);
+  }
 }
 
 function safeRelativePath(path) {
@@ -146,7 +181,9 @@ async function gatherSourcePath(sourceRoot, allowedPath, records) {
   }
   if (metadata.isSymbolicLink()) fail(`source symlink is not allowed: ${allowedPath}`);
   if (metadata.isFile()) {
-    records.set(allowedPath, { path: allowedPath, kind: "file", mode: normalizedMode(allowedPath), data: await readFile(target) });
+    const data = await readFile(target);
+    assertPublicPayload(allowedPath, data);
+    records.set(allowedPath, { path: allowedPath, kind: "file", mode: normalizedMode(allowedPath), data });
     return;
   }
   if (!metadata.isDirectory()) fail(`source path is neither a file nor directory: ${allowedPath}`);
@@ -232,6 +269,7 @@ export async function buildStarter({ source, output = outputRoot } = {}) {
     if (GENERATED_REPLACEMENTS.has(path)) await assertSourcePathExists(canonicalSource, path);
     else await gatherSourcePath(canonicalSource, path, records);
   }
+  for (const path of STARTER_CURATED_COPY_PATHS) await gatherSourcePath(canonicalSource, path, records);
   for (const path of STARTER_ARCHITECTURE_COPY_PATHS) await assertSourcePathExists(canonicalSource, path);
   addGeneratedRecords(records);
   validatePathSet(records);

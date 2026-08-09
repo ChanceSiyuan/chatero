@@ -4,7 +4,8 @@ import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { setTimeout as delay } from "node:timers/promises";
 import { runInNewContext } from "node:vm";
 import test from "node:test";
 import {
@@ -12,6 +13,7 @@ import {
   buildStarter,
   STARTER_ARCHITECTURE_COPY_PATHS,
   STARTER_COPY_PATHS,
+  STARTER_CURATED_COPY_PATHS,
 } from "../build-qlab-starter.mjs";
 import { loadQLab } from "../lib/load-qlab.mjs";
 
@@ -79,6 +81,29 @@ function run(repository, command, args) {
   });
 }
 
+async function expectKnowledgeRejected(repository, invalidIndex) {
+  const indexPath = join(repository, "knowledge", "index.qmd");
+  const original = await readFile(indexPath, "utf8");
+  await writeFile(indexPath, invalidIndex);
+  const result = run(repository, "npm", ["run", "knowledge:check"]);
+  assert.notEqual(result.status, 0, result.stderr || result.stdout);
+  await writeFile(indexPath, original);
+}
+
+async function waitForSite(url, child) {
+  let lastError;
+  for (let attempt = 0; attempt < 60; attempt++) {
+    if (child.exitCode !== null) throw new Error(`site exited early with ${child.exitCode}`);
+    try {
+      return await fetch(url, { redirect: "manual" });
+    } catch (error) {
+      lastError = error;
+      await delay(100);
+    }
+  }
+  throw lastError ?? new Error("site did not become ready");
+}
+
 test("starter ZIP writer is byte-stable and bytewise orders payload paths", () => {
   const files = [
     { path: "z.txt", mode: "0644", data: Buffer.from("z") },
@@ -97,13 +122,56 @@ test("starter Knowledge index satisfies the trusted-index contract", async () =>
   assert.match(index, /^## Reading map$/m);
 });
 
+test("starter retains public Research Loop protocol trees and a real local Vinext application", async () => {
+  const { files } = await loadStarterAsset();
+  for (const path of [
+    "skills/expand-notes/SKILL.md",
+    "skills/edit-topic-tree/SKILL.md",
+    "schemas/research-problem-assessment.schema.json",
+    "src/lib/knowledge/validate.ts",
+    "src/lib/knowledge/resolve.ts",
+    "src/lib/knowledge/site.ts",
+    "src/lib/knowledge/tree.ts",
+    "src/lib/drafts/check.ts",
+    "src/lib/drafts/preview.ts",
+    "src/lib/literature/bibliography.ts",
+    "src/lib/literature/indexes.ts",
+    ".research-loop/tooling/scripts/knowledge.ts",
+    ".research-loop/tooling/scripts/draft-check.ts",
+    ".research-loop/tooling/scripts/draft-preview.ts",
+    ".research-loop/tooling/scripts/literature.ts",
+    ".research-loop/tooling/scripts/qlab.ts",
+    "src/app/page.tsx",
+    "src/app/layout.tsx",
+    "src/app/globals.css",
+    "src/app/api/qlab/health/route.ts",
+  ]) assert.equal(files.has(path), true, `missing public protocol path ${path}`);
+  const packageJSON = JSON.parse(files.get("package.json").toString("utf8"));
+  assert.equal(packageJSON.dependencies.vinext ?? packageJSON.devDependencies.vinext, "0.0.50");
+  assert.match(files.get("src/app/page.tsx").toString("utf8"), /Repository|Knowledge|Drafts|Literature/);
+  assert.match(files.get("src/app/api/qlab/health/route.ts").toString("utf8"), /NextResponse/);
+});
+
+test("real Knowledge validator rejects invalid trusted-note contracts in an extracted starter", async (t) => {
+  const repository = await extractStarter(t);
+  const installed = run(repository, "npm", ["ci", "--ignore-scripts"]);
+  assert.equal(installed.status, 0, installed.stderr || installed.stdout);
+  const index = await readFile(join(repository, "knowledge", "index.qmd"), "utf8");
+  await expectKnowledgeRejected(repository, index.replace(/^description:.*\n/m, ""));
+  await expectKnowledgeRejected(repository, index.replace("---\n\n## Reading map", "categories:\n  - invalid-category\n---\n\n## Reading map"));
+  await expectKnowledgeRejected(repository, index.replace("---\n\n## Reading map", "author: Private Person\n---\n\n## Reading map"));
+  await expectKnowledgeRejected(repository, `${index}\nUnsupported citation [@missing-reference].\n`);
+  const restored = run(repository, "npm", ["run", "knowledge:check"]);
+  assert.equal(restored.status, 0, restored.stderr || restored.stdout);
+});
+
 test("extracted public starter is dependency-closed and builds its Knowledge and local site", async (t) => {
   const repository = await extractStarter(t);
   const packageJSON = JSON.parse(await readFile(join(repository, "package.json"), "utf8"));
-  assert.deepEqual(packageJSON.dependencies ?? {}, {});
-  assert.deepEqual(packageJSON.devDependencies ?? {}, {});
+  assert.equal(packageJSON.dependencies.next, "16.2.6");
+  assert.equal(packageJSON.devDependencies.vinext, "0.0.50");
   for (const script of Object.values(packageJSON.scripts)) {
-    for (const target of String(script).matchAll(/\.research-loop\/[A-Za-z0-9_./-]+\.(?:mjs|js)/g)) {
+    for (const target of String(script).matchAll(/\.research-loop\/[A-Za-z0-9_./-]+\.(?:mjs|js|ts)/g)) {
       const targetPath = join(repository, target[0]);
       const targetResult = spawnSync("test", ["-f", targetPath], { encoding: "utf8" });
       assert.equal(targetResult.status, 0, `missing retained package-script target ${target[0]}`);
@@ -119,8 +187,42 @@ test("extracted public starter is dependency-closed and builds its Knowledge and
     const result = run(repository, invocation[0], invocation[1]);
     assert.equal(result.status, 0, `${invocation.join(" ")}\n${result.stderr || result.stdout}`);
   }
+  assert.equal(spawnSync("test", ["-d", join(repository, "node_modules", "vinext")]).status, 0);
   assert.equal(spawnSync("test", ["-f", join(repository, "public", "knowledge", "index.html")]).status, 0);
-  assert.equal(spawnSync("test", ["-f", join(repository, "dist", "index.html")]).status, 0);
+  assert.equal(spawnSync("test", ["-d", join(repository, "dist", "server")]).status, 0);
+});
+
+test("built Main Site serves the real app, health protocol, Knowledge assets, and a stable 404", async (t) => {
+  const repository = await extractStarter(t);
+  const installed = run(repository, "npm", ["ci", "--ignore-scripts"]);
+  assert.equal(installed.status, 0, installed.stderr || installed.stdout);
+  const built = run(repository, "npm", ["run", "build"]);
+  assert.equal(built.status, 0, built.stderr || built.stdout);
+  const port = 46000 + Math.floor(Math.random() * 1000);
+  const site = spawn("npm", ["run", "start", "--", "--port", String(port)], {
+    cwd: repository,
+    env: { ...process.env, NODE_PATH: "", QLAB_REPOSITORY_ID: "starter-probe" },
+    stdio: "pipe",
+  });
+  t.after(() => { if (site.exitCode === null) site.kill("SIGTERM"); });
+  const origin = `http://127.0.0.1:${port}`;
+  const root = await waitForSite(`${origin}/`, site);
+  assert.equal(root.status, 200);
+  assert.match(await root.text(), /Local research workspace/);
+  const health = await fetch(`${origin}/api/qlab/health`);
+  assert.equal(health.status, 200);
+  assert.deepEqual(await health.json(), { ok: true, repositoryIdentity: "starter-probe" });
+  const redirect = await fetch(`${origin}/knowledge`, { redirect: "manual" });
+  assert.equal(redirect.status, 308);
+  const knowledge = await fetch(`${origin}/knowledge/`);
+  assert.equal(knowledge.status, 200);
+  assert.match(await knowledge.text(), /Research Loop Knowledge/);
+  const asset = await fetch(`${origin}/knowledge/site_libs/quarto-html/quarto.js`);
+  assert.equal(asset.status, 200);
+  const missing = await fetch(`${origin}/definitely-not-present`);
+  assert.equal(missing.status, 404);
+  assert.equal(site.exitCode, null, "a 404 must not stop the Main Site");
+  assert.equal((await fetch(`${origin}/api/qlab/health`)).status, 200);
 });
 
 test("starter builder rejects a symbolic-link ancestor of an explicit source path", async (t) => {
@@ -145,6 +247,14 @@ test("starter builder rejects a symbolic-link ancestor of an explicit source pat
     await writeFile(target, "export {};\n");
   }
   await symlink(external, join(source, ".research-loop", "tooling"));
+  for (const path of STARTER_CURATED_COPY_PATHS) {
+    if (path.startsWith(".research-loop/tooling/")) continue;
+    const target = join(source, path);
+    if (path.includes("/scripts/") || /\.[A-Za-z0-9]+$/.test(path)) {
+      await mkdir(dirname(target), { recursive: true });
+      await writeFile(target, "public fixture\n");
+    } else await mkdir(target, { recursive: true });
+  }
   await assert.rejects(
     () => buildStarter({ source, output }),
     /symlink ancestor/,
@@ -188,11 +298,12 @@ test("starter text has no fixed hosting identity, credentials, or personal data 
 test("starter uses a loadable local-only Vite configuration", async () => {
   const { files } = await loadStarterAsset();
   const source = files.get("vite.config.ts").toString("utf8");
-  assert.doesNotMatch(source, /\.openai|cloudflare|sites\(/i);
+  assert.doesNotMatch(source, /\.openai|hosting\.json|sites\(/i);
   const context = {};
   runInNewContext(
     source
       .replace(/^import vinext from "vinext";$/m, "const vinext = () => ({ name: 'vinext' });")
+      .replace(/^import \{ cloudflare \} from "@cloudflare\/vite-plugin";$/m, "const cloudflare = () => ({ name: 'cloudflare' });")
       .replace(/^export default\s+/m, "this.config = "),
     context,
   );
