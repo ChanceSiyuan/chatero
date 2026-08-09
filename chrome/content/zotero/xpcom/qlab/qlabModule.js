@@ -2995,10 +2995,10 @@ Zotero.QLab = Zotero.QLab || {};
 			window: doc && doc.defaultView,
 			restore: readChatUtilityPreference(),
 			mountChat: content => Zotero.QLab.mountShellTab(content, 'qlabchat'),
-			disposeChat: content => {
-				// The resident host is disposed only with the containing Zotero window.
-				Zotero.QLab.cancelShellTabMount(content);
-			},
+			cancelTurn: host => Zotero.QLab.cancelShellTurn(host),
+			cancelMount: content => Zotero.QLab.cancelShellTabMount(content),
+			// The resident host is disposed only with the containing Zotero window.
+			disposeChat: () => {},
 			persist: writeChatUtilityPreference,
 			onLauncherChange: state => {
 				tabsAPI && tabsAPI._onChatUtilityChanged
@@ -3147,12 +3147,15 @@ Zotero.QLab = Zotero.QLab || {};
 					return null;
 				}
 				this.ensureShellTab(kind, payload);
-				return chatUtility.show({
+				let showOptions = {
 					invocation: options.invocation || 'workspace',
 					focusComposer: options.focusComposer === true,
-					focusReturn: options.focusReturn || null,
 					openingToken: options.openingToken,
-				});
+				};
+				if (Object.prototype.hasOwnProperty.call(options, 'focusReturn')) {
+					showOptions.focusReturn = options.focusReturn;
+				}
+				return chatUtility.show(showOptions);
 			},
 
 			toggleUtility(kind, options = {}) {

@@ -99,7 +99,11 @@ test("Chat utility reuses one resident shell while hidden, closed, reopened, and
 	const elements = utilityElements();
 	let mounts = 0;
 	let disposals = 0;
+	let cancellations = 0;
 	let runtime;
+	const residentHost = {
+		_qlabTurnHandle: { cancel: () => cancellations++ },
+	};
 	const utility = new QLab.ChatUtilityHost({
 		elements,
 		viewport: () => ({ width: 1440, height: 900 }),
@@ -107,8 +111,10 @@ test("Chat utility reuses one resident shell while hidden, closed, reopened, and
 			mounts++;
 			runtime ||= { chunks: [], running: true };
 			container.runtime = runtime;
+			container.register(".qlab-shell-host", residentHost);
 			return runtime;
 		},
+		cancelTurn: host => host._qlabTurnHandle.cancel(),
 		disposeChat: () => disposals++,
 	});
 
@@ -126,6 +132,8 @@ test("Chat utility reuses one resident shell while hidden, closed, reopened, and
 	assert.equal(elements.layer.hidden, false);
 
 	utility.destroy();
+	utility.destroy();
+	assert.equal(cancellations, 1, "window shutdown cancels a resident turn once");
 	assert.equal(disposals, 1, "window shutdown owns final disposal");
 });
 
@@ -251,6 +259,79 @@ test("Pin, hide, drag, and resize update presentation without persisting pointer
 	utility.destroy();
 });
 
+test("cancelled drag and lost resize capture roll preview bounds back without persisting", async () => {
+	const QLab = await loadQLab();
+	const elements = utilityElements();
+	const fakeWindow = new FakeEventTarget();
+	let persists = 0;
+	const utility = new QLab.ChatUtilityHost({
+		elements,
+		window: fakeWindow,
+		viewport: () => ({ width: 1440, height: 900 }),
+		mountChat: async () => ({}),
+		persist: () => persists++,
+	});
+	await utility.show();
+	const original = utility.snapshot().bounds;
+
+	elements.header.dispatch("pointerdown", {
+		button: 0,
+		pointerId: 31,
+		clientX: 100,
+		clientY: 100,
+		preventDefault() {},
+	});
+	fakeWindow.dispatch("pointermove", { pointerId: 31, clientX: 250, clientY: 220 });
+	assert.notEqual(elements.dialog.styleValues.get("--qlab-chat-left"), `${original.left}px`);
+	fakeWindow.dispatch("pointercancel", { pointerId: 31 });
+	assert.equal(elements.dialog.styleValues.get("--qlab-chat-left"), `${original.left}px`);
+	fakeWindow.dispatch("pointerup", { pointerId: 31, clientX: 250, clientY: 220 });
+	assert.equal(persists, 0);
+
+	elements.resizeHandle.dispatch("pointerdown", {
+		button: 0,
+		pointerId: 32,
+		clientX: 800,
+		clientY: 700,
+		preventDefault() {},
+	});
+	fakeWindow.dispatch("pointermove", { pointerId: 32, clientX: 900, clientY: 800 });
+	assert.notEqual(elements.dialog.styleValues.get("--qlab-chat-width"), `${original.width}px`);
+	elements.resizeHandle.dispatch("lostpointercapture", { pointerId: 32 });
+	assert.equal(elements.dialog.styleValues.get("--qlab-chat-width"), `${original.width}px`);
+	fakeWindow.dispatch("pointerup", { pointerId: 32, clientX: 900, clientY: 800 });
+	assert.equal(persists, 0);
+	utility.destroy();
+});
+
+test("each public show captures the current active element unless explicitly overridden", async () => {
+	const QLab = await loadQLab();
+	const elements = utilityElements();
+	const first = new FakeElement();
+	const second = new FakeElement();
+	const explicit = new FakeElement();
+	const doc = { activeElement: first };
+	const utility = new QLab.ChatUtilityHost({
+		document: doc,
+		elements,
+		viewport: () => ({ width: 1200, height: 800 }),
+		mountChat: async () => ({}),
+	});
+
+	await utility.show({ invocation: "arrangement" });
+	doc.activeElement = second;
+	utility.hide();
+	assert.equal(first.focusCount, 1);
+	await utility.show({ invocation: "legacy-dock" });
+	doc.activeElement = first;
+	utility.hide();
+	assert.equal(second.focusCount, 1, "a new show cannot reuse stale focus return");
+	await utility.show({ focusReturn: explicit });
+	utility.hide();
+	assert.equal(explicit.focusCount, 1);
+	utility.destroy();
+});
+
 test("Chat launcher exposes running, completed, and error status without remounting", async () => {
 	const QLab = await loadQLab();
 	const elements = utilityElements();
@@ -285,7 +366,7 @@ test("a failed Chat mount reports an error and can retry without rejecting windo
 	const utility = new QLab.ChatUtilityHost({
 		elements,
 		viewport: () => ({ width: 1200, height: 800 }),
-		mountChat: async () => {
+		mountChat: () => {
 			attempts++;
 			if (attempts === 1) throw new Error("mount failed");
 			return { ready: true };
@@ -298,8 +379,58 @@ test("a failed Chat mount reports an error and can retry without rejecting windo
 	utility.hide();
 	await assert.doesNotReject(utility.show());
 	assert.equal(utility.snapshot().mounted, true);
+	assert.equal(utility.snapshot().activityStatus, "idle");
 	assert.equal(attempts, 2);
 	utility.destroy();
+});
+
+test("successful retry does not clear a genuine turn error that replaced a mount error", async () => {
+	const QLab = await loadQLab();
+	const elements = utilityElements();
+	let attempts = 0;
+	const utility = new QLab.ChatUtilityHost({
+		elements,
+		viewport: () => ({ width: 1200, height: 800 }),
+		mountChat: () => {
+			attempts++;
+			if (attempts === 1) throw new Error("mount failed");
+			return {};
+		},
+	});
+	await utility.show();
+	utility.setActivityStatus("error");
+	utility.hide();
+	await utility.show();
+	assert.equal(utility.snapshot().activityStatus, "error");
+	utility.destroy();
+});
+
+test("destroy while mounting cancels the mount and disposes the late runtime exactly once", async () => {
+	const QLab = await loadQLab();
+	const elements = utilityElements();
+	let resolveMount;
+	let attempts = 0;
+	let cancelledMounts = 0;
+	const disposed = [];
+	const runtime = { id: "late-runtime" };
+	const utility = new QLab.ChatUtilityHost({
+		elements,
+		viewport: () => ({ width: 1200, height: 800 }),
+		mountChat: () => {
+			attempts++;
+			return new Promise(resolve => (resolveMount = resolve));
+		},
+		cancelMount: () => cancelledMounts++,
+		disposeChat: (_content, mountedRuntime) => disposed.push(mountedRuntime),
+	});
+	const showing = utility.show();
+	utility.destroy();
+	resolveMount(runtime);
+	await showing;
+	await utility.ensureMounted();
+	assert.equal(cancelledMounts, 1);
+	assert.deepEqual(disposed, [runtime]);
+	assert.equal(attempts, 1, "destroyed hosts cannot start another mount");
 });
 
 test("window shutdown removes an in-flight drag before disposing the resident shell", async () => {

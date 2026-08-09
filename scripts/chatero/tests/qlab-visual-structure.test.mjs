@@ -90,9 +90,37 @@ test("the main window owns one accessible non-modal Chat utility surface", async
 	assert.match(xul, /role="dialog"/);
 	assert.match(xul, /aria-modal="false"/);
 	assert.match(xul, /data-qlab-chat-drag-handle/);
-	assert.match(xul, /data-qlab-chat-pin[^>]*aria-label="Pin Chat"/);
-	assert.match(xul, /data-qlab-chat-hide[^>]*aria-label="Hide Chat"/);
-	assert.match(xul, /data-qlab-chat-resize[^>]*aria-label="Resize Chat"/);
+	assert.match(xul, /data-l10n-id="qlab-chat-title"/);
+	assert.match(xul, /data-l10n-id="qlab-chat-window-controls"/);
+	assert.match(xul, /data-qlab-chat-pin[^>]*data-l10n-id="qlab-chat-pin"/);
+	assert.match(xul, /data-qlab-chat-hide[^>]*data-l10n-id="qlab-chat-hide"/);
+	assert.match(xul, /data-qlab-chat-resize[^>]*data-l10n-id="qlab-chat-resize"/);
+	assert.doesNotMatch(xul, /aria-label="(?:Pin|Hide|Resize) Chat"/);
+	const tabBar = await readFile(
+		new URL("../../../chrome/content/zotero/components/tabBar.jsx", import.meta.url),
+		"utf8",
+	);
+	assert.match(tabBar, /data-l10n-id=\{utility \? `qlab-chat-launcher-\$\{activityStatus \|\| 'idle'\}`/);
+	assert.doesNotMatch(tabBar, /aria-label=\{utility \? `\$\{title\}/);
+
+	const fluent = await readFile(
+		new URL("../../../chrome/locale/en-US/zotero/zotero.ftl", import.meta.url),
+		"utf8",
+	);
+	for (const id of [
+		"qlab-chat-title",
+		"qlab-chat-window-controls",
+		"qlab-chat-pin",
+		"qlab-chat-unpin",
+		"qlab-chat-hide",
+		"qlab-chat-resize",
+		"qlab-chat-launcher-idle",
+		"qlab-chat-launcher-running",
+		"qlab-chat-launcher-completed",
+		"qlab-chat-launcher-error",
+	]) {
+		assert.match(fluent, new RegExp(`^${id}\\s*=`, "m"));
+	}
 
 	const styles = await readFile(
 		new URL("../../../scss/components/_qlabChatUtility.scss", import.meta.url),

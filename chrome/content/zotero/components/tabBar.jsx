@@ -59,13 +59,13 @@ const Tab = memo((props) => {
 			key={id}
 			data-id={id}
 			data-activity-status={utility ? activityStatus : undefined}
+			data-l10n-id={utility ? `qlab-chat-launcher-${activityStatus || 'idle'}` : undefined}
 			className={cx('tab', {
 				selected,
 				dragging: isBeingDragged,
 				'qlab-utility-launcher': utility,
 			})}
 			role={utility ? 'button' : undefined}
-			aria-label={utility ? `${title}${activityStatus && activityStatus !== 'idle' ? `, ${activityStatus}` : ''}` : undefined}
 			aria-pressed={utility ? utilityPressed : undefined}
 			draggable={true}
 			onMouseDown={handleTabMouseDown}

@@ -132,6 +132,12 @@ Zotero.QLab = Zotero.QLab || {};
 		this._disposeChat = typeof options.disposeChat === 'function'
 			? options.disposeChat
 			: () => {};
+		this._cancelTurn = typeof options.cancelTurn === 'function'
+			? options.cancelTurn
+			: () => {};
+		this._cancelMount = typeof options.cancelMount === 'function'
+			? options.cancelMount
+			: () => {};
 		this._persist = typeof options.persist === 'function' ? options.persist : () => {};
 		this._onLauncherChange = typeof options.onLauncherChange === 'function'
 			? options.onLauncherChange
@@ -140,6 +146,8 @@ Zotero.QLab = Zotero.QLab || {};
 		this._mounted = false;
 		this._runtime = null;
 		this._destroyed = false;
+		this._disposed = false;
+		this._mountError = false;
 		this._activityStatus = 'idle';
 		this._bindings = [];
 		this._activeGestureCleanup = null;
@@ -163,6 +171,9 @@ Zotero.QLab = Zotero.QLab || {};
 		},
 
 		ensureMounted() {
+			if (this._destroyed) {
+				return Promise.resolve(null);
+			}
 			if (this._mounted) {
 				return Promise.resolve(this._runtime);
 			}
@@ -170,19 +181,42 @@ Zotero.QLab = Zotero.QLab || {};
 				return this._mountPromise;
 			}
 			let content = this._elements.content;
-			this._mountPromise = Promise.resolve(this._mountChat(content))
+			let mountResult;
+			try {
+				mountResult = this._mountChat(content);
+			}
+			catch (error) {
+				mountResult = Promise.reject(error);
+			}
+			this._mountPromise = Promise.resolve(mountResult)
 				.then(runtime => {
+					this._mountPromise = null;
 					if (this._destroyed) {
-						return runtime;
+						this._disposeOnce(runtime);
+						return null;
 					}
 					this._runtime = runtime;
 					this._mounted = true;
-					this._notifyLauncher();
+					if (this._mountError && this._activityStatus === 'error') {
+						this._mountError = false;
+						this._activityStatus = 'idle';
+						this._render(this._controller.snapshot());
+					}
+					else {
+						this._notifyLauncher();
+					}
 					return runtime;
 				})
 				.catch(error => {
 					this._mountPromise = null;
-					this.setActivityStatus('error');
+					if (this._destroyed) {
+						this._disposeOnce(null);
+					}
+					else {
+						this._mountError = true;
+						this._activityStatus = 'error';
+						this._render(this._controller.snapshot());
+					}
 					Zotero.logError && Zotero.logError(error);
 					return null;
 				});
@@ -191,8 +225,12 @@ Zotero.QLab = Zotero.QLab || {};
 
 		show(options = {}) {
 			let ready = this.ensureMounted();
+			let showOptions = { ...options };
+			if (!Object.prototype.hasOwnProperty.call(showOptions, 'focusReturn')) {
+				showOptions.focusReturn = this._document && this._document.activeElement || null;
+			}
 			let result = this._controller.show({
-				...options,
+				...showOptions,
 				viewport: this._viewport(),
 			});
 			if (result.focusComposer) {
@@ -226,6 +264,9 @@ Zotero.QLab = Zotero.QLab || {};
 		},
 
 		setActivityStatus(status) {
+			// A public activity update comes from the Agent runtime. It supersedes
+			// any earlier mount error, even when both statuses happen to be "error".
+			this._mountError = false;
 			this._activityStatus = ACTIVITY_STATES.has(status) ? status : 'idle';
 			this._render(this._controller.snapshot());
 			return this._activityStatus;
@@ -244,11 +285,42 @@ Zotero.QLab = Zotero.QLab || {};
 				return;
 			}
 			this._destroyed = true;
-			this._activeGestureCleanup && this._activeGestureCleanup();
+			this._activeGestureCleanup && this._activeGestureCleanup(true);
 			for (let binding of this._bindings.splice(0)) {
 				binding.target.removeEventListener(binding.type, binding.listener, binding.options);
 			}
-			this._disposeChat(this._elements.content, this._runtime);
+			let content = this._elements.content;
+			try {
+				let resident = content && content.querySelector
+					? content.querySelector('.qlab-shell-host')
+					: null;
+				resident && this._cancelTurn(resident);
+			}
+			catch (e) {
+				Zotero.logError && Zotero.logError(e);
+			}
+			try {
+				this._cancelMount(content);
+			}
+			catch (e) {
+				Zotero.logError && Zotero.logError(e);
+			}
+			if (!this._mountPromise) {
+				this._disposeOnce(this._runtime);
+			}
+		},
+
+		_disposeOnce(runtime) {
+			if (this._disposed) {
+				return;
+			}
+			this._disposed = true;
+			try {
+				this._disposeChat(this._elements.content, runtime);
+			}
+			catch (e) {
+				Zotero.logError && Zotero.logError(e);
+			}
 		},
 
 		_bind(target, type, listener, options) {
@@ -285,14 +357,15 @@ Zotero.QLab = Zotero.QLab || {};
 				return;
 			}
 			event.preventDefault && event.preventDefault();
-			event.target && event.target.setPointerCapture
-				&& event.target.setPointerCapture(event.pointerId);
+			let captureTarget = event.currentTarget || event.target;
+			captureTarget && captureTarget.setPointerCapture
+				&& captureTarget.setPointerCapture(event.pointerId);
 			let startX = event.clientX;
 			let startY = event.clientY;
 			let start = this._controller.snapshot().bounds;
 			let preview = { ...start };
 			let pointerId = event.pointerId;
-			this._activeGestureCleanup && this._activeGestureCleanup();
+			this._activeGestureCleanup && this._activeGestureCleanup(true);
 			let onMove = moveEvent => {
 				if (pointerId !== undefined && moveEvent.pointerId !== pointerId) {
 					return;
@@ -304,9 +377,15 @@ Zotero.QLab = Zotero.QLab || {};
 					: { ...start, width: start.width + dx, height: start.height + dy };
 				this._paintBounds(preview);
 			};
-			let cleanup = () => {
+			let cleanup = (rollback = false) => {
 				this._window.removeEventListener('pointermove', onMove, true);
 				this._window.removeEventListener('pointerup', onUp, true);
+				this._window.removeEventListener('pointercancel', onCancel, true);
+				captureTarget && captureTarget.removeEventListener
+					&& captureTarget.removeEventListener('lostpointercapture', onCancel, true);
+				if (rollback) {
+					this._paintBounds(start);
+				}
 				if (this._activeGestureCleanup === cleanup) {
 					this._activeGestureCleanup = null;
 				}
@@ -318,9 +397,18 @@ Zotero.QLab = Zotero.QLab || {};
 				cleanup();
 				this._controller.setBounds(preview);
 			};
+			let onCancel = cancelEvent => {
+				if (pointerId !== undefined && cancelEvent.pointerId !== pointerId) {
+					return;
+				}
+				cleanup(true);
+			};
 			this._activeGestureCleanup = cleanup;
 			this._window.addEventListener('pointermove', onMove, true);
 			this._window.addEventListener('pointerup', onUp, true);
+			this._window.addEventListener('pointercancel', onCancel, true);
+			captureTarget && captureTarget.addEventListener
+				&& captureTarget.addEventListener('lostpointercapture', onCancel, true);
 		},
 
 		_paintBounds(bounds) {
@@ -354,8 +442,8 @@ Zotero.QLab = Zotero.QLab || {};
 					state.pinned ? 'true' : 'false'
 				);
 				pinButton.setAttribute && pinButton.setAttribute(
-					'title',
-					state.pinned ? 'Unpin Chat' : 'Pin Chat'
+					'data-l10n-id',
+					state.pinned ? 'qlab-chat-unpin' : 'qlab-chat-pin'
 				);
 			}
 			this._paintBounds(state.bounds);

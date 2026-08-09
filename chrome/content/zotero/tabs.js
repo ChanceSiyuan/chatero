@@ -1139,14 +1139,29 @@ var Zotero_Tabs = new function () {
 				continue;
 			}
 			if (tab.id == this._selectedID) {
-				let tabToSelectID = Zotero.QLab && Zotero.QLab.contentTabAfterClose
-					? Zotero.QLab.contentTabAfterClose(
+				let tabToSelectID = null;
+				if (Zotero.QLab && Zotero.QLab.contentTabAfterClose) {
+					tabToSelectID = Zotero.QLab.contentTabAfterClose(
 						this._tabs,
 						tab.id,
 						ids,
 						this._prevSelectedID
-					)
-					: null;
+					);
+				}
+				else {
+					// Preserve Zotero's native close behavior if QLab failed to load.
+					let tabToSelect = null;
+					if (this._prevSelectedID && !ids.includes(this._prevSelectedID)) {
+						tabToSelect = this._getTab(this._prevSelectedID).tab;
+					}
+					else {
+						tabToSelect = this._tabs
+							.slice(tabIndex + 1)
+							.concat(this._tabs.slice(0, tabIndex).reverse())
+							.find(x => !ids.includes(x.id));
+					}
+					tabToSelectID = tabToSelect && tabToSelect.id;
+				}
 				let selectOptions = {};
 				// If the tabs menu is visible, let the tab bar handle focus
 				if (this.tabsMenuPanel.visible) {
@@ -1463,9 +1478,14 @@ var Zotero_Tabs = new function () {
 	 * Select the previous tab (closer to the library tab)
 	 */
 	this.selectPrev = function (options) {
-		let id = Zotero.QLab && Zotero.QLab.nextContentTabID
-			? Zotero.QLab.nextContentTabID(this._tabs, this._selectedID, -1)
-			: null;
+		let id;
+		if (Zotero.QLab && Zotero.QLab.nextContentTabID) {
+			id = Zotero.QLab.nextContentTabID(this._tabs, this._selectedID, -1);
+		}
+		else {
+			var { tabIndex } = this._getTab(this._selectedID);
+			id = (this._tabs[tabIndex - 1] || this._tabs[this._tabs.length - 1]).id;
+		}
 		if (id) {
 			this.select(id, false, options || {});
 		}
@@ -1475,9 +1495,14 @@ var Zotero_Tabs = new function () {
 	 * Select the next tab (farther to the library tab)
 	 */
 	this.selectNext = function (options) {
-		let id = Zotero.QLab && Zotero.QLab.nextContentTabID
-			? Zotero.QLab.nextContentTabID(this._tabs, this._selectedID, 1)
-			: null;
+		let id;
+		if (Zotero.QLab && Zotero.QLab.nextContentTabID) {
+			id = Zotero.QLab.nextContentTabID(this._tabs, this._selectedID, 1);
+		}
+		else {
+			var { tabIndex } = this._getTab(this._selectedID);
+			id = (this._tabs[tabIndex + 1] || this._tabs[0]).id;
+		}
 		if (id) {
 			this.select(id, false, options || {});
 		}
