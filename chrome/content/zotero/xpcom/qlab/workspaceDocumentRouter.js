@@ -22,6 +22,10 @@ Zotero.QLab = Zotero.QLab || {};
 		'open-native-reader': 'openNativeReader',
 		'review-pdf-link': 'reviewPDFLink',
 	});
+	// Leases are process-scoped, not router-scoped: native tab remounts may
+	// construct a new router and must not make a revoked host access reusable.
+	const CONSUMED_CAPABILITIES = new WeakSet();
+	const CONSUMED_ACCESS = new WeakSet();
 
 	function refuse(reason) {
 		return Object.freeze({ action: 'refuse', reason: String(reason || 'unsafe-document') });
@@ -183,39 +187,29 @@ Zotero.QLab = Zotero.QLab || {};
 	 * `acquireVerifiedDocument` is the mandatory trusted-host boundary. It must
 	 * realpath root, authority boundary, and target; reject symlink/containment
 	 * mismatches; and return a frozen, host-owned access/handle/token lease.
-	 * Each capability is consumed once and may be released after its fixed bridge
-	 * returns. Write bridges must use that access or repeat no-follow verification
-	 * at the actual open/write operation. The router never returns the capability
-	 * to its request caller.
+	 * Each capability is consumed once and must be irrevocably released after its
+	 * fixed bridge returns. Release must resolve true or the route fails. Write
+	 * bridges must use that access or repeat no-follow verification at the actual
+	 * open/write operation. The router never returns the capability to its caller.
 	 */
 	Zotero.QLab.createWorkspaceDocumentRouter = function (bridges = {}) {
-		let consumedCapabilities = new WeakSet();
-		let consumedAccess = new WeakSet();
-
-		async function canonicalize(value) {
-			if (typeof bridges.canonicalizeRoot !== 'function') return '';
-			try { return canonicalRoot(await bridges.canonicalizeRoot(value)); }
-			catch (error) { return ''; }
-		}
-
 		function validSelectionEpoch(value) {
 			return (Number.isSafeInteger(value) && value >= 0)
 				|| (typeof value === 'string' && value.trim().length > 0);
 		}
 
 		async function selectedState() {
-			if (typeof bridges.getSelectedRoot !== 'function'
-					|| typeof bridges.getSelectionEpoch !== 'function') return null;
-			let selectedValue;
-			let epoch;
+			if (typeof bridges.getSelectedRepositoryState !== 'function') return null;
+			let state;
 			try {
-				selectedValue = await bridges.getSelectedRoot();
-				epoch = await bridges.getSelectionEpoch();
+				state = await bridges.getSelectedRepositoryState();
 			}
 			catch (error) { return null; }
+			if (!state || typeof state !== 'object' || typeof state.root !== 'string') return null;
+			let root = canonicalRoot(state.root);
+			let epoch = state.epoch;
+			if (!root || root !== state.root) return null;
 			if (!validSelectionEpoch(epoch)) return null;
-			let root = await canonicalize(selectedValue);
-			if (!root) return null;
 			return Object.freeze({ root, epoch });
 		}
 
@@ -224,10 +218,15 @@ Zotero.QLab = Zotero.QLab || {};
 			return current.epoch === initial.epoch;
 		}
 
+		async function canonicalizeRequestedRoot(value) {
+			if (typeof bridges.canonicalizeRoot !== 'function') return '';
+			try { return canonicalRoot(await bridges.canonicalizeRoot(value)); }
+			catch (error) { return ''; }
+		}
+
 		async function releaseCapability(capability) {
-			if (typeof bridges.releaseVerifiedDocument !== 'function') return;
-			try { await bridges.releaseVerifiedDocument(capability); }
-			catch (error) {}
+			try { return await bridges.releaseVerifiedDocument(capability) === true; }
+			catch (error) { return false; }
 		}
 
 		return Object.freeze({
@@ -235,10 +234,13 @@ Zotero.QLab = Zotero.QLab || {};
 				if (typeof bridges.acquireVerifiedDocument !== 'function') {
 					return refuse('verified-document-lease-unavailable');
 				}
+				if (typeof bridges.releaseVerifiedDocument !== 'function') {
+					return refuse('document-lease-release-failed');
+				}
 				let initialSelection = await selectedState();
 				if (!initialSelection) return refuse('selected-repository-unavailable');
 				let requestedRoot = input.root
-					? await canonicalize(input.root) : initialSelection.root;
+					? await canonicalizeRequestedRoot(input.root) : initialSelection.root;
 				if (!requestedRoot || requestedRoot !== initialSelection.root) {
 					return refuse('foreign-or-noncanonical-root');
 				}
@@ -280,17 +282,24 @@ Zotero.QLab = Zotero.QLab || {};
 					capability = await bridges.acquireVerifiedDocument(verificationRequest);
 				}
 				catch (error) { return refuse('document-verification-failed'); }
-				if (!verifiedCapabilityMatches(capability, verificationRequest)) {
-					if (capability && typeof capability === 'object') await releaseCapability(capability);
+				if (capability === null || capability === false || capability === undefined) {
 					return refuse('verified-document-capability-mismatch');
 				}
-				let access = opaqueAccess(capability);
-				if (consumedCapabilities.has(capability) || consumedAccess.has(access)) {
-					return refuse('verified-document-capability-reused');
+				let operationResult;
+				if (!verifiedCapabilityMatches(capability, verificationRequest)) {
+					operationResult = refuse('verified-document-capability-mismatch');
 				}
-				consumedCapabilities.add(capability);
-				consumedAccess.add(access);
-				try {
+				else {
+					let access = opaqueAccess(capability);
+					if (CONSUMED_CAPABILITIES.has(capability) || CONSUMED_ACCESS.has(access)) {
+						operationResult = refuse('verified-document-capability-reused');
+					}
+					else {
+						CONSUMED_CAPABILITIES.add(capability);
+						CONSUMED_ACCESS.add(access);
+					}
+				}
+				if (!operationResult) try {
 					let attachmentID = null;
 					if (document.kind === 'pdf' && typeof bridges.findAttachment === 'function') {
 						let match = await bridges.findAttachment(capability);
@@ -298,28 +307,41 @@ Zotero.QLab = Zotero.QLab || {};
 					}
 					let currentSelection = await selectedState();
 					if (!sameSelection(initialSelection, currentSelection)) {
-						return refuse('selected-repository-changed');
+						operationResult = refuse('selected-repository-changed');
 					}
-					let normalizedInput = {
-						root: currentSelection.root,
-						selectedRoot: currentSelection.root,
-						relativePath: document.path,
-						source,
-						placement: input.placement || 'current',
-						explicitSource,
-						attachmentID,
-					};
-					let decision = Zotero.QLab.workspaceDocumentOpenDecision(normalizedInput);
-					if (decision.action === 'refuse') return decision;
-					let bridgeName = ACTION_BRIDGES[decision.action];
-					let bridge = bridgeName && bridges[bridgeName];
-					if (typeof bridge !== 'function') return refuse('routing-bridge-unavailable');
-					let bridgeResult = await bridge(decision, capability);
-					if (bridgeResult !== true) return refuse('routing-bridge-refused');
-					return decision;
+					else {
+						let normalizedInput = {
+							root: currentSelection.root,
+							selectedRoot: currentSelection.root,
+							relativePath: document.path,
+							source,
+							placement: input.placement || 'current',
+							explicitSource,
+							attachmentID,
+						};
+						let decision = Zotero.QLab.workspaceDocumentOpenDecision(normalizedInput);
+						if (decision.action === 'refuse') operationResult = decision;
+						else {
+							let bridgeName = ACTION_BRIDGES[decision.action];
+							let bridge = bridgeName && bridges[bridgeName];
+							if (typeof bridge !== 'function') {
+								operationResult = refuse('routing-bridge-unavailable');
+							}
+							else {
+								// No await is permitted between the final atomic repository
+								// snapshot above and this bridge invocation.
+								let bridgePromise = bridge(decision, capability);
+								let bridgeResult = await bridgePromise;
+								operationResult = bridgeResult === true
+									? decision : refuse('routing-bridge-refused');
+							}
+						}
+					}
 				}
-				catch (error) { return refuse('document-lease-operation-failed'); }
-				finally { await releaseCapability(capability); }
+				catch (error) { operationResult = refuse('document-lease-operation-failed'); }
+				let released = await releaseCapability(capability);
+				if (!released) return refuse('document-lease-release-failed');
+				return operationResult;
 			},
 		});
 	};
