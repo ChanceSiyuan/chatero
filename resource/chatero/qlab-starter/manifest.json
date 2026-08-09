@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
-  "digest": "289570c1d225678d70b5babbbb7d052c989168a3600c4001f53843552229f7cc",
-  "archiveSha256": "5df65dfd08c73b8b7edc8f9643b92888995c96368f64c7c4d3bdbed74a0b697d",
+  "digest": "9a42854d961c3144e854a8bda7ee6553dae7ce643b0cc6f08c83f013150cad9d",
+  "archiveSha256": "4775c31b36e61b68bd24ea42372272dca2e262d1fa9f9f7db452d9fcf3fdb651",
   "entries": [
     {
       "path": ".gitignore",
       "kind": "file",
       "mode": "0644",
-      "digest": "d9b4bfa707923633ee9de4a4d13b5cfd247914821248c7df974f0aed28b34676"
+      "digest": "6f8c71a0336c6ac7b13e12bb0b0c772979d4ec9ee182d11ad5df773087291c8e"
     },
     {
       "path": ".node-version",

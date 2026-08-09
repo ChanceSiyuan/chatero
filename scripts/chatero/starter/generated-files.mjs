@@ -19,6 +19,7 @@ literature/zotero.bib
 literature/**/.raw/
 literature/**/.figures/
 .research-loop/starter.json
+.research-loop/starter.*.json
 .research-loop/local/
 .generated/
 .env*

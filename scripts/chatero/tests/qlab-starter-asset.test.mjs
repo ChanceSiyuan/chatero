@@ -358,6 +358,7 @@ test("starter ignores private setup receipts and local identity state", async ()
   const { files } = await loadStarterAsset();
   const ignore = files.get(".gitignore").toString("utf8");
   assert.match(ignore, /^\.research-loop\/starter\.json$/m);
+  assert.match(ignore, /^\.research-loop\/starter\.\*\.json$/m);
   assert.match(ignore, /^\.research-loop\/local\/$/m);
 });
 

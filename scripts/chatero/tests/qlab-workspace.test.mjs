@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { promises as fs } from "node:fs";
 import path from "node:path";
@@ -155,6 +156,33 @@ test("starter marker recognizes known bundled top-level targets while unknown ta
 	}
 	finally {
 		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("every committed starter top-level target is covered by the resumable workspace contract", async () => {
+	const QLab = await loadQLab();
+	const host = QLab.createNodeQLabPathHost(fs, path);
+	const repositoryRoot = fileURLToPath(new URL("../../../", import.meta.url));
+	const manifest = JSON.parse(await readFile(join(repositoryRoot, "resource", "chatero", "qlab-starter", "manifest.json"), "utf8"));
+	const topLevel = new Map();
+	for (const entry of manifest.entries) {
+		const name = entry.path.split("/")[0];
+		if (!topLevel.has(name)) topLevel.set(name, entry.kind);
+	}
+	for (const [name, kind] of topLevel) {
+		const root = await mkdtemp(join(tmpdir(), "chatero-qlab-manifest-top-level-"));
+		try {
+			await mkdir(join(root, ".research-loop"));
+			await writeFile(join(root, ".research-loop", "starter.json"), "{}\n");
+			if (name !== ".research-loop") {
+				if (kind === "directory") await mkdir(join(root, name));
+				else await writeFile(join(root, name), "starter target\n");
+			}
+			assert.equal(await QLab.qlabRepositoryState(root, host), "partial", name);
+		}
+		finally {
+			await rm(root, { recursive: true, force: true });
+		}
 	}
 });
 

@@ -155,7 +155,9 @@ Zotero.QLab = Zotero.QLab || {};
 	}
 
 	function isExcludedFingerprintPath(relativePath, excludedPaths) {
-		return excludedPaths.some(path => relativePath === path || relativePath.startsWith(`${path}/`));
+		return relativePath === '.research-loop/starter.json'
+			|| /^\.research-loop\/starter\.[1-9][0-9]*\.[a-f0-9]{64}\.json$/.test(relativePath)
+			|| excludedPaths.some(path => relativePath === path || relativePath.startsWith(`${path}/`));
 	}
 
 	async function preservedTargetFingerprint(root, relativePath, host, { exclude = [] } = {}) {

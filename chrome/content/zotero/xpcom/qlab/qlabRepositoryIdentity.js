@@ -135,7 +135,7 @@ Zotero.QLab = Zotero.QLab || {};
 		return Object.freeze({ identity: validatedIdentity(winner), path, created: outcome === 'created' });
 	};
 
-	Zotero.QLab.createNodeQLabRepositoryHost = function (fs, pathModule) {
+	Zotero.QLab.createNodeQLabRepositoryHost = function (fs, pathModule, options = {}) {
 		function normalized(path) {
 			return pathModule.normalize(path);
 		}
@@ -183,6 +183,16 @@ Zotero.QLab = Zotero.QLab || {};
 			}
 			finally { await handle.close(); }
 		}
+		async function removeEscapedCreatedLeaf(root, target, createdStat, directory = false) {
+			let resolved = normalized(await fs.realpath(target));
+			if (isInside(root, resolved)) return;
+			let current = await fs.lstat(resolved);
+			if (current.dev === createdStat.dev && current.ino === createdStat.ino) {
+				if (directory) await fs.rmdir(resolved);
+				else await fs.unlink(resolved);
+			}
+			throw new Error('Created private target escaped the repository root');
+		}
 		return {
 			exists: async p => (await kind(p)) !== 'missing',
 			existsNoFollow: async p => (await kind(p)) !== 'missing',
@@ -214,6 +224,9 @@ Zotero.QLab = Zotero.QLab || {};
 					throw new Error('Private identity parent escaped the repository root');
 				}
 				await assertNoSymlinkComponents(root, parent);
+				if (typeof options.beforeCreate === 'function') {
+					await options.beforeCreate(Object.freeze({ root, target: p, kind: 'private' }));
+				}
 				let handle;
 				try {
 					handle = await fs.open(p, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | (fs.constants.O_NOFOLLOW || 0), mode);
@@ -222,8 +235,14 @@ Zotero.QLab = Zotero.QLab || {};
 					if (error && error.code === 'EEXIST') return 'exists';
 					throw error;
 				}
-				try { await handle.writeFile(value, { encoding: 'utf8' }); await handle.sync(); }
+				let createdStat;
+				try {
+					await handle.writeFile(value, { encoding: 'utf8' });
+					await handle.sync();
+					createdStat = await handle.stat();
+				}
 				finally { await handle.close(); }
+				await removeEscapedCreatedLeaf(root, p, createdStat, false);
 				return 'created';
 			},
 		};

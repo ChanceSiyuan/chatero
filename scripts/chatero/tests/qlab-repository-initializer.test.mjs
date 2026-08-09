@@ -123,6 +123,12 @@ async function fixture(t, assetOptions) {
 	return { QLab, root, host, asset, inspection, plan, git, gitCalls, initializer };
 }
 
+async function latestReceipt(root, host) {
+	const candidates = await host.readReceiptCandidates(join(root, ".research-loop", "starter.json"));
+	assert.ok(candidates.length, "expected an initialization receipt");
+	return JSON.parse(candidates[0].text);
+}
+
 test("initializer verifies first, preserves user bytes and modes, and reports ordered progress", async (t) => {
 	const f = await fixture(t);
 	await mkdir(join(f.root, "drafts"));
@@ -190,7 +196,7 @@ test("initializer leaves an honest receipt after interruption and resumes only a
 	};
 	await assert.rejects(f.initializer.execute(f.plan), /simulated disk interruption/);
 	const receiptPath = join(f.root, ".research-loop", "starter.json");
-	const failed = JSON.parse(await readFile(receiptPath, "utf8"));
+	const failed = await latestReceipt(f.root, f.host);
 	assert.equal(failed.state, "failed");
 	assert.equal(failed.inFlight, "qlab");
 	assert.ok(failed.completed.includes("AGENTS.md"));
@@ -430,7 +436,7 @@ test("initializer persists a receipt before attempting the first ordinary starte
 	};
 
 	await assert.rejects(f.initializer.execute(f.plan), /stop after receipt bootstrap/);
-	const receipt = JSON.parse(await readFile(join(f.root, ".research-loop", "starter.json"), "utf8"));
+	const receipt = await latestReceipt(f.root, f.host);
 	assert.equal(receipt.state, "failed");
 	assert.deepEqual(receipt.completed, []);
 	assert.equal(await fs.access(join(f.root, "AGENTS.md")).then(() => true, () => false), false);
@@ -459,6 +465,34 @@ test("a receipt write failure after its directory bootstrap can be safely retrie
 	const result = await f.initializer.execute(plan);
 	assert.equal(result.state, "ready");
 	assert.equal(f.gitCalls.length, 1);
+});
+
+test("receipt updates are immutable generations and restart falls back from a tampered latest generation", async (t) => {
+	const f = await fixture(t);
+	const first = await f.initializer.execute(f.plan);
+	const bootstrapPath = join(f.root, ".research-loop", "starter.json");
+	const bootstrapBytes = await readFile(bootstrapPath, "utf8");
+	const candidates = await f.host.readReceiptCandidates(bootstrapPath);
+	assert.ok(candidates.length > 2);
+	assert.equal(candidates.at(-1).bootstrap, true);
+	assert.equal(candidates.at(-1).revision, 0);
+	for (const candidate of candidates.filter(candidate => !candidate.bootstrap)) {
+		const receipt = JSON.parse(candidate.text);
+		assert.equal(candidate.revision, receipt.revision);
+		assert.equal(candidate.digest, receipt.receiptDigest);
+		assert.match(candidate.path, /starter\.[1-9][0-9]*\.[a-f0-9]{64}\.json$/);
+	}
+	await assert.rejects(
+		f.host.writeReceipt(bootstrapPath, "cannot overwrite\n", { exclusive: true }),
+		/already exists|generation/i,
+	);
+	assert.equal(await readFile(bootstrapPath, "utf8"), bootstrapBytes);
+
+	await writeFile(candidates[0].path, "{not valid JSON\n", { mode: 0o600 });
+	const recovered = await f.initializer.resume(f.root);
+	assert.equal(recovered.state, "ready");
+	assert.notEqual(recovered.receiptPath, candidates[0].path);
+	assert.equal(first.repositoryIdentity, recovered.repositoryIdentity);
 });
 
 test("Gecko initializer construction binds packaged starter resources and a complete host", async () => {
@@ -495,7 +529,7 @@ test("Gecko initializer construction binds packaged starter resources and a comp
 		"realPath", "normalize", "isAbsolute", "isPathInside", "resolvePath", "join",
 		"kind", "assertNoSymlinkComponents", "readTextNoFollow", "readPrivateNoFollow",
 		"createPrivateIfAbsent", "sha256", "readBytesNoFollow", "createDirectoryIfAbsent",
-		"createFileIfAbsent", "readReceipt", "writeReceipt",
+		"createFileIfAbsent", "readReceiptCandidates", "readReceipt", "writeReceipt",
 	];
 	const prototypeHost = createPrototypeHost({
 		IOUtils: {}, PathUtils: {}, Components: {}, crypto: {},
@@ -512,7 +546,7 @@ test("Node initializer host revalidates a target parent after a missing-leaf rac
 		t.after(() => rm(outside, { recursive: true, force: true }));
 		const parent = join(root, "nested");
 		const target = join(parent, operation === "file" ? "note.qmd" : "child");
-		await mkdir(parent);
+		await mkdir(parent, { recursive: true });
 		let attacked = false;
 		const racingFs = new Proxy(fs, {
 			get(source, property) {
@@ -547,6 +581,52 @@ test("Node initializer host revalidates a target parent after a missing-leaf rac
 			false,
 			`${operation} creation escaped the repository root`,
 		);
+	}
+});
+
+test("Node create operations clean only their own escaped leaf after a final-operation parent swap", async (t) => {
+	const QLab = await loadQLab();
+	for (const operation of ["file", "directory", "receipt", "private"]) {
+		let root = await mkdtemp(join(tmpdir(), `chatero-final-race-${operation}-`));
+		let outside = await mkdtemp(join(tmpdir(), `chatero-final-race-outside-${operation}-`));
+		t.after(() => rm(root, { recursive: true, force: true }));
+		t.after(() => rm(outside, { recursive: true, force: true }));
+		root = await fs.realpath(root);
+		outside = await fs.realpath(outside);
+		const parent = operation === "private"
+			? join(root, ".git", "qlab")
+			: join(root, operation === "receipt" ? ".research-loop" : "nested");
+		const leaf = operation === "directory" ? "child" : operation === "private" ? "repository-id" : "note.qmd";
+		const target = join(parent, leaf);
+		const sentinel = join(outside, "user-sentinel.txt");
+		await mkdir(parent, { recursive: true });
+		await writeFile(sentinel, "do not touch\n");
+		let swapped = false;
+		const beforeCreate = async () => {
+			if (swapped) return;
+			swapped = true;
+			await rm(parent, { recursive: true });
+			await symlink(outside, parent);
+		};
+		const host = operation === "private"
+			? QLab.createNodeQLabRepositoryHost(fs, path, { beforeCreate })
+			: QLab.createNodeQLabInitializerHost(fs, path, createHash, { beforeCreate });
+
+		let promise = operation === "directory"
+			? host.createDirectoryIfAbsent(root, target, 0o700)
+			: operation === "private"
+				? host.createPrivateIfAbsent(root, target, "11111111-2222-4333-8444-555555555555\n", 0o600, 0o700)
+				: host.createFileIfAbsent(root, target, Buffer.from("must stay inside\n"), 0o600);
+		try {
+			await promise;
+			assert.fail(`expected escaped ${operation} creation to reject`);
+		}
+		catch (error) {
+			assert.match(String(error?.message || error), /symbolic|outside|escaped|parent/i, operation);
+		}
+		assert.equal(swapped, true, operation);
+		assert.equal(await readFile(sentinel, "utf8"), "do not touch\n", operation);
+		assert.equal(await fs.access(join(outside, leaf)).then(() => true, () => false), false, operation);
 	}
 });
 
@@ -617,12 +697,14 @@ test("chmod-only mutations of preserved content reject before starter writes", a
 test("ready receipts carry a digest and reject a forged plan digest even when the receipt digest is updated", async (t) => {
 	const f = await fixture(t);
 	const result = await f.initializer.execute(f.plan);
-	const receipt = JSON.parse(await readFile(result.receiptPath, "utf8"));
-	assert.match(receipt.receiptDigest, /^[a-f0-9]{64}$/);
-	assert.equal(receipt.receiptDigest, receiptDigest(receipt));
-	receipt.planDigest = "e".repeat(64);
-	receipt.receiptDigest = receiptDigest(receipt);
-	await writeFile(result.receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, { mode: 0o600 });
+	for (const candidate of await f.host.readReceiptCandidates(join(f.root, ".research-loop", "starter.json"))) {
+		const receipt = JSON.parse(candidate.text);
+		assert.match(receipt.receiptDigest, /^[a-f0-9]{64}$/);
+		assert.equal(receipt.receiptDigest, receiptDigest(receipt));
+		receipt.planDigest = "e".repeat(64);
+		receipt.receiptDigest = receiptDigest(receipt);
+		await writeFile(candidate.path, `${JSON.stringify(receipt, null, 2)}\n`, { mode: 0o600 });
+	}
 
 	await assert.rejects(f.initializer.resume(f.root), /plan|receipt|digest|stale/i);
 	assert.equal(f.gitCalls.length, 1);
@@ -694,39 +776,28 @@ test("committed Task 2 starter manifest and archive initialize idempotently", as
 	assert.equal(gitCalls.length, 1);
 });
 
-test("Gecko initializer host revalidates parent anchors before exclusive creation", async (t) => {
+test("Gecko initializer host cleans escaped leaves after final-operation parent swaps", async (t) => {
 	const QLab = await loadQLab();
-	for (const operation of ["file", "directory"]) {
+	for (const operation of ["file", "directory", "receipt", "private"]) {
 		let root = await mkdtemp(join(tmpdir(), `chatero-gecko-race-${operation}-`));
 		let outside = await mkdtemp(join(tmpdir(), `chatero-gecko-race-outside-${operation}-`));
 		t.after(() => rm(root, { recursive: true, force: true }));
 		t.after(() => rm(outside, { recursive: true, force: true }));
 		root = await fs.realpath(root);
 		outside = await fs.realpath(outside);
-		const parent = join(root, "nested");
-		const target = join(parent, operation === "file" ? "note.qmd" : "child");
-		await mkdir(parent);
+		const parent = operation === "private"
+			? join(root, ".git", "qlab")
+			: join(root, operation === "receipt" ? ".research-loop" : "nested");
+		const leaf = operation === "directory" ? "child" : operation === "private" ? "repository-id" : "note.qmd";
+		const target = join(parent, leaf);
+		const sentinel = join(outside, "user-sentinel.txt");
+		await mkdir(parent, { recursive: true });
+		await writeFile(sentinel, "do not touch\n");
 		let attacked = false;
-		let targetSymlinkChecks = 0;
 		class LocalFile {
 			initWithPath(value) { this.path = value; }
 			normalize() { this.path = fsSync.realpathSync(this.path); }
 			isSymlink() {
-				if (this.path === target) {
-					targetSymlinkChecks++;
-					if (operation === "file" && targetSymlinkChecks === 2 && !attacked) {
-						fsSync.rmSync(parent, { recursive: true });
-						fsSync.symlinkSync(outside, parent);
-						attacked = true;
-						return false;
-					}
-				}
-				if (operation === "directory" && this.path === parent && !attacked) {
-					fsSync.rmSync(parent, { recursive: true });
-					fsSync.symlinkSync(outside, parent);
-					attacked = true;
-					return false;
-				}
 				try { return fsSync.lstatSync(this.path).isSymbolicLink(); }
 				catch { return false; }
 			}
@@ -771,15 +842,30 @@ test("Gecko initializer host revalidates parent anchors before exclusive creatio
 			filename: value => path.basename(value), normalize: value => path.normalize(value),
 			isAbsolute: value => path.isAbsolute(value),
 		};
-		const host = QLab.createGeckoQLabInitializerHost({ IOUtils, PathUtils, Components, crypto: globalThis.crypto });
+		const host = QLab.createGeckoQLabInitializerHost({
+			IOUtils, PathUtils, Components, crypto: globalThis.crypto,
+			beforeCreate: async () => {
+				if (attacked) return;
+				attacked = true;
+				await rm(parent, { recursive: true });
+				await symlink(outside, parent);
+			},
+		});
 
-		await assert.rejects(
-			operation === "file"
-				? host.createFileIfAbsent(root, target, Buffer.from("must stay inside\n"), 0o600)
-				: host.createDirectoryIfAbsent(root, target, 0o700),
-			/symbolic|outside|escaped|parent/i,
-		);
+		let operationPromise = operation === "directory"
+			? host.createDirectoryIfAbsent(root, target, 0o700)
+			: operation === "private"
+				? host.createPrivateIfAbsent(root, target, "11111111-2222-4333-8444-555555555555\n", 0o600, 0o700)
+				: host.createFileIfAbsent(root, target, Buffer.from("must stay inside\n"), 0o600);
+		let rejected = false;
+		try { await operationPromise; }
+		catch (error) {
+			rejected = true;
+			assert.match(String(error?.message || error), /symbolic|outside|escaped|parent/i, operation);
+		}
+		assert.equal(rejected, true, operation);
 		assert.equal(attacked, true);
-		assert.equal(await fs.access(join(outside, path.basename(target))).then(() => true, () => false), false);
+		assert.equal(await readFile(sentinel, "utf8"), "do not touch\n");
+		assert.equal(await fs.access(join(outside, leaf)).then(() => true, () => false), false);
 	}
 });

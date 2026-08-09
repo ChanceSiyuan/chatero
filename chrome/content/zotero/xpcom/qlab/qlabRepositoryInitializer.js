@@ -12,6 +12,7 @@ Zotero.QLab = Zotero.QLab || {};
 
 (function () {
 	const RECEIPT_RELATIVE_PATH = '.research-loop/starter.json';
+	const RECEIPT_GENERATION = /^starter\.([1-9][0-9]*)\.([a-f0-9]{64})\.json$/;
 	const RECEIPT_SCHEMA = 1;
 	const SHA256 = /^[a-f0-9]{64}$/;
 	const RECEIPT_STATES = new Set(['running', 'failed', 'ready']);
@@ -131,6 +132,7 @@ Zotero.QLab = Zotero.QLab || {};
 	function receiptFor(plan, verified, now) {
 		return {
 			schemaVersion: RECEIPT_SCHEMA,
+			revision: 0,
 			state: 'running',
 			root: plan.root,
 			manifestDigest: verified.manifest.digest,
@@ -166,7 +168,9 @@ Zotero.QLab = Zotero.QLab || {};
 			|| !Array.isArray(receipt.create)
 			|| !Array.isArray(receipt.preserve)
 			|| !Array.isArray(receipt.conflicts)
-			|| !Array.isArray(receipt.completed)) {
+			|| !Array.isArray(receipt.completed)
+			|| (receipt.revision !== undefined
+				&& (!Number.isSafeInteger(receipt.revision) || receipt.revision < 0))) {
 			throw new Error('Initialization receipt is stale or invalid');
 		}
 		if (receipt.planDigest !== Zotero.QLab.computeQLabStarterPlanDigest(receipt)) {
@@ -200,6 +204,15 @@ Zotero.QLab = Zotero.QLab || {};
 		return receipt;
 	}
 
+	function receiptRevision(receipt) {
+		return receipt.revision === undefined ? 0 : receipt.revision;
+	}
+
+	function receiptGenerationPath(receiptPath, revision, digest, host) {
+		let parent = receiptPath.slice(0, Math.max(receiptPath.lastIndexOf('/'), receiptPath.lastIndexOf('\\')));
+		return host.join(parent, `starter.${revision}.${digest}.json`);
+	}
+
 	async function assertNoUnplannedTopLevel(root, receipt, host) {
 		let allowed = new Set(['.git', '.DS_Store']);
 		for (let entry of [...receipt.create, ...receipt.preserve]) allowed.add(entry.path.split('/')[0]);
@@ -215,11 +228,36 @@ Zotero.QLab = Zotero.QLab || {};
 		now = typeof now === 'function' ? now : () => new Date().toISOString();
 		uuid = typeof uuid === 'function' ? uuid : () => String(Services.uuid.generateUUID()).replace(/[{}]/g, '');
 
-		async function writeReceipt(receiptPath, receipt, exclusive = false) {
+		async function writeReceipt(receiptPath, receipt, { bootstrap = false } = {}) {
+			receipt.revision = bootstrap ? 0 : receiptRevision(receipt) + 1;
 			receipt.updatedAt = now();
 			delete receipt.receiptDigest;
 			receipt.receiptDigest = await host.sha256(JSON.stringify(receipt));
-			await host.writeReceipt(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, { exclusive });
+			let target = bootstrap
+				? receiptPath
+				: receiptGenerationPath(receiptPath, receipt.revision, receipt.receiptDigest, host);
+			await host.writeReceipt(target, `${JSON.stringify(receipt, null, 2)}\n`, { exclusive: true });
+			return target;
+		}
+
+		async function readLatestValidReceipt(receiptPath, root, verified) {
+			let candidates = await host.readReceiptCandidates(receiptPath);
+			for (let candidate of candidates) {
+				let receipt;
+				try { receipt = JSON.parse(candidate.text); }
+				catch { continue; }
+				try { await validateReceipt(receipt, root, verified, host); }
+				catch { continue; }
+				let revision = receiptRevision(receipt);
+				if (candidate.bootstrap) {
+					if (revision !== 0) continue;
+				}
+				else if (candidate.revision !== revision || candidate.digest !== receipt.receiptDigest) {
+					continue;
+				}
+				return { receipt, path: candidate.path };
+			}
+			return null;
 		}
 
 		async function ensureReadyIdentity(root, receipt) {
@@ -252,7 +290,7 @@ Zotero.QLab = Zotero.QLab || {};
 			}
 		}
 
-		async function continueReceipt(receipt, verified, onProgress, receiptPath, { existingReceipt = true } = {}) {
+		async function continueReceipt(receipt, verified, onProgress, receiptPath, { existingReceipt = true, currentReceiptPath = receiptPath } = {}) {
 			let createdSet = new Set(receipt.completed);
 			let report = step => { if (typeof onProgress === 'function') onProgress(Object.freeze({ step })); };
 			try {
@@ -269,14 +307,14 @@ Zotero.QLab = Zotero.QLab || {};
 						createdSet.add(markerEntry.path);
 						receipt.completed = [...createdSet];
 					}
-					await writeReceipt(receiptPath, receipt, true);
+					currentReceiptPath = await writeReceipt(receiptPath, receipt, { bootstrap: true });
 					existingReceipt = true;
 				}
 				report('add-missing-files');
 				for (let entry of receipt.create) {
 					if (createdSet.has(entry.path)) continue;
 					receipt.inFlight = entry.path;
-					if (existingReceipt) await writeReceipt(receiptPath, receipt);
+					if (existingReceipt) currentReceiptPath = await writeReceipt(receiptPath, receipt);
 					let { target, kind } = await targetStatus(receipt.root, entry, host);
 					if (kind !== 'missing') {
 						throw new Error(`Repository changed: unrecorded target ${entry.path}`);
@@ -288,7 +326,7 @@ Zotero.QLab = Zotero.QLab || {};
 					createdSet.add(entry.path);
 					receipt.completed = [...createdSet];
 					receipt.inFlight = null;
-					if (existingReceipt) await writeReceipt(receiptPath, receipt);
+					if (existingReceipt) currentReceiptPath = await writeReceipt(receiptPath, receipt);
 				}
 				report('initialize-git');
 				await initializeGit(receipt.root);
@@ -305,15 +343,15 @@ Zotero.QLab = Zotero.QLab || {};
 				receipt.state = 'ready';
 				receipt.error = null;
 				receipt.inFlight = null;
-				await writeReceipt(receiptPath, receipt);
+				currentReceiptPath = await writeReceipt(receiptPath, receipt);
 				report('ready');
-				return immutableResult(receipt, receiptPath);
+				return immutableResult(receipt, currentReceiptPath);
 			}
 			catch (error) {
 				receipt.state = 'failed';
 				receipt.error = safeError(error);
 				if (existingReceipt) {
-					try { await writeReceipt(receiptPath, receipt); }
+					try { currentReceiptPath = await writeReceipt(receiptPath, receipt); }
 					catch {}
 				}
 				throw error;
@@ -348,9 +386,9 @@ Zotero.QLab = Zotero.QLab || {};
 				await verifyGitTarget(plan.root);
 				await Zotero.QLab.preflightQLabRepositoryIdentity({ root: plan.root, host });
 				let receiptPath = host.join(plan.root, RECEIPT_RELATIVE_PATH);
-				let existing = await host.readReceipt(receiptPath);
+				let existing = await readLatestValidReceipt(receiptPath, plan.root, verified);
 				if (existing) {
-					let receipt = await validateReceipt(existing, plan.root, verified, host);
+					let receipt = existing.receipt;
 					if (receipt.state !== 'ready') throw new Error('Interrupted initialization must be resumed explicitly');
 					await assertNoUnplannedTopLevel(plan.root, receipt, host);
 					await verifyPreservedEntries(plan.root, receipt.preserve, receipt.create, host);
@@ -365,7 +403,7 @@ Zotero.QLab = Zotero.QLab || {};
 					let identity = await ensureReadyIdentity(plan.root, receipt);
 					receipt.repositoryIdentity = identity;
 					report('add-missing-files'); report('initialize-git'); report('verify-repository'); report('ready');
-					return immutableResult(receipt, receiptPath);
+					return immutableResult(receipt, existing.path);
 				}
 				let receipt = receiptFor(plan, verified, now);
 				return continueReceipt(receipt, verified, onProgress, receiptPath, { existingReceipt: false });
@@ -378,13 +416,14 @@ Zotero.QLab = Zotero.QLab || {};
 					throw new Error('Resume requires a canonical absolute repository root');
 				}
 				let receiptPath = host.join(canonical, RECEIPT_RELATIVE_PATH);
-				let stored = await host.readReceipt(receiptPath);
-				if (!stored) throw new Error('No interrupted initialization receipt exists');
 				let report = step => { if (typeof onProgress === 'function') onProgress(Object.freeze({ step })); };
 				report('verify-folder');
 				report('verify-starter');
 				let verified = await verifyAssets(assetReader, host);
-				let receipt = await validateReceipt(stored, canonical, verified, host);
+				let stored = await readLatestValidReceipt(receiptPath, canonical, verified);
+				if (!stored) throw new Error('No interrupted initialization receipt exists');
+				let receipt = stored.receipt;
+				let currentReceiptPath = stored.path;
 				await assertNoUnplannedTopLevel(canonical, receipt, host);
 				await verifyPreservedEntries(canonical, receipt.preserve, receipt.create, host);
 				await verifyGitTarget(canonical);
@@ -408,7 +447,7 @@ Zotero.QLab = Zotero.QLab || {};
 						receipt.completed = [...completed];
 					}
 					receipt.inFlight = null;
-					await writeReceipt(receiptPath, receipt);
+					currentReceiptPath = await writeReceipt(receiptPath, receipt);
 				}
 				for (let entry of receipt.create) {
 					if (completed.has(entry.path)) continue;
@@ -420,18 +459,18 @@ Zotero.QLab = Zotero.QLab || {};
 						throw new Error('Ready initialization receipt does not satisfy the QLab shape');
 					}
 					await ensureReadyIdentity(canonical, receipt);
-					return immutableResult(receipt, receiptPath);
+					return immutableResult(receipt, currentReceiptPath);
 				}
 				receipt.state = 'running';
 				receipt.error = null;
-				await writeReceipt(receiptPath, receipt);
-				return continueReceipt(receipt, verified, onProgress, receiptPath);
+				currentReceiptPath = await writeReceipt(receiptPath, receipt);
+				return continueReceipt(receipt, verified, onProgress, receiptPath, { currentReceiptPath });
 			},
 		});
 	};
 
-	Zotero.QLab.createNodeQLabInitializerHost = function (fs, pathModule, createHash) {
-		let base = Zotero.QLab.createNodeQLabRepositoryHost(fs, pathModule);
+	Zotero.QLab.createNodeQLabInitializerHost = function (fs, pathModule, createHash, options = {}) {
+		let base = Zotero.QLab.createNodeQLabRepositoryHost(fs, pathModule, options);
 		async function revalidateParent(root, target) {
 			let parent = pathModule.dirname(target);
 			await base.assertNoSymlinkComponents(root, parent);
@@ -446,10 +485,27 @@ Zotero.QLab = Zotero.QLab || {};
 			try { return await handle.readFile(); }
 			finally { await handle.close(); }
 		}
+		async function removeEscapedCreatedLeaf(root, target, createdStat, directory = false) {
+			let resolved = pathModule.normalize(await fs.realpath(target));
+			if (base.isPathInside(root, resolved)) return;
+			let current = await fs.lstat(resolved);
+			if (current.dev === createdStat.dev && current.ino === createdStat.ino) {
+				if (directory) await fs.rmdir(resolved);
+				else await fs.unlink(resolved);
+			}
+			throw new Error('Created target escaped the repository root');
+		}
 		async function createDirectoryIfAbsent(root, target, mode) {
 			await base.assertNoSymlinkComponents(root, target, { allowMissingLeaf: true });
 			await revalidateParent(root, target);
-			try { await fs.mkdir(target, { mode }); return 'created'; }
+			if (typeof options.beforeCreate === 'function') {
+				await options.beforeCreate(Object.freeze({ root, target, kind: 'directory' }));
+			}
+			try {
+				await fs.mkdir(target, { mode });
+				await removeEscapedCreatedLeaf(root, target, await fs.lstat(target), true);
+				return 'created';
+			}
 			catch (error) {
 				if (error && error.code === 'EEXIST' && await base.kind(target) === 'directory') return 'exists';
 				throw error;
@@ -458,6 +514,9 @@ Zotero.QLab = Zotero.QLab || {};
 		async function createFileIfAbsent(root, target, bytes, mode) {
 			await base.assertNoSymlinkComponents(root, target, { allowMissingLeaf: true });
 			await revalidateParent(root, target);
+			if (typeof options.beforeCreate === 'function') {
+				await options.beforeCreate(Object.freeze({ root, target, kind: 'file' }));
+			}
 			let handle;
 			try {
 				handle = await fs.open(target, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | (fs.constants.O_NOFOLLOW || 0), mode);
@@ -466,11 +525,17 @@ Zotero.QLab = Zotero.QLab || {};
 				if (error && error.code === 'EEXIST') return 'exists';
 				throw error;
 			}
-			try { await handle.writeFile(bytes); await handle.sync(); }
+			let createdStat;
+			try {
+				await handle.writeFile(bytes);
+				await handle.sync();
+				createdStat = await handle.stat();
+			}
 			finally { await handle.close(); }
+			await removeEscapedCreatedLeaf(root, target, createdStat, false);
 			return 'created';
 		}
-		return {
+		let host = {
 			...base,
 			entries: async target => (await fs.readdir(target)).map(name => pathModule.join(target, name)),
 			filename: target => pathModule.basename(target),
@@ -480,22 +545,41 @@ Zotero.QLab = Zotero.QLab || {};
 			readBytesNoFollow,
 			createDirectoryIfAbsent,
 			createFileIfAbsent,
+			readReceiptCandidates: async target => {
+				let parent = pathModule.dirname(target);
+				let bootstrap = pathModule.basename(target);
+				let names;
+				try { names = await fs.readdir(parent); }
+				catch (error) { if (error && error.code === 'ENOENT') return []; throw error; }
+				let candidates = [];
+				for (let name of names) {
+					let match = RECEIPT_GENERATION.exec(name);
+					if (name !== bootstrap && !match) continue;
+					let path = pathModule.join(parent, name);
+					try {
+						candidates.push({
+							path,
+							text: (await readBytesNoFollow(path)).toString('utf8'),
+							bootstrap: name === bootstrap,
+							revision: match ? Number(match[1]) : 0,
+							digest: match ? match[2] : '',
+						});
+					}
+					catch (error) { if (!(error && error.code === 'ENOENT')) throw error; }
+				}
+				return candidates.sort((left, right) => right.revision - left.revision);
+			},
 			readReceipt: async target => {
-				try { return JSON.parse((await readBytesNoFollow(target)).toString('utf8')); }
-				catch (error) { if (error && error.code === 'ENOENT') return null; throw error; }
+				let candidates = await host.readReceiptCandidates(target);
+				return candidates.length ? JSON.parse(candidates[0].text) : null;
 			},
 			writeReceipt: async (target, text, { exclusive } = {}) => {
-				if (exclusive) {
-					let outcome = await createFileIfAbsent(pathModule.dirname(pathModule.dirname(target)), target, text, 0o600);
-					if (outcome !== 'created') throw new Error('Initialization receipt already exists');
-					return;
-				}
-				let temporary = `${target}.tmp-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-				let outcome = await createFileIfAbsent(pathModule.dirname(pathModule.dirname(target)), temporary, text, 0o600);
-				if (outcome !== 'created') throw new Error('Could not create private receipt staging file');
-				await fs.rename(temporary, target);
+				if (!exclusive) throw new Error('Receipt updates must be immutable');
+				let outcome = await createFileIfAbsent(pathModule.dirname(pathModule.dirname(target)), target, text, 0o600);
+				if (outcome !== 'created') throw new Error('Initialization receipt generation already exists');
 			},
 		};
+		return host;
 	};
 
 	Zotero.QLab.createGeckoQLabInitializerHost = function (dependencies = {}) {
@@ -593,10 +677,24 @@ Zotero.QLab = Zotero.QLab || {};
 			await assertNoSymlinkComponents(root, parent);
 		}
 
-		async function writeExclusive(target, bytes, mode, root) {
+		async function removeEscapedCreatedLeaf(root, target, directory = false) {
+			let resolved = await host.realPath(target);
+			if (isInside(root, resolved)) return;
+			let current = await kind(resolved);
+			if ((directory && current === 'directory') || (!directory && current === 'file')) {
+				await io.remove(resolved, { ignoreAbsent: true, recursive: false });
+			}
+			throw new Error('Created target escaped the repository root');
+		}
+
+		async function writeExclusive(target, bytes, mode, root, kind = 'file') {
 			let file = localFile(target);
 			if (typeof file.isSymlink === 'function' && file.isSymlink()) throw new Error(`Symbolic link refused at ${target}`);
 			if (root) await revalidateParent(root, target);
+			if (root && typeof dependencies.beforeCreate === 'function') {
+				await dependencies.beforeCreate(Object.freeze({ root, target, kind }));
+			}
+			if (root) await assertNoSymlinkComponents(root, target, { allowMissingLeaf: true });
 			let stream = xpcom.classes['@mozilla.org/network/file-output-stream;1']
 				.createInstance(xpcom.interfaces.nsIFileOutputStream);
 			stream.init(file, 0x02 | 0x08 | 0x80, mode, 0);
@@ -614,12 +712,17 @@ Zotero.QLab = Zotero.QLab || {};
 		async function createDirectoryIfAbsent(root, target, mode) {
 			await assertNoSymlinkComponents(root, target, { allowMissingLeaf: true });
 			await revalidateParent(root, target);
+			if (typeof dependencies.beforeCreate === 'function') {
+				await dependencies.beforeCreate(Object.freeze({ root, target, kind: 'directory' }));
+			}
+			await assertNoSymlinkComponents(root, target, { allowMissingLeaf: true });
 			let file = localFile(target);
 			try { file.create(xpcom.interfaces.nsIFile.DIRECTORY_TYPE, mode); }
 			catch (error) {
 				if (await kind(target) === 'directory') return 'exists';
 				throw error;
 			}
+			await removeEscapedCreatedLeaf(root, target, true);
 			await assertNoSymlinkComponents(root, target);
 			return 'created';
 		}
@@ -627,11 +730,12 @@ Zotero.QLab = Zotero.QLab || {};
 		async function createFileIfAbsent(root, target, bytes, mode) {
 			await assertNoSymlinkComponents(root, target, { allowMissingLeaf: true });
 			await revalidateParent(root, target);
-			try { await writeExclusive(target, bytes, mode, root); }
+			try { await writeExclusive(target, bytes, mode, root, 'file'); }
 			catch (error) {
 				if (await kind(target) !== 'missing') return 'exists';
 				throw error;
 			}
+			await removeEscapedCreatedLeaf(root, target, false);
 			await assertNoSymlinkComponents(root, target);
 			return 'created';
 		}
@@ -679,7 +783,11 @@ Zotero.QLab = Zotero.QLab || {};
 					throw new Error('Private identity parent escaped the repository root');
 				}
 				await assertNoSymlinkComponents(root, parent);
-				try { await writeExclusive(target, value, mode, root); return 'created'; }
+				try {
+					await writeExclusive(target, value, mode, root, 'private');
+					await removeEscapedCreatedLeaf(root, target, false);
+					return 'created';
+				}
 				catch (error) {
 					if (await kind(target) !== 'missing') return 'exists';
 					throw error;
@@ -693,26 +801,39 @@ Zotero.QLab = Zotero.QLab || {};
 			readBytesNoFollow,
 			createDirectoryIfAbsent,
 			createFileIfAbsent,
-			readReceipt: async target => {
-				try { return JSON.parse(new TextDecoder().decode(await readBytesNoFollow(target))); }
-				catch (error) {
-					if (await kind(target) === 'missing') return null;
-					throw error;
+			readReceiptCandidates: async target => {
+				let parent = paths.parent(target);
+				let bootstrap = paths.filename(target);
+				let entries;
+				try { entries = await io.getChildren(parent); }
+				catch (error) { if (await kind(parent) === 'missing') return []; throw error; }
+				let candidates = [];
+				for (let path of entries) {
+					let name = paths.filename(path);
+					let match = RECEIPT_GENERATION.exec(name);
+					if (name !== bootstrap && !match) continue;
+					try {
+						candidates.push({
+							path,
+							text: new TextDecoder().decode(await readBytesNoFollow(path)),
+							bootstrap: name === bootstrap,
+							revision: match ? Number(match[1]) : 0,
+							digest: match ? match[2] : '',
+						});
+					}
+					catch (error) { if (await kind(path) !== 'missing') throw error; }
 				}
+				return candidates.sort((left, right) => right.revision - left.revision);
+			},
+			readReceipt: async target => {
+				let candidates = await host.readReceiptCandidates(target);
+				return candidates.length ? JSON.parse(candidates[0].text) : null;
 			},
 			writeReceipt: async (target, text, { exclusive } = {}) => {
 				let root = paths.parent(paths.parent(target));
-				if (exclusive) {
-					let outcome = await createFileIfAbsent(root, target, new TextEncoder().encode(text), 0o600);
-					if (outcome !== 'created') throw new Error('Initialization receipt already exists');
-					return;
-				}
-				await assertNoSymlinkComponents(root, target, { allowMissingLeaf: true });
-				let temporary = paths.join(paths.parent(target), `.starter-${Date.now()}-${Math.random().toString(16).slice(2)}.tmp`);
-				let outcome = await createFileIfAbsent(root, temporary, new TextEncoder().encode(text), 0o600);
-				if (outcome !== 'created') throw new Error('Could not create private receipt staging file');
-				try { await io.move(temporary, target, { noOverwrite: false }); }
-				catch (error) { try { await io.remove(temporary, { ignoreAbsent: true }); } catch {} throw error; }
+				if (!exclusive) throw new Error('Receipt updates must be immutable');
+				let outcome = await createFileIfAbsent(root, target, new TextEncoder().encode(text), 0o600);
+				if (outcome !== 'created') throw new Error('Initialization receipt generation already exists');
 			},
 		};
 		return host;
