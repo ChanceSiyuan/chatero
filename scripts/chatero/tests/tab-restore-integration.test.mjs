@@ -120,3 +120,51 @@ test("restored duplicate Reader and Note identities reconcile one-to-one in sess
 	]);
 	assert.equal(reconciled.panes[0].activeTabID, "reader-live-b");
 });
+
+test("missing restored Reader and Note tabs are removed with safe pane fallbacks", async () => {
+	const QLab = await loadQLab();
+	const reconciled = QLab.reconcileRestoredTabGroupState({
+		version: 3,
+		contentTabs: [
+			{ id: "zotero-pane", kind: "library", title: "Library" },
+			{ id: "missing-reader", kind: "reader", payload: { itemID: 7 } },
+			{ id: "missing-note", kind: "note", payload: { itemID: 8 } },
+			{ id: "qlabqmd", kind: "qlabqmd", title: "QMD Editor" },
+		],
+		utilityTabs: [],
+		panes: [
+			{ tabIDs: ["zotero-pane", "missing-reader"], activeTabID: "missing-reader" },
+			{ tabIDs: ["missing-note"], activeTabID: "missing-note" },
+			{ tabIDs: ["qlabqmd"], activeTabID: "qlabqmd" },
+		],
+		groups: {
+			left: { tabIDs: ["zotero-pane", "missing-reader"], activeTabID: "missing-reader" },
+			right: { tabIDs: ["missing-note"], activeTabID: "missing-note" },
+		},
+	}, [
+		{ id: "zotero-pane", type: "library", data: {} },
+		{ id: "qlabqmd", type: "qlabqmd", data: {} },
+	]);
+
+	assert.deepEqual(plain(reconciled.contentTabs.map(tab => tab.id)), [
+		"zotero-pane",
+		"qlabqmd",
+	]);
+	assert.deepEqual(plain(reconciled.panes), [
+		{ tabIDs: ["zotero-pane"], activeTabID: "zotero-pane" },
+		{ tabIDs: [], activeTabID: null },
+		{ tabIDs: ["qlabqmd"], activeTabID: "qlabqmd" },
+	]);
+	assert.deepEqual(plain(reconciled.groups), {
+		left: { tabIDs: ["zotero-pane"], activeTabID: "zotero-pane" },
+		right: { tabIDs: [], activeTabID: null },
+	});
+	assert.doesNotMatch(JSON.stringify(reconciled), /missing-(?:reader|note)/);
+
+	const restored = new QLab.TabGroups();
+	restored.restore(reconciled);
+	assert.deepEqual(
+		plain(restored.snapshot().panes.map(pane => pane.activeTabID)),
+		["zotero-pane", "qlabqmd"],
+	);
+});

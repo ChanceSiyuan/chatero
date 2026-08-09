@@ -45,16 +45,25 @@ Zotero.QLab = Zotero.QLab || {};
 		return String(type || '').replace(/-(?:unloaded|loading)$/, '');
 	}
 
-	function clonePaneWithIDs(pane, idMap) {
+	function clonePaneWithIDs(pane, idMap, droppedIDs = new Set()) {
 		if (!pane || typeof pane !== 'object') {
 			return pane;
 		}
+		let tabIDs = Array.isArray(pane.tabIDs)
+			? pane.tabIDs
+				.filter(id => !droppedIDs.has(id))
+				.map(id => idMap.get(id) || id)
+			: pane.tabIDs;
+		let activeTabID = droppedIDs.has(pane.activeTabID)
+			? null
+			: (idMap.get(pane.activeTabID) || pane.activeTabID);
+		if (Array.isArray(tabIDs) && !tabIDs.includes(activeTabID)) {
+			activeTabID = tabIDs[tabIDs.length - 1] || null;
+		}
 		return {
 			...pane,
-			tabIDs: Array.isArray(pane.tabIDs)
-				? pane.tabIDs.map(id => idMap.get(id) || id)
-				: pane.tabIDs,
-			activeTabID: idMap.get(pane.activeTabID) || pane.activeTabID,
+			tabIDs,
+			activeTabID,
 		};
 	}
 
@@ -82,37 +91,47 @@ Zotero.QLab = Zotero.QLab || {};
 		}
 		let used = new Set();
 		let idMap = new Map();
-		result[tabKey] = entries.map(entry => {
+		let droppedIDs = new Set();
+		result[tabKey] = entries.flatMap(entry => {
 			let next = {
 				...entry,
 				payload: entry?.payload && typeof entry.payload === 'object'
 					? { ...entry.payload }
 					: entry?.payload,
 			};
-			if ((entry?.kind !== 'reader' && entry?.kind !== 'note')
-					|| !entry.payload) {
-				return next;
+			if (entry?.kind !== 'reader' && entry?.kind !== 'note') {
+				return [next];
 			}
-			let key = `${entry.kind}:${String(entry.payload.itemID)}`;
-			let values = candidates.get(key) || [];
+			let itemID = entry.payload?.itemID;
+			let key = `${entry.kind}:${String(itemID)}`;
+			let values = itemID === undefined || itemID === null
+				? []
+				: (candidates.get(key) || []);
 			let live = values.find(tab => tab.id === entry.id && !used.has(tab.id))
 				|| values.find(tab => !used.has(tab.id));
 			if (!live) {
-				return next;
+				if (typeof entry.id === 'string' && entry.id) {
+					droppedIDs.add(entry.id);
+				}
+				return [];
 			}
 			used.add(live.id);
 			idMap.set(entry.id, live.id);
 			next.id = live.id;
-			return next;
+			return [next];
 		});
 		if (Array.isArray(data.panes)) {
-			result.panes = data.panes.map(pane => clonePaneWithIDs(pane, idMap));
+			result.panes = data.panes.map(
+				pane => clonePaneWithIDs(pane, idMap, droppedIDs)
+			);
 		}
 		if (data.groups && typeof data.groups === 'object') {
 			result.groups = {};
 			for (let role of ['left', 'center', 'right']) {
 				if (Object.prototype.hasOwnProperty.call(data.groups, role)) {
-					result.groups[role] = clonePaneWithIDs(data.groups[role], idMap);
+					result.groups[role] = clonePaneWithIDs(
+						data.groups[role], idMap, droppedIDs
+					);
 				}
 			}
 		}
