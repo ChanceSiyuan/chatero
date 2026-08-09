@@ -1029,8 +1029,10 @@ var Zotero_Tabs = new function () {
 					if (Zotero.QLab.cancelShellTabMount) {
 						Zotero.QLab.cancelShellTabMount(container);
 					}
-					container.querySelector('.qlab-shell-host')
-						?._qlabQmdWorkspace?.dispose();
+					let shellHost = container.querySelector('.qlab-shell-host');
+					shellHost?._qlabQmdWorkspace?.dispose();
+					shellHost?._qlabSetupView?.dispose();
+					shellHost?._qlabMainSiteView?.dispose();
 				}
 				catch (e) {
 					Zotero.logError && Zotero.logError(e);

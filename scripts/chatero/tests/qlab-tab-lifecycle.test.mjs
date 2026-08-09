@@ -78,6 +78,8 @@ test("every docked QLab tab receives container-scoped workspace disposal", () =>
 		tabsSource,
 		/!tab\.onClose[\s\S]*type !== 'qlabchat'[\s\S]*SHELL_TAB_TYPES\.includes\(type\)[\s\S]*cancelShellTabMount\(container\)[\s\S]*container\.querySelector\('\.qlab-shell-host'\)[\s\S]*_qlabQmdWorkspace\?\.dispose\(\)/,
 	);
+	assert.match(tabsSource, /_qlabSetupView\?\.dispose\(\)/);
+	assert.match(tabsSource, /_qlabMainSiteView\?\.dispose\(\)/);
 });
 
 test("new docked QLab tab close handlers capture their container instead of global document", () => {
@@ -87,7 +89,20 @@ test("new docked QLab tab close handlers capture their container instead of glob
 	);
 	assert.match(ensureShellTab, /cancelShellTabMount\(shellContainer\)/);
 	assert.match(ensureShellTab, /shellContainer\?\.querySelector\('\.qlab-shell-host'\)/);
+	assert.match(ensureShellTab, /_qlabMainSiteView\?\.dispose\(\)/);
 	assert.doesNotMatch(ensureShellTab, /typeof document|document\.getElementById/);
+});
+
+test("ready Main Site tabs mount the site view through the shared service without a local state machine", () => {
+	const mount = moduleSource.slice(
+		moduleSource.indexOf("if (kind === 'qlabsite'"),
+		moduleSource.indexOf("let sameRoot", moduleSource.indexOf("if (kind === 'qlabsite'")),
+	);
+	assert.match(mount, /repositoryIdentity/);
+	assert.match(mount, /getMainSiteService\(\)/);
+	assert.match(mount, /createMainSiteView/);
+	assert.match(mount, /service:/);
+	assert.doesNotMatch(mount, /\.start\(|\.rebuild\(|npm|quarto/);
 });
 
 test("Chat launcher close never cancels or removes the window-owned shell", () => {

@@ -176,6 +176,7 @@ const xpcomFilesLocal = [
 	'qlab/codexDiscovery',
 	'qlab/processRunner',
 	'qlab/mainSiteService',
+	'qlab/mainSiteView',
 	'qlab/qmdCompliance',
 	'qlab/codexExecProvider',
 	'qlab/agentProviders',

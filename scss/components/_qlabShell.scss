@@ -231,6 +231,80 @@
 	cursor: pointer;
 }
 
+.qlab-main-site {
+	display: grid;
+	grid-template-rows: auto minmax(0, 1fr) auto;
+	width: 100%;
+	height: 100%;
+	min-width: 0;
+	min-height: 0;
+	color: var(--zc-text);
+	background: var(--zc-bg);
+}
+
+.qlab-main-site__toolbar {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-height: 42px;
+	padding: 5px 9px;
+	border-bottom: 1px solid var(--zc-border);
+	background: var(--zc-bg-raised);
+}
+
+.qlab-main-site__toolbar button {
+	appearance: none;
+	min-height: 29px;
+	padding: 0 10px;
+	border: 1px solid var(--zc-border);
+	border-radius: 7px;
+	color: var(--zc-text);
+	background: var(--zc-bg-raised);
+	font: inherit;
+	cursor: pointer;
+}
+
+.qlab-main-site__toolbar button:disabled {
+	opacity: .5;
+	cursor: default;
+}
+
+.qlab-main-site__status {
+	min-width: 0;
+	margin-right: auto;
+	overflow: hidden;
+	color: var(--zc-muted);
+	font-size: 12px;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.qlab-main-site__primary {
+	color: var(--zc-accent) !important;
+	border-color: var(--zc-accent) !important;
+}
+
+.qlab-main-site__browser {
+	width: 100%;
+	height: 100%;
+	min-width: 0;
+	min-height: 0;
+	background: white;
+}
+
+.qlab-main-site__log {
+	max-height: 180px;
+	padding: 5px 10px;
+	border-top: 1px solid var(--zc-border);
+	overflow: auto;
+	font-size: 11px;
+}
+
+.qlab-main-site__log pre {
+	margin: 6px 0;
+	white-space: pre-wrap;
+}
+
 @media (prefers-color-scheme: dark) {
 	.qlab-shell-host {
 		--zc-accent: #0a84ff;

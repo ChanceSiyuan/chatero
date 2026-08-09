@@ -15,6 +15,8 @@
 Zotero.QLab = Zotero.QLab || {};
 
 (function () {
+	let mainSiteControllers = [];
+
 	function notReady(feature, message) {
 		return {
 			ok: false,
@@ -24,6 +26,14 @@ Zotero.QLab = Zotero.QLab || {};
 				|| `${feature} lands after A–D daily-path parity.`,
 		};
 	}
+
+	Zotero.QLab.registerMainSiteController = function (controller) {
+		if (!controller || typeof controller.openMainSite !== 'function') return () => {};
+		mainSiteControllers.push(controller);
+		return () => {
+			mainSiteControllers = mainSiteControllers.filter(value => value !== controller);
+		};
+	};
 	
 	Zotero.QLab.Phase4 = {
 		proposeKnowledgePromotion() {
@@ -32,8 +42,20 @@ Zotero.QLab = Zotero.QLab || {};
 		importLiterature() {
 			return notReady('literature-import');
 		},
-		openMainSite() {
-			return notReady('main-site');
+		openMainSite(options = {}) {
+			let controller = mainSiteControllers[mainSiteControllers.length - 1];
+			if (!controller) return notReady('main-site', 'Open a Chatero library window first.');
+			try {
+				let tabID = controller.openMainSite(options);
+				if (!tabID) return notReady('main-site', 'Choose a Research Loop repository first.');
+				return { ok: true, feature: 'main-site', status: 'opened', tabID };
+			}
+			catch (error) {
+				return {
+					ok: false, feature: 'main-site', status: 'error',
+					message: error && error.message || String(error),
+				};
+			}
 		},
 		openTerminal() {
 			return notReady('terminal');

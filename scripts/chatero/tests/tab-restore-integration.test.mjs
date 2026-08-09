@@ -35,6 +35,34 @@ function legacyState() {
 	};
 }
 
+test("native qlabsite restore preserves only its repository target and same-origin page", async () => {
+	const QLab = await loadQLab();
+	const payload = {
+		setupRoot: "/tmp/research-loop",
+		repositoryIdentity: "12345678-1234-4123-8123-123456789abc",
+		siteURL: "http://127.0.0.1:4180/knowledge/topic.html",
+	};
+	let restoredTabs = null;
+	const tabsAPI = {
+		_tabs: [{ id: "zotero-pane", type: "library", data: {} }],
+		async restoreState(tabs) {
+			restoredTabs = tabs;
+			this._tabs = [
+				{ id: "zotero-pane", type: "library", data: {} },
+				{ id: "qlabsite", type: "qlabsite", data: payload },
+			];
+		},
+		restoreQLabGroupsState() {},
+	};
+	await QLab.restoreNativeAndQLabTabState(tabsAPI, {
+		tabs: [
+			{ type: "library", data: {} },
+			{ type: "qlabsite", title: "Knowledge Site", data: payload, selected: true },
+		],
+	});
+	assert.deepEqual(plain(restoredTabs[1].data), payload);
+});
+
 test("native tab restoration finishes before legacy groups reconcile onto the minted Reader id", async () => {
 	const QLab = await loadQLab();
 	const state = legacyState();
