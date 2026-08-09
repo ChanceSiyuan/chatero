@@ -13,6 +13,45 @@ Zotero.QLab = Zotero.QLab || {};
 (function () {
 	const SHELL_KINDS = new Set(['qlabchat', 'qlabqmd', 'qlabsite']);
 	const UTILITY_KINDS = new Set(['qlabchat']);
+
+	function hasStableItemIdentity(tab, kind, itemID) {
+		return tab
+			&& tab.kind === kind
+			&& itemID !== undefined
+			&& itemID !== null
+			&& String(tab.payload && tab.payload.itemID) === String(itemID);
+	}
+
+	/**
+	 * Replace an arrangement's synthetic item-backed tab id with the native id.
+	 * Opening a Reader can register the native tab in TabGroups before this
+	 * bridge resumes, so remove every stale model entry for the same attachment.
+	 */
+	function adoptNativeItemTabID(groups, spec, nativeID) {
+		let oldID = spec.id;
+		if (!nativeID || nativeID === oldID) {
+			return false;
+		}
+		let itemID = spec.payload && spec.payload.itemID;
+		let nativeTab = groups.tab(nativeID);
+		if (nativeTab && !hasStableItemIdentity(nativeTab, spec.kind, itemID)) {
+			throw new Error(`Native tab id ${nativeID} conflicts with ${spec.kind}:${itemID}`);
+		}
+
+		if (!nativeTab && oldID) {
+			groups.rekeyTab(oldID, nativeID);
+		}
+		spec.id = nativeID;
+
+		// If the native open registered its id first, rekeyTab correctly refuses
+		// to overwrite it. In either order, stable item identity must be unique.
+		for (let tab of groups.tabs()) {
+			if (tab.id !== nativeID && hasStableItemIdentity(tab, spec.kind, itemID)) {
+				groups.closeTab(tab.id);
+			}
+		}
+		return true;
+	}
 	
 	/**
 	 * Build idempotent arrangement requests for PDF + Chat and PDF | Editor.
@@ -156,8 +195,7 @@ Zotero.QLab = Zotero.QLab || {};
 				let readerTabID = await bridge.ensureReader(spec.payload.itemID);
 				// Remap model ids onto the live Zotero tab ids when they differ.
 				if (readerTabID && readerTabID !== spec.id) {
-					spec.id = readerTabID;
-					remapped = true;
+					remapped = adoptNativeItemTabID(groups, spec, readerTabID) || remapped;
 				}
 			}
 		}

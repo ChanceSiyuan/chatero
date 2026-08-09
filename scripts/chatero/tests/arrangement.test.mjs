@@ -64,10 +64,63 @@ test("applyArrangement remaps shell tab ids onto the live host id", async () => 
 	});
 	assert.equal(snapshot.groups.right.activeTabID, "tab-random-qmd");
 	assert.equal(snapshot.groups.left.activeTabID, "tab-reader-42");
+	assert.equal(groups.tab("reader:42"), null, "the synthetic Reader id must be rekeyed");
 	const visibility = QLab.resolveSplitVisibility(snapshot, "tab-reader-42");
 	assert.equal(visibility.rightID, "tab-random-qmd");
 	assert.equal(
 		JSON.stringify(QLab.paneClassForTab("tab-random-qmd", visibility).slice().sort()),
 		JSON.stringify(["deck-selected", "qlab-visible-right"].sort()),
+	);
+});
+
+test("applyArrangement replaces the synthetic Reader id with the one live native Reader", async () => {
+	const QLab = await loadQLab();
+	const groups = new QLab.TabGroups();
+	const arrangement = QLab.buildResearchDeskArrangement({
+		itemID: 42,
+		title: "Paper",
+		draftPath: "drafts/paper.qmd",
+	});
+	const bridge = {
+		ensureReader: async () => {
+			// Opening the native Reader registers its minted tab id while the
+			// arrangement's synthetic reader:42 entry is still present.
+			groups.openTab({
+				kind: "reader",
+				id: "tab-reader-42",
+				title: "Paper",
+				payload: { itemID: 42 },
+			}, "left");
+			return "tab-reader-42";
+		},
+		ensureShellTab: async kind => kind,
+		select: () => {},
+	};
+
+	await QLab.applyArrangement(groups, arrangement, bridge);
+	await QLab.applyArrangement(groups, arrangement, bridge);
+
+	const readers = groups.contentTabs().filter(tab => (
+		tab.kind === "reader" && tab.payload?.itemID === 42
+	));
+	assertJSON(readers.map(tab => tab.id), ["tab-reader-42"]);
+	assert.equal(groups.tab("reader:42"), null);
+	assertJSON(
+		groups.serialize().contentTabs
+			.filter(tab => tab.kind === "reader" && tab.payload?.itemID === 42)
+			.map(tab => tab.id),
+		["tab-reader-42"],
+	);
+
+	groups.closeTab("tab-reader-42");
+	const afterClose = groups.snapshot();
+	const liveIDs = new Set(groups.contentTabs().map(tab => tab.id));
+	assert.equal(afterClose.groups.left.activeTabID, "zotero-pane");
+	assert.equal(
+		afterClose.panes.every(pane => (
+			pane.activeTabID === null || liveIDs.has(pane.activeTabID)
+		)),
+		true,
+		"closing the native Reader must not activate a nonexistent synthetic host",
 	);
 });

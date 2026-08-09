@@ -7,6 +7,33 @@ const tabsSource = await readFile("chrome/content/zotero/tabs.js", "utf8");
 const moduleSource = await readFile("chrome/content/zotero/xpcom/qlab/qlabModule.js", "utf8");
 const paneSource = await readFile("chrome/content/zotero/zoteroPane.js", "utf8");
 
+async function exercisePaneStartupRestore({ qlab, state }) {
+	const start = paneSource.indexOf("\t\t// Restore pane state");
+	const end = paneSource.indexOf("\t\taddFocusHandlers();", start);
+	assert.notEqual(start, -1, "zoteroPane restore block must remain discoverable");
+	assert.notEqual(end, -1, "zoteroPane restore block must remain bounded");
+	const restoreBlock = paneSource.slice(start, end);
+	const restored = [];
+	const errors = [];
+	const stateTabs = state.tabs;
+	const context = {
+		Zotero: {
+			QLab: qlab,
+			Session: { state: { windows: [state] } },
+			logError: error => errors.push(error),
+		},
+		Zotero_Tabs: {
+			restoreState: async tabs => restored.push(tabs),
+		},
+	};
+	runInNewContext(
+		`globalThis.__restorePaneTabs = async function () {${restoreBlock}\n};`,
+		context,
+	);
+	await context.__restorePaneTabs();
+	return { errors, restored, stateTabs };
+}
+
 function loadNativeTabsWithoutQLab() {
 	const assignments = [
 		tabsSource.slice(
@@ -151,4 +178,34 @@ test("window session state owns Chat Pin and bounds alongside QLab groups", () =
 	assert.match(getState, /getQLabChatPresentationState/);
 	assert.match(getState, /state\.qlabChatPresentation = chatPresentation/);
 	assert.doesNotMatch(moduleSource, /qlab\.chatUtilityPresentation/);
+});
+
+test("pane startup restores native tabs when the QLab restore helper is unavailable", async () => {
+	const result = await exercisePaneStartupRestore({
+		qlab: {},
+		state: {
+			type: "pane",
+			tabs: [{ type: "reader", data: { itemID: 42 } }],
+		},
+	});
+	assert.equal(result.restored.length, 1);
+	assert.equal(result.restored[0], result.stateTabs);
+});
+
+test("pane startup falls back to native restore when the QLab helper throws before restore", async () => {
+	const failure = new Error("QLab restore unavailable during startup");
+	const result = await exercisePaneStartupRestore({
+		qlab: {
+			restoreNativeAndQLabTabState: async () => {
+				throw failure;
+			},
+		},
+		state: {
+			type: "pane",
+			tabs: [{ type: "reader", data: { itemID: 7 } }],
+		},
+	});
+	assert.equal(result.restored.length, 1);
+	assert.equal(result.restored[0], result.stateTabs);
+	assert.equal(result.errors.includes(failure), true);
 });
