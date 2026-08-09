@@ -220,6 +220,17 @@ Zotero.QLab = Zotero.QLab || {};
 			throw new Error('No available loopback port in the bounded range 4181 through 4199');
 		}
 
+		async function selectReplacementPort(previousPort) {
+			if (Number.isInteger(previousPort)
+					&& previousPort >= PREFERRED_PORT
+					&& previousPort <= LAST_FALLBACK_PORT
+					&& await runtime.isPortAvailable(previousPort, HOST)) {
+				return previousPort;
+			}
+			let preferredHealth = await probe(siteURL(PREFERRED_PORT));
+			return selectPort(preferredHealth);
+		}
+
 		async function dependencies() {
 			let resolved = await runtime.resolveDependencies();
 			if (!resolved || !resolved.node || !nodeVersionIsSupported(resolved.node.version)) {
@@ -506,6 +517,8 @@ Zotero.QLab = Zotero.QLab || {};
 					let target = pinTarget(record, await targetPromise);
 					assertNotCancelled(record);
 					transition(record, 'stale', { error: null });
+					let rebuildsOwnedProcess = record.ownership === 'owned';
+					let previousOwnedPort = rebuildsOwnedProcess ? record.port : null;
 					let currentHealth = record.url ? await probe(record.url) : null;
 					if (!healthMatches(currentHealth, target.identity)
 							&& record.ownership === 'owned') {
@@ -516,6 +529,13 @@ Zotero.QLab = Zotero.QLab || {};
 					assertNotCancelled(record);
 					await runFiniteStage(record, 'installing', resolved.npm, ['ci'], { cwd: target.root });
 					await runFiniteStage(record, 'building', resolved.npm, ['run', 'build'], { cwd: target.root });
+					if (rebuildsOwnedProcess) {
+						if (record.ownership === 'owned') await retireOwnedProcess(record);
+						assertNotCancelled(record);
+						let port = await selectReplacementPort(previousOwnedPort);
+						assertNotCancelled(record);
+						return launch(record, target, resolved.npm, port);
+					}
 					let url = record.lastGoodURL || siteURL(PREFERRED_PORT);
 					if (healthMatches(await probe(url), target.identity)) {
 						return transition(record, 'ready', { url, error: null });

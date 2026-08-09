@@ -395,6 +395,76 @@ test("a failed rebuild preserves the last-good URL", async () => {
 	assert.equal(snapshot.url, "http://127.0.0.1:4180/");
 });
 
+test("a successful rebuild keeps a healthy owned site live through build then replaces it", async () => {
+	const QLab = await loadQLab();
+	const firstControls = { hold: true, exitOnRelease: true };
+	const secondControls = { hold: true, exitOnRelease: true };
+	const { runtime } = runtimeFixture({
+		startControlsFactory: generation => generation === 1 ? firstControls : secondControls,
+	});
+	const service = QLab.createMainSiteService(runtime);
+	await service.start(target());
+
+	const rebuilt = await service.rebuild(target());
+
+	assert.equal(runtime.spawnCalls.filter(call => call.args.includes("start")).length, 2);
+	assert.equal(firstControls.cancelled, 1);
+	assert.equal(firstControls.waits, 1);
+	assert.equal(secondControls.cancelled || 0, 0);
+	assert.equal(rebuilt.state, "ready");
+	assert.equal(rebuilt.ownership, "owned");
+});
+
+test("a failed rebuild leaves the healthy owned site tracked and does not restart it", async () => {
+	const QLab = await loadQLab();
+	const oldControls = { hold: true, exitOnRelease: true };
+	let failBuild = false;
+	const { runtime } = runtimeFixture({ startControls: oldControls });
+	const originalRun = runtime.processRunner.run;
+	runtime.processRunner.run = (command, args, options) => {
+		if (failBuild && args.join(" ") === "run build") {
+			return eventStream([
+				{ type: "stderr", data: "rebuild compile failed" },
+				{ type: "exit", exitCode: 2 },
+			]);
+		}
+		return originalRun(command, args, options);
+	};
+	const service = QLab.createMainSiteService(runtime);
+	await service.start(target());
+	failBuild = true;
+
+	await assert.rejects(service.rebuild(target()), /rebuild compile failed|code 2/i);
+
+	assert.equal(runtime.spawnCalls.filter(call => call.args.includes("start")).length, 1);
+	assert.equal(oldControls.cancelled || 0, 0);
+	assert.equal(oldControls.waits || 0, 0);
+	assert.equal(service.snapshot(IDENTITY).ownership, "owned");
+	assert.equal(service.snapshot(IDENTITY).lastGoodURL, "http://127.0.0.1:4180/");
+});
+
+test("a post-build retirement timeout retains the old owned process and blocks restart", async () => {
+	const QLab = await loadQLab();
+	const oldControls = {
+		hold: true,
+		exitOnRelease: true,
+		waitResults: [new Error("Process exit timed out after 5ms"), 0],
+	};
+	const { runtime } = runtimeFixture({ startControls: oldControls });
+	const service = QLab.createMainSiteService(runtime);
+	await service.start(target());
+
+	await assert.rejects(service.rebuild(target()), /timed out/i);
+
+	assert.equal(runtime.spawnCalls.filter(call => call.args.includes("ci")).length, 2);
+	assert.equal(runtime.spawnCalls.filter(call => call.args.includes("build")).length, 2);
+	assert.equal(runtime.spawnCalls.filter(call => call.args.includes("start")).length, 1);
+	assert.equal(oldControls.cancelled, 1);
+	assert.equal(oldControls.waits, 1);
+	assert.equal(service.snapshot(IDENTITY).ownership, "owned");
+	await service.stop(IDENTITY);
+});
+
 test("stop cancels and waits for an owned process, but never stops an external one", async () => {
 	const QLab = await loadQLab();
 	const owned = runtimeFixture();
