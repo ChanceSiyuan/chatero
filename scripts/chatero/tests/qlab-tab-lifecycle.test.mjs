@@ -105,6 +105,80 @@ test("ready Main Site tabs mount the site view through the shared service withou
 	assert.doesNotMatch(mount, /\.start\(|\.rebuild\(|npm|quarto/);
 });
 
+test("Main Site always replaces tab identity from Git-private authority and fails closed on mismatch", async () => {
+	const QLab = await import("../lib/load-qlab.mjs").then(module => module.loadQLab());
+	const authoritative = await QLab.authoritativeMainSiteIdentity({
+		root: "/repo/a",
+		payloadIdentity: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+		host: {},
+		preflight: async () => ({ existingIdentity: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" }),
+	});
+	assert.deepEqual(JSON.parse(JSON.stringify(authoritative)), {
+		identity: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+		mismatch: true,
+		ok: false,
+	});
+	await assert.rejects(
+		QLab.authoritativeMainSiteIdentity({
+			root: "/repo/a", payloadIdentity: "", host: {},
+			preflight: async () => ({ existingIdentity: null }),
+		}),
+		/repository identity/i,
+	);
+});
+
+test("changing a Main Site setup root clears repository authority and prior page", async () => {
+	const QLab = await import("../lib/load-qlab.mjs").then(module => module.loadQLab());
+	assert.deepEqual(JSON.parse(JSON.stringify(QLab.mainSiteTabDataForUpdate(
+		{ setupRoot: "/repo/a", repositoryIdentity: "id-a", siteURL: "http://127.0.0.1:4180/knowledge/" },
+		{ setupRoot: "/repo/b", repositoryIdentity: "untrusted-id-b", siteURL: "http://127.0.0.1:4180/evil/" },
+	))), {
+		setupRoot: "/repo/b",
+		repositoryIdentity: "",
+		siteURL: "",
+	});
+});
+
+test("Open Source Beside Site remains disabled until Knowledge routing lands", async () => {
+	const QLab = await import("../lib/load-qlab.mjs").then(module => module.loadQLab());
+	const document = {
+		createElementNS(_ns, tag) {
+			return {
+				tagName: tag, children: [], attributes: new Map(), textContent: "",
+				appendChild(child) { this.children.push(child); child.parentNode = this; return child; },
+				replaceChildren(...children) { this.children = children; }, remove() {},
+				setAttribute(name, value) { this.attributes.set(name, String(value)); },
+				getAttribute(name) { return this.attributes.get(name) || null; },
+				addEventListener() {}, removeEventListener() {},
+			};
+		},
+		createXULElement() {
+			return {
+				setAttribute() {}, addEventListener() {}, removeEventListener() {}, remove() {},
+				webProgress: { addProgressListener() {}, removeProgressListener() {} },
+			};
+		},
+		defaultView: {},
+	};
+	const host = document.createElementNS("", "div");
+	const service = {
+		observe(_id, listener) { listener({ state: "idle", url: "", lastGoodURL: "" }); return () => {}; },
+		async check() {}, async start() {}, async rebuild() {},
+	};
+	const view = QLab.createMainSiteView(document, host, {
+		service, target: { identity: "id", root: "/repo" },
+		openSourceBesideSite: () => { throw new Error("must not route Knowledge through Draft editor"); },
+	});
+	await view.ready;
+	const all = [];
+	const walk = node => { all.push(node); for (const child of node.children || []) walk(child); };
+	walk(host);
+	const source = all.find(node => node.getAttribute?.("aria-label") === "Open Source Beside Site");
+	assert.equal(source.disabled, true);
+	assert.match(source.getAttribute("title"), /Task 7|Knowledge routing/i);
+	view.dispose();
+});
+
 test("Chat launcher close never cancels or removes the window-owned shell", () => {
 	const closeSource = tabsSource.slice(
 		tabsSource.indexOf("this.close = function"),

@@ -27,13 +27,34 @@ Zotero.QLab = Zotero.QLab || {};
 		};
 	}
 
-	Zotero.QLab.registerMainSiteController = function (controller) {
+	Zotero.QLab.registerMainSiteController = function (controller, options = {}) {
 		if (!controller || typeof controller.openMainSite !== 'function') return () => {};
-		mainSiteControllers.push(controller);
+		let entry = {
+			controller,
+			isActive: typeof options.isActive === 'function' ? options.isActive : () => false,
+		};
+		mainSiteControllers.push(entry);
 		return () => {
-			mainSiteControllers = mainSiteControllers.filter(value => value !== controller);
+			mainSiteControllers = mainSiteControllers.filter(value => value !== entry);
 		};
 	};
+
+	function mainSiteControllerFor(options) {
+		let explicit = options && options.windowController;
+		if (explicit && typeof explicit.openMainSite === 'function') return explicit;
+		for (let index = mainSiteControllers.length - 1; index >= 0; index--) {
+			let entry = mainSiteControllers[index];
+			try {
+				if (entry.isActive()) return entry.controller;
+			}
+			catch (error) {
+				Zotero.logError && Zotero.logError(error);
+			}
+		}
+		return mainSiteControllers.length
+			? mainSiteControllers[mainSiteControllers.length - 1].controller
+			: null;
+	}
 	
 	Zotero.QLab.Phase4 = {
 		proposeKnowledgePromotion() {
@@ -43,7 +64,7 @@ Zotero.QLab = Zotero.QLab || {};
 			return notReady('literature-import');
 		},
 		openMainSite(options = {}) {
-			let controller = mainSiteControllers[mainSiteControllers.length - 1];
+			let controller = mainSiteControllerFor(options);
 			if (!controller) return notReady('main-site', 'Open a Chatero library window first.');
 			try {
 				let tabID = controller.openMainSite(options);

@@ -35,14 +35,36 @@ class FakeBrowser extends FakeElement {
 		this.currentURI = { spec: "about:blank" };
 		this.webProgress = {
 			listeners: new Set(),
-			addProgressListener: listener => this.webProgress.listeners.add(listener),
+			flags: null,
+			addProgressListener: (listener, flags) => {
+				this.webProgress.flags = flags;
+				this.webProgress.listeners.add(listener);
+			},
 			removeProgressListener: listener => this.webProgress.listeners.delete(listener),
 		};
+		this.messageManager = new FakeMessageManager();
 	}
 	loadURI(url) { this.loaded.push(String(url)); this.currentURI = { spec: String(url) }; }
 	goBack() { this.back = (this.back || 0) + 1; }
 	goForward() { this.forward = (this.forward || 0) + 1; }
 	reload() { this.reloaded = (this.reloaded || 0) + 1; }
+}
+
+class FakeMessageManager {
+	constructor() {
+		this.listeners = new Map();
+		this.loadedScripts = [];
+		this.removedScripts = [];
+		this.sent = [];
+	}
+	addMessageListener(name, listener) { this.listeners.set(name, listener); }
+	removeMessageListener(name, listener) {
+		if (this.listeners.get(name) === listener) this.listeners.delete(name);
+	}
+	loadFrameScript(url, delayed) { this.loadedScripts.push({ url, delayed }); }
+	removeDelayedFrameScript(url) { this.removedScripts.push(url); }
+	sendAsyncMessage(name, data) { this.sent.push({ name, data }); }
+	dispatch(name, data) { this.listeners.get(name)?.({ data }); }
 }
 
 class FakeDocument {
@@ -178,6 +200,120 @@ test("Main Site view routes intercepted navigation without replacing the last go
 	view.dispose();
 });
 
+test("Main Site cancels unsafe top-level requests at STATE_START with both progress notifications", async () => {
+	const QLab = await loadQLab();
+	const document = new FakeDocument();
+	const host = new FakeElement("div", document);
+	const service = fakeService();
+	const external = [];
+	const constants = {
+		NOTIFY_LOCATION: 0x10,
+		NOTIFY_STATE_REQUEST: 0x01,
+		STATE_START: 0x40000,
+		STATE_IS_DOCUMENT: 0x80000,
+	};
+	const view = QLab.createMainSiteView(document, host, {
+		service,
+		target: { identity: "12345678-1234-4123-8123-123456789abc", root: "/tmp/research-loop" },
+		openExternal: url => external.push(url),
+		progressConstants: constants,
+	});
+	await view.ready;
+	service.emit({ state: "ready", url: `${ORIGIN}/`, lastGoodURL: `${ORIGIN}/`, diagnosticTail: "", error: null });
+	const browser = document.browsers[0];
+	assert.equal(browser.webProgress.flags, constants.NOTIFY_LOCATION | constants.NOTIFY_STATE_REQUEST);
+	const listener = [...browser.webProgress.listeners][0];
+	let cancelled = 0;
+	listener.onStateChange(
+		{ isTopLevel: true },
+		{ URI: { spec: "https://example.test/out" }, cancel: () => { cancelled++; } },
+		constants.STATE_START | constants.STATE_IS_DOCUMENT,
+	);
+	assert.equal(cancelled, 1);
+	assert.deepEqual(external, ["https://example.test/out"]);
+	listener.onStateChange(
+		{ isTopLevel: true },
+		{ URI: { spec: "https://cdn.example.test/style.css" }, cancel: () => { cancelled++; } },
+		constants.STATE_START,
+	);
+	assert.equal(cancelled, 1, "top-level document subresources must not be treated as navigations");
+	assert.deepEqual(external, ["https://example.test/out"]);
+	view.dispose();
+});
+
+test("Main Site content bridge blocks subframe exits and cleans every message-manager hook", async () => {
+	const QLab = await loadQLab();
+	const document = new FakeDocument();
+	const host = new FakeElement("div", document);
+	const service = fakeService();
+	const external = [];
+	const view = QLab.createMainSiteView(document, host, {
+		service,
+		target: { identity: "12345678-1234-4123-8123-123456789abc", root: "/tmp/research-loop" },
+		openExternal: url => external.push(url),
+	});
+	await view.ready;
+	service.emit({ state: "ready", url: `${ORIGIN}/`, lastGoodURL: `${ORIGIN}/`, diagnosticTail: "", error: null });
+	const manager = document.browsers[0].messageManager;
+	assert.equal(manager.loadedScripts.length, 1);
+	assert.match(decodeURIComponent(manager.loadedScripts[0].url), /javascript:/);
+	manager.dispatch("QLab:MainSiteNavigation", {
+		url: "https://evil.test/from-frame", topLevel: false, kind: "click",
+	});
+	assert.deepEqual(external, [], "subframes may never route an external or native action");
+	view.dispose();
+	assert.equal(manager.listeners.size, 0);
+	assert.deepEqual(manager.removedScripts, [manager.loadedScripts[0].url]);
+});
+
+test("top-level same-origin location changes persist without reloading the browser", async () => {
+	const QLab = await loadQLab();
+	const document = new FakeDocument();
+	const host = new FakeElement("div", document);
+	const service = fakeService();
+	const persisted = [];
+	const view = QLab.createMainSiteView(document, host, {
+		service,
+		target: { identity: "12345678-1234-4123-8123-123456789abc", root: "/tmp/research-loop" },
+		onPersist: url => persisted.push(url),
+	});
+	await view.ready;
+	service.emit({ state: "ready", url: `${ORIGIN}/`, lastGoodURL: `${ORIGIN}/`, diagnosticTail: "", error: null });
+	const browser = document.browsers[0];
+	const listener = [...browser.webProgress.listeners][0];
+	listener.onLocationChange({ isTopLevel: true }, null, { spec: `${ORIGIN}/knowledge/topic.html#proof` });
+	assert.deepEqual(browser.loaded, [`${ORIGIN}/`]);
+	assert.equal(persisted.at(-1), `${ORIGIN}/knowledge/topic.html#proof`);
+	assert.equal(view.snapshot().lastEmbeddedURL, `${ORIGIN}/knowledge/topic.html#proof`);
+	view.dispose();
+});
+
+test("production health fetch aborts after the bounded timeout and always clears its timer", async () => {
+	const QLab = await loadQLab();
+	let fireTimeout = null;
+	let cleared = 0;
+	let receivedSignal = null;
+	const pending = QLab.fetchMainSiteHealth(`${ORIGIN}/`, {
+		fetchImpl: (_url, options) => {
+			receivedSignal = options.signal;
+			return new Promise((_resolve, reject) => {
+				options.signal.addEventListener("abort", () => reject(new Error("aborted")));
+			});
+		},
+		setTimeoutImpl: (callback, milliseconds) => {
+			assert.equal(milliseconds, 1500);
+			fireTimeout = callback;
+			return 17;
+		},
+		clearTimeoutImpl: token => { assert.equal(token, 17); cleared++; },
+	});
+	assert.equal(receivedSignal.aborted, false);
+	fireTimeout();
+	await assert.rejects(pending, /aborted/);
+	assert.equal(receivedSignal.aborted, true);
+	assert.equal(cleared, 1);
+});
+
 test("Phase 4 Main Site entry point is thin window-controller delegation", async () => {
 	const QLab = await loadQLab();
 	assert.equal(QLab.Phase4.openMainSite().status, "not-ready");
@@ -194,6 +330,23 @@ test("Phase 4 Main Site entry point is thin window-controller delegation", async
 	assert.deepEqual(calls, [{ root: "/tmp/research-loop" }]);
 	unregister();
 	assert.equal(QLab.Phase4.openMainSite().status, "not-ready");
+});
+
+test("Phase 4 selects the explicit or currently focused library controller, never registration order", async () => {
+	const QLab = await loadQLab();
+	const calls = [];
+	let active = "a";
+	const a = { openMainSite: () => { calls.push("a"); return "site-a"; } };
+	const b = { openMainSite: () => { calls.push("b"); return "site-b"; } };
+	const unregisterA = QLab.registerMainSiteController(a, { isActive: () => active === "a" });
+	const unregisterB = QLab.registerMainSiteController(b, { isActive: () => active === "b" });
+	assert.equal(QLab.Phase4.openMainSite().tabID, "site-a");
+	assert.equal(QLab.Phase4.openMainSite({ windowController: b }).tabID, "site-b");
+	active = "b";
+	assert.equal(QLab.Phase4.openMainSite().tabID, "site-b");
+	assert.deepEqual(calls, ["a", "b", "b"]);
+	unregisterA();
+	unregisterB();
 });
 
 test("Main Site service is application-global and only app shutdown stops it", async () => {

@@ -70,3 +70,31 @@ test("closing a native tab cancels an in-flight mount before it creates shell re
 	assert.equal(await mounting, null);
 	assert.equal(touchedContainer, false);
 });
+
+test("same-kind Main Site mounts are target-aware and a queued replacement invalidates the old guard", async () => {
+	const QLab = await loadQLab();
+	let releaseFirst;
+	const firstPending = new Promise(resolve => { releaseFirst = resolve; });
+	const attached = [];
+	const tab = {
+		id: "qlabsite",
+		data: { setupRoot: "/repo/a", repositoryIdentity: "id-a", targetEpoch: 1 },
+	};
+	const container = {
+		id: "qlabsite",
+		ownerDocument: { defaultView: { Zotero_Tabs: { _tabs: [tab] } } },
+	};
+	QLab._mountShellTabImpl = async (_container, _kind, guard) => {
+		const root = tab.data.setupRoot;
+		if (root === "/repo/a") await firstPending;
+		if (guard.isCurrent()) attached.push(root);
+		return root;
+	};
+	const first = QLab.mountShellTab(container, "qlabsite");
+	await Promise.resolve();
+	tab.data = { setupRoot: "/repo/b", repositoryIdentity: "id-b", targetEpoch: 2 };
+	const second = QLab.mountShellTab(container, "qlabsite");
+	releaseFirst();
+	await Promise.all([first, second]);
+	assert.deepEqual(attached, ["/repo/b"]);
+});

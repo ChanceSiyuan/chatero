@@ -73,7 +73,7 @@ export async function loadQLab(extraZotero = {}) {
 		toExternalURI: (uri) => String(uri).replace(/^zotero:\/\//, "chatero://"),
 		...extraZotero,
 	};
-	const sandbox = { Zotero, console, setTimeout, clearTimeout, URL };
+	const sandbox = { Zotero, console, setTimeout, clearTimeout, URL, AbortController };
 	sandbox.fetch = typeof globalThis.fetch === "function"
 		? (...args) => globalThis.fetch(...args)
 		: () => Promise.resolve({ ok: true });

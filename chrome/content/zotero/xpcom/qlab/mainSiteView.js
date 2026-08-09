@@ -16,6 +16,9 @@ Zotero.QLab = Zotero.QLab || {};
 
 (function () {
 	const NATIVE_HOSTS = new Set(['open-pdf', 'select']);
+	const NAVIGATION_MESSAGE = 'QLab:MainSiteNavigation';
+	const NAVIGATION_CONFIG_MESSAGE = 'QLab:MainSiteNavigationConfig';
+	const NAVIGATION_SHUTDOWN_MESSAGE = 'QLab:MainSiteNavigationShutdown';
 
 	function decision(action, url, reason) {
 		return Object.freeze({ action, ...(url ? { url } : {}), ...(reason ? { reason } : {}) });
@@ -67,6 +70,130 @@ Zotero.QLab = Zotero.QLab || {};
 			return decision('native', requested.href);
 		}
 		return decision('refuse', '', 'unsupported-protocol');
+	};
+
+	Zotero.QLab.mainSiteNavigationFrameScript = function () {
+		let source = `(() => {
+			const marker = '__qlabMainSiteNavigationBridge';
+			if (content[marker]) return;
+			let allowedOrigin = '';
+			let disposers = [];
+			function isTopLevel(win) { return win === content; }
+			function findLink(node) {
+				for (let current = node; current; current = current.parentElement) {
+					if (current.localName === 'a' || current.localName === 'area') return current;
+				}
+				return null;
+			}
+			function route(event, rawURL, kind, win) {
+				let url;
+				try { url = new URL(String(rawURL || ''), win.location.href); }
+				catch (error) { url = null; }
+				let forbiddenScript = url && url.protocol === 'javascript:';
+				let embeds = url && !forbiddenScript
+					&& url.protocol === 'http:' && url.origin === allowedOrigin;
+				if (embeds) return true;
+				if (event) {
+					event.preventDefault();
+					event.stopPropagation();
+				}
+				sendAsyncMessage('${NAVIGATION_MESSAGE}', {
+					url: url ? url.href : String(rawURL || ''),
+					topLevel: isTopLevel(win), kind,
+				});
+				return false;
+			}
+			function attach(win) {
+				let onClick = event => {
+					if (event.button !== 0) return;
+					let link = findLink(event.target);
+					if (link && link.href) route(event, link.href, 'click', win);
+				};
+				let onSubmit = event => {
+					let form = event.target;
+					if (form && form.action) route(event, form.action, 'submit', win);
+				};
+				win.addEventListener('click', onClick, true);
+				win.addEventListener('submit', onSubmit, true);
+				let originalOpen = win.open;
+				try {
+					win.open = function (url, ...args) {
+						return route(null, url, 'window-open', win)
+							? originalOpen.call(win, url, ...args) : null;
+					};
+				}
+				catch (error) {}
+				disposers.push(() => {
+					win.removeEventListener('click', onClick, true);
+					win.removeEventListener('submit', onSubmit, true);
+					try { win.open = originalOpen; } catch (error) {}
+				});
+			}
+			function onWindow(event) {
+				let win = event.target && event.target.defaultView;
+				if (win) attach(win);
+			}
+			function shutdown() {
+				content.removeEventListener('DOMWindowCreated', onWindow, true);
+				for (let dispose of disposers.splice(0)) dispose();
+				removeMessageListener('${NAVIGATION_CONFIG_MESSAGE}', onConfig);
+				removeMessageListener('${NAVIGATION_SHUTDOWN_MESSAGE}', shutdown);
+				delete content[marker];
+			}
+			function onConfig(message) { allowedOrigin = String(message.data && message.data.origin || ''); }
+			content[marker] = true;
+			content.addEventListener('DOMWindowCreated', onWindow, true);
+			addMessageListener('${NAVIGATION_CONFIG_MESSAGE}', onConfig);
+			addMessageListener('${NAVIGATION_SHUTDOWN_MESSAGE}', shutdown);
+			attach(content);
+		})();`;
+		return `data:application/javascript;charset=utf-8,${encodeURIComponent(source)}`;
+	};
+
+	Zotero.QLab.bindMainSiteNavigationBridge = function (browser, onNavigate) {
+		if (!browser || typeof onNavigate !== 'function') return { updateOrigin() {}, dispose() {} };
+		let manager = null;
+		let scriptURL = Zotero.QLab.mainSiteNavigationFrameScript();
+		let disposed = false;
+		let origin = '';
+		let listener = message => onNavigate(message && message.data || {});
+		function detach() {
+			if (!manager) return;
+			try { manager.sendAsyncMessage(NAVIGATION_SHUTDOWN_MESSAGE, {}); }
+			catch (error) {}
+			try { manager.removeMessageListener(NAVIGATION_MESSAGE, listener); }
+			catch (error) {}
+			try { manager.removeDelayedFrameScript(scriptURL); }
+			catch (error) {}
+			manager = null;
+		}
+		function bind() {
+			if (disposed) return;
+			let next = null;
+			try { next = browser.messageManager || null; }
+			catch (error) {}
+			if (!next || next === manager) return;
+			detach();
+			manager = next;
+			manager.addMessageListener(NAVIGATION_MESSAGE, listener);
+			manager.loadFrameScript(scriptURL, true);
+			manager.sendAsyncMessage(NAVIGATION_CONFIG_MESSAGE, { origin });
+		}
+		browser.addEventListener && browser.addEventListener('load', bind, true);
+		bind();
+		return Object.freeze({
+			updateOrigin(nextOrigin) {
+				origin = String(nextOrigin || '');
+				try { manager && manager.sendAsyncMessage(NAVIGATION_CONFIG_MESSAGE, { origin }); }
+				catch (error) {}
+			},
+			dispose() {
+				if (disposed) return;
+				disposed = true;
+				browser.removeEventListener && browser.removeEventListener('load', bind, true);
+				detach();
+			},
+		});
 	};
 
 	function htmlElement(document, tagName, className = '') {
@@ -124,6 +251,7 @@ Zotero.QLab = Zotero.QLab || {};
 		let lastEmbeddedURL = '';
 		let restoredURL = String(options.initialURL || '');
 		let cleanups = [];
+		let navigationBridge = null;
 
 		let root = htmlElement(document, 'section', 'qlab-main-site');
 		root.setAttribute('data-qlab-kind', 'qlabsite');
@@ -135,6 +263,16 @@ Zotero.QLab = Zotero.QLab || {};
 		let status = htmlElement(document, 'span', 'qlab-main-site__status');
 		let primary = button(document, 'Build & Start', 'qlab-main-site__primary');
 		let source = button(document, 'Open Source Beside Site', 'qlab-main-site__source');
+		let sourceRoutingReady = options.sourceRoutingReady === true
+			&& typeof options.openSourceBesideSite === 'function';
+		source.disabled = !sourceRoutingReady;
+		source.setAttribute('aria-disabled', sourceRoutingReady ? 'false' : 'true');
+		source.setAttribute(
+			'title',
+			sourceRoutingReady
+				? 'Open Source Beside Site'
+				: 'Available after Task 7 Knowledge routing is enabled'
+		);
 		for (let element of [back, forward, home, reload, status, primary, source]) toolbar.appendChild(element);
 
 		let browser = document.createXULElement
@@ -186,7 +324,10 @@ Zotero.QLab = Zotero.QLab || {};
 			if (disposed || !next) return;
 			snapshot = next;
 			let nextOrigin = originFor(next);
-			if (nextOrigin) activeOrigin = nextOrigin;
+			if (nextOrigin) {
+				activeOrigin = nextOrigin;
+				navigationBridge && navigationBridge.updateOrigin(activeOrigin);
+			}
 			status.textContent = next.error || ({
 				idle: 'Main Site is stopped', checking: 'Checking Main Site…',
 				installing: 'Installing dependencies…', building: 'Building…',
@@ -218,18 +359,39 @@ Zotero.QLab = Zotero.QLab || {};
 		let unsubscribe = service.observe(target.identity, render);
 		if (typeof unsubscribe === 'function') cleanups.push(unsubscribe);
 
+		let progressConstants = options.progressConstants || (typeof Components !== 'undefined'
+			? Components.interfaces.nsIWebProgress : {});
+		let abortCode = typeof Components !== 'undefined' && Components.results
+			? Components.results.NS_BINDING_ABORTED : 0x804b0002;
 		let progressListener = {
 			onLocationChange(_progress, _request, location) {
 				let requested = location && (location.spec || location.href || String(location));
 				if (!requested || requested === 'about:blank') return;
 				let result = Zotero.QLab.mainSiteNavigationDecision({ currentOrigin: activeOrigin, requestedURL: requested });
-				if (result.action !== 'embed') {
-					try { _request && typeof _request.cancel === 'function' && _request.cancel(0x804b0002); }
+				let topLevel = !_progress || _progress.isTopLevel !== false;
+				if (result.action === 'embed' && topLevel) {
+					lastEmbeddedURL = result.url;
+					options.onPersist && options.onPersist(result.url);
+				}
+				else if (result.action !== 'embed') {
+					try { _request && typeof _request.cancel === 'function' && _request.cancel(abortCode); }
 					catch (error) {}
-					decideAndRoute(requested, { load: false });
+					if (topLevel) decideAndRoute(requested, { load: false });
 				}
 			},
-			onStateChange() {}, onProgressChange() {}, onStatusChange() {}, onSecurityChange() {}, onContentBlockingEvent() {},
+			onStateChange(progress, request, flags) {
+				if (!(flags & (progressConstants.STATE_START || 0))) return;
+				if (progressConstants.STATE_IS_DOCUMENT
+						&& !(flags & progressConstants.STATE_IS_DOCUMENT)) return;
+				let requested = request && request.URI && request.URI.spec;
+				if (!requested) return;
+				let result = Zotero.QLab.mainSiteNavigationDecision({ currentOrigin: activeOrigin, requestedURL: requested });
+				if (result.action === 'embed') return;
+				try { request.cancel && request.cancel(abortCode); }
+				catch (error) {}
+				if (!progress || progress.isTopLevel !== false) decideAndRoute(requested, { load: false });
+			},
+			onProgressChange() {}, onStatusChange() {}, onSecurityChange() {}, onContentBlockingEvent() {},
 		};
 		if (typeof ChromeUtils !== 'undefined' && ChromeUtils.generateQI
 				&& typeof Components !== 'undefined') {
@@ -240,13 +402,23 @@ Zotero.QLab = Zotero.QLab || {};
 		}
 		if (browser.webProgress && typeof browser.webProgress.addProgressListener === 'function') {
 			try {
-				let notifyLocation = typeof Components !== 'undefined'
-					? Components.interfaces.nsIWebProgress.NOTIFY_LOCATION : undefined;
-				browser.webProgress.addProgressListener(progressListener, notifyLocation);
+				let flags = (progressConstants.NOTIFY_LOCATION || 0)
+					| (progressConstants.NOTIFY_STATE_REQUEST || 0);
+				browser.webProgress.addProgressListener(progressListener, flags);
 				cleanups.push(() => browser.webProgress.removeProgressListener(progressListener));
 			}
 			catch (error) { Zotero.logError && Zotero.logError(error); }
 		}
+
+		navigationBridge = Zotero.QLab.bindMainSiteNavigationBridge(browser, data => {
+			if (!data || data.topLevel !== true) {
+				status.textContent = 'Blocked unsafe subframe navigation';
+				return 'refuse';
+			}
+			return decideAndRoute(data.url, { load: false });
+		});
+		navigationBridge.updateOrigin(activeOrigin);
+		cleanups.push(() => navigationBridge.dispose());
 
 		function listen(element, type, listener) {
 			element.addEventListener(type, listener);
@@ -260,7 +432,9 @@ Zotero.QLab = Zotero.QLab || {};
 		});
 		listen(reload, 'click', () => browser.reload && browser.reload());
 		listen(primary, 'click', () => { void buildAndStart(); });
-		listen(source, 'click', () => options.openSourceBesideSite && options.openSourceBesideSite(target));
+		listen(source, 'click', () => {
+			if (sourceRoutingReady) options.openSourceBesideSite(target);
+		});
 
 		async function buildAndStart() {
 			let operation = snapshot.lastGoodURL || snapshot.state === 'ready'
@@ -282,7 +456,7 @@ Zotero.QLab = Zotero.QLab || {};
 			buildAndStart,
 			navigate: url => decideAndRoute(url),
 			home: () => home.dispatchEvent ? home.dispatchEvent(new Event('click')) : null,
-			snapshot: () => snapshot,
+			snapshot: () => ({ ...snapshot, lastEmbeddedURL }),
 			dispose() {
 				if (disposed) return;
 				disposed = true;
@@ -304,6 +478,28 @@ Zotero.QLab = Zotero.QLab || {};
 		}
 		return url;
 	}
+
+	Zotero.QLab.fetchMainSiteHealth = async function (baseURL, options = {}) {
+		let base = assertBoundedLoopbackURL(baseURL);
+		let Controller = options.AbortControllerImpl || AbortController;
+		let controller = new Controller();
+		let setTimer = options.setTimeoutImpl || setTimeout;
+		let clearTimer = options.clearTimeoutImpl || clearTimeout;
+		let timeoutMs = Number(options.timeoutMs) || 1500;
+		let timer = setTimer(() => controller.abort(), timeoutMs);
+		try {
+			let request = options.fetchImpl || fetch;
+			let response = await request(new URL('/api/qlab/health', base).href, {
+				cache: 'no-store', credentials: 'omit', redirect: 'error',
+				signal: controller.signal,
+			});
+			if (!response.ok) return null;
+			return response.json();
+		}
+		finally {
+			clearTimer(timer);
+		}
+	};
 
 	async function commandVersion(command, processRunner) {
 		let output = '';
@@ -332,13 +528,7 @@ Zotero.QLab = Zotero.QLab || {};
 				return String(canonical).replace(/\/+$/, '');
 			},
 			async fetchHealth(baseURL) {
-				let base = assertBoundedLoopbackURL(baseURL);
-				let healthURL = new URL('/api/qlab/health', base);
-				let response = await fetch(healthURL.href, {
-					cache: 'no-store', credentials: 'omit', redirect: 'error',
-				});
-				if (!response.ok) return null;
-				return response.json();
+				return Zotero.QLab.fetchMainSiteHealth(baseURL);
 			},
 			async isPortAvailable(port, host) {
 				if (host !== '127.0.0.1' || !Number.isInteger(port) || port < 4180 || port > 4199) {

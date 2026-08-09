@@ -556,6 +556,34 @@ Zotero.QLab = Zotero.QLab || {};
 				Zotero.logError && Zotero.logError(error);
 			});
 	}
+
+	Zotero.QLab.authoritativeMainSiteIdentity = async function ({
+		root,
+		payloadIdentity = '',
+		host,
+		preflight = Zotero.QLab.preflightQLabRepositoryIdentity,
+	} = {}) {
+		if (!root || typeof preflight !== 'function') {
+			throw new Error('Main Site requires an existing repository identity');
+		}
+		let result = await preflight({ root, host });
+		let identity = String(result && result.existingIdentity || '').toLowerCase();
+		if (!identity) throw new Error('Main Site repository identity is missing');
+		let payload = String(payloadIdentity || '').toLowerCase();
+		let mismatch = !!payload && payload !== identity;
+		return Object.freeze({ identity, mismatch, ok: !mismatch });
+	};
+
+	Zotero.QLab.mainSiteTabDataForUpdate = function (current = {}, update = {}) {
+		let next = { ...update };
+		let changesRoot = Object.prototype.hasOwnProperty.call(update, 'setupRoot')
+			&& String(update.setupRoot || '') !== String(current.setupRoot || '');
+		if (changesRoot) {
+			next.repositoryIdentity = '';
+			next.siteURL = '';
+		}
+		return Object.freeze(next);
+	};
 	
 	/**
 	 * Mount shell UI into a tab-content host. Safe to call repeatedly.
@@ -623,25 +651,35 @@ Zotero.QLab = Zotero.QLab || {};
 				? await tabs._qlab.restoreWorkspaceSetup(setupRoot)
 				: null;
 			if (!mountIsCurrent()) return null;
-			if (controller && controller.snapshot().state === 'ready' && !repositoryIdentity
-					&& setupRoot && Zotero.QLab.preflightQLabRepositoryIdentity
+			let readyRepository = controller && controller.snapshot().state === 'ready';
+			if (readyRepository && setupRoot && Zotero.QLab.authoritativeMainSiteIdentity
 					&& Zotero.QLab.createGeckoQLabPathHost) {
 				try {
-					let identity = await Zotero.QLab.preflightQLabRepositoryIdentity({
+					let authority = await Zotero.QLab.authoritativeMainSiteIdentity({
 						root: setupRoot,
+						payloadIdentity: repositoryIdentity,
 						host: Zotero.QLab.createGeckoQLabPathHost(),
 					});
 					if (!mountIsCurrent()) return null;
-					repositoryIdentity = identity.existingIdentity || null;
-					if (repositoryIdentity && tabs.setTabData) {
-						tabs.setTabData(tab.id, { repositoryIdentity });
+					if (tabs.setTabData) {
+						tabs.setTabData(tab.id, {
+							repositoryIdentity: authority.identity,
+							...(authority.mismatch ? { siteURL: '' } : {}),
+						});
+					}
+					repositoryIdentity = authority.ok ? authority.identity : null;
+					if (authority.mismatch) {
+						Zotero.logError && Zotero.logError(
+							new Error('Stored Main Site identity did not match the selected repository')
+						);
 					}
 				}
 				catch (error) {
 					Zotero.logError && Zotero.logError(error);
+					repositoryIdentity = null;
 				}
 			}
-			if (controller && controller.snapshot().state === 'ready' && repositoryIdentity
+			if (readyRepository && repositoryIdentity
 					&& Zotero.QLab.createMainSiteView && Zotero.QLab.getMainSiteService) {
 				let service = null;
 				try { service = Zotero.QLab.getMainSiteService(); }
@@ -1200,14 +1238,29 @@ Zotero.QLab = Zotero.QLab || {};
 		}
 	};
 	
-	Zotero.QLab.runQLabMountSingleton = function (container, kind, operation) {
+	function qlabMountTargetKey(container, kind) {
+		if (kind !== 'qlabsite') return kind;
+		let tabs = container?.ownerDocument?.defaultView?.Zotero_Tabs;
+		let tab = tabs?._tabs?.find(item => item.id === container.id);
+		let data = tab?.data || {};
+		return JSON.stringify([
+			kind,
+			String(data.setupRoot || ''),
+			String(data.repositoryIdentity || ''),
+			Number.isSafeInteger(data.targetEpoch) ? data.targetEpoch : null,
+		]);
+	}
+
+	Zotero.QLab.runQLabMountSingleton = function (container, kind, operation, targetKey = kind) {
 		if (!container || typeof operation !== 'function') {
 			return Promise.resolve(null);
 		}
 		let current = container._qlabMountOperation;
-		if (current && current.kind === kind) return current.promise;
+		if (current && current.kind === kind && current.targetKey === targetKey) {
+			return current.promise;
+		}
 		let predecessor = current ? current.promise.catch(() => null) : Promise.resolve();
-		let record = { kind, promise: null };
+		let record = { kind, targetKey, promise: null };
 		record.promise = predecessor
 			.then(() => operation())
 			.finally(() => {
@@ -1226,19 +1279,25 @@ Zotero.QLab = Zotero.QLab || {};
 	};
 
 	Zotero.QLab.mountShellTab = function (container, kind) {
+		let targetKey = qlabMountTargetKey(container, kind);
+		let current = container && container._qlabMountOperation;
+		if (current && current.kind === kind && current.targetKey === targetKey) {
+			return current.promise;
+		}
+		let generation = (container._qlabMountGeneration || 0) + 1;
+		container._qlabMountGeneration = generation;
 		return Zotero.QLab.runQLabMountSingleton(
 			container,
 			kind,
 			() => {
 				if (container._qlabMountClosed) return null;
-				let generation = (container._qlabMountGeneration || 0) + 1;
-				container._qlabMountGeneration = generation;
 				let mountGuard = {
 					isCurrent: () => !container._qlabMountClosed
 						&& container._qlabMountGeneration === generation,
 				};
 				return Zotero.QLab._mountShellTabImpl(container, kind, mountGuard);
-			}
+			},
+			targetKey
 		);
 	};
 
@@ -3523,7 +3582,23 @@ Zotero.QLab = Zotero.QLab || {};
 			},
 		};
 		if (Zotero.QLab.registerMainSiteController) {
-			unregisterMainSiteController = Zotero.QLab.registerMainSiteController(windowController);
+			unregisterMainSiteController = Zotero.QLab.registerMainSiteController(
+				windowController,
+				{
+					isActive: () => {
+						let window = doc && doc.defaultView;
+						if (!window) return false;
+						try {
+							if (typeof Services !== 'undefined' && Services.focus?.activeWindow === window) {
+								return true;
+							}
+						}
+						catch (error) {}
+						try { return !!doc.hasFocus?.(); }
+						catch (error) { return false; }
+					},
+				}
+			);
 		}
 		return windowController;
 	};

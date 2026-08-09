@@ -781,6 +781,13 @@ var Zotero_Tabs = new function () {
 
 	this.setTabData = function (tabID, data) {
 		let { tab } = this._getTab(tabID);
+		if (!tab) {
+			return;
+		}
+		if (tab.type === 'qlabsite' && Zotero.QLab?.mainSiteTabDataForUpdate) {
+			data = Zotero.QLab.mainSiteTabDataForUpdate(tab.data || {}, data || {});
+		}
+		tab.data = tab.data || {};
 		Object.assign(tab.data, data);
 		Zotero.Session.debounceSave();
 	};
