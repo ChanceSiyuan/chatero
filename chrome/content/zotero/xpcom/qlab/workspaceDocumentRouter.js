@@ -158,6 +158,35 @@ Zotero.QLab = Zotero.QLab || {};
 		return routeAvailability(input, relativePath) ? relativePath : null;
 	};
 
+	function hasOpaqueAccess(capability) {
+		for (let name of ['access', 'handle', 'token']) {
+			let value = capability && capability[name];
+			if ((typeof value === 'object' && value !== null)
+					|| typeof value === 'function' || typeof value === 'symbol') return true;
+		}
+		return false;
+	}
+
+	function verifiedCapabilityMatches(capability, request) {
+		if (!capability || typeof capability !== 'object' || !Object.isFrozen(capability)
+				|| !hasOpaqueAccess(capability)) return false;
+		let expectedPath = `${request.root}/${request.relativePath}`;
+		return capability.root === request.root
+			&& capability.relativePath === request.relativePath
+			&& capability.canonicalPath === expectedPath
+			&& capability.authority === request.authority
+			&& capability.kind === request.kind
+			&& capability.writable === request.writable;
+	}
+
+	/**
+	 * `withVerifiedDocument` is the mandatory trusted-host boundary. It must
+	 * realpath root, authority boundary, and target; reject symlink/containment
+	 * mismatches; and keep its opaque access/handle/token valid until the awaited
+	 * callback finishes. Write bridges must use that access or repeat no-follow
+	 * verification at the actual open/write operation. The router never returns
+	 * the capability to its request caller.
+	 */
 	Zotero.QLab.createWorkspaceDocumentRouter = function (bridges = {}) {
 		async function canonicalize(value) {
 			if (typeof bridges.canonicalizeRoot !== 'function') return '';
@@ -165,22 +194,59 @@ Zotero.QLab = Zotero.QLab || {};
 			catch (error) { return ''; }
 		}
 
+		async function selectedState() {
+			if (typeof bridges.getSelectedRoot !== 'function') return null;
+			let selectedValue;
+			let epoch = null;
+			try {
+				selectedValue = await bridges.getSelectedRoot();
+				if (typeof bridges.getSelectionEpoch === 'function') {
+					epoch = await bridges.getSelectionEpoch();
+				}
+			}
+			catch (error) { return null; }
+			let root = await canonicalize(selectedValue);
+			if (!root) return null;
+			return Object.freeze({ root, epoch });
+		}
+
+		function sameSelection(initial, current) {
+			if (!initial || !current || initial.root !== current.root) return false;
+			return initial.epoch === null || initial.epoch === undefined
+				|| current.epoch === initial.epoch;
+		}
+
 		return Object.freeze({
 			async open(input = {}) {
-				let selectedValue = typeof bridges.getSelectedRoot === 'function'
-					? await bridges.getSelectedRoot() : '';
-				let selectedRoot = await canonicalize(selectedValue);
-				let requestedRoot = await canonicalize(input.root || selectedValue);
-				if (!selectedRoot || requestedRoot !== selectedRoot) return refuse('foreign-or-noncanonical-root');
+				if (typeof bridges.withVerifiedDocument !== 'function') {
+					return refuse('verified-document-guard-unavailable');
+				}
+				let initialSelection = await selectedState();
+				if (!initialSelection) return refuse('selected-repository-unavailable');
+				let requestedRoot = input.root
+					? await canonicalize(input.root) : initialSelection.root;
+				if (!requestedRoot || requestedRoot !== initialSelection.root) {
+					return refuse('foreign-or-noncanonical-root');
+				}
 				let relativePath = input.relativePath;
 				let explicitSource = input.explicitSource === true;
 				let source = input.source || 'explorer';
 				if (input.requestedURL) {
+					if (typeof bridges.getCurrentSiteOrigin !== 'function'
+							|| typeof bridges.getKnowledgePaths !== 'function') {
+						return refuse('trusted-knowledge-route-state-unavailable');
+					}
+					let currentSiteOrigin;
+					let availablePaths;
+					try {
+						currentSiteOrigin = await bridges.getCurrentSiteOrigin({ root: initialSelection.root });
+						availablePaths = await bridges.getKnowledgePaths({ root: initialSelection.root });
+					}
+					catch (error) { return refuse('trusted-knowledge-route-state-unavailable'); }
 					relativePath = Zotero.QLab.knowledgeURLToQmdPath({
-						currentSiteOrigin: input.currentSiteOrigin,
+						currentSiteOrigin,
 						requestedURL: input.requestedURL,
-						availablePaths: input.availablePaths,
-						pathExists: input.pathExists,
+						availablePaths,
 					});
 					if (!relativePath) return refuse('unsafe-or-missing-knowledge-route');
 					explicitSource = true;
@@ -188,34 +254,78 @@ Zotero.QLab = Zotero.QLab || {};
 				}
 				let document = Zotero.QLab.classifyWorkspaceDocument(relativePath);
 				if (!document) return refuse('unsupported-or-unsafe-document');
-				if (typeof bridges.validateDocument === 'function') {
-					let valid = await bridges.validateDocument({ root: selectedRoot, relativePath: document.path });
-					if (valid !== true) return refuse('document-path-validation-failed');
+				let verificationRequest = Object.freeze({
+					root: initialSelection.root,
+					relativePath: document.path,
+					authority: document.authority,
+					kind: document.kind,
+					writable: document.writable,
+				});
+				let callbackCount = 0;
+				let callbackFinished = false;
+				let guardActive = true;
+				let result = refuse('document-verification-refused');
+				try {
+					await bridges.withVerifiedDocument(verificationRequest, async capability => {
+						callbackCount++;
+						if (callbackCount !== 1 || !guardActive
+								|| !verifiedCapabilityMatches(capability, verificationRequest)) {
+							result = refuse('verified-document-capability-mismatch');
+							callbackFinished = true;
+							return result;
+						}
+						let attachmentID = null;
+						if (document.kind === 'pdf' && typeof bridges.findAttachment === 'function') {
+							let match = await bridges.findAttachment(capability);
+							attachmentID = typeof match === 'object' && match ? match.id : match;
+						}
+						if (!guardActive) {
+							result = refuse('document-verification-scope-ended');
+							callbackFinished = true;
+							return result;
+						}
+						let currentSelection = await selectedState();
+						if (!guardActive || !sameSelection(initialSelection, currentSelection)) {
+							result = refuse('selected-repository-changed');
+							callbackFinished = true;
+							return result;
+						}
+						let normalizedInput = {
+							root: currentSelection.root,
+							selectedRoot: currentSelection.root,
+							relativePath: document.path,
+							source,
+							placement: input.placement || 'current',
+							explicitSource,
+							attachmentID,
+						};
+						let decision = Zotero.QLab.workspaceDocumentOpenDecision(normalizedInput);
+						if (decision.action === 'refuse') {
+							result = decision;
+							callbackFinished = true;
+							return result;
+						}
+						let bridgeName = ACTION_BRIDGES[decision.action];
+						let bridge = bridgeName && bridges[bridgeName];
+						if (typeof bridge !== 'function') {
+							result = refuse('routing-bridge-unavailable');
+							callbackFinished = true;
+							return result;
+						}
+						await bridge(decision, capability);
+						result = decision;
+						callbackFinished = true;
+						return result;
+					});
 				}
-				let attachmentID = null;
-				if (document.kind === 'pdf' && typeof bridges.findAttachment === 'function') {
-					let match = await bridges.findAttachment({ root: selectedRoot, relativePath: document.path });
-					attachmentID = typeof match === 'object' && match ? match.id : match;
+				catch (error) {
+					result = refuse('document-verification-failed');
 				}
-				let normalizedInput = {
-					root: selectedRoot, selectedRoot, relativePath: document.path,
-					source, placement: input.placement || 'current', explicitSource, attachmentID,
-				};
-				let decision = Zotero.QLab.workspaceDocumentOpenDecision(normalizedInput);
-				if (decision.action === 'refuse') return decision;
-				// Recompute from the normalized authority-bearing input immediately
-				// before dispatch so caller metadata can never select a bridge.
-				let verified = Zotero.QLab.workspaceDocumentOpenDecision(normalizedInput);
-				if (verified.action !== decision.action
-						|| verified.root !== decision.root
-						|| verified.relativePath !== decision.relativePath) {
-					return refuse('routing-decision-changed');
+				finally { guardActive = false; }
+				if (callbackCount !== 1 || !callbackFinished) {
+					return refuse('document-verification-refused');
 				}
-				let bridgeName = ACTION_BRIDGES[verified.action];
-				let bridge = bridgeName && bridges[bridgeName];
-				if (typeof bridge !== 'function') return refuse('routing-bridge-unavailable');
-				await bridge(verified);
-				return verified;
+				return result;
 			},
 		});
 	};
