@@ -415,10 +415,7 @@ Zotero.QLab = Zotero.QLab || {};
 			beginEdit(block, textarea, value => value);
 		}
 
-		function bindFormulaEditors(container, block, region = { source: block.source, start: 0 }) {
-			if (!editable) {
-				return;
-			}
+		function formulaMappings(container, region) {
 			let spans = Zotero.QLab.qmdMathSpans(region.source).map(span => ({
 				...span,
 				start: span.start + region.start,
@@ -427,21 +424,40 @@ Zotero.QLab = Zotero.QLab || {};
 			let rendered = Array.from(container.querySelectorAll(
 				'.zc-math-inline,.zc-math-display,.zc-math-error,'
 				+ '.qlab-qmd-math-inline,.qlab-qmd-math-display,.qlab-qmd-math-error'));
-			let used = new Set();
-			for (let element of rendered) {
-				let latex = element.dataset && typeof element.dataset.latex === 'string'
-					? element.dataset.latex.trim()
-					: '';
+			// HTML parsing normalizes CRLF inside data-latex attributes, so that
+			// round-tripped string cannot identify the source formula. Rendering
+			// and qmdMathSpans preserve source order; bind by that stable ordinal
+			// while retaining the qmdMathSpans object as the edit authority.
+			if (rendered.length !== spans.length) {
+				return [];
+			}
+			return rendered.map((element, index) => {
+				let span = spans[index];
+				if (!span) {
+					return null;
+				}
 				let display = element.classList.contains('zc-math-display')
 					|| element.classList.contains('qlab-qmd-math-display');
-				let spanIndex = spans.findIndex((candidate, index) => !used.has(index)
-					&& candidate.display === display && candidate.latex.trim() === latex);
-				if (spanIndex < 0) continue;
-				used.add(spanIndex);
-				let span = spans[spanIndex];
-				if (!span) {
-					continue;
+				if (span.display !== display) {
+					return null;
 				}
+				element.dataset.qlabMathOrdinal = String(index);
+				return { element, span };
+			}).filter(Boolean);
+		}
+
+		function prepareFormulaEditors(container, block, region = { source: block.source, start: 0 }) {
+			let mappings = formulaMappings(container, region);
+			if (!mathStylesReady) {
+				for (let { element, span } of mappings) {
+					element.classList.add('qlab-qmd-math-error', 'qlab-qmd-math-style-error');
+					element.textContent = span.source;
+				}
+			}
+			if (!editable) {
+				return;
+			}
+			for (let { element, span } of mappings) {
 				element.dataset.qlabSourceStart = String(span.start);
 				element.dataset.qlabSourceEnd = String(span.end);
 				element.title = 'Edit LaTeX';
@@ -451,31 +467,6 @@ Zotero.QLab = Zotero.QLab || {};
 					selectedBlockId = block.id;
 					openFormulaEditor(block, span, element);
 				});
-			}
-		}
-
-		function replaceUnstyledMath(container, region) {
-			if (mathStylesReady) {
-				return;
-			}
-			let spans = Zotero.QLab.qmdMathSpans(region.source);
-			let rendered = Array.from(container.querySelectorAll(
-				'.qlab-qmd-math-inline,.qlab-qmd-math-display,.qlab-qmd-math-error'));
-			let used = new Set();
-			for (let element of rendered) {
-				let latex = element.dataset && typeof element.dataset.latex === 'string'
-					? element.dataset.latex.trim()
-					: '';
-				let display = element.classList.contains('qlab-qmd-math-display');
-				let index = spans.findIndex((span, candidateIndex) => !used.has(candidateIndex)
-					&& span.display === display && span.latex.trim() === latex);
-				if (index < 0) {
-					continue;
-				}
-				used.add(index);
-				let span = spans[index];
-				element.classList.add('qlab-qmd-math-error', 'qlab-qmd-math-style-error');
-				element.textContent = span.source;
 			}
 		}
 
@@ -514,12 +505,10 @@ Zotero.QLab = Zotero.QLab || {};
 				let bodyRegion = theoremBodyRegion(block.source);
 				setSafeHTML(body, renderBodyHTML(bodyRegion.source));
 				if (titleElement && block.titleRange) {
-					replaceUnstyledMath(titleElement, block.titleRange);
-					bindFormulaEditors(titleElement, block, block.titleRange);
+					prepareFormulaEditors(titleElement, block, block.titleRange);
 				}
-				replaceUnstyledMath(body, bodyRegion);
+				prepareFormulaEditors(body, block, bodyRegion);
 				card.append(header, body);
-				bindFormulaEditors(body, block, bodyRegion);
 				return card;
 			}
 
@@ -532,8 +521,7 @@ Zotero.QLab = Zotero.QLab || {};
 			}
 			else {
 				setSafeHTML(wrapper, Zotero.QLab.renderQmdBlockHTML(block));
-				replaceUnstyledMath(wrapper, { source: block.source, start: 0 });
-				bindFormulaEditors(wrapper, block);
+				prepareFormulaEditors(wrapper, block);
 			}
 			return wrapper;
 		}

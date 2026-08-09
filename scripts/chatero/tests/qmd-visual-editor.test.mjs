@@ -205,7 +205,9 @@ function installTestHTML(QLab) {
 		for (const match of String(html).matchAll(/<span class="([^"]*qlab-qmd-math-(?:inline|display|error)[^"]*)" data-latex="([^"]*)"/g)) {
 			const math = element.ownerDocument.createElement("span");
 			math.className = match[1];
-			math.dataset.latex = decodeHTML(match[2]);
+			// HTML input preprocessing normalizes CR and CRLF inside attribute
+			// values to LF before dataset exposes them.
+			math.dataset.latex = decodeHTML(match[2]).replace(/\r\n?/g, "\n");
 			element.appendChild(math);
 		}
 	};
@@ -601,7 +603,7 @@ test("Visual Edit binds the only rendered inline formula after literal dollars t
 	assert.equal(mounted.source(), "literal $ not math $ and $y$\n");
 });
 
-test("a repeated formula in a theorem title and body maps each rendered node to its own range", async () => {
+test("a repeated formula in a theorem title and body edits both exact occurrences independently", async () => {
 	const source = [
 		"::: {#thm-repeat}",
 		"## Equality $x$",
@@ -618,16 +620,157 @@ test("a repeated formula in a theorem title and body maps each rendered node to 
 	assert.equal(Number(formulas[0].dataset.qlabSourceEnd), source.indexOf("$x$") + 2);
 	assert.equal(Number(formulas[1].dataset.qlabSourceStart), source.lastIndexOf("$x$") + 1);
 	assert.equal(Number(formulas[1].dataset.qlabSourceEnd), source.lastIndexOf("$x$") + 2);
-	const formula = formulas[1];
-	formula.click();
-	const input = card.querySelector(".zc-qmd-visual-math-editor");
-	input.value = "y";
+	formulas[0].click();
+	let input = card.querySelector(".zc-qmd-visual-math-editor");
+	input.value = "t";
 	input.event("input", { bubbles: false });
 	input.blur();
 	await settle();
 
-	assert.match(mounted.source(), /## Equality \$x\$/);
-	assert.match(mounted.source(), /The body also uses \$y\$\./);
+	assert.match(mounted.source(), /## Equality \$t\$/);
+	assert.match(mounted.source(), /The body also uses \$x\$\./);
+	const rerendered = mounted.editor.root.querySelector(".zc-qmd-visual-card.is-thm");
+	const bodyFormula = rerendered.querySelectorAll(".qlab-qmd-math-inline")[1];
+	bodyFormula.click();
+	input = rerendered.querySelector(".zc-qmd-visual-math-editor");
+	input.value = "b";
+	input.event("input", { bubbles: false });
+	input.blur();
+	await settle();
+
+	assert.match(mounted.source(), /## Equality \$t\$/);
+	assert.match(mounted.source(), /The body also uses \$b\$\./);
+});
+
+test("CRLF formal title, repeated body, and multiline display formulas edit exact ranges only", async () => {
+	const source = [
+		"Before.",
+		"",
+		"::: {#def-crlf-ranges .callout-note}",
+		"## The $x$ condition",
+		"",
+		"The body repeats $x$.",
+		"",
+		"$$",
+		"a+b",
+		"c+d",
+		"$$",
+		":::",
+		"",
+		"After.",
+		"",
+	].join("\r\n");
+	const mounted = await createVisualEditor({ source });
+
+	async function editExact(formulaIndex, editorValue, replacementBody) {
+		const before = mounted.source();
+		const block = mounted.QLab.visualQmdBlocks(before)
+			.find(candidate => candidate.semantic === "definition");
+		const card = mounted.editor.root.querySelector(".zc-qmd-visual-card.is-def");
+		const formula = card.querySelectorAll(
+			".qlab-qmd-math-inline,.qlab-qmd-math-display,.qlab-qmd-math-error",
+		)[formulaIndex];
+		const localStart = Number(formula.dataset.qlabSourceStart);
+		const localEnd = Number(formula.dataset.qlabSourceEnd);
+		const absoluteStart = block.start + localStart;
+		const absoluteEnd = block.start + localEnd;
+		assert.equal(before.slice(absoluteStart, absoluteEnd), replacementBody.before);
+
+		formula.click();
+		const input = card.querySelector(".zc-qmd-visual-math-editor");
+		assert.ok(input);
+		input.value = editorValue;
+		input.event("input", { bubbles: false });
+		input.blur();
+		await settle();
+
+		assert.equal(
+			mounted.source(),
+			`${before.slice(0, absoluteStart)}${replacementBody.after}${before.slice(absoluteEnd)}`,
+		);
+	}
+
+	await editExact(0, "t", { before: "x", after: "t" });
+	await editExact(1, "b", { before: "x", after: "b" });
+	await editExact(2, "m+n\r\np+q", {
+		before: "\r\na+b\r\nc+d\r\n",
+		after: "\r\nm+n\r\np+q\r\n",
+	});
+	assert.ok(mounted.source().startsWith("Before.\r\n\r\n"));
+	assert.ok(mounted.source().endsWith("\r\n\r\nAfter.\r\n"));
+});
+
+test("unstyled CRLF multiline display math falls back to exact delimited source and stays editable", async () => {
+	const source = [
+		"::: {#lem-crlf-unstyled}",
+		"## Bound $x$",
+		"",
+		"Body $x$.",
+		"",
+		"$$",
+		"a+b",
+		"c+d",
+		"$$",
+		":::",
+		"",
+	].join("\r\n");
+	const mounted = await createVisualEditor({ source, katexStyled: false });
+	const card = mounted.editor.root.querySelector(".zc-qmd-visual-card.is-lem");
+	const fallbacks = card.querySelectorAll(".qlab-qmd-math-style-error");
+
+	assert.equal(fallbacks.length, 3);
+	const display = fallbacks[2];
+	assert.equal(display.textContent, "$$\r\na+b\r\nc+d\r\n$$");
+	const block = mounted.QLab.visualQmdBlocks(source).find(candidate => candidate.semantic === "lemma");
+	const start = Number(display.dataset.qlabSourceStart);
+	const end = Number(display.dataset.qlabSourceEnd);
+	assert.equal(source.slice(block.start + start, block.start + end), "\r\na+b\r\nc+d\r\n");
+
+	display.click();
+	const input = card.querySelector(".zc-qmd-visual-math-editor");
+	assert.ok(input);
+	input.value = "u+v\r\nw+z";
+	input.event("input", { bubbles: false });
+	input.blur();
+	await settle();
+	assert.equal(mounted.source(), source.replace("a+b\r\nc+d", "u+v\r\nw+z"));
+});
+
+test("invalid CRLF multiline display math keeps its exact editable source range", async () => {
+	const source = [
+		"::: {#thm-crlf-invalid}",
+		"## Invalid",
+		"",
+		"$$",
+		"\\definitelynotacommand{x}",
+		"+y",
+		"$$",
+		":::",
+		"",
+	].join("\r\n");
+	const mounted = await createVisualEditor({ source });
+	const card = mounted.editor.root.querySelector(".zc-qmd-visual-card.is-thm");
+	const error = card.querySelector(".qlab-qmd-math-error");
+	const block = mounted.QLab.visualQmdBlocks(source).find(candidate => candidate.semantic === "theorem");
+
+	assert.ok(error);
+	const start = Number(error.dataset.qlabSourceStart);
+	const end = Number(error.dataset.qlabSourceEnd);
+	assert.equal(
+		source.slice(block.start + start, block.start + end),
+		"\r\n\\definitelynotacommand{x}\r\n+y\r\n",
+	);
+	error.click();
+	const input = card.querySelector(".zc-qmd-visual-math-editor");
+	assert.ok(input);
+	input.value = "x+y";
+	input.event("input", { bubbles: false });
+	input.blur();
+	await settle();
+	assert.equal(
+		mounted.source(),
+		source.replace("\\definitelynotacommand{x}\r\n+y", "x+y"),
+	);
 });
 
 test("a rendered theorem formula never binds to identical LaTeX inside a code fence", async () => {
