@@ -230,7 +230,10 @@ Zotero.QLab = Zotero.QLab || {};
 	 * Reject path traversal and option-like segments for workspace-relative paths.
 	 */
 	Zotero.QLab.isSafeWorkspaceRelativePath = function (relativePath, { under } = {}) {
-		let normalized = String(relativePath || '').replace(/\\/g, '/');
+		let normalized = String(relativePath || '');
+		if (normalized.includes('\\')) {
+			return false;
+		}
 		if (!normalized || normalized.startsWith('/') || normalized.includes('\0')) {
 			return false;
 		}
@@ -251,7 +254,10 @@ Zotero.QLab = Zotero.QLab || {};
 	};
 	
 	Zotero.QLab.isAgentWritableRelativePath = function (relativePath) {
-		let normalized = String(relativePath || '').replace(/\\/g, '/');
+		let normalized = String(relativePath || '');
+		if (normalized.includes('\\')) {
+			return false;
+		}
 		let root = WRITABLE_ROOTS.find(name => (
 			normalized === name || normalized.startsWith(name + '/')
 		));

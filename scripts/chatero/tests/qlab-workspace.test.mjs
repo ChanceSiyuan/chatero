@@ -124,5 +124,6 @@ test("agent writable paths reject knowledge and traversal", async () => {
 	assert.equal(QLab.isAgentWritableRelativePath("knowledge/a.qmd"), false);
 	assert.equal(QLab.isAgentWritableRelativePath("drafts/../knowledge/a.qmd"), false);
 	assert.equal(QLab.isSafeWorkspaceRelativePath("drafts/note.qmd", { under: "drafts" }), true);
+	assert.equal(QLab.isSafeWorkspaceRelativePath("drafts\\note.qmd", { under: "drafts" }), false);
 	assert.equal(QLab.isSafeWorkspaceRelativePath("knowledge/a.qmd", { under: "drafts" }), false);
 });

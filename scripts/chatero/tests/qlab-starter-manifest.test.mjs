@@ -46,6 +46,9 @@ test("starter manifest accepts only immutable, safe file and directory records",
 		{ path: "drafts/-option.qmd", kind: "file", mode: "0644", digest: DIGEST_A },
 	])), /path/);
 	assert.throws(() => QLab.validateQLabStarterManifest(validManifest([
+		{ path: "drafts\\index.qmd", kind: "file", mode: "0644", digest: DIGEST_A },
+	])), /path/);
+	assert.throws(() => QLab.validateQLabStarterManifest(validManifest([
 		{ path: "drafts", kind: "symlink", mode: "0755" },
 	])), /kind/);
 	assert.throws(() => QLab.validateQLabStarterManifest(validManifest([
