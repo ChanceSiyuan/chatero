@@ -137,6 +137,25 @@ test("Chat utility reuses one resident shell while hidden, closed, reopened, and
 	assert.equal(disposals, 1, "window shutdown owns final disposal");
 });
 
+test("workspace refresh preserves lazy Chat mounting when no resident shell exists", async () => {
+	const QLab = await loadQLab();
+	const elements = utilityElements();
+	let mounts = 0;
+	const utility = new QLab.ChatUtilityHost({
+		elements,
+		viewport: () => ({ width: 1200, height: 800 }),
+		mountChat: async () => {
+			mounts++;
+			return {};
+		},
+	});
+
+	await utility.refreshWorkspace();
+	assert.equal(mounts, 0, "choosing a workspace must not open Chat implicitly");
+	assert.equal(utility.snapshot().mounted, false);
+	utility.destroy();
+});
+
 test("Chat launcher routing preserves selected content identity and cycles only content tabs", async () => {
 	const QLab = await loadQLab();
 	const calls = [];
@@ -356,6 +375,42 @@ test("Chat launcher exposes running, completed, and error status without remount
 		"error",
 	]);
 	assert.equal(mounts, 1);
+	utility.destroy();
+});
+
+test("completed Agent replies are unread only while Chat is hidden and clear on reveal", async () => {
+	const QLab = await loadQLab();
+	const elements = utilityElements();
+	const utility = new QLab.ChatUtilityHost({
+		elements,
+		viewport: () => ({ width: 1200, height: 800 }),
+		mountChat: async () => ({}),
+	});
+
+	await utility.ensureMounted();
+	utility.setActivityStatus("completed");
+	assert.equal(utility.snapshot().activityStatus, "completed");
+
+	await utility.show();
+	assert.equal(
+		utility.snapshot().activityStatus,
+		"idle",
+		"revealing Chat marks the completed response as read",
+	);
+
+	utility.setActivityStatus("running");
+	utility.setActivityStatus("completed");
+	assert.equal(
+		utility.snapshot().activityStatus,
+		"idle",
+		"a response completed while Chat is visible must not create unread state",
+	);
+
+	utility.hide();
+	utility.setActivityStatus("completed");
+	assert.equal(utility.snapshot().activityStatus, "completed");
+	await utility.show();
+	assert.equal(utility.snapshot().activityStatus, "idle");
 	utility.destroy();
 });
 

@@ -1,10 +1,10 @@
 /*
 	***** BEGIN LICENSE BLOCK *****
-	
+
 	Copyright © 2026 Chance Siyuan / Chatero contributors
-	
+
 	This file is part of Chatero (a Zotero fork).
-	
+
 	***** END LICENSE BLOCK *****
 */
 

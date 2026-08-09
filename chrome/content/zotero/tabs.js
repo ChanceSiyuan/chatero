@@ -952,6 +952,17 @@ var Zotero_Tabs = new function () {
 		this._applySplitVisibility();
 	};
 
+	this.getQLabChatPresentationState = function () {
+		return this._qlab?.getChatPresentationState?.() || null;
+	};
+
+	this.restoreQLabChatPresentationState = function (data) {
+		if (!this._qlab || !data) {
+			return;
+		}
+		this._qlab.restoreChatPresentationState(data);
+	};
+
 	this.restoreState = async function (tabs) {
 		let itemIDs = [];
 		for (let i = 0; i < tabs.length; i++) {

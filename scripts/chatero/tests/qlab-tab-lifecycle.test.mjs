@@ -5,6 +5,7 @@ import { runInNewContext } from "node:vm";
 
 const tabsSource = await readFile("chrome/content/zotero/tabs.js", "utf8");
 const moduleSource = await readFile("chrome/content/zotero/xpcom/qlab/qlabModule.js", "utf8");
+const paneSource = await readFile("chrome/content/zotero/zoteroPane.js", "utf8");
 
 function loadNativeTabsWithoutQLab() {
 	const assignments = [
@@ -131,4 +132,23 @@ test("arrangement and legacy dock entry points defer focus capture to the utilit
 	assert.doesNotMatch(controller, /dock-shell-tab[^}]*focusReturn/);
 	const showUtility = controller.slice(controller.indexOf("showUtility(kind"));
 	assert.doesNotMatch(showUtility, /focusReturn:\s*options\.focusReturn \|\| null/);
+});
+
+test("workspace selection refreshes the resident utility through the window controller", () => {
+	const chooseWorkspace = paneSource.slice(
+		paneSource.indexOf("this.qlabChooseWorkspace = async function"),
+		paneSource.indexOf("this.qlabChooseAgentProvider = async function"),
+	);
+	assert.match(chooseWorkspace, /Zotero_Tabs\._qlab\?\.refreshWorkspace\?\.\(\)/);
+	assert.doesNotMatch(chooseWorkspace, /document\.getElementById\(tab\.id\)/);
+});
+
+test("window session state owns Chat Pin and bounds alongside QLab groups", () => {
+	const getState = paneSource.slice(
+		paneSource.indexOf("this.getState = function"),
+		paneSource.indexOf("this._qlabActiveAttachmentID = function"),
+	);
+	assert.match(getState, /getQLabChatPresentationState/);
+	assert.match(getState, /state\.qlabChatPresentation = chatPresentation/);
+	assert.doesNotMatch(moduleSource, /qlab\.chatUtilityPresentation/);
 });

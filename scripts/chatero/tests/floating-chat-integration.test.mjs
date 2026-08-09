@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { runInNewContext } from "node:vm";
+import { transformAsync } from "@babel/core";
 import { loadQLab } from "../lib/load-qlab.mjs";
 
 const plain = value => JSON.parse(JSON.stringify(value));
@@ -60,7 +64,65 @@ class FakeElement extends FakeEventTarget {
 	}
 }
 
-function integrationFixture(QLab) {
+async function loadNativeTabs(QLab, document) {
+	const sourceURL = new URL("../../../chrome/content/zotero/tabs.js", import.meta.url);
+	const source = await readFile(sourceURL, "utf8");
+	const transformed = await transformAsync(source, {
+		filename: fileURLToPath(sourceURL),
+	});
+	const Zotero = {
+		QLab,
+		Notifier: {
+			trigger() {},
+			registerObserver: () => "tabs-observer",
+			unregisterObserver() {},
+		},
+		Prefs: {
+			registerObserver: () => "tabs-pref-observer",
+			unregisterObserver() {},
+		},
+		Session: { debounceSave() {} },
+		Utilities: { randomString: () => "native-id" },
+		logError() {},
+	};
+	const window = document.defaultView;
+	const sandbox = {
+		console,
+		document,
+		window,
+		Services: {
+			sysinfo: { getProperty: () => 16 * 1024 ** 3 },
+		},
+		Zotero,
+		ZoteroPane: {},
+		ZoteroContextPane: {},
+		setTimeout,
+		clearTimeout,
+		setInterval: () => 1,
+		clearInterval() {},
+		module: { exports: {} },
+		exports: {},
+		require(id) {
+			if (id === "react") {
+				return { createRef: () => ({ current: null }), createElement: () => null };
+			}
+			if (id === "react-dom") {
+				return { createRoot: () => ({ render() {} }) };
+			}
+			if (id === "components/tabBar") {
+				return function TabBar() {};
+			}
+			throw new Error(`Unexpected tabs.js dependency: ${id}`);
+		},
+	};
+	runInNewContext(`${transformed.code}\nthis.__nativeTabs = Zotero_Tabs;`, sandbox, {
+		filename: "tabs.js",
+	});
+	window.Zotero_Tabs = sandbox.__nativeTabs;
+	return sandbox.__nativeTabs;
+}
+
+function integrationFixture(QLab, { productionMount = false } = {}) {
 	const document = new FakeEventTarget();
 	const defaultView = new FakeEventTarget();
 	defaultView.innerWidth = 1440;
@@ -99,12 +161,14 @@ function integrationFixture(QLab) {
 			return selector === "[data-qlab-provider]" ? providerSelect : null;
 		},
 	};
-	QLab.mountShellTab = async container => {
-		mounts++;
-		streamConsumers++;
-		container.register(".qlab-shell-host", residentHost);
-		return runtime;
-	};
+	if (!productionMount) {
+		QLab.mountShellTab = async container => {
+			mounts++;
+			streamConsumers++;
+			container.register(".qlab-shell-host", residentHost);
+			return runtime;
+		};
+	}
 	QLab.cancelShellTurn = host => host._qlabTurnHandle.cancel();
 	QLab.cancelShellTabMount = () => {};
 
@@ -228,6 +292,171 @@ test("legacy Research Desk reveal keeps PDF/QMD fixed and one Chat stream throug
 	assert.equal(fixture.counts().cancellations, 1, "only window shutdown cancels the turn");
 });
 
+test("a production Agent turn survives actual native Chat tab close and reopen exactly once", async () => {
+	const QLab = await loadQLab();
+	const document = new FakeEventTarget();
+	const window = new FakeEventTarget();
+	window.innerWidth = 1440;
+	window.innerHeight = 900;
+	window.setTimeout = setTimeout;
+	document.defaultView = window;
+	document.activeElement = null;
+
+	const layer = new FakeElement();
+	const dialog = new FakeElement();
+	const content = new FakeElement();
+	const deck = new FakeElement();
+	deck._qlabDeckShim = true;
+	deck.ownerDocument = document;
+	deck.children = [];
+	content.ownerDocument = document;
+	const elements = new Map([
+		["tabs-deck", deck],
+		["qlab-chat-utility-layer", layer],
+		["qlab-chat-utility-dialog", dialog],
+		["qlab-chat-utility-content", content],
+	]);
+	const selectors = new Map([
+		["[data-qlab-chat-drag-handle]", new FakeElement()],
+		["[data-qlab-chat-pin]", new FakeElement()],
+		["[data-qlab-chat-hide]", new FakeElement()],
+		["[data-qlab-chat-resize]", new FakeElement()],
+	]);
+	document.getElementById = id => elements.get(id) || null;
+	document.querySelector = selector => selectors.get(selector) || null;
+	document.createXULElement = () => new FakeElement();
+
+	const prompt = new FakeElement();
+	prompt.value = "Explain the invariant";
+	const status = new FakeElement();
+	status.textContent = "";
+	const send = new FakeElement();
+	const stop = new FakeElement();
+	const controls = new Map([
+		["[data-qlab-prompt]", prompt],
+		[".qlab-shell-status", status],
+		["[data-qlab-send]", send],
+		["[data-qlab-stop]", stop],
+	]);
+	const host = {
+		ownerDocument: document,
+		_qlabMountRoot: "/workspace",
+		_qlabMountWorkspaceState: "ready",
+		_qlabMountedKind: "qlabchat",
+		_qlabMessages: [],
+		_qlabTurnHandle: null,
+		querySelector(selector) {
+			return controls.get(selector) || null;
+		},
+	};
+	content.register(".qlab-shell-host", host);
+
+	let starts = 0;
+	let cancellations = 0;
+	let firstChunkResolve;
+	let releaseResolve;
+	const firstChunk = new Promise(resolve => { firstChunkResolve = resolve; });
+	const release = new Promise(resolve => { releaseResolve = resolve; });
+	const provider = {
+		id: "lifecycle-provider",
+		label: "Lifecycle provider",
+		status: "ready",
+		capabilities: { streaming: true },
+		async *startTurn(_turn, _text, { cancelToken }) {
+			starts++;
+			cancelToken.onCancel(() => cancellations++);
+			yield { type: "text-delta", text: "first" };
+			firstChunkResolve();
+			await release;
+			yield { type: "text-delta", text: " second" };
+			yield { type: "done", status: "ok" };
+		},
+	};
+	const registry = new QLab.AgentProviderRegistry([provider]);
+	const runtime = new QLab.AgentRuntime({ registry, defaultProviderId: provider.id });
+	QLab.Settings.getAgentProviderId = () => provider.id;
+	QLab.Settings.getAgentModel = () => "";
+	QLab.Settings.getChatMode = () => "ask";
+	QLab.Settings.getChatTranscriptMaxChars = () => 24_000;
+	QLab.getAgentRuntime = () => runtime;
+	QLab.loadChatRulesPreamble = async () => "";
+	QLab.renderChatMessages = () => {};
+	QLab.updateChatContextMeter = () => {};
+	QLab.persistChatHost = async () => {};
+	QLab.hideComposerAtPicker = () => {};
+	QLab.refreshChatProviderAvailability = async () => {};
+
+	let mounts = 0;
+	QLab.mountShellTab = async container => {
+		mounts++;
+		container.register(".qlab-shell-host", host);
+		return host;
+	};
+	QLab.cancelShellTabMount = () => {};
+	QLab.cancelShellTurn = resident => resident?._qlabTurnHandle?.cancel?.();
+
+	const tabs = await loadNativeTabs(QLab, document);
+	tabs._update = () => {};
+	tabs._applySplitVisibility = () => {};
+	tabs._tabs = [
+		{ id: "zotero-pane", type: "library", title: "Library", data: {} },
+		{ id: "reader-live", type: "reader", title: "Paper", data: { itemID: 42 } },
+		{ id: "qlabqmd", type: "qlabqmd", title: "QMD Editor", data: {} },
+	];
+	tabs._selectedID = "reader-live";
+	const controller = QLab.createWindowController(tabs);
+	tabs._qlab = controller;
+	controller.restoreGroupsState({
+		version: 3,
+		contentTabs: [
+			{ id: "zotero-pane", kind: "library", title: "Library" },
+			{ id: "reader-live", kind: "reader", title: "Paper", payload: { itemID: 42 } },
+			{ id: "qlabqmd", kind: "qlabqmd", title: "QMD Editor" },
+		],
+		utilityTabs: [],
+		panes: [
+			{ tabIDs: ["zotero-pane", "reader-live"], activeTabID: "reader-live" },
+			{ tabIDs: ["qlabqmd"], activeTabID: "qlabqmd" },
+		],
+		focusedGroup: "left",
+		splitRatios: [0.5],
+	});
+
+	await controller.showUtility("qlabchat", null, { invocation: "native-tab" });
+	const before = plain(controller.groups.snapshot().panes.map(pane => pane.activeTabID));
+	const turnPromise = QLab.runShellFreeform(host, "/workspace", "ready");
+	await firstChunk;
+	assert.ok(host._qlabTurnHandle, "the production AgentRuntime owns the in-flight turn");
+
+	tabs.close("qlabchat");
+	assert.ok(host._qlabTurnHandle, "closing the native launcher must not cancel resident work");
+	assert.equal(cancellations, 0);
+	assert.equal(tabs._tabs.some(tab => tab.id === "qlabchat"), false);
+
+	await controller.showUtility("qlabchat", null, { invocation: "native-tab" });
+	assert.equal(tabs._tabs.some(tab => tab.id === "qlabchat"), true);
+	releaseResolve();
+	await turnPromise;
+
+	assert.equal(starts, 1, "one prompt starts one provider stream");
+	assert.equal(cancellations, 0);
+	assert.equal(mounts, 1, "the native launcher reuses the resident shell mount");
+	assert.deepEqual(
+		plain(host._qlabMessages.map(message => ({ role: message.role, text: message.text }))),
+		[
+			{ role: "user", text: "Explain the invariant" },
+			{ role: "assistant", text: "first second" },
+		],
+		"the production transcript receives each message and delta exactly once",
+	);
+	assert.deepEqual(
+		plain(controller.groups.snapshot().panes.map(pane => pane.activeTabID)),
+		before,
+		"native launcher lifecycle leaves the PDF/QMD content panes unchanged",
+	);
+	controller.destroy();
+});
+
 test("opening the QMD content pane does not reveal an existing hidden Chat launcher", async () => {
 	const QLab = await loadQLab();
 	const calls = [];
@@ -299,4 +528,90 @@ test("composer focus reveals the utility without selecting Chat as content", asy
 		null,
 		{ invocation: "composer-focus", focusComposer: true },
 	]);
+});
+
+test("workspace refresh retargets the resident Chat host and its existing handlers", async () => {
+	const QLab = await loadQLab();
+	let root = "/workspaces/new";
+	QLab.Settings.getRoot = () => root;
+	QLab.createGeckoQLabPathHost = () => ({});
+	QLab.qlabRepositoryState = async () => "ready";
+	QLab.ReaderContextStore.formatForPrompt = () => "";
+	QLab.renderChatMessages = () => {};
+	QLab.refreshComposerTags = () => {};
+	QLab.refreshChatProviderAvailability = async () => {};
+	let refreshDetails = null;
+	QLab.refreshShellWorkspaceChrome = (host, details) => {
+		refreshDetails = { host, details };
+	};
+
+	let handlerRoot = null;
+	const marker = {};
+	const host = {
+		_qlabMountRoot: "/workspaces/old",
+		_qlabMountWorkspaceState: "ready",
+		_qlabMountedKind: "qlabchat",
+		_qlabMessages: [{ role: "assistant", text: "resident transcript" }],
+		querySelector(selector) {
+			return selector === '[data-qlab-kind="qlabchat"]' ? marker : null;
+		},
+		onclick() {
+			handlerRoot = host._qlabMountRoot;
+		},
+	};
+	const originalHandler = host.onclick;
+	const fixture = integrationFixture(QLab, { productionMount: true });
+	fixture.elements["qlab-chat-utility-content"].register(".qlab-shell-host", host);
+
+	await fixture.controller.refreshWorkspace();
+	host.onclick({ target: { closest: () => null } });
+
+	assert.equal(host._qlabMountRoot, root);
+	assert.equal(host._qlabMountWorkspaceState, "ready");
+	assert.equal(host.onclick, originalHandler, "refresh reuses the resident handler and host");
+	assert.equal(handlerRoot, root, "the existing handler reads the refreshed workspace");
+	assert.equal(refreshDetails.host, host);
+	assert.equal(refreshDetails.details.root, root);
+	assert.deepEqual(host._qlabMessages, [{ role: "assistant", text: "resident transcript" }]);
+	fixture.controller.destroy();
+});
+
+test("Chat Pin and bounds restore only into their own window session", async () => {
+	const preference = new Map();
+	const QLab = await loadQLab({
+		Prefs: {
+			get: key => preference.get(key),
+			set: (key, value) => preference.set(key, value),
+		},
+		Session: { debounceSave() {} },
+	});
+	const first = integrationFixture(QLab);
+	first.controller.chatUtility.setPinned(true);
+	first.controller.chatUtility._controller.setBounds({
+		left: 120,
+		top: 90,
+		width: 640,
+		height: 560,
+	});
+	const firstState = first.controller.getChatPresentationState();
+
+	const second = integrationFixture(QLab);
+	assert.equal(second.controller.chatUtility.snapshot().pinned, false);
+	assert.notDeepEqual(
+		plain(second.controller.chatUtility.snapshot().bounds),
+		plain(first.controller.chatUtility.snapshot().bounds),
+	);
+
+	const restored = integrationFixture(QLab);
+	restored.controller.restoreChatPresentationState(firstState);
+	assert.equal(restored.controller.chatUtility.snapshot().pinned, true);
+	assert.deepEqual(
+		plain(restored.controller.chatUtility.snapshot().bounds),
+		plain(first.controller.chatUtility.snapshot().bounds),
+	);
+	assert.equal(restored.controller.chatUtility.snapshot().visibility, "hidden");
+
+	first.controller.destroy();
+	second.controller.destroy();
+	restored.controller.destroy();
 });

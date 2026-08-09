@@ -7291,6 +7291,11 @@ var ZoteroPane = new function () {
 			if (qlabGroups) {
 				state.qlabGroups = qlabGroups;
 			}
+			let chatPresentation = Zotero_Tabs.getQLabChatPresentationState
+				&& Zotero_Tabs.getQLabChatPresentationState();
+			if (chatPresentation) {
+				state.qlabChatPresentation = chatPresentation;
+			}
 		}
 		catch (e) {
 			Zotero.logError(e);
@@ -7414,13 +7419,7 @@ var ZoteroPane = new function () {
 					? `Workspace ready:\n${root}`
 					: `Workspace marked ${state}:\n${root}\n\nEmpty/partial workspaces can be initialized in Phase 3A.`
 			);
-			// Refresh any open shell tabs.
-			for (let tab of Zotero_Tabs._tabs) {
-				if (Zotero.QLab.SHELL_TAB_TYPES.includes(tab.type)) {
-					let container = document.getElementById(tab.id);
-					await Zotero.QLab.mountShellTab(container, tab.type);
-				}
-			}
+			await Zotero_Tabs._qlab?.refreshWorkspace?.();
 		}
 		catch (e) {
 			Zotero.logError(e);

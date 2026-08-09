@@ -60,7 +60,7 @@ Zotero.QLab = Zotero.QLab || {};
 		`),
 		quote: svgDataUrl(`
 			<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 22 22" fill="none"
-				stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+				stroke="#5a5a5f" stroke-width="1.8" stroke-linecap="round">
 				<line x1="5" y1="4" x2="5" y2="18"/>
 				<line x1="9" y1="6" x2="18" y2="6"/>
 				<line x1="9" y1="11" x2="16" y2="11"/>

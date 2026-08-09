@@ -35,15 +35,18 @@ context or focus calls.
 
 ## Test-Driven Integration Evidence
 
-The new end-to-end state test starts from a version-2 PDF | QMD | Chat session,
-migrates it to two content panes plus one hidden utility, reveals Chat, simulates
-a running stream, hides and reveals it, closes and reopens the launcher, and
-then verifies:
+The integration suite combines a version-2 PDF | QMD | Chat migration test with
+a production-path lifecycle test. The latter loads the real native Tabs API,
+starts `runShellFreeform()` through `AgentRuntime`, closes the Chat launcher via
+`Zotero_Tabs.close()`, and reopens it through the public utility API and native
+`Zotero_Tabs.add()` path. Together they verify:
 
 - PDF and QMD pane identity and order never change;
 - Chat is absent from every content pane and present once in `utilityTabs`;
 - the resident Chat shell mounts once;
-- exactly one simulated stream consumer receives five chunks in order;
+- exactly one provider stream updates the resident production transcript;
+- closing and reopening through the native Tabs API neither duplicates stream
+  deltas nor cancels the live turn;
 - no turn cancellation occurs before window shutdown;
 - window shutdown performs the single cancellation;
 - provider refresh does not remount the transcript;
@@ -60,17 +63,39 @@ RED evidence before the integration correction:
 
 GREEN evidence after the correction:
 
-- `scripts/chatero/tests/floating-chat-integration.test.mjs`: `4/4` passed;
+- `scripts/chatero/tests/floating-chat-integration.test.mjs`: `7/7` passed;
 - affected integration set: `81/81` passed.
+
+## Fix Round 1
+
+Whole-branch review identified additional lifecycle and presentation gaps. The
+follow-up corrections now:
+
+- reconcile restored Reader and Note identities after native tab restoration;
+- refresh the resident Chat host when the workspace changes, while preserving
+  its transcript, handlers, live turn, and lazy-mount behavior;
+- serialize Pin and bounds with the owning window session rather than a global
+  preference, always restoring Chat hidden;
+- exempt the visible Chat utility from the inactive-tab subtree hiding rule;
+- use a blue unread completion marker only while Chat is hidden, clearing it
+  when Chat is shown;
+- use an explicit Reader-toolbar stroke for the inline quote SVG instead of
+  relying on `currentColor` inheritance through an `<img>`;
+- exercise a real production Agent stream across actual native Chat launcher
+  close and reopen operations.
+
+Focused follow-up verification passed 61 tests across Chat utility, native tab
+lifecycle, workspace refresh, Reader hooks, restored identities, tab groups,
+and split layout. The full build evidence below was rerun after these fixes.
 
 ## Automated Verification
 
-All commands below ran from `/Users/chance/chatero` after the integration
+All commands below ran from the repository root after the integration
 correction.
 
 | Check | Result | Evidence |
 |---|---|---|
-| Full Chatero tests | PASS | `NODE_OPTIONS=--openssl-legacy-provider npm run test:chatero` — 406 passed, 0 failed, exit 0 |
+| Full Chatero tests | PASS | `NODE_OPTIONS=--openssl-legacy-provider npm run test:chatero` — 417 passed, 0 failed, exit 0 |
 | Application build | PASS | `NODE_OPTIONS=--openssl-legacy-provider npm run build` — JavaScript, Sass, Reader, document worker, and note editor build completed, exit 0 |
 | macOS directory staging | PASS | `app/scripts/dir_build -f -p m` — `Chatero.app` built, ad-hoc signed, valid on disk, and satisfies its Designated Requirement, exit 0 |
 | Staged bundle verification | PASS | `NODE_OPTIONS=--openssl-legacy-provider npm run test:chatero:staged` — staged `Chatero.app` deep validation completed, exit 0 |
@@ -100,8 +125,8 @@ in this task.
    visible.
 6. **NOT RUN** — Start an Agent turn, hide Chat, continue reading/editing, then
    reopen and verify the same turn and transcript remain.
-7. **NOT RUN** — Restart Chatero and verify Chat starts hidden while Pin
-   preference and bounds are remembered.
+7. **NOT RUN** — Restart Chatero and verify Chat starts hidden while that
+   window's Pin setting and bounds are remembered.
 8. **NOT RUN** — Select PDF text and verify the quote icon is recognizable and
    inserts the same QMD quote/deep link.
 9. **NOT RUN** — Open `drafts/local_alg.qmd` in Visual Edit and verify all

@@ -1,7 +1,18 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
+import * as sass from "sass";
 import { loadQLab } from "../lib/load-qlab.mjs";
+
+let mainWindowStyles;
+function compiledMainWindowStyles() {
+	mainWindowStyles ||= sass.compile(
+		fileURLToPath(new URL("../../../scss/zotero-mac.scss", import.meta.url)),
+		{ style: "expanded" },
+	).css;
+	return mainWindowStyles;
+}
 
 test("chat shell exposes XPI-style topbar and composer footer", async () => {
 	const QLab = await loadQLab();
@@ -133,4 +144,21 @@ test("the main window owns one accessible non-modal Chat utility surface", async
 	assert.match(styles, /data-activity-status="running"/);
 	assert.match(styles, /data-activity-status="completed"/);
 	assert.match(styles, /data-activity-status="error"/);
+});
+
+test("the visible Chat utility layer is exempt from the inactive tab subtree cascade", () => {
+	const styles = compiledMainWindowStyles();
+	assert.match(
+		styles,
+		/#tabs-deck\s*>\s*\.qlab-chat-utility-layer\s*\{[^}]*-moz-subtree-hidden-only-visually:\s*0\s*!important;/s,
+		"the window-owned Chat layer must remain paintable when its hidden attribute is removed",
+	);
+});
+
+test("the completed-response unread indicator is blue", () => {
+	const styles = compiledMainWindowStyles();
+	assert.match(
+		styles,
+		/\.tab\.qlab-utility-launcher\[data-activity-status=completed\]\s+\.qlab-tab-activity\s*\{[^}]*background:\s*#007aff;/s,
+	);
 });

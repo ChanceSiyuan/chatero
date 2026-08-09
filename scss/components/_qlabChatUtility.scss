@@ -6,6 +6,12 @@
 	overflow: hidden;
 }
 
+// The layer is a window-owned utility, not an inactive tab host. Override the
+// broad direct-child rule in contextPane.scss so removing [hidden] can paint it.
+#tabs-deck > .qlab-chat-utility-layer {
+	-moz-subtree-hidden-only-visually: 0 !important;
+}
+
 .qlab-chat-utility-dialog {
 	position: absolute;
 	left: var(--qlab-chat-left, 24px);
@@ -171,7 +177,7 @@
 }
 
 .tab.qlab-utility-launcher[data-activity-status="completed"] .qlab-tab-activity {
-	background: #34c759;
+	background: #007aff;
 }
 
 .tab.qlab-utility-launcher[data-activity-status="error"] .qlab-tab-activity {

@@ -56,7 +56,16 @@ test("Reader quote action uses an unambiguous blockquote glyph", async () => {
 
 	assert.equal(verticalBars.length, 1, "blockquote glyph has one vertical quote bar");
 	assert.equal(textLines.length, 3, "blockquote glyph has three horizontal text lines");
-	assert.match(quoteSVG, /stroke="currentColor"/);
+	assert.doesNotMatch(
+		quoteSVG,
+		/currentColor/,
+		"an SVG loaded through img cannot inherit Reader toolbar currentColor",
+	);
+	assert.match(
+		quoteSVG,
+		/stroke="#5a5a5f"/,
+		"the quote icon uses the same explicit neutral stroke as Reader toolbar actions",
+	);
 	assert.doesNotMatch(quoteSVG, /c0-1\.4 1-2\.5 2\.5-2\.5/,
 		"old paired open-loop quotation paths are removed");
 

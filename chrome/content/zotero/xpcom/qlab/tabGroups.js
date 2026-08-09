@@ -126,15 +126,19 @@ Zotero.QLab = Zotero.QLab || {};
 		if (typeof tabsAPI.restoreState === 'function') {
 			await tabsAPI.restoreState(Array.isArray(state.tabs) ? state.tabs : []);
 		}
+		let reconciled = null;
 		if (state.qlabGroups && typeof tabsAPI.restoreQLabGroupsState === 'function') {
-			let reconciled = Zotero.QLab.reconcileRestoredTabGroupState(
+			reconciled = Zotero.QLab.reconcileRestoredTabGroupState(
 				state.qlabGroups,
 				tabsAPI._tabs || []
 			);
 			tabsAPI.restoreQLabGroupsState(reconciled);
-			return reconciled;
 		}
-		return null;
+		if (state.qlabChatPresentation
+				&& typeof tabsAPI.restoreQLabChatPresentationState === 'function') {
+			tabsAPI.restoreQLabChatPresentationState(state.qlabChatPresentation);
+		}
+		return reconciled;
 	};
 	const MAX_PANES = 3;
 	const ROLE_LAYOUTS = {

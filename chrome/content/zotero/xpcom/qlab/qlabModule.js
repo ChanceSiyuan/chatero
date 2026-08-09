@@ -2953,27 +2953,6 @@ Zotero.QLab = Zotero.QLab || {};
 	
 	Zotero.QLab.SHELL_TAB_TYPES = SHELL_TYPES.slice();
 
-	const CHAT_UTILITY_PREF = 'qlab.chatUtilityPresentation';
-
-	function readChatUtilityPreference() {
-		try {
-			let raw = Zotero.Prefs && Zotero.Prefs.get(CHAT_UTILITY_PREF);
-			return raw ? JSON.parse(String(raw)) : {};
-		}
-		catch (e) {
-			return {};
-		}
-	}
-
-	function writeChatUtilityPreference(state) {
-		try {
-			Zotero.Prefs && Zotero.Prefs.set(CHAT_UTILITY_PREF, JSON.stringify(state || {}));
-		}
-		catch (e) {
-			Zotero.logError && Zotero.logError(e);
-		}
-	}
-	
 	/**
 	 * Window-scoped controller. Created from Zotero_Tabs.init when available.
 	 */
@@ -2993,13 +2972,22 @@ Zotero.QLab = Zotero.QLab || {};
 		let chatUtility = new Zotero.QLab.ChatUtilityHost({
 			document: doc,
 			window: doc && doc.defaultView,
-			restore: readChatUtilityPreference(),
+			restore: {},
 			mountChat: content => Zotero.QLab.mountShellTab(content, 'qlabchat'),
+			refreshChat: content => Zotero.QLab.mountShellTab(content, 'qlabchat'),
 			cancelTurn: host => Zotero.QLab.cancelShellTurn(host),
 			cancelMount: content => Zotero.QLab.cancelShellTabMount(content),
 			// The resident host is disposed only with the containing Zotero window.
 			disposeChat: () => {},
-			persist: writeChatUtilityPreference,
+			persist: () => {
+				try {
+					Zotero.Session && Zotero.Session.debounceSave
+						&& Zotero.Session.debounceSave();
+				}
+				catch (e) {
+					Zotero.logError && Zotero.logError(e);
+				}
+			},
 			onLauncherChange: state => {
 				tabsAPI && tabsAPI._onChatUtilityChanged
 					&& tabsAPI._onChatUtilityChanged(state);
@@ -3227,6 +3215,31 @@ Zotero.QLab = Zotero.QLab || {};
 					await Zotero.QLab.refreshChatProviderAvailability(host);
 				}
 				return host;
+			},
+
+			async refreshWorkspace() {
+				await chatUtility.refreshWorkspace();
+				for (let tab of tabsAPI && tabsAPI._tabs || []) {
+					if (tab.type === 'qlabchat' || !SHELL_TYPES.includes(tab.type)) {
+						continue;
+					}
+					let container = doc && doc.getElementById(tab.id);
+					if (container) {
+						await Zotero.QLab.mountShellTab(container, tab.type);
+					}
+				}
+			},
+
+			getChatPresentationState() {
+				let state = chatUtility.snapshot();
+				return {
+					pinned: state.pinned,
+					bounds: { ...state.bounds },
+				};
+			},
+
+			restoreChatPresentationState(state) {
+				return chatUtility.restore(state || {});
 			},
 			
 			async arrangePDFChat(itemID, title) {

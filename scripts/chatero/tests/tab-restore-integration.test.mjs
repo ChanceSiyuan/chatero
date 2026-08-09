@@ -28,6 +28,10 @@ function legacyState() {
 			focusedGroup: "center",
 			splitRatios: [0.37, 0.72],
 		},
+		qlabChatPresentation: {
+			pinned: true,
+			bounds: { left: 88, top: 64, width: 680, height: 600 },
+		},
 	};
 }
 
@@ -37,6 +41,7 @@ test("native tab restoration finishes before legacy groups reconcile onto the mi
 	let releaseNative;
 	const nativeReady = new Promise(resolve => { releaseNative = resolve; });
 	let restoredGroups = null;
+	let restoredChatPresentation = null;
 	const tabsAPI = {
 		_tabs: [{ id: "zotero-pane", type: "library", data: {} }],
 		async restoreState() {
@@ -51,6 +56,9 @@ test("native tab restoration finishes before legacy groups reconcile onto the mi
 		restoreQLabGroupsState(data) {
 			restoredGroups = new QLab.TabGroups();
 			restoredGroups.restore(data);
+		},
+		restoreQLabChatPresentationState(data) {
+			restoredChatPresentation = data;
 		},
 	};
 
@@ -69,6 +77,11 @@ test("native tab restoration finishes before legacy groups reconcile onto the mi
 	assert.equal(restoredGroups.groupOf("minted-reader-id"), "left");
 	assert.deepEqual(plain(snapshot.splitRatios), [0.37]);
 	assert.deepEqual(plain(snapshot.utilityTabs.map(tab => tab.id)), ["qlabchat"]);
+	assert.deepEqual(
+		plain(restoredChatPresentation),
+		plain(state.qlabChatPresentation),
+		"the current window restores only its own serialized Chat presentation",
+	);
 });
 
 test("restored duplicate Reader and Note identities reconcile one-to-one in session order", async () => {

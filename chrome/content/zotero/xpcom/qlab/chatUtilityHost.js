@@ -1,10 +1,10 @@
 /*
 	***** BEGIN LICENSE BLOCK *****
-	
+
 	Copyright © 2026 Chance Siyuan / Chatero contributors
-	
+
 	This file is part of Chatero (a Zotero fork).
-	
+
 	***** END LICENSE BLOCK *****
 */
 
@@ -129,6 +129,9 @@ Zotero.QLab = Zotero.QLab || {};
 		this._mountChat = typeof options.mountChat === 'function'
 			? options.mountChat
 			: () => Promise.resolve(null);
+		this._refreshChat = typeof options.refreshChat === 'function'
+			? options.refreshChat
+			: this._mountChat;
 		this._disposeChat = typeof options.disposeChat === 'function'
 			? options.disposeChat
 			: () => {};
@@ -168,6 +171,10 @@ Zotero.QLab = Zotero.QLab || {};
 				activityStatus: this._activityStatus,
 				mounted: this._mounted,
 			};
+		},
+
+		restore(persisted = {}) {
+			return this._controller.restore(persisted);
 		},
 
 		ensureMounted() {
@@ -223,7 +230,30 @@ Zotero.QLab = Zotero.QLab || {};
 			return this._mountPromise;
 		},
 
+		async refreshWorkspace() {
+			if (this._destroyed) {
+				return null;
+			}
+			if (!this._mounted) {
+				let resident = this._elements.content?.querySelector?.('.qlab-shell-host');
+				if (!this._mountPromise && !resident) {
+					return null;
+				}
+				return this.ensureMounted();
+			}
+			let refreshed = await this._refreshChat(this._elements.content, this._runtime);
+			if (refreshed !== undefined && refreshed !== null) {
+				this._runtime = refreshed;
+			}
+			return this._runtime;
+		},
+
 		show(options = {}) {
+			// A completed status represents a response the user has not seen. Opening
+			// the resident Chat surface is the read acknowledgement.
+			if (this._activityStatus === 'completed') {
+				this._activityStatus = 'idle';
+			}
 			let ready = this.ensureMounted();
 			let showOptions = { ...options };
 			if (!Object.prototype.hasOwnProperty.call(showOptions, 'focusReturn')) {
@@ -267,7 +297,13 @@ Zotero.QLab = Zotero.QLab || {};
 			// A public activity update comes from the Agent runtime. It supersedes
 			// any earlier mount error, even when both statuses happen to be "error".
 			this._mountError = false;
-			this._activityStatus = ACTIVITY_STATES.has(status) ? status : 'idle';
+			let nextStatus = ACTIVITY_STATES.has(status) ? status : 'idle';
+			// Completion is a launcher unread signal, not a persistent success
+			// state. A visible response is already read.
+			this._activityStatus = nextStatus === 'completed'
+				&& this._controller.snapshot().visibility === 'visible'
+				? 'idle'
+				: nextStatus;
 			this._render(this._controller.snapshot());
 			return this._activityStatus;
 		},
