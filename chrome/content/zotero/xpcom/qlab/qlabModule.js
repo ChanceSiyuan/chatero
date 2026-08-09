@@ -496,6 +496,22 @@ Zotero.QLab = Zotero.QLab || {};
 		}
 	};
 	
+	function setChatActivityStatus(host, status) {
+		if (!host) {
+			return;
+		}
+		host._qlabActivityStatus = status;
+		try {
+			let tabs = host.ownerDocument && host.ownerDocument.defaultView
+				&& host.ownerDocument.defaultView.Zotero_Tabs;
+			tabs && tabs._qlab && tabs._qlab.setChatActivityStatus
+				&& tabs._qlab.setChatActivityStatus(status);
+		}
+		catch (e) {
+			Zotero.logError && Zotero.logError(e);
+		}
+	}
+
 	function setChatTurnRunning(host, running) {
 		let send = host && host.querySelector('[data-qlab-send]');
 		let stop = host && host.querySelector('[data-qlab-stop]');
@@ -508,6 +524,12 @@ Zotero.QLab = Zotero.QLab || {};
 		}
 		if (stop) {
 			stop.hidden = !running;
+		}
+		if (running) {
+			setChatActivityStatus(host, 'running');
+		}
+		else if (host && host._qlabActivityStatus === 'running') {
+			setChatActivityStatus(host, 'completed');
 		}
 	}
 	
@@ -2310,6 +2332,7 @@ Zotero.QLab = Zotero.QLab || {};
 		}
 		catch (e) {
 			Zotero.logError && Zotero.logError(e);
+			setChatActivityStatus(host, 'error');
 			if (status) {
 				status.textContent = e.message || String(e);
 			}
@@ -2363,7 +2386,8 @@ Zotero.QLab = Zotero.QLab || {};
 
 	function chatHostForWindow(windowRef, chatTabID) {
 		if (!windowRef || !windowRef.document || !chatTabID) return null;
-		let container = windowRef.document.getElementById(chatTabID);
+		let container = windowRef.document.getElementById('qlab-chat-utility-content')
+			|| windowRef.document.getElementById(chatTabID);
 		return container && container.querySelector('.qlab-shell-host');
 	}
 
@@ -2478,6 +2502,7 @@ Zotero.QLab = Zotero.QLab || {};
 		}
 		catch (e) {
 			Zotero.logError && Zotero.logError(e);
+			setChatActivityStatus(targetHost, 'error');
 			if (status) status.textContent = e.message || String(e);
 			throw e;
 		}
@@ -2915,6 +2940,7 @@ Zotero.QLab = Zotero.QLab || {};
 		}
 		catch (e) {
 			Zotero.logError && Zotero.logError(e);
+			setChatActivityStatus(host, 'error');
 			if (status) {
 				status.textContent = e.message || String(e);
 			}
@@ -2926,6 +2952,27 @@ Zotero.QLab = Zotero.QLab || {};
 	};
 	
 	Zotero.QLab.SHELL_TAB_TYPES = SHELL_TYPES.slice();
+
+	const CHAT_UTILITY_PREF = 'qlab.chatUtilityPresentation';
+
+	function readChatUtilityPreference() {
+		try {
+			let raw = Zotero.Prefs && Zotero.Prefs.get(CHAT_UTILITY_PREF);
+			return raw ? JSON.parse(String(raw)) : {};
+		}
+		catch (e) {
+			return {};
+		}
+	}
+
+	function writeChatUtilityPreference(state) {
+		try {
+			Zotero.Prefs && Zotero.Prefs.set(CHAT_UTILITY_PREF, JSON.stringify(state || {}));
+		}
+		catch (e) {
+			Zotero.logError && Zotero.logError(e);
+		}
+	}
 	
 	/**
 	 * Window-scoped controller. Created from Zotero_Tabs.init when available.
@@ -2941,9 +2988,27 @@ Zotero.QLab = Zotero.QLab || {};
 				Zotero.logError && Zotero.logError(e);
 			}
 		});
+		let deck = tabsAPI && tabsAPI.deck;
+		let doc = deck && deck.ownerDocument;
+		let chatUtility = new Zotero.QLab.ChatUtilityHost({
+			document: doc,
+			window: doc && doc.defaultView,
+			restore: readChatUtilityPreference(),
+			mountChat: content => Zotero.QLab.mountShellTab(content, 'qlabchat'),
+			disposeChat: content => {
+				// The resident host is disposed only with the containing Zotero window.
+				Zotero.QLab.cancelShellTabMount(content);
+			},
+			persist: writeChatUtilityPreference,
+			onLauncherChange: state => {
+				tabsAPI && tabsAPI._onChatUtilityChanged
+					&& tabsAPI._onChatUtilityChanged(state);
+			},
+		});
 		
 		return {
 			groups,
+			chatUtility,
 			
 			isEnabled() {
 				return !Zotero.QLab.Settings || Zotero.QLab.Settings.isEnabled();
@@ -2967,6 +3032,10 @@ Zotero.QLab = Zotero.QLab || {};
 						catch (e) {
 							Zotero.logError && Zotero.logError(e);
 						}
+					}
+					if (kind === 'qlabchat') {
+						void chatUtility.ensureMounted();
+						return existing.id;
 					}
 					try {
 						let container = tabsAPI.deck && tabsAPI.deck.ownerDocument
@@ -2993,7 +3062,7 @@ Zotero.QLab = Zotero.QLab || {};
 					title: titles[kind] || kind,
 					data: payload || {},
 					select: false,
-					onClose: () => {
+					onClose: kind === 'qlabchat' ? undefined : () => {
 						try {
 							Zotero.QLab.cancelShellTabMount(shellContainer);
 							shellContainer?.querySelector('.qlab-shell-host')
@@ -3005,7 +3074,12 @@ Zotero.QLab = Zotero.QLab || {};
 					},
 				});
 				shellContainer = container;
-				Zotero.QLab.mountShellTab(container, kind);
+				if (kind === 'qlabchat') {
+					void chatUtility.ensureMounted();
+				}
+				else {
+					Zotero.QLab.mountShellTab(container, kind);
+				}
 				return id;
 			},
 			
@@ -3017,6 +3091,10 @@ Zotero.QLab = Zotero.QLab || {};
 				let id = this.ensureShellTab(kind, payload);
 				if (!id) {
 					return null;
+				}
+				if (kind === 'qlabchat') {
+					void chatUtility.show({ invocation: 'dock-shell-tab', focusComposer: true });
+					return id;
 				}
 				try {
 					if (groups.tab(id)) {
@@ -3052,6 +3130,7 @@ Zotero.QLab = Zotero.QLab || {};
 						return null;
 					},
 					ensureShellTab: (kind, payload) => this.ensureShellTab(kind, payload),
+					showUtility: (kind, payload) => this.showUtility(kind, payload),
 					select: id => tabsAPI.select(id),
 				});
 				try {
@@ -3061,6 +3140,54 @@ Zotero.QLab = Zotero.QLab || {};
 					Zotero.logError && Zotero.logError(e);
 				}
 				return snapshot;
+			},
+
+			showUtility(kind, payload, options = {}) {
+				if (kind !== 'qlabchat') {
+					return null;
+				}
+				this.ensureShellTab(kind, payload);
+				return chatUtility.show({
+					invocation: options.invocation || 'workspace',
+					focusComposer: options.focusComposer === true,
+					focusReturn: options.focusReturn || null,
+					openingToken: options.openingToken,
+				});
+			},
+
+			toggleUtility(kind, options = {}) {
+				if (kind !== 'qlabchat') {
+					return null;
+				}
+				this.ensureShellTab(kind, options.payload || null);
+				return chatUtility.toggle({
+					...options,
+					invocation: options.invocation || 'native-tab',
+				});
+			},
+
+			hideUtility(kind, options = {}) {
+				return kind === 'qlabchat' ? chatUtility.hide(options) : null;
+			},
+
+			closeUtilityLauncher(kind) {
+				return kind === 'qlabchat' ? chatUtility.closeLauncher() : null;
+			},
+
+			utilityLauncherState(kind) {
+				if (kind !== 'qlabchat') {
+					return null;
+				}
+				let state = chatUtility.snapshot();
+				return {
+					pressed: state.visibility === 'visible',
+					activityStatus: state.activityStatus,
+					mounted: state.mounted,
+				};
+			},
+
+			setChatActivityStatus(status) {
+				return chatUtility.setActivityStatus(status);
 			},
 			
 			async arrangePDFChat(itemID, title) {
@@ -3087,6 +3214,10 @@ Zotero.QLab = Zotero.QLab || {};
 			
 			restoreGroupsState(data) {
 				groups.restore(data);
+			},
+
+			destroy() {
+				chatUtility.destroy();
 			},
 		};
 	};

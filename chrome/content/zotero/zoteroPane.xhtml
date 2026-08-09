@@ -1103,9 +1103,9 @@
 					<div id="zotero-tab-cover" class="hidden" xmlns="http://www.w3.org/1999/xhtml">
 						<label>&zotero.general.loading;</label>
 					</div>
-					<!-- Chatero: hbox (not XUL deck) so up to three tab-content hosts can be
-					     visible together (PDF · Notes · Chat). Tab hosts are never reparented;
-					     visibility is class-driven. -->
+					<!-- Chatero: hbox (not XUL deck) so content tab hosts can be visible
+					     together. Tab hosts are never reparented; the window-owned Chat utility
+					     floats above them and visibility is class-driven. -->
 					<hbox id="tabs-deck" class="tabs-content-area" flex="1">
 						<box id="tabs-split-handle"
 								class="tabs-split-handle"
@@ -1115,6 +1115,52 @@
 								class="tabs-split-handle"
 								hidden="true"
 								tooltiptext="Resize split"/>
+						<html:div id="qlab-chat-utility-layer"
+								class="qlab-chat-utility-layer"
+								data-qlab-chat-utility="true"
+								aria-hidden="true"
+								hidden="true">
+							<html:section id="qlab-chat-utility-dialog"
+									class="qlab-chat-utility-dialog"
+									role="dialog"
+									aria-modal="false"
+									aria-labelledby="qlab-chat-utility-title">
+								<html:header class="qlab-chat-utility-header"
+										data-qlab-chat-drag-handle="true">
+									<html:div class="qlab-chat-utility-title" id="qlab-chat-utility-title">
+										<html:span class="qlab-chat-utility-mark" aria-hidden="true">C</html:span>
+										<html:span>Chat</html:span>
+									</html:div>
+									<html:div class="qlab-chat-utility-actions" role="toolbar" aria-label="Chat window controls">
+										<html:button type="button"
+												class="qlab-chat-utility-button"
+												data-qlab-chat-pin="true"
+												aria-label="Pin Chat"
+												aria-pressed="false"
+												title="Pin Chat">
+											<html:svg viewBox="0 0 24 24" aria-hidden="true">
+												<html:path d="M9 4h6l-1 5 3 3v2h-4v6l-1 1-1-1v-6H7v-2l3-3z"/>
+											</html:svg>
+										</html:button>
+										<html:button type="button"
+												class="qlab-chat-utility-button"
+												data-qlab-chat-hide="true"
+												aria-label="Hide Chat"
+												title="Hide Chat">
+											<html:svg viewBox="0 0 24 24" aria-hidden="true">
+												<html:path d="M6 6l12 12M18 6 6 18"/>
+											</html:svg>
+										</html:button>
+									</html:div>
+								</html:header>
+								<html:div id="qlab-chat-utility-content" class="qlab-chat-utility-content"/>
+								<html:button type="button"
+										class="qlab-chat-utility-resize"
+										data-qlab-chat-resize="true"
+										aria-label="Resize Chat"
+										title="Resize Chat"/>
+							</html:section>
+						</html:div>
 						<tab-content id="zotero-pane" class="deck-selected"
 							onkeydown="ZoteroPane_Local.handleKeyDown(event, this.id)"
 							onkeyup="ZoteroPane_Local.handleKeyUp(event, this.id)"

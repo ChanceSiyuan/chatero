@@ -347,7 +347,8 @@ Zotero.QLab = Zotero.QLab || {};
 		if (!visible && options.select !== false) {
 			windowRef.Zotero_Tabs.select(chat.id);
 		}
-		let container = windowRef.document.getElementById(chat.id);
+		let container = windowRef.document.getElementById('qlab-chat-utility-content')
+			|| windowRef.document.getElementById(chat.id);
 		let host = container && container.querySelector('.qlab-shell-host');
 		if (host) {
 			Zotero.QLab.refreshComposerTags(host);

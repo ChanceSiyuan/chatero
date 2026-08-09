@@ -22,6 +22,7 @@ const QLAB_SCRIPTS = [
 	"agentProviders.js",
 	"splitLayout.js",
 	"chatPresentationController.js",
+	"chatUtilityHost.js",
 	"readerContext.js",
 	"readerIcons.js",
 	"readerHooks.js",

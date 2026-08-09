@@ -79,3 +79,30 @@ test("the main XUL window loads KaTeX styling before Visual Edit mounts", async 
 		/<\?xml-stylesheet href="resource:\/\/zotero\/katex\.min\.css" type="text\/css"\?>/,
 	);
 });
+
+test("the main window owns one accessible non-modal Chat utility surface", async () => {
+	const xul = await readFile(
+		new URL("../../../chrome/content/zotero/zoteroPane.xhtml", import.meta.url),
+		"utf8",
+	);
+	assert.match(xul, /id="qlab-chat-utility-layer"/);
+	assert.match(xul, /data-qlab-chat-utility/);
+	assert.match(xul, /role="dialog"/);
+	assert.match(xul, /aria-modal="false"/);
+	assert.match(xul, /data-qlab-chat-drag-handle/);
+	assert.match(xul, /data-qlab-chat-pin[^>]*aria-label="Pin Chat"/);
+	assert.match(xul, /data-qlab-chat-hide[^>]*aria-label="Hide Chat"/);
+	assert.match(xul, /data-qlab-chat-resize[^>]*aria-label="Resize Chat"/);
+
+	const styles = await readFile(
+		new URL("../../../scss/components/_qlabChatUtility.scss", import.meta.url),
+		"utf8",
+	);
+	assert.match(styles, /\.qlab-chat-utility-layer/);
+	assert.match(styles, /\.qlab-chat-utility-dialog/);
+	assert.match(styles, /color-scheme:\s*light/);
+	assert.match(styles, /prefers-reduced-motion:\s*reduce/);
+	assert.match(styles, /data-activity-status="running"/);
+	assert.match(styles, /data-activity-status="completed"/);
+	assert.match(styles, /data-activity-status="error"/);
+});

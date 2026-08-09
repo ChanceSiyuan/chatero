@@ -33,7 +33,7 @@ const { CSSIcon, CSSItemTypeIcon } = require('./icons');
 const SCROLL_ARROW_SCROLL_BY = 222;
 
 const Tab = memo((props) => {
-	const { icon, id, index, isBeingDragged, isItemType, onContextMenu, onDragEnd, onDragStart, onTabClick, onTabClose, onTabMouseDown, onAudioStatusClick, selected, title, renderTitle, width, audioStatus } = props;
+	const { icon, id, index, isBeingDragged, isItemType, onContextMenu, onDragEnd, onDragStart, onTabClick, onTabClose, onTabMouseDown, onAudioStatusClick, selected, title, renderTitle, width, audioStatus, utility, utilityPressed, activityStatus } = props;
 	
 	const handleTabMouseDown = useCallback(event => onTabMouseDown(event, id), [onTabMouseDown, id]);
 	const handleContextMenu = useCallback(event => onContextMenu(event, id), [onContextMenu, id]);
@@ -58,7 +58,15 @@ const Tab = memo((props) => {
 		<div
 			key={id}
 			data-id={id}
-			className={cx('tab', { selected, dragging: isBeingDragged })}
+			data-activity-status={utility ? activityStatus : undefined}
+			className={cx('tab', {
+				selected,
+				dragging: isBeingDragged,
+				'qlab-utility-launcher': utility,
+			})}
+			role={utility ? 'button' : undefined}
+			aria-label={utility ? `${title}${activityStatus && activityStatus !== 'idle' ? `, ${activityStatus}` : ''}` : undefined}
+			aria-pressed={utility ? utilityPressed : undefined}
 			draggable={true}
 			onMouseDown={handleTabMouseDown}
 			onContextMenu={handleContextMenu}
@@ -87,6 +95,9 @@ const Tab = memo((props) => {
 			{titleHTML
 				? <div className="tab-name" title={titleText} dangerouslySetInnerHTML={{ __html: titleHTML }}/>
 				: <div className="tab-name" title={titleText}>{titleText}</div>}
+			{utility && activityStatus && activityStatus !== 'idle'
+				? <span className="qlab-tab-activity" aria-hidden="true" />
+				: null}
 			<div
 				className="tab-close"
 				onClick={handleTabClose}
@@ -119,6 +130,9 @@ Tab.propTypes = {
 		active: PropTypes.bool.isRequired,
 		paused: PropTypes.bool.isRequired,
 	}),
+	utility: PropTypes.bool,
+	utilityPressed: PropTypes.bool,
+	activityStatus: PropTypes.oneOf(['idle', 'running', 'completed', 'error']),
 };
 
 
@@ -526,6 +540,9 @@ TabBar.propTypes = {
 			selected: PropTypes.bool.isRequired,
 			title: PropTypes.string.isRequired,
 			renderTitle: PropTypes.bool.isRequired,
+			utility: PropTypes.bool,
+			utilityPressed: PropTypes.bool,
+			activityStatus: PropTypes.oneOf(['idle', 'running', 'completed', 'error']),
 			audioStatus: PropTypes.shape({
 				active: PropTypes.bool.isRequired,
 				paused: PropTypes.bool.isRequired,

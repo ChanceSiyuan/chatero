@@ -1,0 +1,189 @@
+.qlab-chat-utility-layer {
+	position: absolute;
+	inset: 0;
+	z-index: 60;
+	pointer-events: none;
+	overflow: hidden;
+}
+
+.qlab-chat-utility-dialog {
+	position: absolute;
+	left: var(--qlab-chat-left, 24px);
+	top: var(--qlab-chat-top, 24px);
+	width: var(--qlab-chat-width, 720px);
+	height: var(--qlab-chat-height, 680px);
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	min-height: 0;
+	overflow: hidden;
+	pointer-events: auto;
+	color: #1d1d1f;
+	background: #fff;
+	border: 1px solid rgba(0, 0, 0, .14);
+	border-radius: 14px;
+	box-shadow: 0 18px 54px rgba(0, 0, 0, .18), 0 4px 14px rgba(0, 0, 0, .1);
+	color-scheme: light;
+}
+
+.qlab-chat-utility-dialog .qlab-shell-host {
+	--zc-accent: #007aff;
+	--zc-accent-strong: #0066d6;
+	--zc-accent-soft: color-mix(in srgb, #007aff 12%, transparent);
+	--zc-bg: #fff;
+	--zc-bg-raised: #fff;
+	--zc-bg-subtle: #f5f5f7;
+	--zc-bg-hover: #ececee;
+	--zc-border: rgba(0, 0, 0, .1);
+	--zc-text: #1d1d1f;
+	--zc-muted: #6e6e73;
+	--zc-danger: #ff3b30;
+	--zc-warning: #ff9500;
+	--zc-success: #34c759;
+	--zc-shadow: 0 10px 30px rgba(0, 0, 0, .1), 0 2px 8px rgba(0, 0, 0, .06);
+	color-scheme: light;
+}
+
+.qlab-chat-utility-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	height: 40px;
+	min-height: 40px;
+	padding: 0 8px 0 12px;
+	color: #3a3a3c;
+	background: #f7f7f9;
+	border-bottom: 1px solid rgba(0, 0, 0, .1);
+	cursor: grab;
+	user-select: none;
+	-moz-window-dragging: no-drag;
+}
+
+.qlab-chat-utility-header:active {
+	cursor: grabbing;
+}
+
+.qlab-chat-utility-title,
+.qlab-chat-utility-actions {
+	display: flex;
+	align-items: center;
+}
+
+.qlab-chat-utility-title {
+	gap: 8px;
+	font-size: 12px;
+	font-weight: 650;
+}
+
+.qlab-chat-utility-mark {
+	display: grid;
+	place-items: center;
+	width: 22px;
+	height: 22px;
+	color: #fff;
+	background: linear-gradient(145deg, #007aff, #6b5cff);
+	border-radius: 7px;
+	font-size: 11px;
+	font-weight: 750;
+}
+
+.qlab-chat-utility-actions {
+	gap: 2px;
+}
+
+.qlab-chat-utility-button {
+	display: inline-grid;
+	place-items: center;
+	width: 28px;
+	height: 28px;
+	padding: 0;
+	color: #4b4b4f;
+	background: transparent;
+	border: 0;
+	border-radius: 7px;
+	cursor: pointer;
+}
+
+.qlab-chat-utility-button:hover,
+.qlab-chat-utility-button[aria-pressed="true"] {
+	color: #0066d6;
+	background: rgba(0, 122, 255, .1);
+}
+
+.qlab-chat-utility-button:focus-visible,
+.qlab-chat-utility-resize:focus-visible {
+	outline: 2px solid #007aff;
+	outline-offset: 1px;
+}
+
+.qlab-chat-utility-button svg {
+	width: 16px;
+	height: 16px;
+	fill: none;
+	stroke: currentColor;
+	stroke-width: 1.8;
+	stroke-linecap: round;
+	stroke-linejoin: round;
+	pointer-events: none;
+}
+
+.qlab-chat-utility-content {
+	display: flex;
+	flex: 1 1 auto;
+	min-width: 0;
+	min-height: 0;
+	overflow: hidden;
+}
+
+.qlab-chat-utility-resize {
+	position: absolute;
+	right: 0;
+	bottom: 0;
+	width: 22px;
+	height: 22px;
+	padding: 0;
+	color: transparent;
+	background: linear-gradient(135deg, transparent 45%, rgba(60, 60, 67, .35) 46% 52%, transparent 53% 61%, rgba(60, 60, 67, .35) 62% 68%, transparent 69%);
+	border: 0;
+	cursor: nwse-resize;
+}
+
+.tab.qlab-utility-launcher {
+	position: relative;
+}
+
+.tab.qlab-utility-launcher[aria-pressed="true"] {
+	background: var(--fill-quinary);
+}
+
+.tab.qlab-utility-launcher .qlab-tab-activity {
+	width: 7px;
+	height: 7px;
+	flex: none;
+	border-radius: 50%;
+}
+
+.tab.qlab-utility-launcher[data-activity-status="running"] .qlab-tab-activity {
+	background: #007aff;
+	box-shadow: 0 0 0 3px rgba(0, 122, 255, .12);
+	animation: qlab-chat-activity-pulse 1.4s ease-in-out infinite;
+}
+
+.tab.qlab-utility-launcher[data-activity-status="completed"] .qlab-tab-activity {
+	background: #34c759;
+}
+
+.tab.qlab-utility-launcher[data-activity-status="error"] .qlab-tab-activity {
+	background: #ff3b30;
+}
+
+@keyframes qlab-chat-activity-pulse {
+	50% { opacity: .45; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.tab.qlab-utility-launcher .qlab-tab-activity {
+		animation: none !important;
+	}
+}

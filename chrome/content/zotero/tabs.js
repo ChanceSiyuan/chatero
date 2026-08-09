@@ -472,7 +472,8 @@ var Zotero_Tabs = new function () {
 					title: tab.title || 'Chat',
 					index: tabIndex,
 					data: tab.data || {},
-					select: tab.selected
+					// Chat is a utility launcher, never restored as content selection.
+					select: false
 				});
 				return { itemID: null };
 			},
@@ -530,6 +531,10 @@ var Zotero_Tabs = new function () {
 	for (let shellType of ['qlabchat', 'qlabqmd', 'qlabsite']) {
 		this.tabHooks.load[shellType] = async (tab) => {
 			try {
+				if (shellType === 'qlabchat') {
+					await this._qlab?.chatUtility?.ensureMounted();
+					return;
+				}
 				let container = document.getElementById(tab.id);
 				if (Zotero.QLab && Zotero.QLab.mountShellTab) {
 					await Zotero.QLab.mountShellTab(container, shellType);
@@ -629,19 +634,29 @@ var Zotero_Tabs = new function () {
 
 		this._tabBarRef.current.setTabs(this._tabs.map((tab) => {
 			let { tabContentType } = this.parseTabType(tab.type);
+			let utility = Zotero.QLab && Zotero.QLab.isChatUtilityTab
+				? Zotero.QLab.isChatUtilityTab(tab)
+				: false;
+			let utilityState = utility && this._qlab && this._qlab.utilityLauncherState
+				? this._qlab.utilityLauncherState(tab.type)
+				: null;
 			return {
 				id: tab.id,
 				type: tab.type,
 				title: tab.title,
 				renderTitle: tabContentType === 'reader',
-				selected: tab.id == this._selectedID,
+				selected: !utility && tab.id == this._selectedID,
 				isItemType: tab.id !== 'zotero-pane',
 				icon: tab.data?.icon || null,
 				audioStatus: tab.audioStatus,
+				utility,
+				utilityPressed: Boolean(utilityState && utilityState.pressed),
+				activityStatus: utilityState && utilityState.activityStatus || 'idle',
 			};
 		}));
 		// Disable File > Close menuitem if multiple tabs are open
-		const multipleTabsOpen = this._tabs.length > 1;
+		const multipleTabsOpen = this._tabs.filter(tab => !(Zotero.QLab
+			&& Zotero.QLab.isChatUtilityTab && Zotero.QLab.isChatUtilityTab(tab))).length > 1;
 		document.getElementById('cmd_close').toggleAttribute('disabled', multipleTabsOpen);
 		var { tab } = this._getTab(this._selectedID);
 		if (!tab) {
@@ -808,6 +823,18 @@ var Zotero_Tabs = new function () {
 		}
 		catch (e) {}
 	};
+
+	this._onChatUtilityChanged = function (state) {
+		this._chatUtilityState = state || null;
+		try {
+			if (this._tabBarRef.current) {
+				this._update();
+			}
+		}
+		catch (e) {
+			Zotero.logError(e);
+		}
+	};
 	
 	this.arrangePDFChat = async function (itemID, title) {
 		if (!this._qlab) {
@@ -837,6 +864,14 @@ var Zotero_Tabs = new function () {
 		if (!tabID) {
 			return false;
 		}
+		let { tab } = this._getTab(tabID);
+		if (Zotero.QLab && Zotero.QLab.isChatUtilityTab
+				&& Zotero.QLab.isChatUtilityTab(tab)) {
+			let state = this._qlab && this._qlab.utilityLauncherState
+				? this._qlab.utilityLauncherState('qlabchat')
+				: null;
+			return Boolean(state && state.pressed);
+		}
 		if (!this._splitVisibility) {
 			return tabID === this._selectedID;
 		}
@@ -845,6 +880,12 @@ var Zotero_Tabs = new function () {
 
 	this.destroy = function () {
 		this._saveSidebarState();
+		try {
+			this._qlab && this._qlab.destroy && this._qlab.destroy();
+		}
+		catch (e) {
+			Zotero.logError(e);
+		}
 	};
 
 	// When an item is modified, update the title accordingly
@@ -958,11 +999,18 @@ var Zotero_Tabs = new function () {
 			throw new Error(`'onClose' should be a function (was ${typeof onClose})`);
 		}
 		id = id || 'tab-' + Zotero.Utilities.randomString();
-		var container = document.createXULElement('tab-content');
-		container.id = id;
-		this.deck.appendChild(container);
+		let isChatUtility = Zotero.QLab && Zotero.QLab.isChatUtilityTab
+			&& Zotero.QLab.isChatUtilityTab({ id, type });
+		var container = isChatUtility
+			? document.getElementById('qlab-chat-utility-content')
+			: document.createXULElement('tab-content');
+		if (!isChatUtility) {
+			container.id = id;
+			this.deck.appendChild(container);
+		}
 		var tab = { id, type, title, data, onClose };
 		if (!tab.onClose
+				&& type !== 'qlabchat'
 				&& Zotero.QLab && Zotero.QLab.SHELL_TAB_TYPES
 				&& Zotero.QLab.SHELL_TAB_TYPES.includes(type)) {
 			tab.onClose = () => {
@@ -993,7 +1041,10 @@ var Zotero_Tabs = new function () {
 			// Not awaited as the id and container should be returned synchronously
 			this.rename(tab.id);
 		}
-		if (Zotero.QLab && Zotero.QLab.SHELL_TAB_TYPES
+		if (isChatUtility) {
+			void this._qlab?.chatUtility?.ensureMounted();
+		}
+		else if (Zotero.QLab && Zotero.QLab.SHELL_TAB_TYPES
 				&& Zotero.QLab.SHELL_TAB_TYPES.includes(type)
 				&& Zotero.QLab.mountShellTab) {
 			Zotero.QLab.mountShellTab(container, type).catch(e => Zotero.logError(e));
@@ -1072,23 +1123,38 @@ var Zotero_Tabs = new function () {
 			if (!tab) {
 				continue;
 			}
+			if (Zotero.QLab && Zotero.QLab.isChatUtilityTab
+					&& Zotero.QLab.isChatUtilityTab(tab)) {
+				this._qlab?.closeUtilityLauncher?.(tab.type);
+				this._tabs.splice(tabIndex, 1);
+				try {
+					if (this._qlab && this._qlab.groups && this._qlab.groups.tab(id)) {
+						this._qlab.groups.closeTab(id);
+					}
+				}
+				catch (e) {
+					Zotero.logError(e);
+				}
+				closedIDs.push(id);
+				continue;
+			}
 			if (tab.id == this._selectedID) {
-				let tabToSelect = null;
-				if (this._prevSelectedID && !ids.includes(this._prevSelectedID)) {
-					tabToSelect = this._getTab(this._prevSelectedID).tab;
-				}
-				else {
-					tabToSelect = this._tabs
-						.slice(tabIndex + 1)
-						.concat(this._tabs.slice(0, tabIndex).reverse())
-						.find(x => !ids.includes(x.id));
-				}
+				let tabToSelectID = Zotero.QLab && Zotero.QLab.contentTabAfterClose
+					? Zotero.QLab.contentTabAfterClose(
+						this._tabs,
+						tab.id,
+						ids,
+						this._prevSelectedID
+					)
+					: null;
 				let selectOptions = {};
 				// If the tabs menu is visible, let the tab bar handle focus
 				if (this.tabsMenuPanel.visible) {
 					selectOptions.keepTabFocused = true;
 				}
-				this.select(tabToSelect.id, false, selectOptions);
+				if (tabToSelectID) {
+					this.select(tabToSelectID, false, selectOptions);
+				}
 			}
 			if (tab.id == this._prevSelectedID) {
 				this._prevSelectedID = null;
@@ -1116,8 +1182,12 @@ var Zotero_Tabs = new function () {
 				this._applySplitVisibility();
 			});
 		}
-		this._history.push(historyEntry);
-		Zotero.Notifier.trigger('close', 'tab', [closedIDs], true);
+		if (historyEntry.length) {
+			this._history.push(historyEntry);
+		}
+		if (closedIDs.length) {
+			Zotero.Notifier.trigger('close', 'tab', [closedIDs], true);
+		}
 		this._update();
 		this._applySplitVisibility();
 	};
@@ -1191,6 +1261,17 @@ var Zotero_Tabs = new function () {
 	 */
 	this.select = function (id, reopening, options = {}) {
 		let { tab, tabIndex } = this._getTab(id);
+		if (!tab) {
+			return;
+		}
+		if (Zotero.QLab && Zotero.QLab.routeUtilityLauncherSelection
+				&& Zotero.QLab.routeUtilityLauncherSelection(this, tab, {
+					...options,
+					focusReturn: options.focusReturn || document.activeElement,
+					focusComposer: options.focusComposer !== false,
+				})) {
+			return;
+		}
 		let { tabContentType, tabState } = this.parseTabType(tab.type);
 
 		let isEditorFocused = false;
@@ -1382,23 +1463,35 @@ var Zotero_Tabs = new function () {
 	 * Select the previous tab (closer to the library tab)
 	 */
 	this.selectPrev = function (options) {
-		var { tabIndex } = this._getTab(this._selectedID);
-		this.select((this._tabs[tabIndex - 1] || this._tabs[this._tabs.length - 1]).id, false, options || {});
+		let id = Zotero.QLab && Zotero.QLab.nextContentTabID
+			? Zotero.QLab.nextContentTabID(this._tabs, this._selectedID, -1)
+			: null;
+		if (id) {
+			this.select(id, false, options || {});
+		}
 	};
 
 	/**
 	 * Select the next tab (farther to the library tab)
 	 */
 	this.selectNext = function (options) {
-		var { tabIndex } = this._getTab(this._selectedID);
-		this.select((this._tabs[tabIndex + 1] || this._tabs[0]).id, false, options || {});
+		let id = Zotero.QLab && Zotero.QLab.nextContentTabID
+			? Zotero.QLab.nextContentTabID(this._tabs, this._selectedID, 1)
+			: null;
+		if (id) {
+			this.select(id, false, options || {});
+		}
 	};
 	
 	/**
 	 * Select the last tab
 	 */
 	this.selectLast = function () {
-		this.select(this._tabs[this._tabs.length - 1].id);
+		let content = this._tabs.filter(tab => !(Zotero.QLab
+			&& Zotero.QLab.isChatUtilityTab && Zotero.QLab.isChatUtilityTab(tab)));
+		if (content.length) {
+			this.select(content[content.length - 1].id);
+		}
 	};
 
 	/**
