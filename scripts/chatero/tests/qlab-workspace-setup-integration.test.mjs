@@ -184,6 +184,79 @@ test("ready repository selection resolves identity and uses guarded activation",
 	assert.equal(opened[0].openExample, false);
 });
 
+test("blocked ready selection keeps the active repository and presents only safe recovery actions", async () => {
+	const QLab = await loadQLab();
+	let activeRoot = null;
+	let activeHosts = [];
+	let identityWrites = 0;
+	const refreshes = [];
+	const opened = [];
+	QLab.normalizeQLabRoot = async path => path;
+	QLab.inspectQLabRepository = async root => inspection(root, "ready");
+	const coordinator = QLab.createQLabWorkspaceSetupCoordinator({
+		hosts: () => activeHosts,
+		controllerOptions: {
+			inspect: async root => inspection(root, "ready"),
+		},
+		resolveReadyRepository: async root => {
+			identityWrites++;
+			return { state: "ready", root, repositoryIdentity: `${root}:identity` };
+		},
+		activateRepository: async result => {
+			activeRoot = result.root;
+			return result.root;
+		},
+		refreshTargets: async epoch => refreshes.push(epoch),
+		openReadyTabs: value => opened.push(value),
+	});
+
+	await QLab.selectQLabWorkspace({ path: OLD_ROOT, host: {}, coordinator });
+	const before = {
+		activeRoot,
+		identity: coordinator.activeRepositoryIdentity,
+		epoch: coordinator.targetEpoch,
+		identityWrites,
+		refreshCount: refreshes.length,
+		openCount: opened.length,
+	};
+	activeHosts = [{ _qlabTurnHandle: { cancel() {} } }];
+	const blocked = await QLab.selectQLabWorkspace({ path: NEW_ROOT, host: {}, coordinator });
+	assert.equal(blocked.state, "blocked");
+
+	// Mirrors ZoteroPane's non-modal blocked-selection route into Setup Center.
+	await coordinator.open(blocked.root);
+	const setupController = coordinator.get(blocked.root);
+	setupController.reportError(blocked.reason);
+	const snapshot = setupController.snapshot();
+	const presentation = setupController.presentation();
+
+	assert.equal(snapshot.root, NEW_ROOT);
+	assert.equal(snapshot.repositoryState, "ready");
+	assert.equal(snapshot.state, "failed");
+	assert.equal(activeRoot, before.activeRoot);
+	assert.equal(coordinator.activeRepositoryIdentity, before.identity);
+	assert.equal(coordinator.targetEpoch, before.epoch);
+	assert.equal(identityWrites, before.identityWrites);
+	assert.equal(refreshes.length, before.refreshCount);
+	assert.equal(opened.length, before.openCount);
+	assert.equal(presentation.title, "Setup needs attention");
+	assert.equal(presentation.message, blocked.reason);
+	assert.equal(presentation.diagnostics.error, blocked.reason);
+	assert.equal(presentation.actions.some(action => action.id === "open"), false);
+	assert.equal(presentation.actions.some(action => action.id === "initialize"), false);
+
+	const explicitBlocked = QLab.workspaceSetupPresentation({
+		state: "blocked",
+		repositoryState: "ready",
+		root: NEW_ROOT,
+		error: blocked.reason,
+	});
+	assert.equal(explicitBlocked.title, "Setup needs attention");
+	assert.equal(explicitBlocked.message, blocked.reason);
+	assert.equal(explicitBlocked.actions.some(action => action.id === "open"), false);
+	assert.equal(explicitBlocked.actions.some(action => action.id === "initialize"), false);
+});
+
 test("native window activation registers Site and theorem Draft before arranging left and right", async () => {
 	const QLab = await loadQLab();
 	class Target {

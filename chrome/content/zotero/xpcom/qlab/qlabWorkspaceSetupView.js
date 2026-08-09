@@ -103,6 +103,11 @@ Zotero.QLab = Zotero.QLab || {};
 			message = 'Setup continues safely in the background if you close this tab.';
 			actions = [action('reveal', 'Reveal in Finder')];
 		}
+		else if (state === 'failed' || state === 'blocked') {
+			title = 'Setup needs attention';
+			message = snapshot.error || 'The folder changed or setup could not finish.';
+			actions = [action('review', 'Review Setup', 'primary'), action('choose', 'Choose Another Folder'), action('reveal', 'Reveal in Finder')];
+		}
 		else if (state === 'incompatible' || repositoryState === 'incompatible') {
 			title = 'This folder cannot be initialized';
 			message = 'It contains files or links that are not a safe partial Research Loop workspace.';
@@ -112,11 +117,6 @@ Zotero.QLab = Zotero.QLab || {};
 			title = 'Research Loop workspace ready';
 			message = 'This repository is ready to use. Open the QMD Editor to start with the example draft.';
 			actions = [action('open', 'Open QMD Editor', 'primary'), action('choose', 'Choose Another Folder'), action('reveal', 'Reveal in Finder')];
-		}
-		else if (state === 'failed') {
-			title = 'Setup needs attention';
-			message = snapshot.error || 'The folder changed or setup could not finish.';
-			actions = [action('review', 'Review Setup', 'primary'), action('choose', 'Choose Another Folder'), action('reveal', 'Reveal in Finder')];
 		}
 		else if (state === 'empty' || repositoryState === 'empty') {
 			title = 'Create a Research Loop workspace';
