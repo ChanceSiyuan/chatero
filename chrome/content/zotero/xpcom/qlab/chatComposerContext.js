@@ -17,6 +17,9 @@ Zotero.QLab = Zotero.QLab || {};
 (function () {
 	const MAX_TEXT = 8000;
 	const MAX_TAGS = 12;
+	const EXACT_SELECTION = 'exact-selection';
+	const BOUNDED_TEXT = 'bounded';
+	const EXACT_SELECTION_KINDS = new Set(['pdf-selection', 'qmd-selection']);
 	
 	function escapeHTML(value) {
 		return String(value || '')
@@ -36,6 +39,22 @@ Zotero.QLab = Zotero.QLab || {};
 	
 	function nextId(prefix) {
 		return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+	}
+
+	function textSemanticsFor(tag) {
+		return EXACT_SELECTION_KINDS.has(String(tag && tag.kind || ''))
+			? EXACT_SELECTION
+			: BOUNDED_TEXT;
+	}
+
+	function composerTagText(tag, semantics) {
+		let text = String(tag && tag.text || '');
+		return semantics === EXACT_SELECTION ? text : text.slice(0, MAX_TEXT);
+	}
+
+	function pdfSelectionFromParams(params) {
+		let value = params && params.annotation && params.annotation.text;
+		return value === null || value === undefined ? '' : String(value);
 	}
 	
 	Zotero.QLab.ChatComposerContext = {
@@ -65,13 +84,15 @@ Zotero.QLab = Zotero.QLab || {};
 			if (!tag || !tag.kind) {
 				throw new Error('Context tag requires kind');
 			}
+			let textSemantics = textSemanticsFor(tag);
 			let entry = {
 				id: tag.id || nextId(tag.kind),
 				stableKey: tag.stableKey || null,
 				kind: tag.kind,
 				label: String(tag.label || tag.kind),
 				detail: String(tag.detail || ''),
-				text: String(tag.text || '').slice(0, MAX_TEXT),
+				textSemantics,
+				text: composerTagText(tag, textSemantics),
 				origin: tag.origin ? Object.freeze({ ...tag.origin }) : null,
 				removable: tag.removable !== false,
 				addedAt: tag.addedAt || new Date().toISOString(),
@@ -142,6 +163,7 @@ Zotero.QLab = Zotero.QLab || {};
 			return {
 				stableKey: `pdf-selection:${context.attachment.id}`,
 				kind: 'pdf-selection',
+				textSemantics: EXACT_SELECTION,
 				label: `${shortTitle} · sel`,
 				detail: `p.${context.selection.pageNumber} · ${text.length} chars`,
 				text,
@@ -211,7 +233,7 @@ Zotero.QLab = Zotero.QLab || {};
 		let short = truncate(path.replace(/^drafts\//, ''), 32);
 		let exactSelection = String(selection || '');
 		if (exactSelection.length > 0) {
-			let text = exactSelection.slice(0, MAX_TEXT);
+			let text = exactSelection;
 			let origin = {
 				type: 'qmd',
 				relativePath: path,
@@ -226,6 +248,7 @@ Zotero.QLab = Zotero.QLab || {};
 			return {
 				stableKey: `qmd-selection:${path}`,
 				kind: 'qmd-selection',
+				textSemantics: EXACT_SELECTION,
 				label: `${short} · sel`,
 				detail: `${text.length} chars · ${surfaceMode}`,
 				text,
@@ -716,6 +739,7 @@ Zotero.QLab = Zotero.QLab || {};
 			let reader = options.reader || (Zotero.Reader.getByTabID
 				&& tabs.selectedID
 				&& Zotero.Reader.getByTabID(tabs.selectedID));
+			let exactSelection = pdfSelectionFromParams(options.params);
 			if (reader && Zotero.QLab.ReaderContextStore) {
 				await Zotero.QLab.ReaderContextStore.captureFromEvent({
 					reader,
@@ -725,6 +749,26 @@ Zotero.QLab = Zotero.QLab || {};
 			let ctx = Zotero.QLab.ReaderContextStore && Zotero.QLab.ReaderContextStore.get();
 			if (!ctx) {
 				throw new Error('Select a PDF or open a QMD Draft first (⌘L)');
+			}
+			// ReaderContextStore bounds ambient snapshots, but a deliberate Reader
+			// selection is an authored attachment. Rebind the raw event text so
+			// Command-K and the selection button never silently alter its UTF-16
+			// code units or whitespace before it reaches the composer prompt.
+			if (exactSelection.length > 0
+					&& (options.preference === 'selection' || options.preference === 'auto')) {
+				ctx = {
+					...ctx,
+					selection: {
+						...(ctx.selection || {}),
+						text: exactSelection,
+						pageIndex: ctx.selection && Number.isInteger(ctx.selection.pageIndex)
+							? ctx.selection.pageIndex
+							: ctx.page && ctx.page.pageIndex,
+						pageNumber: ctx.selection && Number.isInteger(ctx.selection.pageNumber)
+							? ctx.selection.pageNumber
+							: ctx.page && ctx.page.pageNumber,
+					},
+				};
 			}
 			tag = Zotero.QLab.createPdfComposerTag(ctx, options.preference || 'auto');
 			anchorItemID = ctx.attachment && ctx.attachment.id;

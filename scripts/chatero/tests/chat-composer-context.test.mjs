@@ -28,6 +28,10 @@ function samplePdfContext() {
 	};
 }
 
+function oversizedExactSelection(label) {
+	return `  ${label}\r\n${"αβ🙂\tkept  whitespace\r\n".repeat(500)}final line\t  `;
+}
+
 test("createPdfComposerTag prefers selection then page then paper", async () => {
 	const QLab = await loadQLab();
 	const ctx = samplePdfContext();
@@ -137,10 +141,11 @@ test("renderComposerTagsHTML empty state hints ⌘L", async () => {
 	assert.match(html, /⌘L/);
 });
 
-test("QMD Source selection is attached exactly once and focused in resident Chat", async () => {
+test("QMD Source Command-K keeps an oversized exact UTF-16 selection and does not send", async () => {
 	const QLab = await loadQLab();
 	QLab.ChatComposerContext.clear();
-	const exact = "  $f(x)$ is selected\nwith both edges preserved  ";
+	const exact = oversizedExactSelection("$f(x)$ is selected");
+	assert.ok(exact.length > 8000);
 	const prompt = { focusCount: 0, focus() { this.focusCount++; } };
 	const runningTurn = { cancelCount: 0, cancel() { this.cancelCount++; } };
 	const send = { clickCount: 0, click() { this.clickCount++; } };
@@ -214,9 +219,11 @@ test("QMD Source selection is attached exactly once and focused in resident Chat
 	const tags = QLab.ChatComposerContext.list();
 	assert.equal(tags.length, 1, "the existing stable-key semantics deduplicate the selection tag");
 	assert.equal(tags[0].kind, "qmd-selection");
+	assert.equal(tags[0].textSemantics, "exact-selection");
 	assert.equal(tags[0].text, exact);
 	assert.equal(tags[0].origin.start, 9);
 	assert.equal(tags[0].origin.end, 9 + exact.length);
+	assert.ok(QLab.ChatComposerContext.formatForPrompt().includes(exact));
 	assert.equal(prompt.focusCount, 2);
 	assert.equal(calls.filter(call => call[0] === "show").length, 1);
 	assert.equal(calls.some(call => ["send", "cancel", "arrange"].includes(call[0])), false);
@@ -224,4 +231,122 @@ test("QMD Source selection is attached exactly once and focused in resident Chat
 	assert.equal(runningTurn.cancelCount, 0);
 	assert.equal(chatHost._qlabTurnHandle, runningTurn);
 	assert.equal(tabs.selectedID, "reader-41");
+});
+
+test("PDF Command-K keeps an oversized exact UTF-16 selection and does not send", async () => {
+	const exact = oversizedExactSelection("PDF selection");
+	assert.ok(exact.length > 8000);
+	const attachment = {
+		id: 12,
+		key: "ABCDEFGH",
+		libraryID: 1,
+		parentItemID: 9,
+		attachmentFilename: "paper.pdf",
+		getAttachmentLastPageIndex: () => 4,
+	};
+	const parent = {
+		id: 9,
+		key: "PARENTKEY",
+		getDisplayTitle: async () => "Attention Is All You Need",
+	};
+	const QLab = await loadQLab({
+		Items: { get: id => id === attachment.id ? attachment : parent },
+		Reader: { getByTabID: () => null, _readers: [] },
+	});
+	QLab.ChatComposerContext.clear();
+	const prompt = { focusCount: 0, focus() { this.focusCount++; } };
+	const runningTurn = { cancelCount: 0, cancel() { this.cancelCount++; } };
+	const send = { clickCount: 0, click() { this.clickCount++; } };
+	const chatHost = {
+		_qlabTurnHandle: runningTurn,
+		ownerDocument: { createElement: () => ({ firstElementChild: null }) },
+		querySelector(selector) {
+			if (selector === "[data-qlab-context-tags]") return null;
+			if (selector === "[data-qlab-prompt]") return prompt;
+			if (selector === "[data-qlab-send]") return send;
+			return null;
+		},
+	};
+	const chatContainer = { querySelector: selector => selector === ".qlab-shell-host" ? chatHost : null };
+	let chatVisible = false;
+	const calls = [];
+	const tabs = {
+		_tabs: [{ id: "reader-12", type: "reader" }],
+		selectedID: "reader-12",
+		isTabVisible: id => id === "qlabchat" && chatVisible,
+		_qlab: {
+			async showUtility(kind, payload, options) {
+				calls.push(["show", kind, payload, options]);
+				chatVisible = true;
+				if (!tabs._tabs.some(tab => tab.id === "qlabchat")) {
+					tabs._tabs.push({ id: "qlabchat", type: "qlabchat" });
+				}
+			},
+			ensureShellTab(kind, payload) { calls.push(["ensure", kind, payload]); },
+		},
+	};
+	const windowRef = {
+		Zotero_Tabs: tabs,
+		document: {
+			getElementById(id) {
+				if (id === "qlab-chat-utility-content") return chatContainer;
+				return null;
+			},
+		},
+	};
+	const reader = {
+		itemID: 12,
+		_internalReader: { _state: { primaryViewStats: { pageIndex: 4 } } },
+	};
+
+	await QLab.addCurrentContextToChat(windowRef, {
+		reader,
+		params: { annotation: { text: exact } },
+		preference: "selection",
+		focus: true,
+	});
+	await QLab.addCurrentContextToChat(windowRef, {
+		reader,
+		params: { annotation: { text: exact } },
+		preference: "selection",
+		focus: true,
+	});
+
+	const tags = QLab.ChatComposerContext.list();
+	assert.equal(tags.length, 1, "stable selection identity must still deduplicate");
+	assert.equal(tags[0].kind, "pdf-selection");
+	assert.equal(tags[0].textSemantics, "exact-selection");
+	assert.equal(tags[0].text, exact);
+	assert.equal(tags[0].origin.pageIndex, 4);
+	assert.equal(tags[0].origin.pageNumber, 5);
+	assert.ok(QLab.ChatComposerContext.formatForPrompt().includes(exact));
+	assert.equal(prompt.focusCount, 2);
+	assert.equal(calls.filter(call => call[0] === "show").length, 1);
+	assert.equal(send.clickCount, 0);
+	assert.equal(runningTurn.cancelCount, 0);
+	assert.equal(chatHost._qlabTurnHandle, runningTurn);
+	assert.equal(tabs.selectedID, "reader-12");
+});
+
+test("non-selection PDF page and QMD file contexts remain safety-bounded", async () => {
+	const QLab = await loadQLab();
+	QLab.ChatComposerContext.clear();
+	const oversized = "bounded context ".repeat(700);
+	assert.ok(oversized.length > 8000);
+
+	const pdfPage = QLab.ChatComposerContext.add(QLab.createPdfComposerTag({
+		...samplePdfContext(),
+		selection: null,
+		page: { pageIndex: 2, pageNumber: 3, text: oversized },
+	}, "page"));
+	const qmdFile = QLab.ChatComposerContext.add(QLab.createQmdComposerTag({
+		relativePath: "drafts/notes/bounded.qmd",
+		source: oversized,
+		surfaceMode: "source",
+	}));
+
+	assert.equal(pdfPage.text.length, 8000);
+	assert.equal(qmdFile.text.length, 8000);
+	assert.equal(pdfPage.textSemantics, "bounded");
+	assert.equal(qmdFile.textSemantics, "bounded");
 });
