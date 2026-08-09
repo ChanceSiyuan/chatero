@@ -135,3 +135,40 @@ test("repository identity does not chmod an existing valid identity", async (t) 
 	assert.equal(result.identity, FIXED_UUID);
 	assert.equal((await lstat(identityPath)).mode & 0o777, 0o640);
 });
+
+test("repository identity creation revalidates its private parent after a race", async (t) => {
+	const QLab = await loadQLab();
+	const root = await repository(t);
+	const outside = await mkdtemp(join(tmpdir(), "chatero-identity-race-outside-"));
+	t.after(() => rm(outside, { recursive: true, force: true }));
+	const privateParent = join(root, ".git", "qlab");
+	let attacked = false;
+	const racingFs = new Proxy(fs, {
+		get(source, property) {
+			if (property === "lstat") {
+				return async target => {
+					const result = await fs.lstat(target);
+					if (!attacked && target === privateParent && result.isDirectory()) {
+						attacked = true;
+						await rm(privateParent, { recursive: true });
+						await symlink(outside, privateParent);
+					}
+					return result;
+				};
+			}
+			const value = Reflect.get(source, property);
+			return typeof value === "function" ? value.bind(source) : value;
+		},
+	});
+	const host = QLab.createNodeQLabRepositoryHost(racingFs, path);
+
+	await assert.rejects(
+		QLab.createQLabRepositoryIdentity({ root, host, uuid: () => FIXED_UUID }),
+		/symbolic|outside|ancestor|parent/i,
+	);
+	assert.equal(attacked, true);
+	assert.equal(
+		await fs.access(join(outside, "repository-id")).then(() => true, () => false),
+		false,
+	);
+});

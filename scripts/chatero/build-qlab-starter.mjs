@@ -249,6 +249,20 @@ function addGeneratedRecords(records) {
   }
 }
 
+function addImplicitAncestorDirectories(records) {
+	for (const record of [...records.values()]) {
+		const segments = record.path.split("/");
+		segments.pop();
+		while (segments.length) {
+			const path = segments.join("/");
+			const existing = records.get(path);
+			if (existing && existing.kind !== "directory") fail(`file output path is a parent: ${path}`);
+			if (!existing) records.set(path, { path, kind: "directory", mode: "0755" });
+			segments.pop();
+		}
+	}
+}
+
 function validatePathSet(records) {
   const folded = new Set();
   for (const record of records.values()) {
@@ -279,6 +293,7 @@ export async function buildStarter({ source, output = outputRoot } = {}) {
   for (const path of STARTER_CURATED_COPY_PATHS) await gatherSourcePath(canonicalSource, path, records);
   for (const path of STARTER_ARCHITECTURE_COPY_PATHS) await assertSourcePathExists(canonicalSource, path);
   addGeneratedRecords(records);
+  addImplicitAncestorDirectories(records);
   validatePathSet(records);
 
   const entries = [...records.values()]

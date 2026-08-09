@@ -23,6 +23,21 @@ Zotero.QLab = Zotero.QLab || {};
 		drafts: 'directory',
 		knowledge: 'directory',
 	});
+	const KNOWN_STARTER_ENTRY_KINDS = Object.freeze({
+		...REQUIRED_ENTRY_KINDS,
+		'.gitignore': 'file',
+		'.node-version': 'file',
+		'CLAUDE.md': 'file',
+		'Makefile': 'file',
+		'README.md': 'file',
+		'package-lock.json': 'file',
+		'package.json': 'file',
+		'schemas': 'directory',
+		'skills': 'directory',
+		'src': 'directory',
+		'tsconfig.json': 'file',
+		'vite.config.ts': 'file',
+	});
 	
 	Zotero.QLab.QLAB_STARTER_MARKER = QLAB_STARTER_MARKER;
 	Zotero.QLab.QLAB_REQUIRED_ENTRIES = REQUIRED_ENTRIES.slice();
@@ -115,6 +130,13 @@ Zotero.QLab = Zotero.QLab || {};
 		if (expectedKind
 			&& !(await pathIsSymlink(entryPath, host))
 			&& (await pathKind(entryPath, host)) === expectedKind) {
+			return true;
+		}
+		let knownKind = KNOWN_STARTER_ENTRY_KINDS[entry];
+		if (knownKind
+			&& await hasStarterMarker(root, host)
+			&& !(await pathIsSymlink(entryPath, host))
+			&& (await pathKind(entryPath, host)) === knownKind) {
 			return true;
 		}
 		return entry === '.research-loop'

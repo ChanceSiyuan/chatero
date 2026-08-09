@@ -40,7 +40,7 @@ Zotero.QLab = Zotero.QLab || {};
 		}
 	}
 
-	async function resolveGitPrivatePath(root, host) {
+	async function resolveGitPrivatePath(root, host, { allowMissingGit = false } = {}) {
 		if (typeof host.gitPrivatePath === 'function') {
 			let raw = await host.gitPrivatePath(root);
 			if (typeof raw !== 'string' || raw !== raw.trim() || raw.includes('\0') || /[\r\n]/.test(raw)) {
@@ -51,7 +51,10 @@ Zotero.QLab = Zotero.QLab || {};
 			return candidate;
 		}
 		let dotGit = host.join(root, '.git');
-		await host.assertNoSymlinkComponents(root, dotGit, { allowLeafFile: true });
+		await host.assertNoSymlinkComponents(root, dotGit, {
+			allowLeafFile: true,
+			allowMissingLeaf: allowMissingGit,
+		});
 		let kind = await host.kind(dotGit);
 		let gitDirectory;
 		if (kind === 'directory') {
@@ -63,6 +66,9 @@ Zotero.QLab = Zotero.QLab || {};
 			gitDirectory = host.resolvePath(root, pointer.slice('gitdir: '.length));
 			assertInside(root, gitDirectory, host);
 			await host.assertNoSymlinkComponents(root, gitDirectory);
+		}
+		else if (allowMissingGit && kind === 'missing') {
+			gitDirectory = dotGit;
 		}
 		else {
 			throw new Error('Git-private repository identity is unavailable');
@@ -93,20 +99,37 @@ Zotero.QLab = Zotero.QLab || {};
 		return identity;
 	}
 
-	Zotero.QLab.createQLabRepositoryIdentity = async function ({ root, host, uuid }) {
-		if (!host || typeof uuid !== 'function') throw new Error('QLab repository identity requires a host and UUID source');
+	async function inspectIdentityTarget({ root, host, allowMissingGit = false }) {
+		if (!host) throw new Error('QLab repository identity requires a host');
 		let canonical = await host.realPath(root);
 		canonical = host.normalize(canonical).replace(/[\\/]+$/, '');
 		requireCanonicalAbsoluteRoot(root, canonical, host);
-		let path = await resolveGitPrivatePath(canonical, host);
+		let path = await resolveGitPrivatePath(canonical, host, { allowMissingGit });
 		await host.assertNoSymlinkComponents(canonical, path, { allowMissingParent: true, allowMissingLeaf: true });
 		let existing = await host.readPrivateNoFollow(path, MAX_IDENTITY_BYTES + 1);
+		return Object.freeze({
+			root: canonical,
+			path,
+			existingIdentity: existing === null ? null : validatedIdentity(existing),
+		});
+	}
+
+	Zotero.QLab.preflightQLabRepositoryIdentity = async function ({ root, host }) {
+		return inspectIdentityTarget({ root, host, allowMissingGit: true });
+	};
+
+	Zotero.QLab.createQLabRepositoryIdentity = async function ({ root, host, uuid }) {
+		if (!host || typeof uuid !== 'function') throw new Error('QLab repository identity requires a host and UUID source');
+		let target = await inspectIdentityTarget({ root, host });
+		let { path } = target;
+		let canonical = target.root;
+		let existing = target.existingIdentity;
 		if (existing !== null) {
-			return Object.freeze({ identity: validatedIdentity(existing), path, created: false });
+			return Object.freeze({ identity: existing, path, created: false });
 		}
 		let generated = String(await uuid()).toLowerCase();
 		if (!UUID_PATTERN.test(generated)) throw new Error('Generated repository UUID is invalid');
-		let outcome = await host.createPrivateIfAbsent(path, `${generated}\n`, 0o600, 0o700);
+		let outcome = await host.createPrivateIfAbsent(canonical, path, `${generated}\n`, 0o600, 0o700);
 		let winner = await host.readPrivateNoFollow(path, MAX_IDENTITY_BYTES + 1);
 		if (winner === null) throw new Error('Repository identity creation did not produce a readable identity');
 		return Object.freeze({ identity: validatedIdentity(winner), path, created: outcome === 'created' });
@@ -182,10 +205,15 @@ Zotero.QLab = Zotero.QLab || {};
 					throw error;
 				}
 			},
-			createPrivateIfAbsent: async (p, value, mode, directoryMode) => {
+			createPrivateIfAbsent: async (root, p, value, mode, directoryMode) => {
 				let parent = pathModule.dirname(p);
 				await fs.mkdir(parent, { recursive: true, mode: directoryMode });
-				await assertNoSymlinkComponents(pathModule.parse(p).root, parent);
+				await assertNoSymlinkComponents(root, parent);
+				let resolvedParent = normalized(await fs.realpath(parent));
+				if (resolvedParent !== normalized(parent) || !isInside(root, resolvedParent)) {
+					throw new Error('Private identity parent escaped the repository root');
+				}
+				await assertNoSymlinkComponents(root, parent);
 				let handle;
 				try {
 					handle = await fs.open(p, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | (fs.constants.O_NOFOLLOW || 0), mode);

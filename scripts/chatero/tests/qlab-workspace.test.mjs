@@ -103,13 +103,37 @@ test("starter marker does not make an unknown root entry resumable", async () =>
 	try {
 		await mkdir(join(root, ".research-loop"));
 		await writeFile(join(root, ".research-loop/starter.json"), "{}\n");
-		await writeFile(join(root, "README.md"), "user content\n");
+		await writeFile(join(root, "personal.txt"), "user content\n");
 		const inspection = await QLab.inspectQLabRepository(root, host);
 		assert.equal(inspection.state, "incompatible");
-		assert.deepEqual(Array.from(inspection.conflicts), ["README.md"]);
+		assert.deepEqual(Array.from(inspection.conflicts), ["personal.txt"]);
 
-		await rm(join(root, "README.md"));
+		await rm(join(root, "personal.txt"));
 		assert.equal(await QLab.qlabRepositoryState(root, host), "partial");
+	}
+	finally {
+		await rm(root, { recursive: true, force: true });
+	}
+});
+
+test("starter marker recognizes known bundled top-level targets while unknown targets fail closed", async () => {
+	const QLab = await loadQLab();
+	const host = QLab.createNodeQLabPathHost(fs, path);
+	const root = await mkdtemp(join(tmpdir(), "chatero-qlab-known-partial-"));
+	try {
+		await mkdir(join(root, ".research-loop"));
+		await writeFile(join(root, ".research-loop", "starter.json"), "{}\n");
+		await writeFile(join(root, "README.md"), "public starter readme\n");
+		await writeFile(join(root, "package.json"), "{}\n");
+		await mkdir(join(root, "skills"));
+		let inspection = await QLab.inspectQLabRepository(root, host);
+		assert.equal(inspection.state, "partial");
+		assert.deepEqual(Array.from(inspection.conflicts), []);
+
+		await writeFile(join(root, "unrecognized.data"), "private unknown\n");
+		inspection = await QLab.inspectQLabRepository(root, host);
+		assert.equal(inspection.state, "incompatible");
+		assert.deepEqual(Array.from(inspection.conflicts), ["unrecognized.data"]);
 	}
 	finally {
 		await rm(root, { recursive: true, force: true });

@@ -15,6 +15,8 @@ Zotero.QLab = Zotero.QLab || {};
 	const RECEIPT_SCHEMA = 1;
 	const SHA256 = /^[a-f0-9]{64}$/;
 	const RECEIPT_STATES = new Set(['running', 'failed', 'ready']);
+	const STARTER_MANIFEST_URI = 'resource://zotero/chatero/qlab-starter/manifest.json';
+	const STARTER_ARCHIVE_URI = 'resource://zotero/chatero/qlab-starter/research-loop-starter.zip';
 
 	function immutableResult(receipt, receiptPath) {
 		return Object.freeze({
@@ -33,7 +35,16 @@ Zotero.QLab = Zotero.QLab || {};
 			&& left.kind === right.kind
 			&& left.mode === right.mode
 			&& (left.digest || '') === (right.digest || '')
+			&& (left.fingerprint || '') === (right.fingerprint || '')
 			&& (left.reason || '') === (right.reason || '');
+	}
+
+	function sameStarterRecord(left, right) {
+		return left && right
+			&& left.path === right.path
+			&& left.kind === right.kind
+			&& left.mode === right.mode
+			&& (left.digest || '') === (right.digest || '');
 	}
 
 	function sameRecordList(left, right) {
@@ -106,6 +117,10 @@ Zotero.QLab = Zotero.QLab || {};
 			if (kind !== entry.kind) {
 				throw new Error(`Preserved starter target changed: ${entry.path}`);
 			}
+			if (!SHA256.test(String(entry.fingerprint || ''))
+				|| await Zotero.QLab.fingerprintQLabPreservedTarget(root, entry.path, host) !== entry.fingerprint) {
+				throw new Error(`Preserved starter target fingerprint changed: ${entry.path}`);
+			}
 		}
 	}
 
@@ -117,8 +132,10 @@ Zotero.QLab = Zotero.QLab || {};
 			manifestDigest: verified.manifest.digest,
 			archiveSha256: verified.rawManifest.archiveSha256,
 			planDigest: plan.digest,
+			inspectionFingerprint: plan.inspectionFingerprint,
 			create: plan.create.map(entry => ({ ...entry })),
 			preserve: plan.preserve.map(entry => ({ ...entry })),
+			conflicts: plan.conflicts.map(entry => ({ ...entry })),
 			completed: [],
 			inFlight: null,
 			repositoryIdentity: null,
@@ -127,22 +144,33 @@ Zotero.QLab = Zotero.QLab || {};
 		};
 	}
 
-	function validateReceipt(receipt, root, verified) {
+	async function validateReceipt(receipt, root, verified, host) {
 		if (!receipt || receipt.schemaVersion !== RECEIPT_SCHEMA || receipt.root !== root) {
 			throw new Error('Initialization receipt does not match this repository');
+		}
+		let canonicalReceipt = { ...receipt };
+		delete canonicalReceipt.receiptDigest;
+		if (!SHA256.test(String(receipt.receiptDigest || ''))
+			|| await host.sha256(JSON.stringify(canonicalReceipt)) !== receipt.receiptDigest) {
+			throw new Error('Initialization receipt digest is stale or invalid');
 		}
 		if (receipt.manifestDigest !== verified.manifest.digest
 			|| receipt.archiveSha256 !== verified.rawManifest.archiveSha256
 			|| !SHA256.test(String(receipt.planDigest || ''))
+			|| typeof receipt.inspectionFingerprint !== 'string'
 			|| !RECEIPT_STATES.has(receipt.state)
 			|| !Array.isArray(receipt.create)
 			|| !Array.isArray(receipt.preserve)
+			|| !Array.isArray(receipt.conflicts)
 			|| !Array.isArray(receipt.completed)) {
 			throw new Error('Initialization receipt is stale or invalid');
 		}
+		if (receipt.planDigest !== Zotero.QLab.computeQLabStarterPlanDigest(receipt)) {
+			throw new Error('Initialization receipt plan digest is stale or invalid');
+		}
 		let manifestByPath = new Map(verified.manifest.entries.map(entry => [entry.path, entry]));
 		for (let entry of [...receipt.create, ...receipt.preserve]) {
-			if (!sameRecord(entry, manifestByPath.get(entry.path))) {
+			if (!sameStarterRecord(entry, manifestByPath.get(entry.path))) {
 				throw new Error('Initialization receipt plan does not match the starter manifest');
 			}
 		}
@@ -185,6 +213,8 @@ Zotero.QLab = Zotero.QLab || {};
 
 		async function writeReceipt(receiptPath, receipt, exclusive = false) {
 			receipt.updatedAt = now();
+			delete receipt.receiptDigest;
+			receipt.receiptDigest = await host.sha256(JSON.stringify(receipt));
 			await host.writeReceipt(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, { exclusive });
 		}
 
@@ -218,6 +248,22 @@ Zotero.QLab = Zotero.QLab || {};
 			let createdSet = new Set(receipt.completed);
 			let report = step => { if (typeof onProgress === 'function') onProgress(Object.freeze({ step })); };
 			try {
+				if (!existingReceipt) {
+					let markerEntry = receipt.create.find(entry => entry.path === '.research-loop' && entry.kind === 'directory');
+					let markerParent = host.join(receipt.root, '.research-loop');
+					let outcome = await host.createDirectoryIfAbsent(
+						receipt.root,
+						markerParent,
+						markerEntry ? parseInt(markerEntry.mode, 8) : 0o700
+					);
+					if (outcome !== 'created' && outcome !== 'exists') throw new Error('Could not create private receipt directory');
+					if (markerEntry) {
+						createdSet.add(markerEntry.path);
+						receipt.completed = [...createdSet];
+					}
+					await writeReceipt(receiptPath, receipt, true);
+					existingReceipt = true;
+				}
 				report('add-missing-files');
 				for (let entry of receipt.create) {
 					if (createdSet.has(entry.path)) continue;
@@ -234,18 +280,7 @@ Zotero.QLab = Zotero.QLab || {};
 					createdSet.add(entry.path);
 					receipt.completed = [...createdSet];
 					receipt.inFlight = null;
-					if (entry.path === '.research-loop' && !existingReceipt) {
-						await writeReceipt(receiptPath, receipt, true);
-						existingReceipt = true;
-					}
-					else if (existingReceipt) await writeReceipt(receiptPath, receipt);
-				}
-				if (!existingReceipt) {
-					let markerParent = host.join(receipt.root, '.research-loop');
-					let outcome = await host.createDirectoryIfAbsent(receipt.root, markerParent, 0o700);
-					if (outcome !== 'created' && outcome !== 'exists') throw new Error('Could not create private receipt directory');
-					await writeReceipt(receiptPath, receipt, true);
-					existingReceipt = true;
+					if (existingReceipt) await writeReceipt(receiptPath, receipt);
 				}
 				report('initialize-git');
 				await initializeGit(receipt.root);
@@ -303,11 +338,22 @@ Zotero.QLab = Zotero.QLab || {};
 					throw new Error('QLab initialization plan snapshot no longer matches the repository and starter manifest');
 				}
 				await verifyGitTarget(plan.root);
+				await Zotero.QLab.preflightQLabRepositoryIdentity({ root: plan.root, host });
 				let receiptPath = host.join(plan.root, RECEIPT_RELATIVE_PATH);
 				let existing = await host.readReceipt(receiptPath);
 				if (existing) {
-					let receipt = validateReceipt(existing, plan.root, verified);
+					let receipt = await validateReceipt(existing, plan.root, verified, host);
 					if (receipt.state !== 'ready') throw new Error('Interrupted initialization must be resumed explicitly');
+					await assertNoUnplannedTopLevel(plan.root, receipt, host);
+					await verifyPreservedEntries(plan.root, receipt.preserve, host);
+					for (let entry of receipt.create) {
+						if (!await verifyEntry(plan.root, entry, verified.payloads, host)) {
+							throw new Error(`Created starter target changed: ${entry.path}`);
+						}
+					}
+					if (!await Zotero.QLab.isQLabRepositoryShape(plan.root, host)) {
+						throw new Error('Ready initialization receipt does not satisfy the QLab shape');
+					}
 					let identity = await ensureReadyIdentity(plan.root, receipt);
 					receipt.repositoryIdentity = identity;
 					report('add-missing-files'); report('initialize-git'); report('verify-repository'); report('ready');
@@ -330,7 +376,7 @@ Zotero.QLab = Zotero.QLab || {};
 				report('verify-folder');
 				report('verify-starter');
 				let verified = await verifyAssets(assetReader, host);
-				let receipt = validateReceipt(stored, canonical, verified);
+				let receipt = await validateReceipt(stored, canonical, verified, host);
 				await assertNoUnplannedTopLevel(canonical, receipt, host);
 				await verifyPreservedEntries(canonical, receipt.preserve, host);
 				await verifyGitTarget(canonical);
@@ -362,6 +408,9 @@ Zotero.QLab = Zotero.QLab || {};
 					if (status.kind !== 'missing') throw new Error(`Repository changed: unrecorded target ${entry.path}`);
 				}
 				if (receipt.state === 'ready') {
+					if (!await Zotero.QLab.isQLabRepositoryShape(canonical, host)) {
+						throw new Error('Ready initialization receipt does not satisfy the QLab shape');
+					}
 					await ensureReadyIdentity(canonical, receipt);
 					return immutableResult(receipt, receiptPath);
 				}
@@ -375,6 +424,15 @@ Zotero.QLab = Zotero.QLab || {};
 
 	Zotero.QLab.createNodeQLabInitializerHost = function (fs, pathModule, createHash) {
 		let base = Zotero.QLab.createNodeQLabRepositoryHost(fs, pathModule);
+		async function revalidateParent(root, target) {
+			let parent = pathModule.dirname(target);
+			await base.assertNoSymlinkComponents(root, parent);
+			let resolvedParent = pathModule.normalize(await fs.realpath(parent));
+			if (resolvedParent !== pathModule.normalize(parent) || !base.isPathInside(root, resolvedParent)) {
+				throw new Error('Target parent escaped the repository root');
+			}
+			await base.assertNoSymlinkComponents(root, parent);
+		}
 		async function readBytesNoFollow(target) {
 			let handle = await fs.open(target, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
 			try { return await handle.readFile(); }
@@ -382,6 +440,7 @@ Zotero.QLab = Zotero.QLab || {};
 		}
 		async function createDirectoryIfAbsent(root, target, mode) {
 			await base.assertNoSymlinkComponents(root, target, { allowMissingLeaf: true });
+			await revalidateParent(root, target);
 			try { await fs.mkdir(target, { mode }); return 'created'; }
 			catch (error) {
 				if (error && error.code === 'EEXIST' && await base.kind(target) === 'directory') return 'exists';
@@ -390,6 +449,7 @@ Zotero.QLab = Zotero.QLab || {};
 		}
 		async function createFileIfAbsent(root, target, bytes, mode) {
 			await base.assertNoSymlinkComponents(root, target, { allowMissingLeaf: true });
+			await revalidateParent(root, target);
 			let handle;
 			try {
 				handle = await fs.open(target, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | (fs.constants.O_NOFOLLOW || 0), mode);
@@ -428,6 +488,274 @@ Zotero.QLab = Zotero.QLab || {};
 				await fs.rename(temporary, target);
 			},
 		};
+	};
+
+	Zotero.QLab.createGeckoQLabInitializerHost = function (dependencies = {}) {
+		let io = dependencies.IOUtils || (typeof IOUtils !== 'undefined' ? IOUtils : null);
+		let paths = dependencies.PathUtils || (typeof PathUtils !== 'undefined' ? PathUtils : null);
+		let xpcom = dependencies.Components || (typeof Components !== 'undefined' ? Components : null);
+		let cryptoAPI = dependencies.crypto || (typeof crypto !== 'undefined' ? crypto : null);
+
+		function localFile(path) {
+			let file = xpcom.classes['@mozilla.org/file/local;1']
+				.createInstance(xpcom.interfaces.nsIFile);
+			file.initWithPath(path);
+			return file;
+		}
+
+		function normalized(path) {
+			if (paths && typeof paths.normalize === 'function') return paths.normalize(path);
+			let file = localFile(path);
+			try { file.normalize(); }
+			catch {}
+			return String(file.path || path);
+		}
+
+		function separator(path) {
+			return String(path).includes('\\') && !String(path).includes('/') ? '\\' : '/';
+		}
+
+		function isInside(root, target) {
+			let canonicalRoot = normalized(root).replace(/[\\/]+$/, '');
+			let candidate = normalized(target).replace(/[\\/]+$/, '');
+			let boundary = separator(canonicalRoot);
+			return candidate === canonicalRoot || candidate.startsWith(canonicalRoot + boundary);
+		}
+
+		async function isSymlink(target) {
+			try {
+				let file = localFile(target);
+				return typeof file.isSymlink === 'function' && file.isSymlink();
+			}
+			catch { return false; }
+		}
+
+		async function kind(target) {
+			if (await isSymlink(target)) return 'symlink';
+			try {
+				let stat = await io.stat(target);
+				if (stat.type === 'directory') return 'directory';
+				if (stat.type === 'file' || stat.type === 'regular') return 'file';
+				return 'other';
+			}
+			catch (error) {
+				if (error && (error.name === 'NotFoundError' || error.result === xpcom.results.NS_ERROR_FILE_NOT_FOUND)) return 'missing';
+				throw error;
+			}
+		}
+
+		async function assertNoSymlinkComponents(root, target, options = {}) {
+			let canonicalRoot = normalized(root).replace(/[\\/]+$/, '');
+			let candidate = normalized(target);
+			if (!isInside(canonicalRoot, candidate)) throw new Error('Path is outside the repository root');
+			let suffix = candidate.slice(canonicalRoot.length).replace(/^[\\/]+/, '');
+			let components = suffix ? suffix.split(/[\\/]+/) : [];
+			let current = canonicalRoot;
+			for (let index = 0; index < components.length; index++) {
+				current = paths.join(current, components[index]);
+				let value = await kind(current);
+				let leaf = index === components.length - 1;
+				if (value === 'symlink') throw new Error(`Symbolic link refused at ${current}`);
+				if (value === 'missing') {
+					if ((leaf && options.allowMissingLeaf) || options.allowMissingParent) return;
+					throw new Error(`Private path component is missing at ${current}`);
+				}
+				if (!leaf && value !== 'directory') throw new Error(`Private path ancestor is not a directory at ${current}`);
+			}
+		}
+
+		async function readBytesNoFollow(target, maxBytes) {
+			if (await isSymlink(target)) throw new Error(`Symbolic link refused at ${target}`);
+			if (maxBytes !== undefined) {
+				let stat = await io.stat(target);
+				if (Number(stat.size) > maxBytes) throw new Error('Private file is oversized');
+			}
+			let bytes = await io.read(target, maxBytes === undefined ? undefined : { maxBytes });
+			if (await isSymlink(target)) throw new Error(`Symbolic link refused at ${target}`);
+			return bytes;
+		}
+
+		async function revalidateParent(root, target) {
+			let parent = paths.parent(target);
+			await assertNoSymlinkComponents(root, parent);
+			let resolvedParent = await host.realPath(parent);
+			if (normalized(resolvedParent) !== normalized(parent) || !isInside(root, resolvedParent)) {
+				throw new Error('Target parent escaped the repository root');
+			}
+			await assertNoSymlinkComponents(root, parent);
+		}
+
+		async function writeExclusive(target, bytes, mode, root) {
+			let file = localFile(target);
+			if (typeof file.isSymlink === 'function' && file.isSymlink()) throw new Error(`Symbolic link refused at ${target}`);
+			if (root) await revalidateParent(root, target);
+			let stream = xpcom.classes['@mozilla.org/network/file-output-stream;1']
+				.createInstance(xpcom.interfaces.nsIFileOutputStream);
+			stream.init(file, 0x02 | 0x08 | 0x80, mode, 0);
+			let binary = xpcom.classes['@mozilla.org/binaryoutputstream;1']
+				.createInstance(xpcom.interfaces.nsIBinaryOutputStream);
+			binary.setOutputStream(stream);
+			try {
+				let data = bytes instanceof Uint8Array ? bytes : new TextEncoder().encode(String(bytes));
+				binary.writeByteArray(Array.from(data), data.length);
+				binary.flush();
+			}
+			finally { binary.close(); }
+		}
+
+		async function createDirectoryIfAbsent(root, target, mode) {
+			await assertNoSymlinkComponents(root, target, { allowMissingLeaf: true });
+			await revalidateParent(root, target);
+			let file = localFile(target);
+			try { file.create(xpcom.interfaces.nsIFile.DIRECTORY_TYPE, mode); }
+			catch (error) {
+				if (await kind(target) === 'directory') return 'exists';
+				throw error;
+			}
+			await assertNoSymlinkComponents(root, target);
+			return 'created';
+		}
+
+		async function createFileIfAbsent(root, target, bytes, mode) {
+			await assertNoSymlinkComponents(root, target, { allowMissingLeaf: true });
+			await revalidateParent(root, target);
+			try { await writeExclusive(target, bytes, mode, root); }
+			catch (error) {
+				if (await kind(target) !== 'missing') return 'exists';
+				throw error;
+			}
+			await assertNoSymlinkComponents(root, target);
+			return 'created';
+		}
+
+		let host = {
+			entries: target => io.getChildren(target),
+			filename: target => paths.filename(target),
+			stat: target => io.stat(target),
+			isSymlink,
+			exists: async target => (await kind(target)) !== 'missing',
+			existsNoFollow: async target => (await kind(target)) !== 'missing',
+			realPath: async target => {
+				let file = localFile(target);
+				file.normalize();
+				return String(file.path);
+			},
+			normalize: normalized,
+			isAbsolute: target => paths.isAbsolute(target),
+			isPathInside: isInside,
+			resolvePath: (base, value) => normalized(paths.isAbsolute(value) ? value : paths.join(base, value)),
+			join: (...parts) => paths.join(...parts),
+			kind,
+			assertNoSymlinkComponents,
+			readTextNoFollow: async (target, maxBytes) => new TextDecoder().decode(await readBytesNoFollow(target, maxBytes)),
+			readPrivateNoFollow: async (target, maxBytes) => {
+				try { return new TextDecoder().decode(await readBytesNoFollow(target, maxBytes)); }
+				catch (error) {
+					if (await kind(target) === 'missing') return null;
+					throw error;
+				}
+			},
+			createPrivateIfAbsent: async (root, target, value, mode, directoryMode) => {
+				let parent = paths.parent(target);
+				let parentKind = await kind(parent);
+				if (parentKind === 'missing') {
+					let ancestor = paths.parent(parent);
+					if (await kind(ancestor) !== 'directory' || await isSymlink(ancestor)) throw new Error('Private identity parent is unsafe');
+					let file = localFile(parent);
+					file.create(xpcom.interfaces.nsIFile.DIRECTORY_TYPE, directoryMode);
+				}
+				else if (parentKind !== 'directory') throw new Error('Private identity parent is unsafe');
+				await assertNoSymlinkComponents(root, parent);
+				let resolvedParent = await host.realPath(parent);
+				if (normalized(resolvedParent) !== normalized(parent) || !isInside(root, resolvedParent)) {
+					throw new Error('Private identity parent escaped the repository root');
+				}
+				await assertNoSymlinkComponents(root, parent);
+				try { await writeExclusive(target, value, mode, root); return 'created'; }
+				catch (error) {
+					if (await kind(target) !== 'missing') return 'exists';
+					throw error;
+				}
+			},
+			sha256: async bytes => {
+				let input = typeof bytes === 'string' ? new TextEncoder().encode(bytes) : bytes;
+				let digest = new Uint8Array(await cryptoAPI.subtle.digest('SHA-256', input));
+				return Array.from(digest, byte => byte.toString(16).padStart(2, '0')).join('');
+			},
+			readBytesNoFollow,
+			createDirectoryIfAbsent,
+			createFileIfAbsent,
+			readReceipt: async target => {
+				try { return JSON.parse(new TextDecoder().decode(await readBytesNoFollow(target))); }
+				catch (error) {
+					if (await kind(target) === 'missing') return null;
+					throw error;
+				}
+			},
+			writeReceipt: async (target, text, { exclusive } = {}) => {
+				let root = paths.parent(paths.parent(target));
+				if (exclusive) {
+					let outcome = await createFileIfAbsent(root, target, new TextEncoder().encode(text), 0o600);
+					if (outcome !== 'created') throw new Error('Initialization receipt already exists');
+					return;
+				}
+				await assertNoSymlinkComponents(root, target, { allowMissingLeaf: true });
+				let temporary = paths.join(paths.parent(target), `.starter-${Date.now()}-${Math.random().toString(16).slice(2)}.tmp`);
+				let outcome = await createFileIfAbsent(root, temporary, new TextEncoder().encode(text), 0o600);
+				if (outcome !== 'created') throw new Error('Could not create private receipt staging file');
+				try { await io.move(temporary, target, { noOverwrite: false }); }
+				catch (error) { try { await io.remove(temporary, { ignoreAbsent: true }); } catch {} throw error; }
+			},
+		};
+		return host;
+	};
+
+	Zotero.QLab.createGeckoQLabGitService = function (dependencies = {}) {
+		function subprocess() {
+			if (dependencies.Subprocess) return dependencies.Subprocess;
+			return ChromeUtils.importESModule('resource://gre/modules/Subprocess.sys.mjs').Subprocess;
+		}
+		async function call(root, argumentsList) {
+			let proc = await subprocess().call({
+				command: '/usr/bin/git',
+				arguments: argumentsList,
+				workdir: root,
+			});
+			let output = '';
+			try { output = await proc.stdout.readString(); }
+			catch {}
+			let result = await proc.wait();
+			return { exitCode: result.exitCode, output };
+		}
+		return Object.freeze({
+			isRepository: async root => {
+				let result = await call(root, ['rev-parse', '--is-inside-work-tree']);
+				return result.exitCode === 0 && result.output.trim() === 'true';
+			},
+			initialize: async ({ executable, argv, cwd }) => {
+				if (executable !== '/usr/bin/git' || !Array.isArray(argv) || argv.length !== 1 || argv[0] !== 'init') {
+					throw new Error('Refusing an unexpected Git initialization command');
+				}
+				let result = await call(cwd, ['init']);
+				if (result.exitCode !== 0) throw new Error('Git initialization failed');
+			},
+		});
+	};
+
+	Zotero.QLab.createGeckoQLabRepositoryInitializer = function (options = {}) {
+		let host = options.host || Zotero.QLab.createGeckoQLabInitializerHost();
+		let assetReader = options.assetReader || Zotero.QLab.createGeckoQLabStarterAssetReader({
+			manifestURI: STARTER_MANIFEST_URI,
+			archiveURI: STARTER_ARCHIVE_URI,
+		});
+		let git = options.git || Zotero.QLab.createGeckoQLabGitService();
+		return Zotero.QLab.createQLabRepositoryInitializer({
+			host,
+			assetReader,
+			git,
+			now: options.now,
+			uuid: options.uuid,
+		});
 	};
 
 	async function readBundledBytes(uri) {

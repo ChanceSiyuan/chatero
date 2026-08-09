@@ -144,6 +144,50 @@ Zotero.QLab = Zotero.QLab || {};
 		return freezeRecord({ path: entry.path, kind: entry.kind, mode: entry.mode, ...(entry.digest ? { digest: entry.digest } : {}), ...extra });
 	}
 
+	async function preservedTargetFingerprint(root, relativePath, host) {
+		let records = [];
+		async function visit(target, relative) {
+			let status = await pathStatus(target, host);
+			if (!status.exists || status.symlink || !status.kind) {
+				throw new Error(`Preserved starter target is unsafe: ${relative}`);
+			}
+			let stat = await host.stat(target);
+			let record = {
+				path: relative,
+				kind: status.kind,
+				size: Number(stat && stat.size) || 0,
+				modified: Number(stat && (stat.mtimeMs || stat.lastModified)) || 0,
+			};
+			if (status.kind === 'file' && typeof host.readBytesNoFollow === 'function' && typeof host.sha256 === 'function') {
+				record.digest = await host.sha256(await host.readBytesNoFollow(target));
+			}
+			records.push(record);
+			if (status.kind !== 'directory') return;
+			let children = await host.entries(target);
+			children.sort((left, right) => bytewiseCompare(host.filename(left), host.filename(right)));
+			for (let child of children) {
+				let name = host.filename(child);
+				await visit(child, relative ? `${relative}/${name}` : name);
+			}
+		}
+		await visit(host.join(root, relativePath), relativePath);
+		return sha256(JSON.stringify(records));
+	}
+
+	function starterPlanDigest(snapshot) {
+		return sha256(JSON.stringify({
+			root: snapshot.root,
+			inspectionFingerprint: snapshot.inspectionFingerprint,
+			manifestDigest: snapshot.manifestDigest,
+			create: snapshot.create,
+			preserve: snapshot.preserve,
+			conflicts: snapshot.conflicts,
+		}));
+	}
+
+	Zotero.QLab.fingerprintQLabPreservedTarget = preservedTargetFingerprint;
+	Zotero.QLab.computeQLabStarterPlanDigest = starterPlanDigest;
+
 	Zotero.QLab.validateQLabStarterManifest = function (raw) {
 		if (!raw || typeof raw !== 'object' || Array.isArray(raw)) fail('expected an object');
 		if (raw.schemaVersion !== SCHEMA_VERSION) fail('unsupported schema version');
@@ -200,19 +244,24 @@ Zotero.QLab = Zotero.QLab || {};
 				if (!status.exists) create.push(planRecord(entry));
 				else if (status.symlink) conflicts.push(planRecord(entry, { reason: 'symlink-target' }));
 				else if (status.kind !== entry.kind) conflicts.push(planRecord(entry, { reason: 'existing-kind' }));
-				else preserve.push(planRecord(entry));
+				else preserve.push(planRecord(entry, {
+					fingerprint: await preservedTargetFingerprint(canonicalRoot, entry.path, host),
+				}));
 			}
 		}
 		let byPath = (a, b) => a.path.localeCompare(b.path);
 		create.sort(byPath); preserve.sort(byPath); conflicts.sort(byPath);
-		return freezeRecord({
+		let planPayload = {
 			root: canonicalRoot,
 			inspectionFingerprint: inspection.fingerprint,
 			manifestDigest: validated.digest,
-			digest: sha256(`${inspection.fingerprint}\n${validated.digest}`),
 			create: Object.freeze(create),
 			preserve: Object.freeze(preserve),
 			conflicts: Object.freeze(conflicts),
+		};
+		return freezeRecord({
+			...planPayload,
+			digest: starterPlanDigest(planPayload),
 		});
 	};
 

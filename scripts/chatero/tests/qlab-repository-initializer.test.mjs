@@ -1,14 +1,40 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { chmod, lstat, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { promises as fs } from "node:fs";
+import fsSync from "node:fs";
 import { tmpdir } from "node:os";
 import path, { join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import { loadQLab } from "../lib/load-qlab.mjs";
 
 const UUID = "11111111-2222-4333-8444-555555555555";
 const sha256 = value => createHash("sha256").update(value).digest("hex");
+
+function receiptDigest(receipt) {
+	const canonical = { ...receipt };
+	delete canonical.receiptDigest;
+	return sha256(JSON.stringify(canonical));
+}
+
+function storedArchiveFiles(archive) {
+	const files = new Map();
+	let offset = 0;
+	while (offset + 4 <= archive.length && archive.readUInt32LE(offset) === 0x04034B50) {
+		const method = archive.readUInt16LE(offset + 8);
+		const size = archive.readUInt32LE(offset + 18);
+		const nameLength = archive.readUInt16LE(offset + 26);
+		const extraLength = archive.readUInt16LE(offset + 28);
+		assert.equal(method, 0, "committed starter must use stored ZIP entries");
+		const nameStart = offset + 30;
+		const dataStart = nameStart + nameLength + extraLength;
+		const name = archive.subarray(nameStart, nameStart + nameLength).toString("utf8");
+		files.set(name, archive.subarray(dataStart, dataStart + size));
+		offset = dataStart + size;
+	}
+	return files;
+}
 
 function canonicalManifestDigest(entries) {
 	const canonicalEntries = entries
@@ -22,13 +48,13 @@ function canonicalManifestDigest(entries) {
 	return sha256(JSON.stringify({ schemaVersion: 1, entries: canonicalEntries }));
 }
 
-function starterAsset({ corruptArchive = false, corruptPayload = false } = {}) {
+function starterAsset({ corruptArchive = false, corruptPayload = false, includeReceiptDirectory = true } = {}) {
 	const payloads = new Map([
 		["AGENTS.md", Buffer.from("# Public agent contract\n")],
 		["qlab", Buffer.from("#!/bin/sh\n")],
 	]);
 	const entries = [
-		{ path: ".research-loop", kind: "directory", mode: "0700" },
+		...(includeReceiptDirectory ? [{ path: ".research-loop", kind: "directory", mode: "0700" }] : []),
 		{ path: "AGENTS.md", kind: "file", mode: "0644", digest: sha256(payloads.get("AGENTS.md")) },
 		{ path: "drafts", kind: "directory", mode: "0755" },
 		{ path: "knowledge", kind: "directory", mode: "0755" },
@@ -272,4 +298,342 @@ test("initializer rejects a non-repository .git target before writing starter fi
 	assert.deepEqual(await fs.readdir(f.root), [".git"]);
 	assert.equal(await readFile(join(f.root, ".git", "sentinel"), "utf8"), "not a repository\n");
 	assert.deepEqual(f.gitCalls, []);
+});
+
+test("initializer preflights every Git-private identity component before any repository write", async (t) => {
+	const fixtures = [
+		async root => {
+			await mkdir(join(root, ".git"));
+			await writeFile(join(root, ".git", "HEAD"), "ref: refs/heads/main\n");
+			await writeFile(join(root, ".git", "qlab"), "identity parent conflict\n");
+		},
+		async root => {
+			await mkdir(join(root, ".git"));
+			await writeFile(join(root, ".git", "HEAD"), "ref: refs/heads/main\n");
+			await writeFile(join(root, ".git", "commondir"), "../../outside\n");
+		},
+	];
+	for (const prepare of fixtures) {
+		const f = await fixture(t);
+		await prepare(f.root);
+		f.git.isRepository = async () => true;
+		const inspection = await f.QLab.inspectQLabRepository(f.root, f.host);
+		const plan = await f.QLab.planQLabStarterInstall({
+			root: f.root,
+			inspection,
+			manifest: f.asset.manifest,
+			host: f.host,
+		});
+
+		await assert.rejects(f.initializer.execute(plan), /identity|private|common|outside|ancestor/i);
+		for (const target of ["AGENTS.md", "qlab", "drafts", "knowledge", "literature", ".research-loop"]) {
+			assert.equal(await fs.access(join(f.root, target)).then(() => true, () => false), false, target);
+		}
+		assert.deepEqual(f.gitCalls, []);
+	}
+});
+
+test("initializer persists a receipt before attempting the first ordinary starter target", async (t) => {
+	const f = await fixture(t, { includeReceiptDirectory: false });
+	const originalCreateFile = f.host.createFileIfAbsent;
+	f.host.createFileIfAbsent = async (...args) => {
+		if (args[1] === join(f.root, "AGENTS.md")) {
+			assert.equal(
+				await fs.access(join(f.root, ".research-loop", "starter.json")).then(() => true, () => false),
+				true,
+				"the durable receipt must precede ordinary starter writes",
+			);
+			throw new Error("stop after receipt bootstrap");
+		}
+		return originalCreateFile(...args);
+	};
+
+	await assert.rejects(f.initializer.execute(f.plan), /stop after receipt bootstrap/);
+	const receipt = JSON.parse(await readFile(join(f.root, ".research-loop", "starter.json"), "utf8"));
+	assert.equal(receipt.state, "failed");
+	assert.deepEqual(receipt.completed, []);
+	assert.equal(await fs.access(join(f.root, "AGENTS.md")).then(() => true, () => false), false);
+});
+
+test("Gecko initializer construction binds packaged starter resources and a complete host", async () => {
+	const QLab = await loadQLab();
+	const host = { marker: "host" };
+	const git = { marker: "git" };
+	const assetReader = { marker: "asset" };
+	const createPrototypeHost = QLab.createGeckoQLabInitializerHost;
+	let resourceOptions;
+	let initializerOptions;
+	QLab.createGeckoQLabInitializerHost = () => host;
+	QLab.createGeckoQLabGitService = () => git;
+	QLab.createGeckoQLabStarterAssetReader = options => {
+		resourceOptions = options;
+		return assetReader;
+	};
+	QLab.createQLabRepositoryInitializer = options => {
+		initializerOptions = options;
+		return { marker: "initializer" };
+	};
+
+	const initializer = QLab.createGeckoQLabRepositoryInitializer();
+	assert.deepEqual(JSON.parse(JSON.stringify(resourceOptions)), {
+		manifestURI: "resource://zotero/chatero/qlab-starter/manifest.json",
+		archiveURI: "resource://zotero/chatero/qlab-starter/research-loop-starter.zip",
+	});
+	assert.equal(initializerOptions.host, host);
+	assert.equal(initializerOptions.assetReader, assetReader);
+	assert.equal(initializerOptions.git, git);
+	assert.equal(initializer.marker, "initializer");
+
+	const requiredHostMethods = [
+		"entries", "filename", "stat", "isSymlink", "exists", "existsNoFollow",
+		"realPath", "normalize", "isAbsolute", "isPathInside", "resolvePath", "join",
+		"kind", "assertNoSymlinkComponents", "readTextNoFollow", "readPrivateNoFollow",
+		"createPrivateIfAbsent", "sha256", "readBytesNoFollow", "createDirectoryIfAbsent",
+		"createFileIfAbsent", "readReceipt", "writeReceipt",
+	];
+	const prototypeHost = createPrototypeHost({
+		IOUtils: {}, PathUtils: {}, Components: {}, crypto: {},
+	});
+	for (const method of requiredHostMethods) assert.equal(typeof prototypeHost[method], "function", method);
+});
+
+test("Node initializer host revalidates a target parent after a missing-leaf race", async (t) => {
+	const QLab = await loadQLab();
+	for (const operation of ["file", "directory"]) {
+		const root = await mkdtemp(join(tmpdir(), `chatero-node-race-${operation}-`));
+		const outside = await mkdtemp(join(tmpdir(), `chatero-node-race-outside-${operation}-`));
+		t.after(() => rm(root, { recursive: true, force: true }));
+		t.after(() => rm(outside, { recursive: true, force: true }));
+		const parent = join(root, "nested");
+		const target = join(parent, operation === "file" ? "note.qmd" : "child");
+		await mkdir(parent);
+		let attacked = false;
+		const racingFs = new Proxy(fs, {
+			get(source, property) {
+				if (property === "lstat") {
+					return async pathValue => {
+						try { return await fs.lstat(pathValue); }
+						catch (error) {
+							if (!attacked && pathValue === target && error?.code === "ENOENT") {
+								attacked = true;
+								await rm(parent, { recursive: true });
+								await symlink(outside, parent);
+							}
+							throw error;
+						}
+					};
+				}
+				const value = Reflect.get(source, property);
+				return typeof value === "function" ? value.bind(source) : value;
+			},
+		});
+		const host = QLab.createNodeQLabInitializerHost(racingFs, path, createHash);
+
+		await assert.rejects(
+			operation === "file"
+				? host.createFileIfAbsent(root, target, Buffer.from("must stay inside\n"), 0o600)
+				: host.createDirectoryIfAbsent(root, target, 0o700),
+			/symbolic|outside|ancestor|parent/i,
+		);
+		assert.equal(attacked, true);
+		assert.equal(
+			await fs.access(join(outside, path.basename(target))).then(() => true, () => false),
+			false,
+			`${operation} creation escaped the repository root`,
+		);
+	}
+});
+
+test("initializer fingerprints preserved nested content and makes zero writes after an in-place mutation", async (t) => {
+	const f = await fixture(t);
+	await mkdir(join(f.root, "drafts", "topic"), { recursive: true });
+	const note = join(f.root, "drafts", "topic", "private.qmd");
+	await writeFile(note, "private alpha\n", { mode: 0o640 });
+	const inspection = await f.QLab.inspectQLabRepository(f.root, f.host);
+	const plan = await f.QLab.planQLabStarterInstall({
+		root: f.root,
+		inspection,
+		manifest: f.asset.manifest,
+		host: f.host,
+	});
+	const drafts = plan.preserve.find(entry => entry.path === "drafts");
+	assert.match(drafts.fingerprint, /^[a-f0-9]{64}$/);
+	await writeFile(note, "private omega\n", { mode: 0o640 });
+
+	await assert.rejects(f.initializer.execute(plan), /changed|stale|snapshot|fingerprint/i);
+	assert.equal(await readFile(note, "utf8"), "private omega\n");
+	for (const target of ["AGENTS.md", "qlab", "knowledge", "literature", ".research-loop"]) {
+		assert.equal(await fs.access(join(f.root, target)).then(() => true, () => false), false, target);
+	}
+	assert.deepEqual(f.gitCalls, []);
+});
+
+test("ready receipts carry a digest and reject a forged plan digest even when the receipt digest is updated", async (t) => {
+	const f = await fixture(t);
+	const result = await f.initializer.execute(f.plan);
+	const receipt = JSON.parse(await readFile(result.receiptPath, "utf8"));
+	assert.match(receipt.receiptDigest, /^[a-f0-9]{64}$/);
+	assert.equal(receipt.receiptDigest, receiptDigest(receipt));
+	receipt.planDigest = "e".repeat(64);
+	receipt.receiptDigest = receiptDigest(receipt);
+	await writeFile(result.receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, { mode: 0o600 });
+
+	await assert.rejects(f.initializer.resume(f.root), /plan|receipt|digest|stale/i);
+	assert.equal(f.gitCalls.length, 1);
+});
+
+test("ready receipt reconciliation rejects changed nested preserved content", async (t) => {
+	const f = await fixture(t);
+	await mkdir(join(f.root, "drafts", "topic"), { recursive: true });
+	const note = join(f.root, "drafts", "topic", "private.qmd");
+	await writeFile(note, "private alpha\n", { mode: 0o640 });
+	const inspection = await f.QLab.inspectQLabRepository(f.root, f.host);
+	const plan = await f.QLab.planQLabStarterInstall({
+		root: f.root,
+		inspection,
+		manifest: f.asset.manifest,
+		host: f.host,
+	});
+	await f.initializer.execute(plan);
+	await writeFile(note, "private omega\n", { mode: 0o640 });
+
+	await assert.rejects(f.initializer.resume(f.root), /preserved|changed|fingerprint|receipt/i);
+	assert.equal(await readFile(note, "utf8"), "private omega\n");
+	assert.equal(f.gitCalls.length, 1);
+});
+
+test("committed Task 2 starter manifest and archive initialize idempotently", async (t) => {
+	const QLab = await loadQLab();
+	const repositoryRoot = fileURLToPath(new URL("../../../", import.meta.url));
+	const starterRoot = join(repositoryRoot, "resource", "chatero", "qlab-starter");
+	const manifest = JSON.parse(await readFile(join(starterRoot, "manifest.json"), "utf8"));
+	const archive = await readFile(join(starterRoot, "research-loop-starter.zip"));
+	const files = storedArchiveFiles(archive);
+	let root = await mkdtemp(join(tmpdir(), "chatero-real-starter-initialize-"));
+	t.after(() => rm(root, { recursive: true, force: true }));
+	root = await fs.realpath(root);
+	const host = QLab.createNodeQLabInitializerHost(fs, path, createHash);
+	const gitCalls = [];
+	const git = {
+		isRepository: async target => host.kind(join(target, ".git")).then(kind => kind === "directory"),
+		initialize: async options => {
+			gitCalls.push(options);
+			await mkdir(join(options.cwd, ".git"));
+			await writeFile(join(options.cwd, ".git", "HEAD"), "ref: refs/heads/main\n");
+		},
+	};
+	const initializer = QLab.createQLabRepositoryInitializer({
+		host,
+		assetReader: {
+			readManifest: async () => structuredClone(manifest),
+			readArchive: async () => Buffer.from(archive),
+			readEntry: async relativePath => Buffer.from(files.get(relativePath)),
+		},
+		git,
+		now: () => "2026-08-10T00:00:00.000Z",
+		uuid: () => UUID,
+	});
+	let inspection = await QLab.inspectQLabRepository(root, host);
+	let plan = await QLab.planQLabStarterInstall({ root, inspection, manifest, host });
+	const first = await initializer.execute(plan);
+	const qlabBefore = await readFile(join(root, "qlab"));
+	assert.equal(await QLab.qlabRepositoryState(root, host), "ready");
+	assert.equal(first.created.length, plan.create.length);
+
+	inspection = await QLab.inspectQLabRepository(root, host);
+	plan = await QLab.planQLabStarterInstall({ root, inspection, manifest, host });
+	const second = await initializer.execute(plan);
+	assert.equal(second.repositoryIdentity, first.repositoryIdentity);
+	assert.deepEqual(await readFile(join(root, "qlab")), qlabBefore);
+	assert.equal(gitCalls.length, 1);
+});
+
+test("Gecko initializer host revalidates parent anchors before exclusive creation", async (t) => {
+	const QLab = await loadQLab();
+	for (const operation of ["file", "directory"]) {
+		let root = await mkdtemp(join(tmpdir(), `chatero-gecko-race-${operation}-`));
+		let outside = await mkdtemp(join(tmpdir(), `chatero-gecko-race-outside-${operation}-`));
+		t.after(() => rm(root, { recursive: true, force: true }));
+		t.after(() => rm(outside, { recursive: true, force: true }));
+		root = await fs.realpath(root);
+		outside = await fs.realpath(outside);
+		const parent = join(root, "nested");
+		const target = join(parent, operation === "file" ? "note.qmd" : "child");
+		await mkdir(parent);
+		let attacked = false;
+		let targetSymlinkChecks = 0;
+		class LocalFile {
+			initWithPath(value) { this.path = value; }
+			normalize() { this.path = fsSync.realpathSync(this.path); }
+			isSymlink() {
+				if (this.path === target) {
+					targetSymlinkChecks++;
+					if (operation === "file" && targetSymlinkChecks === 2 && !attacked) {
+						fsSync.rmSync(parent, { recursive: true });
+						fsSync.symlinkSync(outside, parent);
+						attacked = true;
+						return false;
+					}
+				}
+				if (operation === "directory" && this.path === parent && !attacked) {
+					fsSync.rmSync(parent, { recursive: true });
+					fsSync.symlinkSync(outside, parent);
+					attacked = true;
+					return false;
+				}
+				try { return fsSync.lstatSync(this.path).isSymbolicLink(); }
+				catch { return false; }
+			}
+			create(type, mode) {
+				if (type === 1) fsSync.mkdirSync(this.path, { mode });
+				else fsSync.closeSync(fsSync.openSync(this.path, "wx", mode));
+			}
+		}
+		class FileOutputStream {
+			init(file, _flags, mode) { this.fd = fsSync.openSync(file.path, "wx", mode); }
+		}
+		class BinaryOutputStream {
+			setOutputStream(stream) { this.stream = stream; }
+			writeByteArray(bytes) { fsSync.writeSync(this.stream.fd, Buffer.from(bytes)); }
+			flush() { fsSync.fsyncSync(this.stream.fd); }
+			close() { fsSync.closeSync(this.stream.fd); }
+		}
+		const Components = {
+			classes: {
+				"@mozilla.org/file/local;1": { createInstance: () => new LocalFile() },
+				"@mozilla.org/network/file-output-stream;1": { createInstance: () => new FileOutputStream() },
+				"@mozilla.org/binaryoutputstream;1": { createInstance: () => new BinaryOutputStream() },
+			},
+			interfaces: {
+				nsIFile: { DIRECTORY_TYPE: 1, NORMAL_FILE_TYPE: 0 },
+				nsIFileOutputStream: {}, nsIBinaryOutputStream: {},
+			},
+			results: {},
+		};
+		const IOUtils = {
+			stat: async value => {
+				const stat = await fs.stat(value);
+				return { type: stat.isDirectory() ? "directory" : "regular", size: stat.size, lastModified: stat.mtimeMs };
+			},
+			getChildren: async value => (await fs.readdir(value)).map(name => join(value, name)),
+			read: value => fs.readFile(value),
+			move: (from, to) => fs.rename(from, to),
+			remove: (value, options) => fs.rm(value, { force: options?.ignoreAbsent }),
+		};
+		const PathUtils = {
+			join: (...parts) => path.join(...parts), parent: value => path.dirname(value),
+			filename: value => path.basename(value), normalize: value => path.normalize(value),
+			isAbsolute: value => path.isAbsolute(value),
+		};
+		const host = QLab.createGeckoQLabInitializerHost({ IOUtils, PathUtils, Components, crypto: globalThis.crypto });
+
+		await assert.rejects(
+			operation === "file"
+				? host.createFileIfAbsent(root, target, Buffer.from("must stay inside\n"), 0o600)
+				: host.createDirectoryIfAbsent(root, target, 0o700),
+			/symbolic|outside|escaped|parent/i,
+		);
+		assert.equal(attacked, true);
+		assert.equal(await fs.access(join(outside, path.basename(target))).then(() => true, () => false), false);
+	}
 });

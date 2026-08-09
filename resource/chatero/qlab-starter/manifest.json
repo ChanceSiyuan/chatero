@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "digest": "ec9865a666f3f468e9fc94fae96c9347c7b7ac8aa05f684c477e60e1dbdbbc2b",
+  "digest": "289570c1d225678d70b5babbbb7d052c989168a3600c4001f53843552229f7cc",
   "archiveSha256": "5df65dfd08c73b8b7edc8f9643b92888995c96368f64c7c4d3bdbed74a0b697d",
   "entries": [
     {
@@ -458,6 +458,11 @@
       "digest": "8f6d45891def65297a48933121c222bfc844dffff9b295a46507b3cc43bd10cb"
     },
     {
+      "path": "src/lib",
+      "kind": "directory",
+      "mode": "0755"
+    },
+    {
       "path": "src/lib/drafts",
       "kind": "directory",
       "mode": "0755"
@@ -599,10 +604,20 @@
       "digest": "d9e4fdbc422e9b1603edc03d8ecb49f1ccf0c9e286dec54c25be1996997fe257"
     },
     {
+      "path": "src/lib/skills",
+      "kind": "directory",
+      "mode": "0755"
+    },
+    {
       "path": "src/lib/skills/sci-brain.mjs",
       "kind": "file",
       "mode": "0644",
       "digest": "4986c0723080c27ba397d7f3c7c1e7daf24b793da73af184a7a892ed7dc28830"
+    },
+    {
+      "path": "src/worker",
+      "kind": "directory",
+      "mode": "0755"
     },
     {
       "path": "src/worker/index.ts",

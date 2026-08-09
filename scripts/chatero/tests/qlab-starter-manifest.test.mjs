@@ -125,12 +125,12 @@ test("incompatible marker inspection cannot plan starter writes", async () => {
 	try {
 		await mkdir(join(root, ".research-loop"));
 		await writeFile(join(root, ".research-loop/starter.json"), "{}\n");
-		await writeFile(join(root, "README.md"), "user content\n");
+		await writeFile(join(root, "personal.txt"), "user content\n");
 		const inspection = await QLab.inspectQLabRepository(root, host);
 		const plan = await QLab.planQLabStarterInstall({ root, inspection, manifest: validManifest(), host });
 		assert.equal(inspection.state, "incompatible");
 		assert.deepEqual(Array.from(plan.create), []);
-		assert.deepEqual(Array.from(plan.conflicts, entry => entry.path), ["README.md"]);
+		assert.deepEqual(Array.from(plan.conflicts, entry => entry.path), ["personal.txt"]);
 	}
 	finally {
 		await rm(root, { recursive: true, force: true });
