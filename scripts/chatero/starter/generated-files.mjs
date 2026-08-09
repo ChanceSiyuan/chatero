@@ -6,6 +6,55 @@ const text = (value) => Buffer.from(value.replace(/^\n/, ""), "utf8");
  * literature trees from the source checkout.
  */
 export const GENERATED_STARTER_FILES = Object.freeze({
+  ".gitignore": text(`
+node_modules/
+.next/
+.vinext/
+dist/
+out/
+public/knowledge/
+drafts/.preview/
+drafts/.quarto/
+drafts/ai-contexts/
+literature/.staging/
+literature/zotero.bib
+literature/**/.raw/
+literature/**/.figures/
+.research-loop/starter.json
+.research-loop/local/
+.generated/
+.wrangler/
+.env*
+`),
+  "AGENTS.md": text(`
+# Research Loop — Agent Instructions
+
+Research Loop is a local human-and-agent knowledge system. Keep the trusted
+Knowledge tree, editable Drafts, and external Literature as separate areas.
+
+| Tree | Status | Rule |
+| --- | --- | --- |
+| \`knowledge/\` | trusted | Add only user-reviewed material. |
+| \`drafts/\` | editable | Keep unfinished work here until review. |
+| \`literature/\` | external evidence | Do not treat source material as trusted knowledge. |
+
+Run \`make knowledge-check\` before proposing a Draft for Knowledge. Keep all
+preview and build work local, and never execute QMD code while rendering.
+`),
+  "CLAUDE.md": text(`
+# Research Loop
+
+Follow the repository trust boundary and workflow in \`AGENTS.md\`.
+`),
+  "vite.config.ts": text(`
+import vinext from "vinext";
+
+export default {
+  plugins: [vinext()],
+  server: { host: "127.0.0.1" },
+  preview: { host: "127.0.0.1" },
+};
+`),
   "knowledge/index.qmd": text(`
 ---
 title: "Knowledge"
@@ -88,6 +137,8 @@ export function GET() {
 
 export const GENERATED_STARTER_DIRECTORIES = Object.freeze([
   ".research-loop",
+  ".research-loop/tooling",
+  ".research-loop/tooling/scripts",
   "drafts",
   "drafts/examples",
   "knowledge",

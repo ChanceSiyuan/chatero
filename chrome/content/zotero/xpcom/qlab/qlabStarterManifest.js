@@ -83,6 +83,20 @@ Zotero.QLab = Zotero.QLab || {};
 		return Object.freeze(record);
 	}
 
+	function manifestDigest(entries) {
+		return sha256(JSON.stringify({ schemaVersion: SCHEMA_VERSION, entries }));
+	}
+
+	function bytewiseCompare(left, right) {
+		let leftBytes = utf8Bytes(left);
+		let rightBytes = utf8Bytes(right);
+		let length = Math.min(leftBytes.length, rightBytes.length);
+		for (let index = 0; index < length; index++) {
+			if (leftBytes[index] !== rightBytes[index]) return leftBytes[index] - rightBytes[index];
+		}
+		return leftBytes.length - rightBytes.length;
+	}
+
 	function statKind(stat) {
 		if (stat && typeof stat.isFile === 'function' && stat.isFile()) return 'file';
 		if (stat && typeof stat.isDirectory === 'function' && stat.isDirectory()) return 'directory';
@@ -161,7 +175,8 @@ Zotero.QLab = Zotero.QLab || {};
 				ancestors.pop();
 			}
 		}
-		entries.sort((a, b) => a.path.localeCompare(b.path));
+		entries.sort((a, b) => bytewiseCompare(a.path, b.path));
+		if (raw.digest !== manifestDigest(entries)) fail('manifest digest mismatch');
 		return freezeRecord({ schemaVersion: SCHEMA_VERSION, digest: raw.digest, entries: Object.freeze(entries.map(freezeRecord)) });
 	};
 

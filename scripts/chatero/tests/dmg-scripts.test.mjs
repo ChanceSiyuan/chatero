@@ -496,6 +496,16 @@ test("bundle verifier requires a complete starter payload and rejects an archive
   assert.notEqual(result.status, 0, "missing public starter manifest unexpectedly verified");
 });
 
+test("bundle verifier rejects a starter manifest whose canonical digest is stale", async (t) => {
+  const fixture = await verifierFixture(t);
+  const manifest = JSON.parse(await readFile(fixture.starterManifest, "utf8"));
+  manifest.digest = "0".repeat(64);
+  await writeFile(fixture.starterManifest, `${JSON.stringify(manifest)}\n`);
+  const result = fixture.run();
+  assertFinished(result);
+  assert.notEqual(result.status, 0, "stale public starter manifest unexpectedly verified");
+});
+
 test("bundle verifier rejects non-ad-hoc metadata, active UpdateURL, wrong executable, and missing Word entitlement", async (t) => {
   for (const [ini, env] of [
     [undefined, { TEST_SIGNATURE: "Developer ID Application" }],

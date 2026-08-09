@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
@@ -11,12 +12,26 @@ const DIGEST_A = "a".repeat(64);
 const DIGEST_B = "b".repeat(64);
 const DIGEST_C = "c".repeat(64);
 
+function canonicalManifestDigest(entries) {
+	const canonicalEntries = entries
+		.map(entry => ({
+			path: entry.path,
+			kind: entry.kind,
+			mode: entry.mode,
+			...(entry.kind === "file" ? { digest: entry.digest } : {}),
+		}))
+		.sort((left, right) => Buffer.compare(Buffer.from(left.path), Buffer.from(right.path)));
+	return createHash("sha256")
+		.update(JSON.stringify({ schemaVersion: 1, entries: canonicalEntries }))
+		.digest("hex");
+}
+
 function validManifest(entries = [
 	{ path: "AGENTS.md", kind: "file", mode: "0644", digest: DIGEST_A },
 	{ path: "qlab", kind: "file", mode: "0755", digest: DIGEST_B },
 	{ path: "drafts/index.qmd", kind: "file", mode: "0644", digest: DIGEST_C },
 ]) {
-	return { schemaVersion: 1, digest: DIGEST_A, entries };
+	return { schemaVersion: 1, digest: canonicalManifestDigest(entries), entries };
 }
 
 test("starter manifest accepts only immutable, safe file and directory records", async () => {
@@ -54,6 +69,22 @@ test("starter manifest accepts only immutable, safe file and directory records",
 	assert.throws(() => QLab.validateQLabStarterManifest(validManifest([
 		{ path: "AGENTS.md", kind: "file", mode: "0777", digest: DIGEST_A },
 	])), /mode/);
+});
+
+test("starter manifest rejects every stale canonical digest field", async () => {
+	const QLab = await loadQLab();
+	const base = validManifest([
+		{ path: "AGENTS.md", kind: "file", mode: "0644", digest: DIGEST_A },
+		{ path: "drafts", kind: "directory", mode: "0755" },
+	]);
+	for (const mutate of [
+		manifest => ({ ...manifest, entries: [{ ...manifest.entries[0], path: "CLAUDE.md" }, manifest.entries[1]] }),
+		manifest => ({ ...manifest, entries: [{ ...manifest.entries[0], mode: "0600" }, manifest.entries[1]] }),
+		manifest => ({ ...manifest, entries: [{ ...manifest.entries[0], kind: "directory", digest: undefined }, manifest.entries[1]] }),
+		manifest => ({ ...manifest, entries: [{ ...manifest.entries[0], digest: DIGEST_B }, manifest.entries[1]] }),
+	]) {
+		assert.throws(() => QLab.validateQLabStarterManifest(mutate(base)), /manifest digest mismatch/);
+	}
 });
 
 test("Gecko regular stats classify ready repositories and preserve starter files", async () => {

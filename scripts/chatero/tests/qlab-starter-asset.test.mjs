@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
+import { runInNewContext } from "node:vm";
 import test from "node:test";
 import { buildDeterministicZip } from "../build-qlab-starter.mjs";
 import { loadQLab } from "../lib/load-qlab.mjs";
@@ -38,6 +39,18 @@ function storedArchiveFiles(archive) {
   return files;
 }
 
+async function loadStarterAsset() {
+  const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+  const archive = await readFile(archivePath);
+  return { archive, manifest, files: storedArchiveFiles(archive) };
+}
+
+function textPayloads(files) {
+  return [...files.entries()]
+    .filter(([path]) => /\.(?:md|qmd|ts|tsx|mjs|js|json|ya?ml|css|html|txt)$/i.test(path))
+    .map(([path, data]) => ({ path, text: data.toString("utf8") }));
+}
+
 test("starter ZIP writer is byte-stable and bytewise orders payload paths", () => {
   const files = [
     { path: "z.txt", mode: "0644", data: Buffer.from("z") },
@@ -49,11 +62,65 @@ test("starter ZIP writer is byte-stable and bytewise orders payload paths", () =
   assert.deepEqual([...storedArchiveFiles(first).keys()], ["a.txt", "z.txt"]);
 });
 
+test("starter manifest digest covers the canonical manifest payload", async () => {
+  const { manifest } = await loadStarterAsset();
+  assert.equal(
+    manifest.digest,
+    sha256(JSON.stringify({ schemaVersion: manifest.schemaVersion, entries: manifest.entries })),
+  );
+});
+
+test("starter contains only the explicit public .research-loop tooling sub-tree", async () => {
+  const { files } = await loadStarterAsset();
+  for (const path of files.keys()) {
+    if (!path.startsWith(".research-loop/")) continue;
+    assert.match(path, /^\.research-loop\/tooling\/scripts\/[A-Za-z0-9._-]+\.(?:mjs|ts)$/);
+  }
+  for (const forbidden of [".research-loop/docs/", ".research-loop/fixtures/", ".research-loop/tests/"]) {
+    assert.equal([...files.keys()].some(path => path.startsWith(forbidden)), false, `forbidden starter path: ${forbidden}`);
+  }
+});
+
+test("starter text has no fixed hosting identity, credentials, or personal data path", async () => {
+  const { files } = await loadStarterAsset();
+  for (const { path, text } of textPayloads(files)) {
+    assert.doesNotMatch(text, /\.openai\/hosting\.json|appgprj_[a-z0-9]+|Reuse the opaque Sites project ID/i, path);
+    assert.doesNotMatch(text, /(?:^|[^A-Za-z])(?:sk|ghp)_[A-Za-z0-9_-]{16,}|AKIA[0-9A-Z]{16}|-----BEGIN (?:RSA |EC )?PRIVATE KEY-----/, path);
+    assert.doesNotMatch(text, /\/Users\/[A-Za-z0-9_.-]+\//, path);
+  }
+  assert.deepEqual(
+    [...files.keys()].filter(path => /\.(?:qmd|pdf)$/i.test(path)).sort(),
+    ["drafts/examples/theorem-blocks.qmd", "knowledge/index.qmd"],
+  );
+  assert.equal([...files.keys()].some(path => /(?:\.research-loop\/(?:docs|fixtures|tests)\/|downloads-knowledge-import|ref\.bib\.bak)/i.test(path)), false);
+  assert.doesNotMatch(files.get("literature/ref.bib").toString("utf8"), /^\s*@/m);
+});
+
+test("starter uses a loadable local-only Vite configuration", async () => {
+  const { files } = await loadStarterAsset();
+  const source = files.get("vite.config.ts").toString("utf8");
+  assert.doesNotMatch(source, /\.openai|cloudflare|sites\(/i);
+  const context = {};
+  runInNewContext(
+    source
+      .replace(/^import vinext from "vinext";$/m, "const vinext = () => ({ name: 'vinext' });")
+      .replace(/^export default\s+/m, "this.config = "),
+    context,
+  );
+  assert.equal(context.config.server.host, "127.0.0.1");
+  assert.equal(context.config.preview.host, "127.0.0.1");
+});
+
+test("starter ignores private setup receipts and local identity state", async () => {
+  const { files } = await loadStarterAsset();
+  const ignore = files.get(".gitignore").toString("utf8");
+  assert.match(ignore, /^\.research-loop\/starter\.json$/m);
+  assert.match(ignore, /^\.research-loop\/local\/$/m);
+});
+
 test("public Research Loop starter is complete, deterministic, and free of personal or generated content", async () => {
-  const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
-  const archive = await readFile(archivePath);
+  const { manifest, archive, files: archiveFiles } = await loadStarterAsset();
   const entries = archiveEntries(archivePath);
-  const archiveFiles = storedArchiveFiles(archive);
 
   assert.equal(manifest.schemaVersion, 1);
   assert.match(manifest.digest, /^[a-f0-9]{64}$/);

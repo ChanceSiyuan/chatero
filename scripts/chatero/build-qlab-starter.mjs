@@ -36,6 +36,27 @@ export const STARTER_COPY_PATHS = Object.freeze([
   "drafts/_quarto.yml",
 ]);
 
+export const STARTER_ARCHITECTURE_COPY_PATHS = Object.freeze([
+  ".research-loop/tooling/scripts/build-problem-index.mjs",
+  ".research-loop/tooling/scripts/dev-problem-index.mjs",
+  ".research-loop/tooling/scripts/draft-check.ts",
+  ".research-loop/tooling/scripts/draft-preview.ts",
+  ".research-loop/tooling/scripts/ensure-sci-brain.mjs",
+  ".research-loop/tooling/scripts/knowledge.ts",
+  ".research-loop/tooling/scripts/literature.ts",
+  ".research-loop/tooling/scripts/local-assessment-service.mjs",
+  ".research-loop/tooling/scripts/local-autoresearch-service.mjs",
+  ".research-loop/tooling/scripts/qlab.ts",
+]);
+
+const GENERATED_REPLACEMENTS = new Set([
+  ".gitignore",
+  "AGENTS.md",
+  "CLAUDE.md",
+  "vite.config.ts",
+  ".research-loop",
+]);
+
 const bytewiseCompare = (left, right) => Buffer.compare(Buffer.from(left, "utf8"), Buffer.from(right, "utf8"));
 const sha256 = (value) => createHash("sha256").update(value).digest("hex");
 const isWithin = (root, target) => target === root || target.startsWith(`${root}${sep}`);
@@ -150,6 +171,20 @@ async function gatherSourcePath(sourceRoot, allowedPath, records) {
   }
 }
 
+async function assertSourcePathExists(sourceRoot, allowedPath) {
+  if (!safeRelativePath(allowedPath)) fail(`unsafe allowlisted path ${JSON.stringify(allowedPath)}`);
+  const target = resolve(sourceRoot, allowedPath);
+  if (!isWithin(sourceRoot, target)) fail(`allowlisted path escapes source root: ${allowedPath}`);
+  let metadata;
+  try {
+    metadata = await lstat(target);
+  }
+  catch {
+    fail(`required source path is missing: ${allowedPath}`);
+  }
+  if (metadata.isSymbolicLink()) fail(`source symlink is not allowed: ${allowedPath}`);
+}
+
 function addGeneratedRecords(records) {
   for (const path of GENERATED_STARTER_DIRECTORIES) {
     if (!safeRelativePath(path)) fail(`unsafe generated directory ${path}`);
@@ -187,7 +222,11 @@ export async function buildStarter({ source, output = outputRoot } = {}) {
   const sourceMetadata = await stat(canonicalSource);
   if (!sourceMetadata.isDirectory()) fail(`source is not a directory: ${source}`);
   const records = new Map();
-  for (const path of STARTER_COPY_PATHS) await gatherSourcePath(canonicalSource, path, records);
+  for (const path of STARTER_COPY_PATHS) {
+    if (GENERATED_REPLACEMENTS.has(path)) await assertSourcePathExists(canonicalSource, path);
+    else await gatherSourcePath(canonicalSource, path, records);
+  }
+  for (const path of STARTER_ARCHITECTURE_COPY_PATHS) await gatherSourcePath(canonicalSource, path, records);
   addGeneratedRecords(records);
   validatePathSet(records);
 
@@ -196,7 +235,7 @@ export async function buildStarter({ source, output = outputRoot } = {}) {
     .map((record) => record.kind === "directory"
       ? { path: record.path, kind: record.kind, mode: record.mode }
       : { path: record.path, kind: record.kind, mode: record.mode, digest: sha256(record.data) });
-  const manifestDigest = sha256(stableJSON({ schemaVersion: 1, entries }));
+  const manifestDigest = sha256(JSON.stringify({ schemaVersion: 1, entries }));
   const archive = buildDeterministicZip([...records.values()].filter((record) => record.kind === "file"));
   const manifest = {
     schemaVersion: 1,
