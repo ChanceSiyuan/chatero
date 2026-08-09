@@ -1107,6 +1107,11 @@
 					     together. Tab hosts are never reparented; the window-owned Chat utility
 					     floats above them and visibility is class-driven. -->
 					<hbox id="tabs-deck" class="tabs-content-area" flex="1">
+						<!-- Persistent live region for the native, non-modal QLab setup tab. -->
+						<html:div id="qlab-workspace-setup-announcer"
+								class="qlab-setup-announcer"
+								aria-live="polite"
+								aria-atomic="true"/>
 						<box id="tabs-split-handle"
 								class="tabs-split-handle"
 								hidden="true"

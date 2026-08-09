@@ -13,6 +13,7 @@ const QLAB_SCRIPTS = [
 	"qlabStarterManifest.js",
 	"qlabRepositoryIdentity.js",
 	"qlabRepositoryInitializer.js",
+	"qlabWorkspaceSetupView.js",
 	"researchActions.js",
 	"settings.js",
 	"arrangement.js",

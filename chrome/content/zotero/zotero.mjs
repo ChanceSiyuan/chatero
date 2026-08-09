@@ -167,6 +167,7 @@ const xpcomFilesLocal = [
 	'qlab/qlabStarterManifest',
 	'qlab/qlabRepositoryIdentity',
 	'qlab/qlabRepositoryInitializer',
+	'qlab/qlabWorkspaceSetupView',
 	'qlab/researchActions',
 	'qlab/settings',
 	'qlab/arrangement',

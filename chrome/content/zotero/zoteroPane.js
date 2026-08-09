@@ -7405,44 +7405,55 @@ var ZoteroPane = new function () {
 		}
 	};
 	
+	this.qlabPickWorkspaceFolder = async function () {
+		if (!Zotero.QLab || !Zotero.QLab.Settings) return '';
+		let fp = Cc['@mozilla.org/filepicker;1'].createInstance(Ci.nsIFilePicker);
+		fp.init(window.browsingContext, 'Choose Research Loop Workspace', Ci.nsIFilePicker.modeGetFolder);
+		let current = Zotero.QLab.Settings.getRoot();
+		if (current) {
+			try {
+				let file = Cc['@mozilla.org/file/local;1'].createInstance(Ci.nsIFile);
+				file.initWithPath(current);
+				if (file.exists()) fp.displayDirectory = file;
+			}
+			catch (e) {}
+		}
+		let rv = await new Promise(resolve => fp.open(resolve));
+		return rv === Ci.nsIFilePicker.returnOK || rv === Ci.nsIFilePicker.returnReplace
+			? fp.file.path
+			: '';
+	};
+
 	this.qlabChooseWorkspace = async function () {
 		try {
-			if (!Zotero.QLab || !Zotero.QLab.Settings) {
-				Zotero.alert(null, 'QLab', 'QLab module is unavailable');
-				return;
-			}
-			let fp = Cc['@mozilla.org/filepicker;1'].createInstance(Ci.nsIFilePicker);
-			fp.init(window.browsingContext, 'Choose QLab Workspace', Ci.nsIFilePicker.modeGetFolder);
-			let current = Zotero.QLab.Settings.getRoot();
-			if (current) {
-				try {
-					let file = Cc['@mozilla.org/file/local;1'].createInstance(Ci.nsIFile);
-					file.initWithPath(current);
-					if (file.exists()) {
-						fp.displayDirectory = file;
-					}
-				}
-				catch (e) {}
-			}
-			let rv = await new Promise(resolve => fp.open(resolve));
-			if (rv !== Ci.nsIFilePicker.returnOK && rv !== Ci.nsIFilePicker.returnReplace) {
-				return;
-			}
+			if (!Zotero.QLab || !Zotero.QLab.Settings || !Zotero_Tabs._qlab) return;
+			let selected = await this.qlabPickWorkspaceFolder();
+			if (!selected) return;
 			let host = Zotero.QLab.createGeckoQLabPathHost();
-			let root = await Zotero.QLab.Settings.setRoot(fp.file.path, host);
-			let state = await Zotero.QLab.qlabRepositoryState(root, host);
-			Zotero.alert(
-				null,
-				'QLab Workspace',
-				state === 'ready'
-					? `Workspace ready:\n${root}`
-					: `Workspace marked ${state}:\n${root}\n\nEmpty/partial workspaces can be initialized in Phase 3A.`
-			);
-			await Zotero_Tabs._qlab?.refreshWorkspace?.();
+			let root = await Zotero.QLab.normalizeQLabRoot(selected, host);
+			let inspection = await Zotero.QLab.inspectQLabRepository(root, host);
+			if (inspection.state === 'empty' || inspection.state === 'partial' || inspection.state === 'incompatible') {
+				await Zotero_Tabs._qlab.openWorkspaceSetup(root, inspection);
+				return;
+			}
+			let blocker = Zotero_Tabs._qlab.workspaceSwitchBlocker();
+			if (!blocker.ok) {
+				await Zotero_Tabs._qlab.openWorkspaceSetup(root, inspection);
+				Zotero_Tabs._qlab.getWorkspaceSetupController(root).reportError(blocker.reason);
+				return;
+			}
+			await Zotero.QLab.Settings.setRoot(root, host);
+			await Zotero_Tabs._qlab.refreshWorkspace();
 		}
 		catch (e) {
 			Zotero.logError(e);
-			Zotero.alert(null, 'QLab', e.message || String(e));
+			// Setup errors belong in the persistent, copyable site-tab diagnostics,
+			// not in a modal loop that interrupts normal Zotero usage.
+			let root = Zotero.QLab.Settings?.getRoot?.() || '';
+			if (root && Zotero_Tabs._qlab) {
+				await Zotero_Tabs._qlab.openWorkspaceSetup(root);
+				Zotero_Tabs._qlab.getWorkspaceSetupController(root).reportError(e.message || String(e));
+			}
 		}
 	};
 	

@@ -5,6 +5,7 @@ import { runInNewContext } from "node:vm";
 
 const tabsSource = await readFile("chrome/content/zotero/tabs.js", "utf8");
 const moduleSource = await readFile("chrome/content/zotero/xpcom/qlab/qlabModule.js", "utf8");
+const setupSource = await readFile("chrome/content/zotero/xpcom/qlab/qlabWorkspaceSetupView.js", "utf8");
 const paneSource = await readFile("chrome/content/zotero/zoteroPane.js", "utf8");
 
 async function exercisePaneStartupRestore({ qlab, state }) {
@@ -166,8 +167,31 @@ test("workspace selection refreshes the resident utility through the window cont
 		paneSource.indexOf("this.qlabChooseWorkspace = async function"),
 		paneSource.indexOf("this.qlabChooseAgentProvider = async function"),
 	);
-	assert.match(chooseWorkspace, /Zotero_Tabs\._qlab\?\.refreshWorkspace\?\.\(\)/);
+	assert.match(chooseWorkspace, /Zotero_Tabs\._qlab\.refreshWorkspace\(\)/);
 	assert.doesNotMatch(chooseWorkspace, /document\.getElementById\(tab\.id\)/);
+});
+
+test("workspace selection opens native setup instead of a modal for incomplete roots", () => {
+	const chooseWorkspace = paneSource.slice(
+		paneSource.indexOf("this.qlabChooseWorkspace = async function"),
+		paneSource.indexOf("this.qlabChooseAgentProvider = async function"),
+	);
+	assert.match(chooseWorkspace, /openWorkspaceSetup\(root, inspection\)/);
+	assert.doesNotMatch(chooseWorkspace, /Zotero\.alert\(/);
+	assert.match(moduleSource, /workspaceSwitchBlocker\(\)/);
+	assert.match(moduleSource, /_workspaceTargetEpoch/);
+});
+
+test("successful setup activates a workspace only when native QLab surfaces are safe", () => {
+	const controller = moduleSource.slice(
+		moduleSource.indexOf("Zotero.QLab.createWindowController"),
+		moduleSource.length,
+	);
+	assert.match(setupSource, /host\._qlabTurnHandle/);
+	assert.match(setupSource, /host\._qlabDirty/);
+	assert.match(setupSource, /host\._qlabDraftState\?\.workingPath/);
+	assert.match(controller, /drafts\/examples\/theorem-blocks\.qmd/);
+	assert.match(moduleSource, /mountQLabWorkspaceSetupView\(host/);
 });
 
 test("window session state owns Chat Pin and bounds alongside QLab groups", () => {

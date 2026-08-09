@@ -32,6 +32,205 @@
 	box-sizing: border-box;
 }
 
+// Native repository setup is deliberately light and quiet: it lives in a
+// normal Chatero tab, not in a modal that blocks the library or reader.
+.qlab-workspace-setup-host,
+.qlab-setup {
+	width: 100%;
+	height: 100%;
+	min-width: 0;
+	min-height: 0;
+}
+
+.qlab-setup-announcer {
+	position: fixed;
+	width: 1px;
+	height: 1px;
+	overflow: hidden;
+	clip: rect(0, 0, 0, 0);
+	white-space: nowrap;
+}
+
+.qlab-setup {
+	display: grid;
+	place-items: start center;
+	overflow: auto;
+	padding: min(8vh, 72px) 24px 48px;
+	background: linear-gradient(180deg, color-mix(in srgb, var(--zc-accent) 4%, var(--zc-bg)), var(--zc-bg) 220px);
+}
+
+.qlab-setup-card {
+	width: min(680px, 100%);
+	padding: 34px;
+	border: 1px solid var(--zc-border);
+	border-radius: 16px;
+	background: var(--zc-bg-raised);
+	box-shadow: var(--zc-shadow);
+}
+
+.qlab-setup-mark {
+	display: grid;
+	place-items: center;
+	width: 34px;
+	height: 34px;
+	margin-bottom: 14px;
+	border-radius: 10px;
+	color: #fff;
+	background: linear-gradient(145deg, var(--zc-accent), #6b5cff);
+	font-weight: 760;
+}
+
+.qlab-setup-kicker {
+	margin: 0 0 4px;
+	color: var(--zc-accent-strong);
+	font-size: 11px;
+	font-weight: 720;
+	letter-spacing: .06em;
+	text-transform: uppercase;
+}
+
+.qlab-setup h1 {
+	margin: 0;
+	font-size: 23px;
+	line-height: 1.2;
+	letter-spacing: -.025em;
+}
+
+.qlab-setup-message {
+	margin: 10px 0 0;
+	color: var(--zc-muted);
+	font-size: 13px;
+	line-height: 1.5;
+}
+
+.qlab-setup-root {
+	display: block;
+	margin-top: 14px;
+	padding: 8px 10px;
+	overflow: auto;
+	border: 1px solid var(--zc-border);
+	border-radius: 7px;
+	color: var(--zc-text);
+	background: var(--zc-bg-subtle);
+	font-size: 11px;
+}
+
+.qlab-setup-plan-section {
+	margin-top: 22px;
+	padding-top: 18px;
+	border-top: 1px solid var(--zc-border);
+}
+
+.qlab-setup-plan-section h2 {
+	margin: 0 0 8px;
+	font-size: 13px;
+}
+
+.qlab-setup-plan-section p,
+.qlab-setup-plan-section ul {
+	margin: 0;
+	color: var(--zc-muted);
+	font-size: 12px;
+	line-height: 1.55;
+}
+
+.qlab-setup-plan-section ul {
+	padding-left: 18px;
+}
+
+.qlab-setup-plan-section code {
+	color: var(--zc-text);
+	font-size: 11px;
+}
+
+.qlab-setup-steps {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 7px 14px;
+	margin: 24px 0 0;
+	padding: 0;
+	list-style: none;
+	color: var(--zc-muted);
+	font-size: 12px;
+}
+
+.qlab-setup-steps li::before {
+	content: '○';
+	margin-right: 7px;
+}
+
+.qlab-setup-steps li.is-active {
+	color: var(--zc-accent-strong);
+	font-weight: 650;
+}
+
+.qlab-setup-steps li.is-active::before {
+	content: '●';
+}
+
+.qlab-setup-error {
+	margin: 20px 0 0;
+	padding: 9px 11px;
+	border-radius: 8px;
+	color: var(--zc-danger);
+	background: color-mix(in srgb, var(--zc-danger) 8%, transparent);
+	font-size: 12px;
+	line-height: 1.45;
+}
+
+.qlab-setup-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	margin-top: 25px;
+}
+
+.qlab-setup-action {
+	display: inline-flex;
+	align-items: center;
+	gap: 7px;
+	min-height: 32px;
+	padding: 0 12px;
+	border: 1px solid var(--zc-border);
+	border-radius: 8px;
+	color: var(--zc-text);
+	background: var(--zc-bg-raised);
+	font: inherit;
+	font-size: 12px;
+	font-weight: 610;
+	cursor: pointer;
+}
+
+.qlab-setup-action:hover {
+	border-color: color-mix(in srgb, var(--zc-accent) 45%, var(--zc-border));
+	background: var(--zc-bg-hover);
+}
+
+.qlab-setup-action.is-primary {
+	border-color: var(--zc-accent);
+	color: #fff;
+	background: var(--zc-accent);
+}
+
+.qlab-setup-action svg {
+	width: 15px;
+	height: 15px;
+}
+
+.qlab-setup-links {
+	margin-top: 16px;
+}
+
+.qlab-setup-links button {
+	padding: 0;
+	border: 0;
+	color: var(--zc-accent-strong);
+	background: transparent;
+	font: inherit;
+	font-size: 11px;
+	cursor: pointer;
+}
+
 @media (prefers-color-scheme: dark) {
 	.qlab-shell-host {
 		--zc-accent: #0a84ff;
