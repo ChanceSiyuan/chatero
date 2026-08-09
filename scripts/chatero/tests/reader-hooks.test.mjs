@@ -281,3 +281,120 @@ test("closing one Reader document releases only its adapter while the other Read
 		"plugin teardown releases remaining Reader document adapters");
 	bridge.dispose();
 });
+
+test("Reader Command-K attaches the exact PDF selection once and focuses floating Chat", async () => {
+	const registered = new Map();
+	const attachment = {
+		id: 71,
+		key: "PDFKEY71",
+		libraryID: 1,
+		parentItemID: null,
+		attachmentFilename: "selection-paper.pdf",
+		getField: () => "Selection paper",
+	};
+	const exact = "  exact PDF selection\nwith preserved whitespace  ";
+	let mainWindow;
+	const reader = {
+		itemID: attachment.id,
+		_internalReader: { _state: { primaryViewStats: { pageIndex: 4 } } },
+		get _window() { return mainWindow; },
+	};
+	const Reader = {
+		_readers: [reader],
+		getByTabID: id => id === "reader-71" ? reader : null,
+		registerEventListener(type, listener) { registered.set(type, listener); },
+		unregisterEventListener() {},
+	};
+	const QLab = await loadQLab({
+		Reader,
+		Items: { get: id => id === attachment.id ? attachment : null },
+	});
+	QLab.ChatComposerContext.clear();
+	const calls = [];
+	const prompt = { focusCount: 0, focus() { this.focusCount++; } };
+	const chatHost = {
+		ownerDocument: { createElement: () => ({ firstElementChild: null }) },
+		querySelector(selector) {
+			if (selector === "[data-qlab-context-tags]") return null;
+			if (selector === "[data-qlab-prompt]") return prompt;
+			return null;
+		},
+	};
+	const chatContainer = { querySelector: selector => selector === ".qlab-shell-host" ? chatHost : null };
+	let chatVisible = false;
+	const tabs = {
+		_tabs: [
+			{ id: "reader-71", type: "reader" },
+			{ id: "qlabqmd", type: "qlabqmd" },
+		],
+		// A split workspace may leave QMD as the native selected content tab
+		// while the keyboard event comes from the visible Reader document.
+		selectedID: "qlabqmd",
+		isTabVisible: id => id === "qlabchat" && chatVisible,
+		_qlab: {
+			async showUtility(kind, payload, options) {
+				calls.push(["show", kind, payload, options]);
+				chatVisible = true;
+				if (!tabs._tabs.some(tab => tab.id === "qlabchat")) {
+					tabs._tabs.push({ id: "qlabchat", type: "qlabchat" });
+				}
+			},
+			ensureShellTab(kind, payload) { calls.push(["ensure", kind, payload]); },
+		},
+		arrangePDFChat() { calls.push(["arrange"]); },
+	};
+	mainWindow = {
+		Zotero_Tabs: tabs,
+		document: {
+			getElementById(id) {
+				return id === "qlab-chat-utility-content" ? chatContainer : null;
+			},
+		},
+	};
+	const readerWindow = new LifecycleTarget("reader-shortcut-window");
+	const doc = lifecycleReaderDocument("reader-shortcut-document");
+	doc.defaultView = readerWindow;
+	QLab.registerReaderHooks();
+	registered.get("renderTextSelectionPopup")({
+		doc,
+		reader,
+		params: { annotation: { text: exact } },
+		append() {},
+	});
+	await new Promise(resolve => setTimeout(resolve, 0));
+	function commandK() {
+		const event = {
+			key: "k",
+			metaKey: true,
+			ctrlKey: false,
+			shiftKey: false,
+			altKey: false,
+			isComposing: false,
+			target: {},
+			prevented: 0,
+			stopped: 0,
+			preventDefault() { this.prevented++; },
+			stopPropagation() { this.stopped++; },
+		};
+		readerWindow.dispatch("keydown", event);
+		return event;
+	}
+	const first = commandK();
+	await new Promise(resolve => setTimeout(resolve, 0));
+	const second = commandK();
+	await new Promise(resolve => setTimeout(resolve, 0));
+
+	const tags = QLab.ChatComposerContext.list();
+	assert.equal(tags.length, 1);
+	assert.equal(tags[0].kind, "pdf-selection");
+	assert.equal(tags[0].text, exact);
+	assert.equal(tags[0].origin.pageNumber, 5);
+	assert.equal(prompt.focusCount, 2);
+	assert.equal(first.prevented, 1);
+	assert.equal(first.stopped, 1);
+	assert.equal(second.prevented, 1);
+	assert.equal(second.stopped, 1);
+	assert.equal(calls.filter(call => call[0] === "show").length, 1);
+	assert.equal(calls.some(call => call[0] === "arrange"), false);
+	QLab.unregisterReaderHooks();
+});

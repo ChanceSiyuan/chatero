@@ -151,12 +151,15 @@
 					qmdEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyK, () => {
 						let model = qmdEditor.getModel();
 						let selection = qmdEditor.getSelection();
+						let selectionText = model ? model.getValueInRange(selection) : '';
+						let start = model ? model.getOffsetAt(selection.getStartPosition()) : 0;
+						let end = model ? model.getOffsetAt(selection.getEndPosition()) : 0;
 						emitQmdMonaco({
 							type: 'command',
-							command: 'ai',
-							selection: model ? model.getValueInRange(selection) : '',
-							start: model ? model.getOffsetAt(selection.getStartPosition()) : 0,
-							end: model ? model.getOffsetAt(selection.getEndPosition()) : 0,
+							command: selectionText && end > start ? 'chat-selection' : 'ai',
+							selection: selectionText,
+							start,
+							end,
 						});
 					});
 					qmdCompletionProvider = monaco.languages.registerCompletionItemProvider('markdown', {

@@ -165,6 +165,29 @@
 - [ ] Record automated results and the ten manual DMG checks from the design in the findings document. Do not claim the macOS UI checks passed unless they were actually performed.
 - [ ] Commit as `test: verify floating research workspace integration`.
 
+## Task 8: Open Chat from a PDF or QMD Source selection with Command-K
+
+**Files:**
+
+- Modify: `chrome/content/zotero/xpcom/qlab/readerHooks.js`
+- Modify: `chrome/content/zotero/qlab/qmdMonaco.html`
+- Modify: `chrome/content/zotero/xpcom/qlab/qmdWorkspaceShell.js`
+- Modify: `chrome/content/zotero/xpcom/qlab/chatComposerContext.js`
+- Test: `scripts/chatero/tests/reader-hooks.test.mjs`
+- Test: `scripts/chatero/tests/qmd-monaco-host.test.mjs`
+- Test: `scripts/chatero/tests/qmd-workspace-shell.test.mjs`
+- Test: `scripts/chatero/tests/chat-composer-context.test.mjs`
+
+- [x] Add failing behavioral tests proving PDF selection + `⌘K` and Monaco selection + `⌘K` each add the exact selection as one context tag, reveal the resident Chat utility, and focus the composer without sending a message.
+- [x] Add a Monaco regression proving `⌘K` with no selection still invokes the existing inline-write action.
+- [x] Run the focused files and observe the selection-routing failures before production changes.
+- [x] Route Reader `⌘K` through the captured Reader selection context. Do not change `⌘⇧K` quote-to-QMD or `⌘L` pin-context behavior.
+- [x] Make Monaco emit a distinct selection-to-Chat command when its selection is non-empty; retain `ai` for an empty selection. Handle the new command in the QMD workspace without rewriting the Draft.
+- [x] Teach QMD composer-context capture to prefer the exact Monaco selection/range when Source is active, then reveal and focus Chat with `focus: true`.
+- [x] Verify Chat opening does not auto-submit, cancel a running turn, rearrange PDF/QMD panes, or duplicate an existing selection tag.
+- [x] Run focused tests and the complete Chatero suite.
+- [x] Commit as `feat: open Chat from research selections`.
+
 ## Completion Gate
 
 - [ ] Request a whole-branch code review against the approved design and resolve all material findings.

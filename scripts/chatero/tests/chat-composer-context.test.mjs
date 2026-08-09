@@ -118,3 +118,69 @@ test("renderComposerTagsHTML empty state hints ⌘L", async () => {
 	const html = QLab.renderComposerTagsHTML();
 	assert.match(html, /⌘L/);
 });
+
+test("QMD Source selection is attached exactly once and focused in resident Chat", async () => {
+	const QLab = await loadQLab();
+	QLab.ChatComposerContext.clear();
+	const exact = "  $f(x)$ is selected\nwith both edges preserved  ";
+	const prompt = { focusCount: 0, focus() { this.focusCount++; } };
+	const qmdHost = {
+		_qlabSurfaceMode: "source",
+		_qlabBuffer: `# Draft\n\n${exact}\n`,
+		_qlabMonacoSelection: { start: 9, end: 9 + exact.length, text: exact },
+		_qlabDraftState: { originalPath: "drafts/exact.qmd", viewingWorking: false },
+		ownerDocument: { activeElement: null, getSelection: () => "wrong DOM selection" },
+		querySelector: () => null,
+	};
+	const chatHost = {
+		ownerDocument: { createElement: () => ({ firstElementChild: null }) },
+		querySelector(selector) {
+			if (selector === "[data-qlab-context-tags]") return null;
+			if (selector === "[data-qlab-prompt]") return prompt;
+			return null;
+		},
+	};
+	const qmdContainer = { querySelector: selector => selector === ".qlab-shell-host" ? qmdHost : null };
+	const chatContainer = { querySelector: selector => selector === ".qlab-shell-host" ? chatHost : null };
+	let chatVisible = false;
+	const calls = [];
+	const tabs = {
+		_tabs: [{ id: "qlabqmd", type: "qlabqmd", data: { primaryItemID: 41 } }],
+		selectedID: "qlabqmd",
+		isTabVisible: id => id === "qlabchat" && chatVisible,
+		_qlab: {
+			async showUtility(kind, payload, options) {
+				calls.push(["show", kind, payload, options]);
+				chatVisible = true;
+				if (!tabs._tabs.some(tab => tab.id === "qlabchat")) {
+					tabs._tabs.push({ id: "qlabchat", type: "qlabchat" });
+				}
+			},
+			ensureShellTab(kind, payload) { calls.push(["ensure", kind, payload]); },
+		},
+	};
+	const windowRef = {
+		Zotero_Tabs: tabs,
+		document: {
+			getElementById(id) {
+				if (id === "qlabqmd") return qmdContainer;
+				if (id === "qlab-chat-utility-content") return chatContainer;
+				return null;
+			},
+		},
+	};
+	QLab.getQmdShellBuffer = host => host._qlabBuffer;
+
+	await QLab.addCurrentContextToChat(windowRef, { preference: "selection", focus: true });
+	await QLab.addCurrentContextToChat(windowRef, { preference: "selection", focus: true });
+
+	const tags = QLab.ChatComposerContext.list();
+	assert.equal(tags.length, 1, "the existing stable-key semantics deduplicate the selection tag");
+	assert.equal(tags[0].kind, "qmd-selection");
+	assert.equal(tags[0].text, exact);
+	assert.equal(tags[0].origin.start, 9);
+	assert.equal(tags[0].origin.end, 9 + exact.length);
+	assert.equal(prompt.focusCount, 2);
+	assert.equal(calls.filter(call => call[0] === "show").length, 1);
+	assert.equal(calls.some(call => ["send", "cancel", "arrange"].includes(call[0])), false);
+});

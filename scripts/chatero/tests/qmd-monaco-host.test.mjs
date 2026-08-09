@@ -23,12 +23,13 @@ test("dedicated QMD Monaco host exposes the parent bridge contract", async () =>
 	}
 });
 
-test("QMD Monaco host provides save and AI keyboard commands", async () => {
+test("QMD Monaco host provides save and context-sensitive Command-K bindings", async () => {
 	let html = await readFile(hostPath, "utf8");
 	assert.match(html, /KeyMod\.CtrlCmd\s*\|\s*monaco\.KeyCode\.KeyS/);
 	assert.match(html, /KeyMod\.CtrlCmd\s*\|\s*monaco\.KeyCode\.KeyK/);
 	assert.match(html, /command:\s*'save'/);
-	assert.match(html, /command:\s*'ai'/);
+	assert.match(html, /'chat-selection'/);
+	assert.match(html, /:\s*'ai'/);
 });
 
 test("QMD Monaco host publishes pointer activity without consuming editor input", async () => {
@@ -54,22 +55,33 @@ test("QMD Monaco preserves the selected Draft's existing line-ending style", asy
 	assert.doesNotMatch(html, /model\.setEOL\(qmdMonaco\.editor\.EndOfLineSequence\.LF\);/);
 });
 
-async function executeMonacoHost() {
+async function executeMonacoHost({ selectionText = "", selectionStart = 0 } = {}) {
 	const html = await readFile(hostPath, "utf8");
 	const scripts = [...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g)];
 	const source = scripts.at(-1)[1]
-		+ "\n;globalThis.__qmdHost = { loadQmdMonaco, setQmdModel, disposeQmdMonaco };";
+		+ "\n;globalThis.__qmdHost = { loadQmdMonaco, subscribeQmdMonaco, setQmdModel, disposeQmdMonaco };";
 	let amdReady;
 	let editors = 0;
 	let revoked = [];
 	let listeners = new Map();
+	let commands = new Map();
 	let nextWorker = 0;
 	const models = [];
+	const selection = {
+		getStartPosition: () => ({ offset: selectionStart }),
+		getEndPosition: () => ({ offset: selectionStart + selectionText.length }),
+	};
+	const activeModel = {
+		getValueInRange: () => selectionText,
+		getOffsetAt: position => position.offset,
+	};
 	const editor = {
 		dispose() {},
 		onDidChangeModelContent: () => ({ dispose() {} }),
 		onDidChangeCursorPosition: () => ({ dispose() {} }),
-		addCommand() {},
+		addCommand(keybinding, listener) { commands.set(keybinding, listener); },
+		getModel: () => activeModel,
+		getSelection: () => selection,
 	};
 	const monaco = {
 		KeyMod: { CtrlCmd: 1 },
@@ -115,11 +127,51 @@ async function executeMonacoHost() {
 	return {
 		api: context.__qmdHost,
 		completeAMD: () => amdReady(),
+		triggerCommand: keybinding => commands.get(keybinding)?.(),
 		editors: () => editors,
 		revoked,
 		listeners,
 	};
 }
+
+test("Command-K routes an exact non-empty Monaco selection to Chat context", async () => {
+	const exact = "  f(u,G,x) = F(V_r)\nwith preserved whitespace  ";
+	const host = await executeMonacoHost({ selectionText: exact, selectionStart: 17 });
+	const events = [];
+	host.api.subscribeQmdMonaco(event => events.push(JSON.parse(JSON.stringify(event))));
+	const loading = host.api.loadQmdMonaco();
+	host.completeAMD();
+	await loading;
+
+	host.triggerCommand(3);
+
+	assert.deepEqual(events.at(-1), {
+		type: "command",
+		command: "chat-selection",
+		selection: exact,
+		start: 17,
+		end: 17 + exact.length,
+	});
+});
+
+test("Command-K retains inline AI writing when Monaco has no selection", async () => {
+	const host = await executeMonacoHost({ selectionText: "", selectionStart: 29 });
+	const events = [];
+	host.api.subscribeQmdMonaco(event => events.push(JSON.parse(JSON.stringify(event))));
+	const loading = host.api.loadQmdMonaco();
+	host.completeAMD();
+	await loading;
+
+	host.triggerCommand(3);
+
+	assert.deepEqual(events.at(-1), {
+		type: "command",
+		command: "ai",
+		selection: "",
+		start: 29,
+		end: 29,
+	});
+});
 
 test("disposing during Monaco AMD initialization prevents a late editor and releases its worker URL", async () => {
 	const host = await executeMonacoHost();

@@ -199,6 +199,8 @@ Zotero.QLab = Zotero.QLab || {};
 		relativePath = '',
 		source = '',
 		selection = '',
+		selectionStart = null,
+		selectionEnd = null,
 		blockIndex = null,
 		surfaceMode = 'source',
 	} = {}) {
@@ -207,20 +209,27 @@ Zotero.QLab = Zotero.QLab || {};
 		}
 		let path = relativePath || 'draft.qmd';
 		let short = truncate(path.replace(/^drafts\//, ''), 32);
-		if (selection && selection.trim()) {
-			let text = selection.trim().slice(0, MAX_TEXT);
+		let exactSelection = String(selection || '');
+		if (exactSelection && exactSelection.trim()) {
+			let text = exactSelection.slice(0, MAX_TEXT);
+			let origin = {
+				type: 'qmd',
+				relativePath: path,
+				surfaceMode,
+				hasSelection: true,
+			};
+			if (Number.isInteger(selectionStart) && Number.isInteger(selectionEnd)
+					&& selectionEnd >= selectionStart) {
+				origin.start = selectionStart;
+				origin.end = selectionEnd;
+			}
 			return {
 				stableKey: `qmd-selection:${path}`,
 				kind: 'qmd-selection',
 				label: `${short} · sel`,
 				detail: `${text.length} chars · ${surfaceMode}`,
 				text,
-				origin: {
-					type: 'qmd',
-					relativePath: path,
-					surfaceMode,
-					hasSelection: true,
-				},
+				origin,
 			};
 		}
 		if (Number.isInteger(blockIndex) && source) {
@@ -635,7 +644,7 @@ Zotero.QLab = Zotero.QLab || {};
 		let anchorItemID = null;
 		
 		// Prefer QMD shell when it is the selected tab (live Quarto draft).
-		if (selected && selected.type === 'qlabqmd') {
+		if (selected && selected.type === 'qlabqmd' && !options.reader) {
 			let container = windowRef.document.getElementById(selected.id);
 			let host = container && container.querySelector('.qlab-shell-host');
 			let state = host && host._qlabDraftState;
@@ -648,28 +657,45 @@ Zotero.QLab = Zotero.QLab || {};
 				? Zotero.QLab.getQmdShellBuffer(host)
 				: '';
 			let selection = '';
-			let active = host.ownerDocument.activeElement;
-			let editor = (active && active.matches
-					&& active.matches('[data-qlab-editor], .qlab-qmd-visual-source-editor'))
-				? active
-				: host.querySelector('[data-qlab-editor]');
-			if (editor && typeof editor.selectionStart === 'number'
-					&& editor.selectionEnd > editor.selectionStart) {
-				selection = editor.value.slice(editor.selectionStart, editor.selectionEnd);
+			let selectionStart = null;
+			let selectionEnd = null;
+			let monacoSelection = host && host._qlabSurfaceMode === 'source'
+				? host._qlabMonacoSelection
+				: null;
+			if (monacoSelection && String(monacoSelection.text || '').trim()
+					&& Number(monacoSelection.end) > Number(monacoSelection.start)) {
+				selection = String(monacoSelection.text);
+				selectionStart = Number(monacoSelection.start);
+				selectionEnd = Number(monacoSelection.end);
 			}
 			else {
-				try {
-					let sel = host.ownerDocument.getSelection && host.ownerDocument.getSelection();
-					if (sel && String(sel).trim()) {
-						selection = String(sel);
-					}
+				let active = host.ownerDocument.activeElement;
+				let editor = (active && active.matches
+						&& active.matches('[data-qlab-editor], .qlab-qmd-visual-source-editor'))
+					? active
+					: host.querySelector('[data-qlab-editor]');
+				if (editor && typeof editor.selectionStart === 'number'
+						&& editor.selectionEnd > editor.selectionStart) {
+					selection = editor.value.slice(editor.selectionStart, editor.selectionEnd);
+					selectionStart = editor.selectionStart;
+					selectionEnd = editor.selectionEnd;
 				}
-				catch (e) {}
+				else {
+					try {
+						let sel = host.ownerDocument.getSelection && host.ownerDocument.getSelection();
+						if (sel && String(sel).trim()) {
+							selection = String(sel);
+						}
+					}
+					catch (e) {}
+				}
 			}
 			tag = Zotero.QLab.createQmdComposerTag({
 				relativePath: path,
 				source,
 				selection,
+				selectionStart,
+				selectionEnd,
 				surfaceMode: (host && host._qlabSurfaceMode) || 'source',
 			});
 			let primary = selected.data && selected.data.primaryItemID;
@@ -677,9 +703,9 @@ Zotero.QLab = Zotero.QLab || {};
 		}
 		else {
 			// PDF Reader tab or ambient Reader context.
-			let reader = Zotero.Reader.getByTabID
+			let reader = options.reader || (Zotero.Reader.getByTabID
 				&& tabs.selectedID
-				&& Zotero.Reader.getByTabID(tabs.selectedID);
+				&& Zotero.Reader.getByTabID(tabs.selectedID));
 			if (reader && Zotero.QLab.ReaderContextStore) {
 				await Zotero.QLab.ReaderContextStore.captureFromEvent({
 					reader,

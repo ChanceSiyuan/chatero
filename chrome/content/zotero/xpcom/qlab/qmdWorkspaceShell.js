@@ -682,6 +682,35 @@ Zotero.QLab = Zotero.QLab || {};
 		};
 	};
 
+	Zotero.QLab.handleQmdMonacoWorkspaceCommand = async function ({
+		host,
+		view,
+		command,
+		event = {},
+		onSave = () => {},
+		onInlineWrite = () => {},
+	} = {}) {
+		if (command === 'save') {
+			onSave();
+			return 'save';
+		}
+		if (command !== 'ai' && command !== 'chat-selection') return null;
+		let selection = {
+			start: Number(event.start) || 0,
+			end: Number(event.end) || 0,
+			text: String(event.selection || ''),
+		};
+		host._qlabMonacoSelection = selection;
+		if (command === 'chat-selection' && selection.text && selection.end > selection.start) {
+			return Zotero.QLab.addCurrentContextToChat(view, {
+				preference: 'selection',
+				focus: true,
+			});
+		}
+		onInlineWrite();
+		return 'ai';
+	};
+
 	function joinRoot(root, relativePath) {
 		return `${String(root || '').replace(/[\\/]+$/, '')}/${String(relativePath || '').replace(/^[\\/]+/, '')}`;
 	}
@@ -802,15 +831,14 @@ Zotero.QLab = Zotero.QLab || {};
 			language: text => Zotero.QLab.qmdLanguageSnapshot(text, bibliographyText),
 			bibliographyText,
 			onCommand(command, event) {
-				if (command === 'save') void workspace.saveNow();
-				if (command === 'ai') {
-					host._qlabMonacoSelection = {
-						start: Number(event.start) || 0,
-						end: Number(event.end) || 0,
-						text: String(event.selection || ''),
-					};
-					Zotero.QLab.toggleQmdInlineBar(host, true);
-				}
+				void Zotero.QLab.handleQmdMonacoWorkspaceCommand({
+					host,
+					view,
+					command,
+					event,
+					onSave: () => workspace.saveNow(),
+					onInlineWrite: () => Zotero.QLab.toggleQmdInlineBar(host, true),
+				}).catch(error => Zotero.logError && Zotero.logError(error));
 			},
 			onCursor(event) {
 				let offset = Number(event.offset) || 0;

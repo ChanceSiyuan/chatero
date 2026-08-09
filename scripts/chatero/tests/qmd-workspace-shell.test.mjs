@@ -609,3 +609,60 @@ test("workspace event bindings are removed exactly once on disposal", async () =
 	assert.equal(calls, 1);
 	assert.equal(listeners.has("click"), false);
 });
+
+test("Monaco selection command opens focused Chat context without starting an inline rewrite", async () => {
+	const QLab = await loadQLab();
+	const exact = "  selected QMD source\nwithout normalization  ";
+	const calls = [];
+	const host = {};
+	const view = { name: "research-window" };
+	QLab.addCurrentContextToChat = async (windowRef, options) => {
+		calls.push(["chat", windowRef, options]);
+		return { kind: "qmd-selection" };
+	};
+
+	const result = await QLab.handleQmdMonacoWorkspaceCommand({
+		host,
+		view,
+		command: "chat-selection",
+		event: { selection: exact, start: 11, end: 11 + exact.length },
+		onSave: () => calls.push(["save"]),
+		onInlineWrite: () => calls.push(["inline"]),
+	});
+
+	assert.equal(result.kind, "qmd-selection");
+	assert.deepEqual(JSON.parse(JSON.stringify(host._qlabMonacoSelection)), {
+		start: 11,
+		end: 11 + exact.length,
+		text: exact,
+	});
+	assert.deepEqual(JSON.parse(JSON.stringify(calls)), [[
+		"chat",
+		view,
+		{ preference: "selection", focus: true },
+	]]);
+});
+
+test("empty Monaco Command-K still opens the existing inline-write bar", async () => {
+	const QLab = await loadQLab();
+	const calls = [];
+	const host = {};
+	QLab.addCurrentContextToChat = async () => calls.push("chat");
+
+	const result = await QLab.handleQmdMonacoWorkspaceCommand({
+		host,
+		view: {},
+		command: "ai",
+		event: { selection: "", start: 23, end: 23 },
+		onSave: () => calls.push("save"),
+		onInlineWrite: () => calls.push("inline"),
+	});
+
+	assert.equal(result, "ai");
+	assert.deepEqual(JSON.parse(JSON.stringify(host._qlabMonacoSelection)), {
+		start: 23,
+		end: 23,
+		text: "",
+	});
+	assert.deepEqual(calls, ["inline"]);
+});

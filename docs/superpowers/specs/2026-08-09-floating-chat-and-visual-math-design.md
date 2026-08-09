@@ -255,6 +255,11 @@ keeps drag and resize stable if the pointer leaves the surface.
 
 - Selecting the native Chat tab reveals the surface without replacing either
   primary pane.
+- With text selected in the PDF Reader or Monaco QMD Source, `⌘K` adds that
+  exact selection as a composer context tag, reveals the same resident Chat,
+  and focuses the composer so the user can ask a question. It never sends a
+  message automatically. In Monaco, `⌘K` with no selection retains the existing
+  inline-write action.
 - The Reader Chat icon captures the current PDF/selection context, reveals
   Chat, and focuses the composer.
 - `⌘L` adds current context and reveals Chat only when the existing focus rule

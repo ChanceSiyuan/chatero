@@ -174,10 +174,17 @@ Zotero.QLab = Zotero.QLab || {};
 			|| /^(INPUT|TEXTAREA|SELECT)$/i.test(target.tagName)));
 	}
 
-	function installShortcuts(win) {
-		if (!win || win._qlabShortcutsBound) {
+	function installShortcuts(win, readerEvent = null) {
+		if (!win) {
 			return;
 		}
+		if (readerEvent && readerEvent.reader) {
+			win._qlabReaderShortcutContext = {
+				reader: readerEvent.reader,
+				params: readerEvent.params || {},
+			};
+		}
+		if (win._qlabShortcutsBound) return;
 		win._qlabShortcutsBound = true;
 		win.addEventListener('keydown', (event) => {
 			let meta = event.metaKey || event.ctrlKey;
@@ -213,6 +220,30 @@ Zotero.QLab = Zotero.QLab || {};
 					&& win.Zotero_Tabs
 					&& Zotero.Reader.getByTabID(win.Zotero_Tabs.selectedID);
 				void quoteSelectionIntoQmd({ reader, params: {} });
+				return;
+			}
+
+			// With a PDF selection, ⌘K opens the resident Chat utility with the
+			// exact captured selection as composer context. Unlike ⌘⇧K, it never
+			// writes into the QMD Draft.
+			if (key === 'k' && !event.shiftKey && !isEditableTarget(event.target)) {
+				let shortcutContext = win._qlabReaderShortcutContext || {};
+				let reader = shortcutContext.reader;
+				if (!reader) {
+					reader = Zotero.Reader.getByTabID
+						&& win.Zotero_Tabs
+						&& Zotero.Reader.getByTabID(win.Zotero_Tabs.selectedID);
+				}
+				if (!reader) return;
+				event.preventDefault();
+				event.stopPropagation();
+				let mainWindow = reader._window || (win.Zotero_Tabs ? win : Zotero.getMainWindow());
+				void Zotero.QLab.addCurrentContextToChat(mainWindow, {
+					reader,
+					params: shortcutContext.params || {},
+					preference: 'selection',
+					focus: true,
+				}).catch((e) => Zotero.logError(e));
 				return;
 			}
 
@@ -318,7 +349,7 @@ Zotero.QLab = Zotero.QLab || {};
 			try {
 				let { doc, append } = event;
 				attachReaderDocument(event, doc);
-				installShortcuts(doc.defaultView);
+				installShortcuts(doc.defaultView, event);
 				append(makeIconButton(doc, {
 					title: 'Add to Chat (⌘L)',
 					iconSrc: icons.chat,
@@ -350,7 +381,7 @@ Zotero.QLab = Zotero.QLab || {};
 			try {
 				let { doc, append } = event;
 				attachReaderDocument(event, doc);
-				installShortcuts(doc.defaultView);
+				installShortcuts(doc.defaultView, event);
 				void Zotero.QLab.ReaderContextStore
 					&& Zotero.QLab.ReaderContextStore.captureFromEvent(event).catch(() => {});
 				let group = doc.createElement('div');
