@@ -576,6 +576,57 @@ test("workspace refresh retargets the resident Chat host and its existing handle
 	fixture.controller.destroy();
 });
 
+test("workspace refresh replaces the previous root's approval policy in place", async () => {
+	const QLab = await loadQLab();
+	const oldRoot = "/workspaces/old";
+	const newRoot = "/workspaces/new";
+	const oldPolicy = { defaultAction: "allow", allow: [], deny: [] };
+	const newPolicy = { defaultAction: "ask", allow: [], deny: ["unlisted-tool"] };
+	const loadedRoots = [];
+	QLab.Settings.getRoot = () => newRoot;
+	QLab.createGeckoQLabPathHost = () => ({});
+	QLab.qlabRepositoryState = async () => "ready";
+	QLab.ReaderContextStore.formatForPrompt = () => "";
+	QLab.refreshShellWorkspaceChrome = () => {};
+	QLab.loadApprovalPolicy = async root => {
+		loadedRoots.push(root);
+		return root === newRoot ? newPolicy : oldPolicy;
+	};
+
+	const marker = {};
+	const runningTurn = { cancel() {} };
+	const messages = [{ role: "assistant", text: "resident transcript" }];
+	const host = {
+		_qlabMountRoot: oldRoot,
+		_qlabMountWorkspaceState: "ready",
+		_qlabMountedKind: "qlabchat",
+		_qlabApprovalPolicy: oldPolicy,
+		_qlabApprovalPolicyRoot: oldRoot,
+		_qlabMessages: messages,
+		_qlabTurnHandle: runningTurn,
+		querySelector(selector) {
+			return selector === '[data-qlab-kind="qlabchat"]' ? marker : null;
+		},
+	};
+	const fixture = integrationFixture(QLab, { productionMount: true });
+	fixture.elements["qlab-chat-utility-content"].register(".qlab-shell-host", host);
+
+	await fixture.controller.refreshWorkspace();
+	await Promise.resolve();
+
+	assert.deepEqual(loadedRoots, [newRoot]);
+	assert.equal(host._qlabApprovalPolicyRoot, newRoot);
+	assert.equal(host._qlabApprovalPolicy, newPolicy);
+	assert.equal(
+		QLab.evaluateApproval(host._qlabApprovalPolicy, { tool: "unlisted-tool" }),
+		"deny",
+		"later approvals must use the new workspace policy",
+	);
+	assert.equal(host._qlabMessages, messages, "workspace refresh preserves the transcript");
+	assert.equal(host._qlabTurnHandle, runningTurn, "workspace refresh preserves a live turn");
+	fixture.controller.destroy();
+});
+
 test("Chat Pin and bounds restore only into their own window session", async () => {
 	const preference = new Map();
 	const QLab = await loadQLab({

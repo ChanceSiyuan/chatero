@@ -532,6 +532,30 @@ Zotero.QLab = Zotero.QLab || {};
 			setChatActivityStatus(host, 'completed');
 		}
 	}
+
+	function reloadChatApprovalPolicy(host, root, mountIsCurrent = () => true) {
+		if (!host) {
+			return;
+		}
+		let policyRoot = root || '';
+		host._qlabApprovalPolicy = null;
+		host._qlabApprovalPolicyRoot = policyRoot;
+		if (!policyRoot || !Zotero.QLab.loadApprovalPolicy) {
+			return;
+		}
+		void Promise.resolve(Zotero.QLab.loadApprovalPolicy(policyRoot))
+			.then(policy => {
+				if (!mountIsCurrent()
+						|| host._qlabMountRoot !== policyRoot
+						|| host._qlabApprovalPolicyRoot !== policyRoot) {
+					return;
+				}
+				host._qlabApprovalPolicy = policy;
+			})
+			.catch(error => {
+				Zotero.logError && Zotero.logError(error);
+			});
+	}
 	
 	/**
 	 * Mount shell UI into a tab-content host. Safe to call repeatedly.
@@ -600,6 +624,9 @@ Zotero.QLab = Zotero.QLab || {};
 			});
 			host._qlabMountRoot = root;
 			host._qlabMountWorkspaceState = workspaceState;
+			if (kind === 'qlabchat' && !sameRoot) {
+				reloadChatApprovalPolicy(host, root, mountIsCurrent);
+			}
 			return;
 		}
 		
@@ -697,12 +724,7 @@ Zotero.QLab = Zotero.QLab || {};
 					Zotero.QLab.updateChatContextMeter(host);
 				});
 			}
-			if (root && Zotero.QLab.loadApprovalPolicy) {
-				void Zotero.QLab.loadApprovalPolicy(root).then((policy) => {
-					if (!mountIsCurrent()) return;
-					host._qlabApprovalPolicy = policy;
-				});
-			}
+			reloadChatApprovalPolicy(host, root, mountIsCurrent);
 			Zotero.QLab.renderChatMessages(host);
 			Zotero.QLab.updateChatContextMeter(host);
 			void Zotero.QLab.refreshChatProviderAvailability(host);
@@ -2086,10 +2108,24 @@ Zotero.QLab = Zotero.QLab || {};
 				if (failClosed) throw new Error(message);
 			}
 			else if (event.type === 'approval-needed') {
+				let approvalRoot = host._qlabMountRoot || '';
 				let policy = host._qlabApprovalPolicy;
-				if (!policy && host._qlabMountRoot && Zotero.QLab.loadApprovalPolicy) {
-					policy = await Zotero.QLab.loadApprovalPolicy(host._qlabMountRoot);
-					host._qlabApprovalPolicy = policy;
+				if (policy && host._qlabApprovalPolicyRoot !== undefined
+						&& host._qlabApprovalPolicyRoot !== approvalRoot) {
+					policy = null;
+				}
+				if (!policy && approvalRoot && Zotero.QLab.loadApprovalPolicy) {
+					let loaded = await Zotero.QLab.loadApprovalPolicy(approvalRoot);
+					if (host._qlabMountRoot === approvalRoot) {
+						policy = loaded;
+						host._qlabApprovalPolicy = loaded;
+						host._qlabApprovalPolicyRoot = approvalRoot;
+					}
+					else {
+						policy = host._qlabApprovalPolicyRoot === host._qlabMountRoot
+							? host._qlabApprovalPolicy
+							: null;
+					}
 				}
 				let decision = Zotero.QLab.evaluateApproval(policy, event);
 				if (decision === 'allow') {
