@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { runInNewContext } from "node:vm";
 import { loadQLab } from "../lib/load-qlab.mjs";
 
 const ORIGIN = "http://127.0.0.1:4180";
@@ -36,11 +37,11 @@ class FakeBrowser extends FakeElement {
 		this.webProgress = {
 			listeners: new Set(),
 			flags: null,
-			addProgressListener: (listener, flags) => {
-				this.webProgress.flags = flags;
-				this.webProgress.listeners.add(listener);
+			addProgressListener(listener, flags) {
+				this.flags = flags;
+				this.listeners.add(listener);
 			},
-			removeProgressListener: listener => this.webProgress.listeners.delete(listener),
+			removeProgressListener(listener) { this.listeners.delete(listener); },
 		};
 		this.messageManager = new FakeMessageManager();
 	}
@@ -206,9 +207,11 @@ test("Main Site cancels unsafe top-level requests at STATE_START with both progr
 	const host = new FakeElement("div", document);
 	const service = fakeService();
 	const external = [];
-	const constants = {
+	const notifyConstants = {
 		NOTIFY_LOCATION: 0x10,
 		NOTIFY_STATE_REQUEST: 0x01,
+	};
+	const stateConstants = {
 		STATE_START: 0x40000,
 		STATE_IS_DOCUMENT: 0x80000,
 	};
@@ -216,25 +219,26 @@ test("Main Site cancels unsafe top-level requests at STATE_START with both progr
 		service,
 		target: { identity: "12345678-1234-4123-8123-123456789abc", root: "/tmp/research-loop" },
 		openExternal: url => external.push(url),
-		progressConstants: constants,
+		notifyConstants,
+		stateConstants,
 	});
 	await view.ready;
 	service.emit({ state: "ready", url: `${ORIGIN}/`, lastGoodURL: `${ORIGIN}/`, diagnosticTail: "", error: null });
 	const browser = document.browsers[0];
-	assert.equal(browser.webProgress.flags, constants.NOTIFY_LOCATION | constants.NOTIFY_STATE_REQUEST);
+	assert.equal(browser.webProgress.flags, notifyConstants.NOTIFY_LOCATION | notifyConstants.NOTIFY_STATE_REQUEST);
 	const listener = [...browser.webProgress.listeners][0];
 	let cancelled = 0;
 	listener.onStateChange(
 		{ isTopLevel: true },
 		{ URI: { spec: "https://example.test/out" }, cancel: () => { cancelled++; } },
-		constants.STATE_START | constants.STATE_IS_DOCUMENT,
+		stateConstants.STATE_START | stateConstants.STATE_IS_DOCUMENT,
 	);
 	assert.equal(cancelled, 1);
 	assert.deepEqual(external, ["https://example.test/out"]);
 	listener.onStateChange(
 		{ isTopLevel: true },
 		{ URI: { spec: "https://cdn.example.test/style.css" }, cancel: () => { cancelled++; } },
-		constants.STATE_START,
+		stateConstants.STATE_START,
 	);
 	assert.equal(cancelled, 1, "top-level document subresources must not be treated as navigations");
 	assert.deepEqual(external, ["https://example.test/out"]);
@@ -264,6 +268,141 @@ test("Main Site content bridge blocks subframe exits and cleans every message-ma
 	view.dispose();
 	assert.equal(manager.listeners.size, 0);
 	assert.deepEqual(manager.removedScripts, [manager.loadedScripts[0].url]);
+});
+
+test("Main Site content bridge retargets auxiliary contexts into the managed browser", async () => {
+	const QLab = await loadQLab();
+	const document = new FakeDocument();
+	const host = new FakeElement("div", document);
+	const service = fakeService();
+	const view = QLab.createMainSiteView(document, host, {
+		service,
+		target: { identity: "12345678-1234-4123-8123-123456789abc", root: "/tmp/research-loop" },
+	});
+	await view.ready;
+	service.emit({ state: "ready", url: `${ORIGIN}/`, lastGoodURL: `${ORIGIN}/`, diagnosticTail: "", error: null });
+	const browser = document.browsers[0];
+	const script = decodeURIComponent(browser.messageManager.loadedScripts[0].url);
+	assert.match(script, /target/);
+	assert.doesNotMatch(script, /originalOpen\.call/, "window.open must never create an unmanaged popup");
+	browser.messageManager.dispatch("QLab:MainSiteNavigation", {
+		url: `${ORIGIN}/knowledge/popup.html`,
+		topLevel: true,
+		kind: "auxiliary",
+		replaceTopLevel: true,
+	});
+	assert.deepEqual(browser.loaded, [`${ORIGIN}/`, `${ORIGIN}/knowledge/popup.html`]);
+	view.dispose();
+});
+
+test("Main Site rebinds both message and progress guards when Gecko replaces the frame loader", async () => {
+	const QLab = await loadQLab();
+	const document = new FakeDocument();
+	const host = new FakeElement("div", document);
+	const service = fakeService();
+	const view = QLab.createMainSiteView(document, host, {
+		service,
+		target: { identity: "12345678-1234-4123-8123-123456789abc", root: "/tmp/research-loop" },
+		notifyConstants: { NOTIFY_LOCATION: 0x10, NOTIFY_STATE_REQUEST: 0x01 },
+		stateConstants: { STATE_START: 0x1, STATE_IS_DOCUMENT: 0x2 },
+	});
+	await view.ready;
+	const browser = document.browsers[0];
+	const oldManager = browser.messageManager;
+	const oldProgress = browser.webProgress;
+	const nextManager = new FakeMessageManager();
+	const nextProgress = {
+		listeners: new Set(), flags: null,
+		addProgressListener(listener, flags) { this.flags = flags; this.listeners.add(listener); },
+		removeProgressListener(listener) { this.listeners.delete(listener); },
+	};
+	browser.messageManager = nextManager;
+	browser.webProgress = nextProgress;
+	browser.dispatch("XULFrameLoaderCreated");
+	assert.equal(oldManager.listeners.size, 0);
+	assert.equal(oldProgress.listeners.size, 0);
+	assert.equal(nextManager.listeners.size, 1);
+	assert.equal(nextManager.loadedScripts.length, 1);
+	assert.equal(nextProgress.listeners.size, 1);
+	view.dispose();
+	assert.equal(nextManager.listeners.size, 0);
+	assert.equal(nextProgress.listeners.size, 0);
+});
+
+test("Main Site frame script releases obsolete document windows before tab disposal", async () => {
+	const QLab = await loadQLab();
+	const source = decodeURIComponent(QLab.mainSiteNavigationFrameScript());
+	assert.match(source, /pagehide/);
+	assert.match(source, /disposers\.delete/);
+	assert.match(source, /eventRoot\.removeEventListener/, "shutdown must use the exact registration target");
+});
+
+test("Main Site frame script executes popup and subframe guards before content navigation", async () => {
+	const QLab = await loadQLab();
+	const listenersFor = () => new Map();
+	function fakeWindow(href) {
+		const listeners = listenersFor();
+		let popupCalls = 0;
+		const win = {
+			location: { href },
+			listeners,
+			addEventListener(type, listener) {
+				if (!listeners.has(type)) listeners.set(type, new Set());
+				listeners.get(type).add(listener);
+			},
+			removeEventListener(type, listener) { listeners.get(type)?.delete(listener); },
+			open() { popupCalls++; return {}; },
+			popupCalls: () => popupCalls,
+		};
+		return win;
+	}
+	const content = fakeWindow(`${ORIGIN}/knowledge/`);
+	const messages = [];
+	const messageListeners = new Map();
+	const encoded = QLab.mainSiteNavigationFrameScript();
+	const source = decodeURIComponent(encoded.slice(encoded.indexOf(",") + 1));
+	runInNewContext(source, {
+		content,
+		URL,
+		sendAsyncMessage: (name, data) => messages.push({ name, data }),
+		addMessageListener: (name, listener) => messageListeners.set(name, listener),
+		removeMessageListener: (name, listener) => {
+			if (messageListeners.get(name) === listener) messageListeners.delete(name);
+		},
+	});
+	messageListeners.get("QLab:MainSiteNavigationConfig")({ data: { origin: ORIGIN } });
+	let prevented = 0;
+	const popupLink = {
+		localName: "a", href: `${ORIGIN}/knowledge/popup.html`, target: "_blank", parentElement: null,
+	};
+	for (const listener of content.listeners.get("click")) {
+		listener({
+			button: 0, target: popupLink,
+			preventDefault: () => { prevented++; }, stopPropagation() {},
+		});
+	}
+	assert.equal(prevented, 1);
+	assert.equal(content.popupCalls(), 0);
+	assert.equal(messages.at(-1).data.replaceTopLevel, true);
+	assert.equal(content.open(`${ORIGIN}/knowledge/window-open.html`), null);
+	assert.equal(content.popupCalls(), 0);
+	assert.equal(messages.at(-1).data.kind, "auxiliary");
+
+	const frame = fakeWindow(`${ORIGIN}/knowledge/frame.html`);
+	for (const listener of content.listeners.get("DOMWindowCreated")) {
+		listener({ target: { defaultView: frame } });
+	}
+	for (const listener of frame.listeners.get("click")) {
+		listener({
+			button: 0,
+			target: { localName: "a", href: "https://evil.test/", target: "", parentElement: null },
+			preventDefault() {}, stopPropagation() {},
+		});
+	}
+	assert.equal(messages.at(-1).data.topLevel, false);
+	for (const listener of frame.listeners.get("pagehide")) listener({ persisted: false });
+	assert.equal(frame.listeners.get("click").size, 0);
+	assert.equal(frame.listeners.get("submit").size, 0);
 });
 
 test("top-level same-origin location changes persist without reloading the browser", async () => {

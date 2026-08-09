@@ -75,9 +75,11 @@ Zotero.QLab = Zotero.QLab || {};
 	Zotero.QLab.mainSiteNavigationFrameScript = function () {
 		let source = `(() => {
 			const marker = '__qlabMainSiteNavigationBridge';
-			if (content[marker]) return;
+			const eventRoot = content;
+			if (eventRoot[marker]) return;
 			let allowedOrigin = '';
-			let disposers = [];
+			let disposers = new Set();
+			let attached = new WeakSet();
 			function isTopLevel(win) { return win === content; }
 			function findLink(node) {
 				for (let current = node; current; current = current.parentElement) {
@@ -85,64 +87,84 @@ Zotero.QLab = Zotero.QLab || {};
 				}
 				return null;
 			}
-			function route(event, rawURL, kind, win) {
+			function route(event, rawURL, kind, win, replaceTopLevel = false) {
 				let url;
 				try { url = new URL(String(rawURL || ''), win.location.href); }
 				catch (error) { url = null; }
 				let forbiddenScript = url && url.protocol === 'javascript:';
 				let embeds = url && !forbiddenScript
 					&& url.protocol === 'http:' && url.origin === allowedOrigin;
-				if (embeds) return true;
+				if (embeds && !replaceTopLevel) return true;
 				if (event) {
 					event.preventDefault();
 					event.stopPropagation();
 				}
 				sendAsyncMessage('${NAVIGATION_MESSAGE}', {
 					url: url ? url.href : String(rawURL || ''),
-					topLevel: isTopLevel(win), kind,
+					topLevel: isTopLevel(win), kind, replaceTopLevel,
 				});
 				return false;
 			}
 			function attach(win) {
+				if (!win || attached.has(win)) return;
+				attached.add(win);
 				let onClick = event => {
-					if (event.button !== 0) return;
 					let link = findLink(event.target);
-					if (link && link.href) route(event, link.href, 'click', win);
+					if (!link || !link.href) return;
+					let target = String(link.target || '').toLowerCase();
+					let auxiliary = Number(event.button || 0) !== 0
+						|| event.metaKey || event.ctrlKey || event.shiftKey || event.altKey
+						|| (target && target !== '_self');
+					route(event, link.href, auxiliary ? 'auxiliary' : 'click', win, !!auxiliary);
 				};
 				let onSubmit = event => {
 					let form = event.target;
-					if (form && form.action) route(event, form.action, 'submit', win);
+					if (!form || !form.action) return;
+					let target = String(form.target || '').toLowerCase();
+					let auxiliary = !!target && target !== '_self';
+					route(event, form.action, auxiliary ? 'auxiliary' : 'submit', win, auxiliary);
 				};
 				win.addEventListener('click', onClick, true);
 				win.addEventListener('submit', onSubmit, true);
 				let originalOpen = win.open;
 				try {
-					win.open = function (url, ...args) {
-						return route(null, url, 'window-open', win)
-							? originalOpen.call(win, url, ...args) : null;
+					win.open = function (url) {
+						route(null, url, 'auxiliary', win, true);
+						return null;
 					};
 				}
 				catch (error) {}
-				disposers.push(() => {
+				let disposed = false;
+				let dispose = () => {
+					if (disposed) return;
+					disposed = true;
 					win.removeEventListener('click', onClick, true);
 					win.removeEventListener('submit', onSubmit, true);
+					win.removeEventListener('pagehide', onPageHide, true);
 					try { win.open = originalOpen; } catch (error) {}
-				});
+					attached.delete(win);
+					disposers.delete(dispose);
+				};
+				let onPageHide = event => {
+					if (!event.persisted) dispose();
+				};
+				win.addEventListener('pagehide', onPageHide, true);
+				disposers.add(dispose);
 			}
 			function onWindow(event) {
 				let win = event.target && event.target.defaultView;
 				if (win) attach(win);
 			}
 			function shutdown() {
-				content.removeEventListener('DOMWindowCreated', onWindow, true);
-				for (let dispose of disposers.splice(0)) dispose();
+				eventRoot.removeEventListener('DOMWindowCreated', onWindow, true);
+				for (let dispose of [...disposers]) dispose();
 				removeMessageListener('${NAVIGATION_CONFIG_MESSAGE}', onConfig);
 				removeMessageListener('${NAVIGATION_SHUTDOWN_MESSAGE}', shutdown);
-				delete content[marker];
+				delete eventRoot[marker];
 			}
 			function onConfig(message) { allowedOrigin = String(message.data && message.data.origin || ''); }
-			content[marker] = true;
-			content.addEventListener('DOMWindowCreated', onWindow, true);
+			eventRoot[marker] = true;
+			eventRoot.addEventListener('DOMWindowCreated', onWindow, true);
 			addMessageListener('${NAVIGATION_CONFIG_MESSAGE}', onConfig);
 			addMessageListener('${NAVIGATION_SHUTDOWN_MESSAGE}', shutdown);
 			attach(content);
@@ -179,7 +201,9 @@ Zotero.QLab = Zotero.QLab || {};
 			manager.loadFrameScript(scriptURL, true);
 			manager.sendAsyncMessage(NAVIGATION_CONFIG_MESSAGE, { origin });
 		}
-		browser.addEventListener && browser.addEventListener('load', bind, true);
+		for (let type of ['XULFrameLoaderCreated', 'load']) {
+			browser.addEventListener && browser.addEventListener(type, bind, true);
+		}
 		bind();
 		return Object.freeze({
 			updateOrigin(nextOrigin) {
@@ -190,10 +214,51 @@ Zotero.QLab = Zotero.QLab || {};
 			dispose() {
 				if (disposed) return;
 				disposed = true;
-				browser.removeEventListener && browser.removeEventListener('load', bind, true);
+				for (let type of ['XULFrameLoaderCreated', 'load']) {
+					browser.removeEventListener && browser.removeEventListener(type, bind, true);
+				}
 				detach();
 			},
 		});
+	};
+
+	Zotero.QLab.bindMainSiteProgressGuard = function (browser, listener, flags) {
+		if (!browser || !listener) return () => {};
+		let current = null;
+		let disposed = false;
+		function bind() {
+			if (disposed) return;
+			let next = null;
+			try { next = browser.webProgress || null; }
+			catch (error) {}
+			if (!next || next === current) return;
+			if (current) {
+				try { current.removeProgressListener(listener); }
+				catch (error) {}
+			}
+			current = next;
+			try { current.addProgressListener(listener, flags); }
+			catch (error) {
+				Zotero.logError && Zotero.logError(error);
+				current = null;
+			}
+		}
+		for (let type of ['XULFrameLoaderCreated', 'load']) {
+			browser.addEventListener && browser.addEventListener(type, bind, true);
+		}
+		bind();
+		return () => {
+			if (disposed) return;
+			disposed = true;
+			for (let type of ['XULFrameLoaderCreated', 'load']) {
+				browser.removeEventListener && browser.removeEventListener(type, bind, true);
+			}
+			if (current) {
+				try { current.removeProgressListener(listener); }
+				catch (error) {}
+			}
+			current = null;
+		};
 	};
 
 	function htmlElement(document, tagName, className = '') {
@@ -359,8 +424,10 @@ Zotero.QLab = Zotero.QLab || {};
 		let unsubscribe = service.observe(target.identity, render);
 		if (typeof unsubscribe === 'function') cleanups.push(unsubscribe);
 
-		let progressConstants = options.progressConstants || (typeof Components !== 'undefined'
+		let notifyConstants = options.notifyConstants || (typeof Components !== 'undefined'
 			? Components.interfaces.nsIWebProgress : {});
+		let stateConstants = options.stateConstants || (typeof Components !== 'undefined'
+			? Components.interfaces.nsIWebProgressListener : {});
 		let abortCode = typeof Components !== 'undefined' && Components.results
 			? Components.results.NS_BINDING_ABORTED : 0x804b0002;
 		let progressListener = {
@@ -380,9 +447,9 @@ Zotero.QLab = Zotero.QLab || {};
 				}
 			},
 			onStateChange(progress, request, flags) {
-				if (!(flags & (progressConstants.STATE_START || 0))) return;
-				if (progressConstants.STATE_IS_DOCUMENT
-						&& !(flags & progressConstants.STATE_IS_DOCUMENT)) return;
+				if (!(flags & (stateConstants.STATE_START || 0))) return;
+				if (stateConstants.STATE_IS_DOCUMENT
+						&& !(flags & stateConstants.STATE_IS_DOCUMENT)) return;
 				let requested = request && request.URI && request.URI.spec;
 				if (!requested) return;
 				let result = Zotero.QLab.mainSiteNavigationDecision({ currentOrigin: activeOrigin, requestedURL: requested });
@@ -400,22 +467,18 @@ Zotero.QLab = Zotero.QLab || {};
 				Components.interfaces.nsISupportsWeakReference,
 			]);
 		}
-		if (browser.webProgress && typeof browser.webProgress.addProgressListener === 'function') {
-			try {
-				let flags = (progressConstants.NOTIFY_LOCATION || 0)
-					| (progressConstants.NOTIFY_STATE_REQUEST || 0);
-				browser.webProgress.addProgressListener(progressListener, flags);
-				cleanups.push(() => browser.webProgress.removeProgressListener(progressListener));
-			}
-			catch (error) { Zotero.logError && Zotero.logError(error); }
-		}
+		let progressFlags = (notifyConstants.NOTIFY_LOCATION || 0)
+			| (notifyConstants.NOTIFY_STATE_REQUEST || 0);
+		cleanups.push(Zotero.QLab.bindMainSiteProgressGuard(
+			browser, progressListener, progressFlags
+		));
 
 		navigationBridge = Zotero.QLab.bindMainSiteNavigationBridge(browser, data => {
 			if (!data || data.topLevel !== true) {
 				status.textContent = 'Blocked unsafe subframe navigation';
 				return 'refuse';
 			}
-			return decideAndRoute(data.url, { load: false });
+			return decideAndRoute(data.url, { load: data.replaceTopLevel === true });
 		});
 		navigationBridge.updateOrigin(activeOrigin);
 		cleanups.push(() => navigationBridge.dispose());
