@@ -175,6 +175,7 @@ const xpcomFilesLocal = [
 	'qlab/codexExecProvider',
 	'qlab/agentProviders',
 	'qlab/splitLayout',
+	'qlab/chatPresentationController',
 	'qlab/readerContext',
 	'qlab/readerIcons',
 	'qlab/readerHooks',

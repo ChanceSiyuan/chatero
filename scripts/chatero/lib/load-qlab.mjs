@@ -21,6 +21,7 @@ const QLAB_SCRIPTS = [
 	"codexExecProvider.js",
 	"agentProviders.js",
 	"splitLayout.js",
+	"chatPresentationController.js",
 	"readerContext.js",
 	"readerIcons.js",
 	"readerHooks.js",
