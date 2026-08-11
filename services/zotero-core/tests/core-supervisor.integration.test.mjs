@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { lstat, mkdir, mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { afterEach, test } from "node:test";
 
 const temporaryDirectories = [];
@@ -47,6 +47,35 @@ const fixtureCollections = [
   { childCount: 1, collectionKey: "PHYSICS", itemCount: 2, libraryId: 1, name: "Physics" },
   { childCount: 0, collectionKey: "RG", itemCount: 1, libraryId: 1, name: "Renormalization", parentKey: "PHYSICS" },
 ];
+
+test("builds an explicit headless Gecko launch without putting secrets in argv or environment", async () => {
+  const { buildCoreLaunchPlan } = await import("../supervisor/core-supervisor.mjs");
+  const plan = buildCoreLaunchPlan({
+    geckoExecutable: "/Applications/Chatero Core.app/Contents/MacOS/zotero",
+    profileDirectory: "/tmp/chatero profile",
+  });
+
+  assert.equal(plan.executable, "/Applications/Chatero Core.app/Contents/MacOS/zotero");
+  assert.deepEqual(plan.args, ["-no-remote", "-profile", "/tmp/chatero profile", "-headless", "-ChateroCore"]);
+  assert.equal(JSON.stringify(plan).includes("bootstrap"), false);
+  assert.equal(JSON.stringify(plan).includes("socket"), false);
+  assert.throws(() => buildCoreLaunchPlan({ geckoExecutable: "relative/zotero", profileDirectory: "/tmp/profile" }), /absolute/);
+});
+
+test("supervises an explicit Core executable through the same authenticated client", async () => {
+  const { startCore } = await import("../supervisor/core-supervisor.mjs");
+  const { profileDirectory, root } = await createProfile();
+  const executable = join(root, "fake-gecko-core");
+  const fixtureCore = resolve(import.meta.dirname, "..", "fixture", "fixture-core.mjs");
+  await writeFile(executable, `#!/bin/sh\nif [ ! -f /dev/fd/3 ]; then\n  echo "bootstrap fd must be a regular inherited file" >&2\n  exit 99\nfi\nexec "${process.execPath}" "${fixtureCore}" "$@"\n`);
+  await chmod(executable, 0o700);
+
+  const core = await startCore({ geckoExecutable: executable, profileDirectory, fixtureCollections, fixtureItems });
+  running.push(core);
+  assert.equal(core.mode, "gecko");
+  assert.equal(core.child.spawnargs.includes("-ChateroCore"), true);
+  assert.equal((await core.client.request("library.search", { limit: 10, query: "density" })).total, 1);
+});
 
 test("supervises an authenticated fixture Core over an owner-only Unix socket", async () => {
   const { startCore } = await import("../supervisor/core-supervisor.mjs");

@@ -8,6 +8,7 @@ const CORE_ROOT = resolve(SCRIPT_DIRECTORY, "..");
 const DEFAULT_SOURCE = join(CORE_ROOT, "protocol", "chatero-core.protocol.json");
 const DEFAULT_JAVASCRIPT = join(CORE_ROOT, "generated", "protocol.mjs");
 const DEFAULT_DECLARATIONS = join(CORE_ROOT, "generated", "protocol.d.ts");
+const DEFAULT_GECKO_JAVASCRIPT = resolve(CORE_ROOT, "..", "..", "chrome", "content", "zotero", "modules", "chateroCoreProtocol.mjs");
 const TOP_LEVEL_FIELDS = new Set([
   "schemaVersion",
   "protocolVersion",
@@ -175,6 +176,7 @@ async function atomicWrite(path, contents) {
 export async function generateProtocol({
   sourcePath = DEFAULT_SOURCE,
   javascriptPath = DEFAULT_JAVASCRIPT,
+  geckoJavascriptPath = DEFAULT_GECKO_JAVASCRIPT,
   declarationsPath = DEFAULT_DECLARATIONS,
   check = false,
 } = {}) {
@@ -182,16 +184,18 @@ export async function generateProtocol({
   const javascript = renderJavaScript(contract);
   const declarations = renderDeclarations(contract);
   if (check) {
-    const [actualJavaScript, actualDeclarations] = await Promise.all([
+    const [actualJavaScript, actualGeckoJavaScript, actualDeclarations] = await Promise.all([
       readFile(javascriptPath, "utf8"),
+      readFile(geckoJavascriptPath, "utf8"),
       readFile(declarationsPath, "utf8"),
     ]);
-    if (actualJavaScript !== javascript || actualDeclarations !== declarations) {
+    if (actualJavaScript !== javascript || actualGeckoJavaScript !== javascript || actualDeclarations !== declarations) {
       throw new Error("generated Zotero Core protocol files are stale; run npm run core:generate");
     }
   }
   else {
     await atomicWrite(javascriptPath, javascript);
+    await atomicWrite(geckoJavascriptPath, javascript);
     await atomicWrite(declarationsPath, declarations);
   }
   return {

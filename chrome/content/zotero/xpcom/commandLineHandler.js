@@ -120,7 +120,7 @@ var ZoteroCommandLineHandler = {
 			Zotero.Integration.execCommand(agent, command, docId, templateVersion);
 		}
 		// Only open main window if we aren't handling an integration command
-		else if (!Zotero.getMainWindow()) {
+		else if (!CommandLineOptions.chateroCore && !Zotero.getMainWindow()) {
 			Zotero.openMainWindow();
 		}
 		

@@ -98,15 +98,31 @@ async function activate(context) {
     return selection[0].fsPath;
   };
 
+  const selectCoreExecutable = async () => {
+    const selection = await vscode.window.showOpenDialog({
+      canSelectFiles: true,
+      canSelectFolders: false,
+      canSelectMany: false,
+      openLabel: "Use as Zotero Core",
+      title: "Select the Chatero/Zotero Gecko executable",
+    });
+    if (!selection?.[0]) return null;
+    await vscode.workspace.getConfiguration("chatero.zotero").update("coreExecutable", selection[0].fsPath, vscode.ConfigurationTarget.Global);
+    return selection[0].fsPath;
+  };
+
   const start = async () => {
     if (core) return core;
     const configuration = vscode.workspace.getConfiguration("chatero.zotero");
     let profileDirectory = configuration.get("profilePath", "");
     if (!profileDirectory) profileDirectory = await selectProfile();
     if (!profileDirectory) return null;
-    if (!configuration.get("developerFixtureCore", false)) {
-      void vscode.window.showInformationMessage("The headless Gecko Zotero adapter is not enabled in this developer build. Your profile was not opened.");
-      return null;
+    const fixture = configuration.get("developerFixtureCore", false);
+    let geckoExecutable;
+    if (!fixture) {
+      geckoExecutable = configuration.get("coreExecutable", "");
+      if (!geckoExecutable) geckoExecutable = await selectCoreExecutable();
+      if (!geckoExecutable) return null;
     }
     const { startCore } = await import("./runtime/zotero-core/supervisor/core-supervisor.mjs");
     core = await vscode.window.withProgress({
@@ -114,6 +130,7 @@ async function activate(context) {
       title: "Starting Zotero Core…",
     }, () => startCore({
       profileDirectory,
+      ...(geckoExecutable && { geckoExecutable }),
       requestedCapabilities: ["events:read", "library:read", "library:search", "profile:read"],
     }));
     const model = new LibraryTreeModel({ request: core.client.request });
@@ -132,6 +149,7 @@ async function activate(context) {
   };
 
   context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.selectProfile", selectProfile));
+  context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.selectCoreExecutable", selectCoreExecutable));
   context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.startCore", () => start().catch(error => vscode.window.showErrorMessage(`Could not start Zotero Core: ${error.message}`))));
   context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.stopCore", () => stop().catch(error => vscode.window.showErrorMessage(`Could not stop Zotero Core: ${error.message}`))));
   context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.refreshLibrary", () => provider.refresh()));

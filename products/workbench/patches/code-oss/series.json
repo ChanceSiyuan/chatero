@@ -4,6 +4,10 @@
     {
       "file": "0001-disable-upstream-copilot.patch",
       "sha256": "03aadef53cb982036c91e2ade84dc11e173a3707fec5a63631741afa96c3e0cc"
+    },
+    {
+      "file": "0002-quarantine-upstream-copilot-sources.patch",
+      "sha256": "e3b89ccf442a337c464ca96cb9806dbeffc14fe82ba1bf5bdf35e4cde182088d"
     }
   ]
 }

@@ -6,6 +6,7 @@ export var CommandLineOptions = {
 	test: false,
 	automatedTest: false,
 	skipBundledFiles: false,
+	chateroCore: false,
 	file: false,
 	url: false,
 };

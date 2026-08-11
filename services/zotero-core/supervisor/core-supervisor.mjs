@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
-import { chmod, lstat, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdtemp, open, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,6 +13,25 @@ const CORE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const DEFAULT_FIXTURE_CORE = join(CORE_ROOT, "fixture", "fixture-core.mjs");
 const SESSION_PREFIX = "chatero-zotero-core-";
 const MARKER_FILE = ".chatero-session.json";
+
+export function buildCoreLaunchPlan({ geckoExecutable, profileDirectory, fixtureCorePath = DEFAULT_FIXTURE_CORE } = {}) {
+  const canonicalProfile = resolve(profileDirectory);
+  if (geckoExecutable !== undefined) {
+    if (typeof geckoExecutable !== "string" || !geckoExecutable.startsWith("/")) {
+      throw new Error("Gecko Core executable must be an absolute path");
+    }
+    return Object.freeze({
+      args: Object.freeze(["-no-remote", "-profile", canonicalProfile, "-headless", "-ChateroCore"]),
+      executable: geckoExecutable,
+      mode: "gecko",
+    });
+  }
+  return Object.freeze({
+    args: Object.freeze([fixtureCorePath]),
+    executable: process.execPath,
+    mode: "fixture",
+  });
+}
 
 function wait(milliseconds) {
   return new Promise(resolvePromise => setTimeout(resolvePromise, milliseconds));
@@ -64,6 +83,7 @@ export async function startCore({
   fixtureItems = [],
   fixtureCorePath = DEFAULT_FIXTURE_CORE,
   fixtureSearchDelayMs = 0,
+  geckoExecutable,
   requestedCapabilities = CAPABILITIES,
   readyTimeoutMs = 5000,
   upstreamVersion = "7.0-fixture",
@@ -75,25 +95,39 @@ export async function startCore({
   const sessionDirectory = await mkdtemp(join(tmpdir(), SESSION_PREFIX));
   await chmod(sessionDirectory, 0o700);
   const markerPath = join(sessionDirectory, MARKER_FILE);
+  const bootstrapPath = join(sessionDirectory, "bootstrap.token");
   const fixturePath = join(sessionDirectory, "fixture-items.json");
   const socketPath = join(sessionDirectory, "core.sock");
   await writeFile(markerPath, `${JSON.stringify({ nonce: sessionNonce, schemaVersion: 1 })}\n`, { mode: 0o600 });
+  await writeFile(bootstrapPath, `${bootstrapToken}\n`, { mode: 0o600 });
   await writeFile(fixturePath, `${JSON.stringify({ collections: fixtureCollections, items: fixtureItems })}\n`, { mode: 0o600 });
 
-  const child = spawn(process.execPath, [fixtureCorePath], {
-    env: {
-      ...process.env,
-      ...(process.versions.electron && { ELECTRON_RUN_AS_NODE: "1" }),
-      CHATERO_CORE_FIXTURE_PATH: fixturePath,
-      CHATERO_CORE_PROFILE_DIRECTORY: resolve(profileDirectory),
-      CHATERO_CORE_PROFILE_EPOCH: profileEpoch,
-      CHATERO_CORE_SEARCH_DELAY_MS: String(fixtureSearchDelayMs),
-      CHATERO_CORE_SOCKET_PATH: socketPath,
-      CHATERO_CORE_UPSTREAM_VERSION: upstreamVersion,
-    },
-    stdio: ["ignore", "pipe", "pipe", "pipe"],
-  });
-  child.stdio[3].end(`${bootstrapToken}\n`);
+  const launch = buildCoreLaunchPlan({ fixtureCorePath, geckoExecutable, profileDirectory });
+  const bootstrapHandle = await open(bootstrapPath, "r");
+  let child;
+  try {
+    child = spawn(launch.executable, launch.args, {
+      env: {
+        ...process.env,
+        ...(process.versions.electron && { ELECTRON_RUN_AS_NODE: "1" }),
+        CHATERO_CORE_FIXTURE_PATH: fixturePath,
+        CHATERO_CORE_PROFILE_DIRECTORY: resolve(profileDirectory),
+        CHATERO_CORE_PROFILE_EPOCH: profileEpoch,
+        CHATERO_CORE_SEARCH_DELAY_MS: String(fixtureSearchDelayMs),
+        CHATERO_CORE_SOCKET_PATH: socketPath,
+        CHATERO_CORE_UPSTREAM_VERSION: upstreamVersion,
+      },
+      stdio: ["ignore", "pipe", "pipe", bootstrapHandle.fd],
+    });
+  }
+  finally {
+    await bootstrapHandle.close();
+    await unlink(bootstrapPath).catch(error => {
+      if (error?.code !== "ENOENT") throw error;
+    });
+  }
+  let spawnError = null;
+  child.once("error", error => { spawnError = error; });
   let stderr = "";
   child.stderr.setEncoding("utf8");
   child.stderr.on("data", chunk => {
@@ -104,8 +138,9 @@ export async function startCore({
   const deadline = Date.now() + readyTimeoutMs;
   try {
     while (!client && Date.now() < deadline) {
+      if (spawnError) throw spawnError;
       if (child.exitCode !== null || child.signalCode !== null) {
-        throw new Error(`fixture Zotero Core exited before readiness: ${stderr.trim() || child.exitCode || child.signalCode}`);
+        throw new Error(`Zotero Core exited before readiness: ${stderr.trim() || child.exitCode || child.signalCode}`);
       }
       try {
         client = await connectCore({
@@ -171,6 +206,7 @@ export async function startCore({
     bootstrapTransport: "inherited-fd",
     child,
     client,
+    mode: launch.mode,
     profileEpoch,
     sessionDirectory,
     socketPath,

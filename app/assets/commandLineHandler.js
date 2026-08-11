@@ -22,11 +22,23 @@ if (CommandLineOptions.forceDebugLog) {
 }
 
 CommandLineOptions.forceDataDir = cmdLine.handleFlagWithParam("datadir", false);
+CommandLineOptions.chateroCore = cmdLine.handleFlag("ChateroCore", false);
 // Set here, to be acted upon in xpcom/commandLineHandler.js
 CommandLineOptions.file = cmdLine.handleFlagWithParam("file", false);
 CommandLineOptions.url = cmdLine.handleFlagWithParam("url", false);
 if (CommandLineOptions.url) {
 	CommandLineOptions.url = cmdLine.resolveURI(CommandLineOptions.url);
+}
+
+if (CommandLineOptions.chateroCore) {
+	Services.ww.openWindow(
+		null,
+		"chrome://zotero/content/chateroCore.xhtml",
+		"_blank",
+		"chrome,dialog=no,width=1,height=1",
+		null
+	);
+	cmdLine.preventDefault = true;
 }
 
 var processTestOptions = false;

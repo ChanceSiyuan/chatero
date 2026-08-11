@@ -17,12 +17,14 @@ test("declares native Library views and commands without a webview", async () =>
   assert.deepEqual(commands, [
     "chatero.zotero.refreshLibrary",
     "chatero.zotero.searchLibrary",
+    "chatero.zotero.selectCoreExecutable",
     "chatero.zotero.selectProfile",
     "chatero.zotero.startCore",
     "chatero.zotero.stopCore",
   ]);
   assert.equal(manifest.contributes.viewsContainers.activitybar[0].id, "chatero-zotero");
   assert.equal(manifest.contributes.views["chatero-zotero"][0].id, "chatero.zotero.library");
+  assert.equal(manifest.contributes.configuration.properties["chatero.zotero.coreExecutable"].type, "string");
   assert.equal(Object.hasOwn(manifest.contributes, "webviewPanel"), false);
 });
 

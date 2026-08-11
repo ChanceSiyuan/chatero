@@ -36,6 +36,11 @@
         "category": "Chatero"
       },
       {
+        "command": "chatero.zotero.selectCoreExecutable",
+        "title": "Select Zotero Core Executable…",
+        "category": "Chatero"
+      },
+      {
         "command": "chatero.zotero.refreshLibrary",
         "title": "Refresh Library",
         "category": "Chatero",
@@ -55,6 +60,11 @@
           "type": "string",
           "default": "",
           "description": "Absolute path to the Zotero profile owned by Chatero Core."
+        },
+        "chatero.zotero.coreExecutable": {
+          "type": "string",
+          "default": "",
+          "description": "Absolute path to the bundled or development Chatero/Zotero Gecko executable."
         },
         "chatero.zotero.developerFixtureCore": {
           "type": "boolean",

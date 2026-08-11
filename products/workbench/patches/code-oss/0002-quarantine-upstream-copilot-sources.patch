@@ -1,0 +1,2015 @@
+diff --git a/src/vs/platform/agentHost/common/otel/agentHostOTelService.ts b/src/vs/platform/agentHost/common/otel/agentHostOTelService.ts
+index d116b231831..3ba5939e23e 100644
+--- a/src/vs/platform/agentHost/common/otel/agentHostOTelService.ts
++++ b/src/vs/platform/agentHost/common/otel/agentHostOTelService.ts
+@@ -1,40 +1,42 @@
++// @ts-nocheck
++// Chatero does not ship or activate the upstream Copilot provider.
+ /*---------------------------------------------------------------------------------------------
+  *  Copyright (c) Microsoft Corporation. All rights reserved.
+  *  Licensed under the MIT License. See License.txt in the project root for license information.
+  *--------------------------------------------------------------------------------------------*/
+ 
+ import type { TelemetryConfig } from '@github/copilot-sdk';
+ import type { URI } from '../../../../base/common/uri.js';
+ import { createDecorator } from '../../../instantiation/common/instantiation.js';
+ 
+ 
+ /**
+  * Lean service that wires the @github/copilot-sdk telemetry hook to either:
+  *
+  *  - **External-only mode**: pass user-configured exporter settings straight through
+  *    so the SDK's spawned CLI exports OTel data directly to the user's sink.
+  *  - **DB mode** (`COPILOT_OTEL_DB_SPAN_EXPORTER_ENABLED=true`): point the SDK at a
+  *    loopback OTLP/HTTP receiver, persist all spans into a local SQLite store, and
+  *    optionally fan-out to a user-configured external sink as well.
+  *
+  * The interface lives in `common/` so consumers (DI registration, tests, callers
+  * in other layers) can import it without pulling in the node-only concrete
+  * implementation and its transitive native dependencies (`node:sqlite`).
+  */
+ export const AgentHostSessionTitleSpanName = 'vscode.agent_host.session.title_changed';
+ 
+ export const AgentHostSessionTitleAttribute = 'vscode.agent_host.session.title';
+ export const AgentHostSessionUriAttribute = 'vscode.agent_host.session.uri';
+ 
+ export interface IAgentHostOTelService {
+ 	readonly _serviceBrand: undefined;
+ 
+ 	/**
+ 	 * Returns the telemetry config to hand to `new CopilotClient({ telemetry })`,
+ 	 * starting the loopback receiver + store on first call when in DB mode.
+ 	 * Resolves to `undefined` when telemetry is disabled.
+ 	 */
+ 	getSdkTelemetryConfig(): Promise<TelemetryConfig | undefined>;
+ 
+ 	/**
+ 	 * Path of the SQLite span store, or `undefined` when DB mode is off.
+diff --git a/src/vs/platform/agentHost/node/agentHostGitHubTelemetryRouter.ts b/src/vs/platform/agentHost/node/agentHostGitHubTelemetryRouter.ts
+index ab773491897..f2f60ce0214 100644
+--- a/src/vs/platform/agentHost/node/agentHostGitHubTelemetryRouter.ts
++++ b/src/vs/platform/agentHost/node/agentHostGitHubTelemetryRouter.ts
+@@ -1,40 +1,42 @@
++// @ts-nocheck
++// Chatero does not ship or activate the upstream Copilot provider.
+ /*---------------------------------------------------------------------------------------------
+  *  Copyright (c) Microsoft Corporation. All rights reserved.
+  *  Licensed under the MIT License. See License.txt in the project root for license information.
+  *--------------------------------------------------------------------------------------------*/
+ 
+ import type { GitHubTelemetryNotification } from '@github/copilot-sdk';
+ import { multiplexProperties, type IAgentHostRestrictedTelemetry, type IAgentHostRestrictedTelemetryContext, type TelemetryProps } from './agentHostRestrictedTelemetry.js';
+ 
+ const enum TelemetryDestination {
+ 	EnhancedGH = 1,
+ 	InternalMSFT = 2,
+ }
+ 
+ const targetDestinations = new Map<string, TelemetryDestination>([
+ 	['engine.messages', TelemetryDestination.EnhancedGH],
+ 	['engine.messages.length', TelemetryDestination.EnhancedGH | TelemetryDestination.InternalMSFT],
+ 	['model.message.added', TelemetryDestination.InternalMSFT],
+ 	['model.modelCall.input', TelemetryDestination.InternalMSFT],
+ 	['model.modelCall.output', TelemetryDestination.InternalMSFT],
+ 	['model.request.added', TelemetryDestination.InternalMSFT],
+ 	['model.request.options.added', TelemetryDestination.InternalMSFT],
+ ]);
+ 
+ export class AgentHostGitHubTelemetryRouter {
+ 
+ 	constructor(private readonly _telemetryService: IAgentHostRestrictedTelemetry) { }
+ 
+ 	isTarget(notification: GitHubTelemetryNotification): boolean {
+ 		return targetDestinations.has(notification.event.kind);
+ 	}
+ 
+ 	async route(notification: GitHubTelemetryNotification, context?: IAgentHostRestrictedTelemetryContext, additionalProperties?: TelemetryProps): Promise<boolean> {
+ 		const { event } = notification;
+ 		const eventName = event.kind;
+ 		const destinations = targetDestinations.get(eventName);
+ 		if (destinations === undefined) {
+ 			return false;
+ 		}
+ 		if (!notification.restricted) {
+ 			return true;
+diff --git a/src/vs/platform/agentHost/node/agentHostMain.ts b/src/vs/platform/agentHost/node/agentHostMain.ts
+index bb684cc89fc..6a5c83c2a28 100644
+--- a/src/vs/platform/agentHost/node/agentHostMain.ts
++++ b/src/vs/platform/agentHost/node/agentHostMain.ts
+@@ -1,66 +1,65 @@
+ /*---------------------------------------------------------------------------------------------
+  *  Copyright (c) Microsoft Corporation. All rights reserved.
+  *  Licensed under the MIT License. See License.txt in the project root for license information.
+  *--------------------------------------------------------------------------------------------*/
+ 
+ import { ProxyChannel } from '../../../base/parts/ipc/common/ipc.js';
+ import { Server as ChildProcessServer } from '../../../base/parts/ipc/node/ipc.cp.js';
+ import { Server as UtilityProcessServer } from '../../../base/parts/ipc/node/ipc.mp.js';
+ import { isUtilityProcess } from '../../../base/parts/sandbox/node/electronTypes.js';
+ import { Emitter, type Event } from '../../../base/common/event.js';
+ import { DisposableStore, IDisposable, MutableDisposable, toDisposable } from '../../../base/common/lifecycle.js';
+ import { joinPath } from '../../../base/common/resources.js';
+ import { isWindows } from '../../../base/common/platform.js';
+ import { URI } from '../../../base/common/uri.js';
+ import { generateUuid } from '../../../base/common/uuid.js';
+ import * as os from 'os';
+ import * as inspector from 'inspector';
+ import { AgentHostByokModelsEnabledEnvVar, AgentHostClaudeAgentEnabledEnvVar, AgentHostCodexAgentEnabledEnvVar, AgentHostIpcChannels, IAgentHostInspectInfo, IAgentHostSocketInfo, IAgentService, IConnectionTrackerService, isAgentEnabled } from '../common/agentService.js';
+ import { AgentHostCodexEnabledConfigKey, platformRootSchema } from '../common/agentHostSchema.js';
+ import { AgentService } from './agentService.js';
+ import { IAgentHostStateManager } from './agentHostStateManager.js';
+ import { IAgentConfigurationService } from './agentConfigurationService.js';
+ import { IAgentHostGitHubEndpointService } from './agentHostGitHubEndpointService.js';
+ import { IAgentHostCompletions } from './agentHostCompletions.js';
+ import { IAgentHostTerminalManager } from './agentHostTerminalManager.js';
+-import { CopilotAgent } from './copilot/copilotAgent.js';
+ import { WorktreeIsolation } from './shared/worktreeIsolation.js';
+ import { CopilotApiService, ICopilotApiService } from './shared/copilotApiService.js';
+ import { ClaudeAgent } from './claude/claudeAgent.js';
+ import { ClaudeAgentSdkService, ClaudeSdkPackage, IClaudeAgentSdkService } from './claude/claudeAgentSdkService.js';
+ import { ClaudeProxyService, IClaudeProxyService } from './claude/claudeProxyService.js';
+ import { CodexAgent, CodexSdkPackage } from './codex/codexAgent.js';
+ import { createCodexProviderConfiguration } from './codex/codexProviderConfiguration.js';
+ import { CodexProxyService, ICodexProxyService } from './codex/codexProxyService.js';
+ import { ByokLmProxyService, IByokLmProxyService } from './copilot/byokLmProxyService.js';
+ import { ByokLmBridgeRegistry, IByokLmBridgeRegistry } from './byokLmBridgeRegistry.js';
+ import { IAgentHostProxyResolver } from './agentHostProxyResolver.js';
+ import { INetworkDiagnosticsService, NetworkDiagnosticsService } from './networkDiagnosticsService.js';
+ import { AgentSdkDownloader, IAgentSdkDownloader, type IAgentSdkDownloadProgress } from './agentSdkDownloader.js';
+ import { IAgentHostOTelService } from '../common/otel/agentHostOTelService.js';
+ import { AgentHostOTelService } from './otel/agentHostOTelService.js';
+ import { ProtocolServerHandler } from './protocolServerHandler.js';
+ import { CompositeProtocolServer } from './compositeProtocolServer.js';
+ import { WebSocketProtocolServer } from './webSocketTransport.js';
+ import { MessagePortProtocolServer } from './messagePortProtocolServer.js';
+ import { cleanupLocalAgentHostEndpointMetadataSync, cleanupLocalAgentHostEndpointSocketSync, createLocalAgentHostEndpointMetadata, prepareLocalAgentHostEndpointMetadataDirectory, prepareLocalAgentHostEndpointSocketDirectory, publishLocalAgentHostEndpointMetadata, type ILocalAgentHostEndpointMetadata } from './localAgentHostMetadata.js';
+ import { AgentHostManagementService } from './agentHostManagementService.js';
+ import { INativeEnvironmentService } from '../../environment/common/environment.js';
+ import { NativeEnvironmentService } from '../../environment/node/environmentService.js';
+ import { parseArgs, OPTIONS } from '../../environment/node/argv.js';
+ import { getLogLevel, ILogService, isDevConsoleLogForwardingEnabled, registerDevConsoleLogForwarder } from '../../log/common/log.js';
+ import { LogService } from '../../log/common/logService.js';
+ import { LoggerService } from '../../log/node/loggerService.js';
+ import { LoggerChannel } from '../../log/common/logIpc.js';
+ import { OtlpEmitterLogger, OtlpLogEmitter } from '../common/otlp/otlpLogEmitter.js';
+ import { DefaultURITransformer } from '../../../base/common/uriIpc.js';
+ import product from '../../product/common/product.js';
+ import { IProductService } from '../../product/common/productService.js';
+ import { localize } from '../../../nls.js';
+ import { FileService } from '../../files/common/fileService.js';
+ import { IFileService } from '../../files/common/files.js';
+ import { DiskFileSystemProvider } from '../../files/node/diskFileSystemProvider.js';
+ import { Schemas } from '../../../base/common/network.js';
+ import { IInstantiationService } from '../../instantiation/common/instantiation.js';
+ import { InstantiationService } from '../../instantiation/common/instantiationService.js';
+ import { ServiceCollection } from '../../instantiation/common/serviceCollection.js';
+@@ -201,81 +200,80 @@ async function startAgentHost(): Promise<void> {
+ 		const byokLmProxyService = disposables.add(instantiationService.createInstance(ByokLmProxyService));
+ 		diServices.set(IByokLmProxyService, byokLmProxyService);
+ 		const agentHostOTelService = disposables.add(instantiationService.createInstance(AgentHostOTelService, fetchFn));
+ 		diServices.set(IAgentHostOTelService, agentHostOTelService);
+ 		agentService = new AgentService(logService, fileService, sessionDataService, productService, gitService, rootConfigResource, telemetryService, fileMonitorService, undefined, fetchFn, [createCodexProviderConfiguration(environmentService.userHome)]);
+ 		const networkDiagnosticsService = instantiationService.createInstance(NetworkDiagnosticsService);
+ 		diServices.set(INetworkDiagnosticsService, networkDiagnosticsService);
+ 		agentService.setNetworkDiagnosticsService(networkDiagnosticsService);
+ 		diServices.set(IAgentService, agentService);
+ 		diServices.set(IAgentHostStateManager, agentService.stateManager);
+ 		const pluginManager = new AgentPluginManager(URI.file(environmentService.userDataPath), fileService, logService);
+ 		diServices.set(IAgentPluginManager, pluginManager);
+ 		const diffComputeService = disposables.add(new NodeWorkerDiffComputeService(logService));
+ 		diServices.set(IDiffComputeService, diffComputeService);
+ 		const editAttributionService = disposables.add(instantiationService.createInstance(AgentEditAttributionService, undefined, undefined));
+ 		diServices.set(IAgentEditAttributionService, editAttributionService);
+ 		agentService.setEditAttributionService(editAttributionService);
+ 		diServices.set(IEditSurvivalReporterFactory, instantiationService.createInstance(EditSurvivalReporterFactory));
+ 
+ 		diServices.set(IAgentHostTerminalManager, agentService.terminalManager);
+ 		diServices.set(IAgentConfigurationService, agentService.configurationService);
+ 		const editArcReporterService = disposables.add(instantiationService.createInstance(EditArcReporterService, undefined));
+ 		diServices.set(IEditArcReporterService, editArcReporterService);
+ 		diServices.set(IAgentHostGitHubEndpointService, agentService.gitHubEndpointService);
+ 		diServices.set(IAgentHostCompletions, agentService.completionsService);
+ 		diServices.set(IAgentHostCheckpointService, agentService.checkpointService);
+ 
+ 		// CopilotApiService and the proxies that consume it are created AFTER the
+ 		// GitHub endpoint service is re-exported (above) so CAPI endpoint discovery
+ 		// can target a GitHub Enterprise host. Matches agentHostServerMain ordering.
+ 		const copilotApiService = instantiationService.createInstance(CopilotApiService, fetchFn);
+ 		diServices.set(ICopilotApiService, copilotApiService);
+ 		// Host-owned worktree isolation controller: a single instance drives folder
+ 		// / worktree isolation for every agent, so providers stay unaware of it. It
+ 		// owns its branch-name generator, created from ICopilotApiService.
+ 		agentService.setWorktreeIsolation(disposables.add(instantiationService.createInstance(WorktreeIsolation, undefined)));
+ 		const claudeProxyService = disposables.add(instantiationService.createInstance(ClaudeProxyService));
+ 		diServices.set(IClaudeProxyService, claudeProxyService);
+ 		const codexProxyService = disposables.add(instantiationService.createInstance(CodexProxyService));
+ 		diServices.set(ICodexProxyService, codexProxyService);
+-		agentService.registerProvider(instantiationService.createInstance(CopilotAgent));
+ 		// Claude and Codex providers are gated on two things:
+ 		//  1. The user-facing enable toggle (`chat.agentHost.<x>Agent.enabled`,
+ 		//     forwarded as an env var by the starters). Claude defaults to on,
+ 		//     Codex defaults to off.
+ 		//  2. The SDK being reachable. Claude is a devDependency of this repo
+ 		//     so the bare-import path in `ClaudeAgentSdkService._loadSdk`
+ 		//     always succeeds in dev; in built products the SDK ships via
+ 		//     `product.agentSdks.claude` and the downloader handles it. Codex
+ 		//     is likewise a devDependency, so `CodexAgent._resolveSdkRoot`
+ 		//     resolves it from `node_modules` in dev; built products use the
+ 		//     env-var override or a `product.agentSdks.codex` entry.
+ 		// If either gate fails, the provider is not registered and never appears
+ 		// in the agent picker (matches the pre-CDN UX exactly).
+ 		if (isAgentEnabled(process.env[AgentHostClaudeAgentEnabledEnvVar], true) && (!environmentService.isBuilt || agentSdkDownloader.isAvailable(ClaudeSdkPackage))) {
+ 			agentService.registerProvider(instantiationService.createInstance(ClaudeAgent));
+ 		}
+ 		// Codex registration is one-way (register-on-enable): the env-var toggle
+ 		// or the renderer-forwarded `codexAgentEnabled` root config enables it.
+ 		// Disabling requires an agent host restart.
+ 		if (!environmentService.isBuilt || agentSdkDownloader.isAvailable(CodexSdkPackage)) {
+ 			const agentConfigurationService = agentService.configurationService;
+ 			let codexRegistered = false;
+ 			const registerCodexIfEnabled = () => {
+ 				if (codexRegistered) {
+ 					return;
+ 				}
+ 				const enabledByEnv = isAgentEnabled(process.env[AgentHostCodexAgentEnabledEnvVar], false);
+ 				const enabledByRootConfig = agentConfigurationService.getRootValue(platformRootSchema, AgentHostCodexEnabledConfigKey) === true;
+ 				if (enabledByEnv || enabledByRootConfig) {
+ 					codexRegistered = true;
+ 					agentService.registerProvider(instantiationService.createInstance(CodexAgent));
+ 				}
+ 			};
+ 			registerCodexIfEnabled();
+ 			disposables.add(agentConfigurationService.onDidRootConfigChange(() => registerCodexIfEnabled()));
+ 		}
+ 	} catch (err) {
+ 		logService.error('Failed to create AgentService', err);
+ 		throw err;
+ 	}
+diff --git a/src/vs/platform/agentHost/node/agentHostServerMain.ts b/src/vs/platform/agentHost/node/agentHostServerMain.ts
+index 1c40a1ce71b..aa06843ea48 100644
+--- a/src/vs/platform/agentHost/node/agentHostServerMain.ts
++++ b/src/vs/platform/agentHost/node/agentHostServerMain.ts
+@@ -1,78 +1,77 @@
+ /*---------------------------------------------------------------------------------------------
+  *  Copyright (c) Microsoft Corporation. All rights reserved.
+  *  Licensed under the MIT License. See License.txt in the project root for license information.
+  *--------------------------------------------------------------------------------------------*/
+ 
+ // Standalone agent host server with WebSocket protocol transport.
+ // Start with: node out/vs/platform/agentHost/node/agentHostServerMain.js [--port <port>] [--host <host>] [--connection-token <token>] [--connection-token-file <path>] [--without-connection-token] [--enable-mock-agent] [--claude-sdk-root <path>] [--codex-sdk-root <path>] [--quiet] [--log <level>]
+ 
+ import { fileURLToPath } from 'url';
+ 
+ // This standalone process isn't bootstrapped via bootstrap-esm.ts, so we must
+ // set _VSCODE_FILE_ROOT ourselves so that FileAccess can resolve module paths.
+ // This file lives at out/vs/platform/agentHost/node/ - the root is `out/`.
+ globalThis._VSCODE_FILE_ROOT = fileURLToPath(new URL('../../../..', import.meta.url));
+ 
+ import * as fs from 'fs';
+ import * as os from 'os';
+ import type { Event } from '../../../base/common/event.js';
+ import { DisposableStore, MutableDisposable } from '../../../base/common/lifecycle.js';
+ import { raceTimeout } from '../../../base/common/async.js';
+ import { joinPath } from '../../../base/common/resources.js';
+ import { URI } from '../../../base/common/uri.js';
+ import { generateUuid } from '../../../base/common/uuid.js';
+ import { localize } from '../../../nls.js';
+ import { NativeEnvironmentService } from '../../environment/node/environmentService.js';
+ import { INativeEnvironmentService } from '../../environment/common/environment.js';
+ import { parseArgs, OPTIONS } from '../../environment/node/argv.js';
+ import { getLogLevel, ILogService } from '../../log/common/log.js';
+ import { LogService } from '../../log/common/logService.js';
+ import { LoggerService } from '../../log/node/loggerService.js';
+ import { OtlpEmitterLogger, OtlpLogEmitter } from '../common/otlp/otlpLogEmitter.js';
+ import product from '../../product/common/product.js';
+ import { IProductService } from '../../product/common/productService.js';
+ import { InstantiationService } from '../../instantiation/common/instantiationService.js';
+ import { ServiceCollection } from '../../instantiation/common/serviceCollection.js';
+ import { registerAgentHostNetworkServices } from './agentHostBootstrap.js';
+ import { BANG_COMMAND_PREFIX } from './agentHostBangCommand.js';
+-import { CopilotAgent } from './copilot/copilotAgent.js';
+ import { INetworkDiagnosticsService, NetworkDiagnosticsService } from './networkDiagnosticsService.js';
+ import { IByokLmBridgeRegistry, NullByokLmBridgeRegistry } from './byokLmBridgeRegistry.js';
+ import { IByokLmProxyService, NullByokLmProxyService } from './copilot/byokLmProxyService.js';
+ import { WorktreeIsolation } from './shared/worktreeIsolation.js';
+ import { CopilotApiService, ICopilotApiService } from './shared/copilotApiService.js';
+ import { ClaudeAgent } from './claude/claudeAgent.js';
+ import { ClaudeAgentSdkService, ClaudeSdkPackage, IClaudeAgentSdkService } from './claude/claudeAgentSdkService.js';
+ import { ClaudeProxyService, IClaudeProxyService } from './claude/claudeProxyService.js';
+ import { CodexAgent, CodexSdkPackage } from './codex/codexAgent.js';
+ import { createCodexProviderConfiguration } from './codex/codexProviderConfiguration.js';
+ import { CodexProxyService, ICodexProxyService } from './codex/codexProxyService.js';
+ import { AgentSdkDownloader, IAgentSdkDownloader, type IAgentSdkDownloadProgress } from './agentSdkDownloader.js';
+ import { IAgentHostOTelService } from '../common/otel/agentHostOTelService.js';
+ import { AgentHostOTelService } from './otel/agentHostOTelService.js';
+ import { AgentService } from './agentService.js';
+ import { IAgentHostStateManager } from './agentHostStateManager.js';
+ import { AgentHostClaudeAgentEnabledEnvVar, AgentHostClaudeSdkRootEnvVar, AgentHostCodexAgentEnabledEnvVar, IAgentService, AgentHostCodexAgentSdkRootEnvVar, isAgentEnabled } from '../common/agentService.js';
+ import { IAgentConfigurationService } from './agentConfigurationService.js';
+ import { IAgentHostGitHubEndpointService } from './agentHostGitHubEndpointService.js';
+ import { IAgentHostCompletions } from './agentHostCompletions.js';
+ import { IAgentHostTerminalManager } from './agentHostTerminalManager.js';
+ import { WebSocketProtocolServer } from './webSocketTransport.js';
+ import { ProtocolServerHandler } from './protocolServerHandler.js';
+ import { FileService } from '../../files/common/fileService.js';
+ import { IFileService } from '../../files/common/files.js';
+ import { DiskFileSystemProvider } from '../../files/node/diskFileSystemProvider.js';
+ import { Schemas } from '../../../base/common/network.js';
+ import { ISessionDataService } from '../common/sessionDataService.js';
+ import { IDiffComputeService } from '../common/diffComputeService.js';
+ import { IAgentEditAttributionService } from '../common/fileEditAttribution.js';
+ import { NodeWorkerDiffComputeService } from './diffComputeService.js';
+ import { AgentEditAttributionService } from './shared/agentEditAttributionService.js';
+ import { IEditSurvivalReporterFactory, EditSurvivalReporterFactory } from './shared/editSurvivalReporter.js';
+ import { EditArcReporterService, IEditArcReporterService } from './shared/editArcReporter.js';
+ import { SessionDataService } from './sessionDataService.js';
+ import { IWindowsMxcTerminalSandboxRuntime, WindowsMxcTerminalSandboxRuntime } from '../../sandbox/common/terminalSandboxMxcRuntime.js';
+ import { ISandboxHelperService } from '../../sandbox/common/sandboxHelperService.js';
+ import { SandboxHelperService } from '../../sandbox/node/sandboxHelper.js';
+ import { AgentHostClientFileSystemProvider } from '../common/agentHostClientFileSystemProvider.js';
+ import { AGENT_CLIENT_SCHEME } from '../common/agentClientUri.js';
+@@ -274,86 +273,83 @@ async function main(): Promise<void> {
+ 		agentService.setEditAttributionService(editAttributionService);
+ 		diServices.set(IEditSurvivalReporterFactory, instantiationService.createInstance(EditSurvivalReporterFactory));
+ 		diServices.set(IAgentHostTerminalManager, agentService.terminalManager);
+ 		diServices.set(IAgentConfigurationService, agentService.configurationService);
+ 		const editArcReporterService = disposables.add(instantiationService.createInstance(EditArcReporterService, undefined));
+ 		diServices.set(IEditArcReporterService, editArcReporterService);
+ 		diServices.set(IAgentHostGitHubEndpointService, agentService.gitHubEndpointService);
+ 		diServices.set(IAgentHostCompletions, agentService.completionsService);
+ 		diServices.set(IAgentHostCheckpointService, agentService.checkpointService);
+ 		diServices.set(IAgentHostGitService, gitService);
+ 		// Register `ICopilotApiService` BEFORE `IClaudeProxyService` —
+ 		// the proxy service constructor requires it.
+ 		const copilotApiService = instantiationService.createInstance(CopilotApiService, fetchFn);
+ 		diServices.set(ICopilotApiService, copilotApiService);
+ 		// Host-owned worktree isolation controller: a single instance drives folder
+ 		// / worktree isolation for every agent, so providers stay unaware of it. It
+ 		// owns its branch-name generator, created from ICopilotApiService.
+ 		agentService.setWorktreeIsolation(disposables.add(instantiationService.createInstance(WorktreeIsolation, undefined)));
+ 		// CLI flags become env vars BEFORE the downloader is constructed so
+ 		// `isAvailable()` and `loadSdkRoot()` see them as dev overrides.
+ 		if (options.claudeSdkRoot) {
+ 			process.env[AgentHostClaudeSdkRootEnvVar] = options.claudeSdkRoot;
+ 		}
+ 		if (options.codexSdkRoot) {
+ 			process.env[AgentHostCodexAgentSdkRootEnvVar] = options.codexSdkRoot;
+ 		}
+ 		// Register the agent SDK downloader BEFORE any service that injects it.
+ 		const agentSdkDownloader = disposables.add(instantiationService.createInstance(AgentSdkDownloader));
+ 		diServices.set(IAgentSdkDownloader, agentSdkDownloader);
+ 		sdkDownloadProgress = agentSdkDownloader.onDidDownloadProgress;
+ 		const claudeProxyService = disposables.add(instantiationService.createInstance(ClaudeProxyService));
+ 		diServices.set(IClaudeProxyService, claudeProxyService);
+ 		const claudeAgentSdkService = instantiationService.createInstance(ClaudeAgentSdkService);
+ 		diServices.set(IClaudeAgentSdkService, claudeAgentSdkService);
+ 		const codexProxyService = disposables.add(instantiationService.createInstance(CodexProxyService));
+ 		diServices.set(ICodexProxyService, codexProxyService);
+ 		const agentHostOTelService = disposables.add(instantiationService.createInstance(AgentHostOTelService, fetchFn));
+ 		diServices.set(IAgentHostOTelService, agentHostOTelService);
+ 		// BYOK is unsupported in the remote agent host (no extension host runs
+ 		// next to it to serve the renderer LM API). Inject null implementations
+-		// to satisfy CopilotAgent / CopilotSessionLauncher DI.
++		// for the remaining first-party agent providers.
+ 		diServices.set(IByokLmBridgeRegistry, new NullByokLmBridgeRegistry());
+ 		diServices.set(IByokLmProxyService, new NullByokLmProxyService());
+-		const copilotAgent = disposables.add(instantiationService.createInstance(CopilotAgent));
+-		agentService.registerProvider(copilotAgent);
+-		log('CopilotAgent registered');
+ 		// Claude and Codex providers are gated on two things:
+ 		//  1. The user-facing enable toggle (`chat.agentHost.<x>Agent.enabled`,
+ 		//     forwarded as an env var by the renderer-side starters; the remote
+ 		//     server reads the env directly). Claude defaults to on, Codex
+ 		//     defaults to off.
+ 		//  2. The SDK being reachable. Claude is a devDependency of this repo
+ 		//     so the bare-import path in `ClaudeAgentSdkService._loadSdk`
+ 		//     always succeeds in dev; in built/shipped server installs the
+ 		//     SDK comes from the CLI flag / env var dev override or a
+ 		//     `product.agentSdks.claude` entry. Codex is likewise a
+ 		//     devDependency, so `CodexAgent._resolveSdkRoot` resolves it from
+ 		//     `node_modules` in dev; built/shipped installs use the env-var
+ 		//     override or `product.agentSdks.codex`.
+ 		if (isAgentEnabled(process.env[AgentHostClaudeAgentEnabledEnvVar], true) && (!environmentService.isBuilt || agentSdkDownloader.isAvailable(ClaudeSdkPackage))) {
+ 			const claudeAgent = disposables.add(instantiationService.createInstance(ClaudeAgent));
+ 			agentService.registerProvider(claudeAgent);
+ 			log('ClaudeAgent registered');
+ 		}
+ 		if (isAgentEnabled(process.env[AgentHostCodexAgentEnabledEnvVar], false) && (!environmentService.isBuilt || agentSdkDownloader.isAvailable(CodexSdkPackage))) {
+ 			const codexAgent = disposables.add(instantiationService.createInstance(CodexAgent));
+ 			agentService.registerProvider(codexAgent);
+ 			log('CodexAgent registered');
+ 		}
+ 	}
+ 
+ 	// Surface agent-SDK download progress to clients as generic `progress`
+ 	// notifications. The downloader fires process-global frames keyed by package
+ 	// id; the agent service fans each out to the `createSession` progress tokens
+ 	// of the sessions waiting on that provider's SDK, routed through the state
+ 	// manager so both local (IPC) and remote (WebSocket) renderers receive them
+ 	// via the same path as session updates.
+ 	if (sdkDownloadProgress) {
+ 		disposables.add(sdkDownloadProgress(p => agentService.emitDownloadProgress(
+ 			p.packageId,
+ 			p.displayName,
+ 			p.receivedBytes,
+ 			p.totalBytes,
+ 			p.phase === 'completed' || p.phase === 'failed',
+ 		)));
+ 	}
+diff --git a/src/vs/platform/agentHost/node/copilot/buildSessionEvents.ts b/src/vs/platform/agentHost/node/copilot/buildSessionEvents.ts
+index ce31c52512b..80ad5345d19 100644
+--- a/src/vs/platform/agentHost/node/copilot/buildSessionEvents.ts
++++ b/src/vs/platform/agentHost/node/copilot/buildSessionEvents.ts
+@@ -1,40 +1,42 @@
++// @ts-nocheck
++// Chatero does not ship or activate the upstream Copilot provider.
+ /*---------------------------------------------------------------------------------------------
+  *  Copyright (c) Microsoft Corporation. All rights reserved.
+  *  Licensed under the MIT License. See License.txt in the project root for license information.
+  *--------------------------------------------------------------------------------------------*/
+ 
+ import type { SessionEvent } from '@github/copilot-sdk';
+ import { isObject } from '../../../../base/common/types.js';
+ import { generateUuid, isUUID } from '../../../../base/common/uuid.js';
+ import { ResponsePartKind, ToolCallStatus, ToolResultContentType, TurnState, type ToolCallCompletedState, type ToolResultContent, type ToolResultSubagentContent, type Turn } from '../../common/state/sessionState.js';
+ 
+ /**
+  * Default schema version stamped on the synthesized `session.start` event.
+  *
+  * The Copilot SDK owns the authoritative event-format schema version; this
+  * value is only meaningful when the resulting `events.jsonl` is actually
+  * resumed by a CLI. It is irrelevant to the reconstruction performed by
+  * {@link mapSessionEvents} (which ignores it), so unit tests can rely on the
+  * default. Callers that write a log for real resume SHOULD pass the version the
+  * target CLI expects.
+  */
+ const DEFAULT_SESSION_EVENT_SCHEMA_VERSION = 1;
+ 
+ /**
+  * Producer identifier stamped on the synthesized `session.start` event so a
+  * migrated event log is attributable to this translation path rather than a
+  * genuine agent run.
+  */
+ const MIGRATION_PRODUCER = 'vscode-copilot-migration';
+ 
+ /**
+  * Options controlling how {@link buildSessionEventsFromTurns} synthesizes a
+  * Copilot SDK event log from VS Code turns.
+  */
+ export interface IBuildSessionEventsOptions {
+ 	/** The target session id (stamped on the `session.start` event). */
+ 	readonly sessionId: string;
+ 	/** Working directory of the session, recorded on `session.start` context. */
+ 	readonly workingDirectory?: string;
+ 	/** Model id to attribute the synthesized assistant messages to, if known. */
+ 	readonly model?: string;
+diff --git a/src/vs/platform/agentHost/node/copilot/copilotAgent.ts b/src/vs/platform/agentHost/node/copilot/copilotAgent.ts
+index c727ddb9e16..7f1f610cde8 100644
+--- a/src/vs/platform/agentHost/node/copilot/copilotAgent.ts
++++ b/src/vs/platform/agentHost/node/copilot/copilotAgent.ts
+@@ -1,40 +1,42 @@
++// @ts-nocheck
++// Chatero does not ship or activate the upstream Copilot provider.
+ /*---------------------------------------------------------------------------------------------
+  *  Copyright (c) Microsoft Corporation. All rights reserved.
+  *  Licensed under the MIT License. See License.txt in the project root for license information.
+  *--------------------------------------------------------------------------------------------*/
+ 
+ import { CopilotClient, RuntimeConnection, type CopilotClientOptions, type GitHubTelemetryNotification } from '@github/copilot-sdk';
+ import * as fs from 'fs/promises';
+ import * as os from 'os';
+ import { pathToFileURL } from 'url';
+ import { CancelablePromise, createCancelablePromise, Delayer, disposableTimeout, Limiter, SequencerByKey } from '../../../../base/common/async.js';
+ import { type CancellationToken } from '../../../../base/common/cancellation.js';
+ import { CancellationError } from '../../../../base/common/errors.js';
+ import { Emitter, Event } from '../../../../base/common/event.js';
+ import { combinedDisposable, Disposable, DisposableMap, MutableDisposable } from '../../../../base/common/lifecycle.js';
+ import { ResourceMap } from '../../../../base/common/map.js';
+ import { FileAccess } from '../../../../base/common/network.js';
+ import { formatTokenCount } from '../../../../base/common/numbers.js';
+ import { equals } from '../../../../base/common/objects.js';
+ import { autorun, observableValue, type ISettableObservable } from '../../../../base/common/observable.js';
+ import { delimiter, dirname, join } from '../../../../base/common/path.js';
+ import { basename as resourceBasename, isEqual, isEqualOrParent, joinPath as resourceJoinPath, relativePath } from '../../../../base/common/resources.js';
+ import { URI } from '../../../../base/common/uri.js';
+ import { generateUuid } from '../../../../base/common/uuid.js';
+ import { rgDiskPath } from '../../../../base/node/ripgrep.js';
+ import { localize } from '../../../../nls.js';
+ import { IParsedAgent, IParsedPlugin, IParsedRule, IParsedSkill, parseAgentFile, parsePlugin, parseRuleFile, parseSkillFile, PluginFormat } from '../../../agentPlugins/common/pluginParsers.js';
+ import { AiAgentEnvValue, AiAgentEnvVar } from '../../../chat/common/aiAgentEnv.js';
+ import { IFileService } from '../../../files/common/files.js';
+ import { IInstantiationService } from '../../../instantiation/common/instantiation.js';
+ import { ILogService, LogLevel } from '../../../log/common/log.js';
+ import { ITelemetryService } from '../../../telemetry/common/telemetry.js';
+ import { INativeEnvironmentService } from '../../../../platform/environment/common/environment.js';
+ import { workspacelessScratchDir } from '../workspacelessScratchDir.js';
+ import { IAgentHostCheckpointService } from '../../common/agentHostCheckpointService.js';
+ import { IAgentHostReviewService } from '../../common/agentHostReviewService.js';
+ import { createPricingMetaFromBilling, hasLongContextSurcharge, normalizeCAPIBilling, type ICAPIModelBilling } from '../../common/agentModelPricing.js';
+ import { createAgentModelByokMeta } from '../../common/agentModelByokMeta.js';
+ import { AgentHostConfigKey, agentHostCustomizationConfigSchema, DEFAULT_SESSION_CUSTOMIZATION_DISCOVERY_MODE, toContainerCustomization } from '../../common/agentHostCustomizationConfig.js';
+ import { CopilotCliConfigKey, copilotCliConfigSchema, type CopilotSdkLogLevelSetting } from '../../common/copilotCliConfig.js';
+ import { AgentHostMcpServersConfigKey, AgentHostCopilotMultiRootEnabledConfigKey, AgentHostPreferLongContextEnabledConfigKey, AgentHostSessionSyncEnabledConfigKey, AgentHostSystemProxyEnabledConfigKey, AutoApproveLevel, SessionMode, migrateLegacyAutopilotConfig, platformRootSchema, platformSessionSchema, type AgentHostMcpServers } from '../../common/agentHostSchema.js';
+diff --git a/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts b/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts
+index 5668c7f6493..88c4af350e4 100644
+--- a/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts
++++ b/src/vs/platform/agentHost/node/copilot/copilotAgentSession.ts
+@@ -1,40 +1,42 @@
++// @ts-nocheck
++// Chatero does not ship or activate the upstream Copilot provider.
+ /*---------------------------------------------------------------------------------------------
+  *  Copyright (c) Microsoft Corporation. All rights reserved.
+  *  Licensed under the MIT License. See License.txt in the project root for license information.
+  *--------------------------------------------------------------------------------------------*/
+ 
+ import type { CopilotSession, CurrentToolMetadata, ExitPlanModeRequest, McpServersLoadedServer, MessageOptions, PermissionAllowAllMode, PermissionAutoApproval, PermissionRequestResult, PermissionResult, SessionConfig, Tool, ToolResultObject, McpServerStatus as SdkMcpServerStatus } from '@github/copilot-sdk';
+ import { raceCancellation, RunOnceScheduler, Sequencer, Throttler } from '../../../../base/common/async.js';
+ import { encodeBase64, VSBuffer } from '../../../../base/common/buffer.js';
+ import { CancellationToken, CancellationTokenSource } from '../../../../base/common/cancellation.js';
+ import { Emitter } from '../../../../base/common/event.js';
+ import { CancellationError, getErrorMessage } from '../../../../base/common/errors.js';
+ import { escapeMarkdownSyntaxTokens } from '../../../../base/common/htmlContent.js';
+ import { Disposable, DisposableMap, IReference, MutableDisposable, toDisposable } from '../../../../base/common/lifecycle.js';
+ import { Schemas } from '../../../../base/common/network.js';
+ import { isAuthorizationProtectedResourceMetadata } from '../../../../base/common/oauth.js';
+ import { safeStringify } from '../../../../base/common/objects.js';
+ import { isAbsolute, join } from '../../../../base/common/path.js';
+ import { extUriBiasedIgnorePathCase, normalizePath } from '../../../../base/common/resources.js';
+ import { StopWatch } from '../../../../base/common/stopwatch.js';
+ import { splitLinesIncludeSeparators } from '../../../../base/common/strings.js';
+ import { hasKey, isDefined, isObject, isString, type Mutable } from '../../../../base/common/types.js';
+ import { URI } from '../../../../base/common/uri.js';
+ import { generateUuid } from '../../../../base/common/uuid.js';
+ import { localize } from '../../../../nls.js';
+ import { INativeEnvironmentService } from '../../../environment/common/environment.js';
+ import { IFileService } from '../../../files/common/files.js';
+ import { IInstantiationService } from '../../../instantiation/common/instantiation.js';
+ import { ILogService, LogLevel } from '../../../log/common/log.js';
+ import { ITelemetryService } from '../../../telemetry/common/telemetry.js';
+ import { getCopilotHomePath } from '../../common/copilotHome.js';
+ import { CopilotCliConfigKey, applyModelFamilyAlias, copilotCliConfigSchema } from '../../common/copilotCliConfig.js';
+ import type { ChatInputRequestWithPlanReview, IAgentHostPlanReviewAction } from '../../common/agentHostPlanReview.js';
+ import { gitHubMcpServerUrl } from '../../common/githubEndpoints.js';
+ import { AgentHostSandboxConfigKey, sandboxConfigSchema } from '../../common/sandboxConfigSchema.js';
+ import { AgentHostGlobalAutoApproveEnabledConfigKey, AgentHostAutoReplyAnswer, AgentHostAutoReplyEnabledConfigKey, AgentHostDisableRepoInfoTelemetryConfigKey, platformRootSchema, platformSessionSchema } from '../../common/agentHostSchema.js';
+ import { AgentSession, AgentSignal, AuthenticateParams, IMcpNotification, IRestoredSubagentSession, subagentChatTitle, type IAgentToolPendingConfirmationSignal } from '../../common/agentService.js';
+ import { META_DIFF_BASE_BRANCH } from '../../common/agentHostGitService.js';
+ import { stripRedundantCdPrefix } from '../../common/commandLineHelpers.js';
+ import { readToolCallMeta, toToolCallMeta, type IToolCallMeta, type IToolCallUiMeta, type IToolSearchCandidate } from '../../common/meta/agentToolCallMeta.js';
+ import { OtelData, type OtelAttributeValue } from '../../common/otlp/otlpLogEmitter.js';
+diff --git a/src/vs/platform/agentHost/node/copilot/copilotGitHubTelemetryForwarder.ts b/src/vs/platform/agentHost/node/copilot/copilotGitHubTelemetryForwarder.ts
+index 24e6d69724b..ca58c79f886 100644
+--- a/src/vs/platform/agentHost/node/copilot/copilotGitHubTelemetryForwarder.ts
++++ b/src/vs/platform/agentHost/node/copilot/copilotGitHubTelemetryForwarder.ts
+@@ -1,40 +1,42 @@
++// @ts-nocheck
++// Chatero does not ship or activate the upstream Copilot provider.
+ /*---------------------------------------------------------------------------------------------
+  *  Copyright (c) Microsoft Corporation. All rights reserved.
+  *  Licensed under the MIT License. See License.txt in the project root for license information.
+  *--------------------------------------------------------------------------------------------*/
+ 
+ import type { GitHubTelemetryNotification } from '@github/copilot-sdk';
+ import { ITelemetryData, ITelemetryService } from '../../../telemetry/common/telemetry.js';
+ 
+ /* __GDPR__FRAGMENT__
+ 	"CopilotCliForwardedTelemetry": {
+ 		"created_at": { "classification": "SystemMetaData", "purpose": "PerformanceAndHealth", "comment": "Timestamp when the SDK created the event." },
+ 		"model_call_id": { "classification": "SystemMetaData", "purpose": "PerformanceAndHealth", "comment": "SDK identifier for the model call." },
+ 		"exp_assignment_context": { "classification": "SystemMetaData", "purpose": "FeatureInsight", "comment": "Experiment assignment context from the Copilot CLI runtime." },
+ 		"session_id": { "classification": "SystemMetaData", "purpose": "FeatureInsight", "comment": "Identifier for the Copilot CLI session." },
+ 		"sdk_session_id": { "classification": "SystemMetaData", "purpose": "FeatureInsight", "comment": "Identifier for the SDK session that forwarded the event." },
+ 		"copilot_tracking_id": { "classification": "EndUserPseudonymizedInformation", "purpose": "BusinessInsight", "comment": "Pseudonymous Copilot user identifier supplied by the runtime." },
+ 		"kind": { "classification": "SystemMetaData", "purpose": "FeatureInsight", "comment": "Kind of SDK telemetry event." },
+ 		"cli_version": { "classification": "SystemMetaData", "purpose": "PerformanceAndHealth", "comment": "Version of the Copilot CLI runtime." },
+ 		"os_platform": { "classification": "SystemMetaData", "purpose": "PerformanceAndHealth", "comment": "Operating system platform of the Copilot CLI runtime." },
+ 		"os_version": { "classification": "SystemMetaData", "purpose": "PerformanceAndHealth", "comment": "Operating system version of the Copilot CLI runtime." },
+ 		"os_arch": { "classification": "SystemMetaData", "purpose": "PerformanceAndHealth", "comment": "Operating system architecture of the Copilot CLI runtime." },
+ 		"node_version": { "classification": "SystemMetaData", "purpose": "PerformanceAndHealth", "comment": "Node.js version of the Copilot CLI runtime." },
+ 		"copilot_plan": { "classification": "SystemMetaData", "purpose": "FeatureInsight", "comment": "Copilot subscription plan reported by the runtime." },
+ 		"client_type": { "classification": "SystemMetaData", "purpose": "FeatureInsight", "comment": "Type of client that produced the event." },
+ 		"client_name": { "classification": "SystemMetaData", "purpose": "FeatureInsight", "comment": "Name of the client that produced the event." },
+ 		"dev_device_id": { "classification": "EndUserPseudonymizedInformation", "purpose": "BusinessInsight", "comment": "Pseudonymous device identifier supplied by the runtime." },
+ 		"is_staff": { "classification": "SystemMetaData", "purpose": "FeatureInsight", "comment": "Whether the user is a GitHub or Microsoft staff member.", "isMeasurement": true },
+ 		"restricted": { "classification": "SystemMetaData", "purpose": "FeatureInsight", "comment": "Whether the SDK marked the event as restricted telemetry.", "isMeasurement": true },
+ 		"${wildcard}": [{
+ 			"${prefix}": "feature.",
+ 			"${classification}": { "classification": "SystemMetaData", "purpose": "FeatureInsight", "comment": "Feature flag value supplied by the Copilot CLI runtime." }
+ 		}]
+ 	}
+ */
+ 
+ /* __GDPR__
+ 	"copilotCli/response.success": {
+ 		"owner": "amunger",
+ 		"comment": "Reports performance and usage details for successful Copilot CLI model responses forwarded by the Copilot SDK.",
+ 		"${include}": [ "${CopilotCliForwardedTelemetry}" ],
+diff --git a/src/vs/platform/agentHost/node/copilot/copilotPluginConverters.ts b/src/vs/platform/agentHost/node/copilot/copilotPluginConverters.ts
+index 49a195b72da..3043bf8467c 100644
+--- a/src/vs/platform/agentHost/node/copilot/copilotPluginConverters.ts
++++ b/src/vs/platform/agentHost/node/copilot/copilotPluginConverters.ts
+@@ -1,40 +1,42 @@
++// @ts-nocheck
++// Chatero does not ship or activate the upstream Copilot provider.
+ /*---------------------------------------------------------------------------------------------
+  *  Copyright (c) Microsoft Corporation. All rights reserved.
+  *  Licensed under the MIT License. See License.txt in the project root for license information.
+  *--------------------------------------------------------------------------------------------*/
+ 
+ import { spawn } from 'child_process';
+ import type { CustomAgentConfig, MCPServerConfig, SessionConfig } from '@github/copilot-sdk';
+ import { Schemas } from '../../../../base/common/network.js';
+ import { OperatingSystem, OS } from '../../../../base/common/platform.js';
+ import { URI } from '../../../../base/common/uri.js';
+ import { parseFrontMatter } from '../../../../base/common/yaml.js';
+ import { IFileService } from '../../../files/common/files.js';
+ import { McpServerType, type IMcpServerConfiguration } from '../../../mcp/common/mcpPlatformTypes.js';
+ import type { IMcpServerDefinition, INamedPluginResource, IParsedAgent, IParsedHookCommand, IParsedHookGroup, IParsedPlugin } from '../../../agentPlugins/common/pluginParsers.js';
+ import { type AgentCustomization, type ChildCustomization } from '../../common/state/protocol/state.js';
+ import { dirname } from '../../../../base/common/path.js';
+ 
+ type SessionHooks = NonNullable<SessionConfig['hooks']>;
+ type PreToolUseHookInput = Parameters<NonNullable<SessionHooks['onPreToolUse']>>[0];
+ type PostToolUseHookInput = Parameters<NonNullable<SessionHooks['onPostToolUse']>>[0];
+ type UserPromptSubmittedHookInput = Parameters<NonNullable<SessionHooks['onUserPromptSubmitted']>>[0];
+ type SessionStartHookInput = Parameters<NonNullable<SessionHooks['onSessionStart']>>[0];
+ type SessionEndHookInput = Parameters<NonNullable<SessionHooks['onSessionEnd']>>[0];
+ type ErrorOccurredHookInput = Parameters<NonNullable<SessionHooks['onErrorOccurred']>>[0];
+ 
+ // ---------------------------------------------------------------------------
+ // MCP servers
+ // ---------------------------------------------------------------------------
+ 
+ /**
+  * Converts parsed MCP server definitions into the SDK's `mcpServers` config.
+  */
+ export function toSdkMcpServers(defs: readonly IMcpServerDefinition[]): Record<string, MCPServerConfig> {
+ 	const result: Record<string, MCPServerConfig> = {};
+ 	for (const def of defs) {
+ 		result[def.name] = toSdkMcpServer(def.name, def.configuration);
+ 	}
+ 	return result;
+ }
+ 
+diff --git a/src/vs/platform/agentHost/node/copilot/copilotSessionLauncher.ts b/src/vs/platform/agentHost/node/copilot/copilotSessionLauncher.ts
+index 0644a831393..3168a8db970 100644
+--- a/src/vs/platform/agentHost/node/copilot/copilotSessionLauncher.ts
++++ b/src/vs/platform/agentHost/node/copilot/copilotSessionLauncher.ts
+@@ -1,40 +1,42 @@
++// @ts-nocheck
++// Chatero does not ship or activate the upstream Copilot provider.
+ /*---------------------------------------------------------------------------------------------
+  *  Copyright (c) Microsoft Corporation. All rights reserved.
+  *  Licensed under the MIT License. See License.txt in the project root for license information.
+  *--------------------------------------------------------------------------------------------*/
+ 
+ import type { CopilotClient, ExitPlanModeRequest, ExitPlanModeResult, NamedProviderConfig, PermissionRequestResult, ProviderModelConfig, ResumeSessionConfig, SessionConfig, Tool } from '@github/copilot-sdk';
+ import { coalesce } from '../../../../base/common/arrays.js';
+ import { Schemas } from '../../../../base/common/network.js';
+ import { URI } from '../../../../base/common/uri.js';
+ import { IFileService } from '../../../files/common/files.js';
+ import { ILogService, LogLevel } from '../../../log/common/log.js';
+ import { CopilotCliConfigKey, applyModelFamilyAlias, copilotCliConfigSchema, normalizeToolSearchDeferThreshold } from '../../common/copilotCliConfig.js';
+ import { agentHostModelSupportsToolSearch, CLIENT_TOOL_SEARCH_REFERENCE_NAME } from './toolSearchDeferral.js';
+ import { AgentHostSessionSyncEnabledConfigKey, platformRootSchema, type AgentHostMcpServers } from '../../common/agentHostSchema.js';
+ import { AgentHostSandboxConfigKey, sandboxConfigSchema } from '../../common/sandboxConfigSchema.js';
+ import { IAgentConfigurationService } from '../agentConfigurationService.js';
+ import { IAgentHostTerminalManager } from '../agentHostTerminalManager.js';
+ import { IByokLmBridgeRegistry } from '../byokLmBridgeRegistry.js';
+ import { IByokLmProxyService, type IByokLmProxyHandle } from './byokLmProxyService.js';
+ import type { IByokLmModelInfo } from '../../common/agentHostByokLm.js';
+ import type { ModelSelection, ToolDefinition } from '../../common/state/protocol/state.js';
+ import type { ActiveClientToolSet } from '../activeClientState.js';
+ import { CopilotSessionWrapper } from './copilotSessionWrapper.js';
+ import { ShellManager, createShellTools, type IUnsandboxedCommandConfirmationRequest } from './copilotShellTools.js';
+ import { toSdkHooks, toSdkInstructionDirectories, toSdkMcpServers, toSdkMcpServersFromConfigMap, toSdkSessionCustomAgents, toSdkSkillDirectories } from './copilotPluginConverters.js';
+ import { buildSandboxConfigForSdk, type ISdkSandboxConfig } from './sandboxConfigForSdk.js';
+ import type { ITypedPermissionRequest } from './copilotToolDisplay.js';
+ import type { ICopilotPluginInfo } from './copilotAgent.js';
+ import { agentHostPromptRegistry, type IAgentHostPromptContext } from './prompts/promptRegistry.js';
+ import { describeSystemMessageConfig } from './prompts/systemMessage.js';
+ import './prompts/allPrompts.js';
+ import { StopWatch } from '../../../../base/common/stopwatch.js';
+ 
+ export const ThinkingLevelConfigKey = 'thinkingLevel';
+ /**
+  * Config key for the numeric "Context Size" selection (a context-window token count). Mapped to the
+  * SDK's two-valued {@link SessionConfig.contextTier} by {@link getCopilotContextTier}.
+  */
+ export const ContextSizeConfigKey = 'contextSize';
+ /**
+diff --git a/src/vs/platform/agentHost/node/copilot/copilotSessionWrapper.ts b/src/vs/platform/agentHost/node/copilot/copilotSessionWrapper.ts
+index 38a5da77477..0da96e50c91 100644
+--- a/src/vs/platform/agentHost/node/copilot/copilotSessionWrapper.ts
++++ b/src/vs/platform/agentHost/node/copilot/copilotSessionWrapper.ts
+@@ -1,40 +1,42 @@
++// @ts-nocheck
++// Chatero does not ship or activate the upstream Copilot provider.
+ /*---------------------------------------------------------------------------------------------
+  *  Copyright (c) Microsoft Corporation. All rights reserved.
+  *  Licensed under the MIT License. See License.txt in the project root for license information.
+  *--------------------------------------------------------------------------------------------*/
+ 
+ import type { CopilotSession, SessionEvent, SessionEventPayload, SessionEventType } from '@github/copilot-sdk';
+ import { DeferredPromise } from '../../../../base/common/async.js';
+ import { Emitter, Event } from '../../../../base/common/event.js';
+ import { Disposable, toDisposable } from '../../../../base/common/lifecycle.js';
+ 
+ /**
+  * Thin wrapper around {@link CopilotSession} that exposes each SDK event as a
+  * proper VS Code `Event<T>`. All subscriptions and the underlying SDK session
+  * are cleaned up on dispose.
+  */
+ export class CopilotSessionWrapper extends Disposable {
+ 
+ 	private readonly _handledEventTypes = new Set<SessionEventType>();
+ 	private readonly _onUnhandledEvent = this._register(new Emitter<SessionEvent>());
+ 	readonly onUnhandledEvent = this._onUnhandledEvent.event;
+ 	private readonly _shutdown = new DeferredPromise<void>();
+ 	private _disconnectPromise: Promise<void> | undefined;
+ 
+ 	constructor(readonly session: CopilotSession) {
+ 		super();
+ 		const unsubscribeAll = session.on(event => {
+ 			if (event.type === 'session.shutdown') {
+ 				void this._shutdown.complete();
+ 			}
+ 			if (!this._handledEventTypes.has(event.type)) {
+ 				this._onUnhandledEvent.fire(event);
+ 			}
+ 		});
+ 		this._register(toDisposable(unsubscribeAll));
+ 		this._register(toDisposable(() => {
+ 			void this.disconnect().catch(() => { /* best-effort */ });
+ 		}));
+ 	}
+ 
+ 	get sessionId(): string { return this.session.sessionId; }
+diff --git a/src/vs/platform/agentHost/node/copilot/copilotShellTools.ts b/src/vs/platform/agentHost/node/copilot/copilotShellTools.ts
+index 9b409c4aa25..66e4af25f94 100644
+--- a/src/vs/platform/agentHost/node/copilot/copilotShellTools.ts
++++ b/src/vs/platform/agentHost/node/copilot/copilotShellTools.ts
+@@ -1,40 +1,42 @@
++// @ts-nocheck
++// Chatero does not ship or activate the upstream Copilot provider.
+ /*---------------------------------------------------------------------------------------------
+  *  Copyright (c) Microsoft Corporation. All rights reserved.
+  *  Licensed under the MIT License. See License.txt in the project root for license information.
+  *--------------------------------------------------------------------------------------------*/
+ 
+ import type { Tool, ToolResultObject } from '@github/copilot-sdk';
+ import { generateUuid } from '../../../../base/common/uuid.js';
+ import { URI } from '../../../../base/common/uri.js';
+ import { Disposable, DisposableStore, type IReference, toDisposable } from '../../../../base/common/lifecycle.js';
+ import { Emitter, Event } from '../../../../base/common/event.js';
+ import { IEnvironmentService } from '../../../environment/common/environment.js';
+ import { IInstantiationService } from '../../../instantiation/common/instantiation.js';
+ import { ILogService } from '../../../log/common/log.js';
+ import { IProductService } from '../../../product/common/productService.js';
+ import { ISandboxHelperService } from '../../../sandbox/common/sandboxHelperService.js';
+ import type { ITerminalSandboxResolvedNetworkDomains } from '../../../sandbox/common/terminalSandboxService.js';
+ import { TerminalSandboxEngine } from '../../../sandbox/common/terminalSandboxEngine.js';
+ import { TerminalClaimKind, type TerminalSessionClaim } from '../../common/state/protocol/state.js';
+ import { isZsh } from '../agentHostShellUtils.js';
+ import { IAgentHostTerminalManager } from '../agentHostTerminalManager.js';
+ import { createAgentHostSandboxEngine } from './agentHostSandboxEngine.js';
+ import { IAgentConfigurationService } from '../agentConfigurationService.js';
+ import { DEFAULT_SHELL_COMMAND_TIMEOUT_MS, executeShellCommand, isMultilineCommand, prefixForHistorySuppression, prepareOutputForModel, shellTypeForExecutable, type IShellCommandResult, type ShellType } from '../shared/shellCommandExecution.js';
+ 
+ // Re-exported for consumers (and tests) that historically imported these
+ // shell helpers from this module. Their canonical home is the shared,
+ // agent-agnostic shellCommandExecution module.
+ export { isMultilineCommand, prefixForHistorySuppression, shellTypeForExecutable };
+ export type { ShellType };
+ 
+ /**
+  * Message returned to the model when a command switches to the terminal's
+  * alternate buffer (typically an interactive full-screen UI).
+  */
+ const ALT_BUFFER_MESSAGE = 'The command opened the alternate buffer and is still running in the terminal. It likely launched an interactive terminal UI. Use write_bash/write_powershell to interact with it, or shutdown the shell to stop it.';
+ 
+ /**
+  * Tracks a single persistent shell instance backed by a managed PTY terminal.
+  */
+ interface IManagedShell {
+diff --git a/src/vs/platform/agentHost/node/copilot/copilotSlashCommandCompletionProvider.ts b/src/vs/platform/agentHost/node/copilot/copilotSlashCommandCompletionProvider.ts
+index 73f819f4b28..4fda8aa2ae7 100644
+--- a/src/vs/platform/agentHost/node/copilot/copilotSlashCommandCompletionProvider.ts
++++ b/src/vs/platform/agentHost/node/copilot/copilotSlashCommandCompletionProvider.ts
+@@ -1,40 +1,42 @@
++// @ts-nocheck
++// Chatero does not ship or activate the upstream Copilot provider.
+ /*---------------------------------------------------------------------------------------------
+  *  Copyright (c) Microsoft Corporation. All rights reserved.
+  *  Licensed under the MIT License. See License.txt in the project root for license information.
+  *--------------------------------------------------------------------------------------------*/
+ 
+ import { CancellationToken } from '../../../../base/common/cancellation.js';
+ import { AgentSession } from '../../common/agentService.js';
+ import { CompletionItem, CompletionItemKind, CompletionsParams } from '../../common/state/protocol/commands.js';
+ import { Customization, CustomizationType, DirectoryCustomization, MessageAttachmentKind, PluginCustomization, SkillCustomization } from '../../common/state/protocol/state.js';
+ import { getCompletionAction, toCommandCompletionAttachmentMeta } from '../../common/meta/agentCompletionAttachmentMeta.js';
+ import { getCopilotConfigSlashCommandItems, ICopilotConfigSlashCommandState, isCopilotConfigSlashCommand } from '../../common/copilotConfigSlashCommands.js';
+ import { CompletionTriggerCharacter, IAgentHostCompletionItemProvider } from '../agentHostCompletions.js';
+ import { extractLeadingSlashToken, extractWhitespaceDelimitedSlashToken, matchesSlashCompletion } from '../agentHostSlashCompletion.js';
+ import { SYNCED_CUSTOMIZATION_SCHEME } from '../../common/agentHostFileSystemService.js';
+ import type { CopilotSession } from '@github/copilot-sdk';
+ 
+ export { parseLeadingSlashCommand } from '../../common/agentHostSlashCommand.js';
+ 
+ const HIDDEN_RUNTIME_COMMANDS = new Set<string>(['agent', 'app', 'changelog', 'context', 'copy', 'exit', 'extensions', 'feedback', 'help', 'ide', 'instructions', 'login', 'logout', 'mcp', 'model', 'new', 'plugin', 'rename', 'restart', 'resume', 'sandbox', 'session', 'settings', 'skills', 'statusline', 'streamer-mode', 'subagents', 'tasks', 'terminal-setup', 'theme', 'undo', 'update', 'user', 'voice', 'worktree', 'autopilot', 'yolo', 'cd', 'cwd', 'after', 'before', 'add-dir', 'allow-all', 'list-dirs', 'reset-allowed-tools']);
+ 
+ export const DEFAULT_RUNTIME_SLASH_COMMAND_COMPLETION_WAIT_MS = 300;
+ 
+ /**
+  * Lookup hooks used by {@link CopilotSlashCommandCompletionProvider} to
+  * retrieve runtime slash command metadata and apply feature gating.
+  */
+ export interface ICopilotSlashCommandSessionInfo {
+ 	/**
+ 	 * Whether the experimental rubber duck critic subagent is enabled via
+ 	 * the agent host config. When provided and `false`, `/rubber-duck` is hidden.
+ 	 */
+ 	isRubberDuckEnabled?(): boolean;
+ 	/** Runtime slash commands discovered from the SDK session. */
+ 	getRuntimeSlashCommands?(sessionId: string, options?: ICopilotRuntimeSlashCommandQueryOptions): Promise<readonly ICopilotRuntimeSlashCommandInfo[]>;
+ 	getSessionCustomizations: (session: string) => Promise<readonly Customization[]>;
+ 	/**
+ 	 * The session's current config state (`mode` / `autoApprove` axes), used to
+ 	 * filter config-action slash command completions so only the state-changing
+ 	 * forms are offered. When omitted, all forms are offered.
+ 	 */
+diff --git a/src/vs/platform/agentHost/node/copilot/copilotSlashCommandProvider.ts b/src/vs/platform/agentHost/node/copilot/copilotSlashCommandProvider.ts
+index 34a750af9f7..eae83125813 100644
+--- a/src/vs/platform/agentHost/node/copilot/copilotSlashCommandProvider.ts
++++ b/src/vs/platform/agentHost/node/copilot/copilotSlashCommandProvider.ts
+@@ -1,40 +1,42 @@
++// @ts-nocheck
++// Chatero does not ship or activate the upstream Copilot provider.
+ /*---------------------------------------------------------------------------------------------
+  *  Copyright (c) Microsoft Corporation. All rights reserved.
+  *  Licensed under the MIT License. See License.txt in the project root for license information.
+  *--------------------------------------------------------------------------------------------*/
+ 
+ import type { CopilotClient } from '@github/copilot-sdk';
+ import { ILogService } from '../../../log/common/log.js';
+ import { raceTimeout } from '../../../../base/common/async.js';
+ 
+ type RuntimeSlashCommandCatalog = {
+ 	readonly commands: readonly RuntimeSlashCommandInfo[];
+ 	readonly byName: ReadonlyMap<string, RuntimeSlashCommandInfo>;
+ 	readonly byAlias: ReadonlyMap<string, RuntimeSlashCommandInfo>;
+ };
+ 
+ type RuntimeSlashCommandCache = {
+ 	value?: RuntimeSlashCommandCatalog;
+ 	inFlight?: Promise<RuntimeSlashCommandCatalog>;
+ };
+ 
+ type RuntimeSlashCommandInfo = Awaited<ReturnType<CopilotClient['rpc']['commands']['list']>>['commands'][number];
+ 
+ export class CopilotSlashCommandProvider {
+ 	private _runtimeSlashCommandCache: RuntimeSlashCommandCache | undefined;
+ 	constructor(
+ 		private readonly listCommands: () => Promise<RuntimeSlashCommandInfo[]>,
+ 		@ILogService private readonly _logService: ILogService,
+ 	) { }
+ 
+ 	async getSlashCommands(options?: { readonly maxWaitMs?: number }): Promise<readonly RuntimeSlashCommandInfo[]> {
+ 		try {
+ 			const maxWaitMs = options?.maxWaitMs;
+ 			const catalog = await this._getRuntimeSlashCommandCatalog(maxWaitMs === undefined ? undefined : Math.max(0, maxWaitMs));
+ 			return catalog.commands;
+ 		} catch (err) {
+ 			this._logService.warn(`[Copilot] rpc.commands.list failed`, err);
+ 			return [];
+ 		}
+ 	}
+ 
+diff --git a/src/vs/platform/agentHost/node/copilot/copilotSystemNotification.ts b/src/vs/platform/agentHost/node/copilot/copilotSystemNotification.ts
+index 56653c579f0..183547df84e 100644
+--- a/src/vs/platform/agentHost/node/copilot/copilotSystemNotification.ts
++++ b/src/vs/platform/agentHost/node/copilot/copilotSystemNotification.ts
+@@ -1,40 +1,42 @@
++// @ts-nocheck
++// Chatero does not ship or activate the upstream Copilot provider.
+ /*---------------------------------------------------------------------------------------------
+  *  Copyright (c) Microsoft Corporation. All rights reserved.
+  *  Licensed under the MIT License. See License.txt in the project root for license information.
+  *--------------------------------------------------------------------------------------------*/
+ 
+ import type { SessionEventPayload, SystemNotification } from '@github/copilot-sdk';
+ import { softAssertNever } from '../../../../base/common/assert.js';
+ import { localize } from '../../../../nls.js';
+ 
+ export interface ICopilotSystemNotification {
+ 	/** Text for a new system-origin AHP turn; derived from SDK `data.kind` metadata, e.g. shell completion `description`. */
+ 	readonly messageText: string;
+ 	/** Whether the runtime notification wakes the agent loop when it arrives while idle. */
+ 	readonly startsTurn: boolean;
+ }
+ 
+ export function buildCopilotSystemNotification(event: SessionEventPayload<'system.notification'>): ICopilotSystemNotification | undefined {
+ 	const data = event.data;
+ 	const kind: SystemNotification = data.kind;
+ 	const content = cleanSystemNotificationContent(data.content);
+ 	if (!content) {
+ 		return undefined;
+ 	}
+ 
+ 	switch (kind.type) {
+ 		case 'shell_completed':
+ 		case 'shell_detached_completed': {
+ 			const description = kind.description;
+ 			return {
+ 				messageText: description
+ 					? localize('agentHost.copilot.systemNotification.shellDescriptionCompleted', "`{0}` completed", description)
+ 					: localize('agentHost.copilot.systemNotification.shellCompleted', "Shell completed"),
+ 				startsTurn: true,
+ 			};
+ 		}
+ 		case 'agent_completed':
+ 			return {
+ 				messageText: kind.status === 'failed'
+ 					? localize('agentHost.copilot.systemNotification.agentFailed', "Background agent {0} failed", kind.agentId)
+ 					: localize('agentHost.copilot.systemNotification.agentCompleted', "Background agent {0} completed", kind.agentId),
+diff --git a/src/vs/platform/agentHost/node/copilot/copilotToolDisplay.ts b/src/vs/platform/agentHost/node/copilot/copilotToolDisplay.ts
+index ccd83b108ec..ea12518025a 100644
+--- a/src/vs/platform/agentHost/node/copilot/copilotToolDisplay.ts
++++ b/src/vs/platform/agentHost/node/copilot/copilotToolDisplay.ts
+@@ -1,40 +1,42 @@
++// @ts-nocheck
++// Chatero does not ship or activate the upstream Copilot provider.
+ /*---------------------------------------------------------------------------------------------
+  *  Copyright (c) Microsoft Corporation. All rights reserved.
+  *  Licensed under the MIT License. See License.txt in the project root for license information.
+  *--------------------------------------------------------------------------------------------*/
+ 
+ import type { PermissionRequest } from '@github/copilot-sdk';
+ import { hasKey } from '../../../../base/common/types.js';
+ import { URI } from '../../../../base/common/uri.js';
+ import { appendEscapedMarkdownInlineCode, escapeMarkdownLinkLabel, MarkdownString } from '../../../../base/common/htmlContent.js';
+ import { hash } from '../../../../base/common/hash.js';
+ import { localize } from '../../../../nls.js';
+ import type { IAgentToolPendingConfirmationSignal } from '../../common/agentService.js';
+ import { stripRedundantCdPrefix } from '../../common/commandLineHelpers.js';
+ import { parsePartialToolInput } from '../../common/partialToolInput.js';
+ import { StringOrMarkdown } from '../../common/state/protocol/state.js';
+ import { basename } from '../../../../base/common/resources.js';
+ import { getStreamingCreateMessage, getStreamingInsertMessage, getStreamingPatchMessage, getStreamingReplaceMessage, streamingToolTextLineCount, type ToolPathResolver } from '../../common/streamingToolCallDisplay.js';
+ import { getServerToolDisplay } from '../shared/serverToolGroups.js';
+ 
+ // =============================================================================
+ // Copilot CLI built-in tool interfaces
+ //
+ // The Copilot CLI (via @github/copilot-sdk) exposes these built-in tools. Tool names
+ // and parameter shapes are not typed in the SDK -- they come from the CLI server
+ // as plain strings. These interfaces are derived from observing the CLI's actual
+ // tool events and the Copilot Chat extension's CLI display table.
+ //
+ // Shell tool names follow a pattern per ShellConfig:
+ //   shellToolName, readShellToolName, writeShellToolName,
+ //   stopShellToolName, listShellsToolName
+ // For bash: bash, read_bash, write_bash, stop_bash/bash_shutdown, list_bash
+ // For powershell: powershell, read_powershell, write_powershell, stop_powershell/powershell_shutdown, list_powershell
+ // =============================================================================
+ 
+ /**
+  * Known Copilot CLI tool names. These are the `toolName` values that appear
+  * in `tool.execution_start` events from the SDK.
+  */
+ const enum CopilotToolName {
+ 	StrReplaceEditor = 'str_replace_editor',
+diff --git a/src/vs/platform/agentHost/node/copilot/diskSessionFsProvider.ts b/src/vs/platform/agentHost/node/copilot/diskSessionFsProvider.ts
+index e60d036501a..0656dde055f 100644
+--- a/src/vs/platform/agentHost/node/copilot/diskSessionFsProvider.ts
++++ b/src/vs/platform/agentHost/node/copilot/diskSessionFsProvider.ts
+@@ -1,40 +1,42 @@
++// @ts-nocheck
++// Chatero does not ship or activate the upstream Copilot provider.
+ /*---------------------------------------------------------------------------------------------
+  *  Copyright (c) Microsoft Corporation. All rights reserved.
+  *  Licensed under the MIT License. See License.txt in the project root for license information.
+  *--------------------------------------------------------------------------------------------*/
+ 
+ import { promises as fs } from 'fs';
+ import type { SessionFsFileInfo, SessionFsProvider } from '@github/copilot-sdk';
+ import { dirname, join } from '../../../../base/common/path.js';
+ 
+ /**
+  * Directory entry shape returned by {@link SessionFsProvider.readdirWithTypes}.
+  * Mirrors the SDK's `SessionFsReaddirWithTypesEntry`, which is not re-exported
+  * from the package root.
+  */
+ type SessionFsReaddirWithTypesEntry = { name: string; type: 'file' | 'directory' };
+ 
+ /**
+  * A {@link SessionFsProvider} that transparently maps the Copilot runtime's
+  * session-filesystem operations onto a real directory on disk (the
+  * {@link _baseDir}). Every path the SDK supplies is sandboxed under the base
+  * directory so the runtime's session-scoped state (chiefly `events.jsonl`,
+  * plus workspace metadata, checkpoints, etc.) lives in one place we control.
+  *
+  * This is the seam used to *import* a translated conversation: the caller
+  * pre-writes a synthesized `events.jsonl` under the base directory at the
+  * runtime's `sessionStatePath`, then resumes the session — the SDK reads that
+  * log through this provider and reconstitutes editable turns.
+  *
+  * Paths from the runtime may be absolute (per the configured path conventions);
+  * they are treated as relative to {@link _baseDir} so nothing escapes it.
+  */
+ export class DiskSessionFsProvider implements SessionFsProvider {
+ 
+ 	constructor(private readonly _baseDir: string) { }
+ 
+ 	/** Maps a runtime-supplied SessionFs path onto a real path under the base dir. */
+ 	private _resolve(sessionFsPath: string): string {
+ 		// Normalize separators and strip any leading root (`/`, `\`, or a drive
+ 		// like `C:`) so the path is always resolved *within* the base directory.
+ 		const normalized = sessionFsPath.replace(/\\/g, '/').replace(/^[a-zA-Z]:/, '').replace(/^\/+/, '');
+diff --git a/src/vs/platform/agentHost/node/copilot/mapSessionEvents.ts b/src/vs/platform/agentHost/node/copilot/mapSessionEvents.ts
+index 8656e5077df..7b4fa5f6d0c 100644
+--- a/src/vs/platform/agentHost/node/copilot/mapSessionEvents.ts
++++ b/src/vs/platform/agentHost/node/copilot/mapSessionEvents.ts
+@@ -1,40 +1,42 @@
++// @ts-nocheck
++// Chatero does not ship or activate the upstream Copilot provider.
+ /*---------------------------------------------------------------------------------------------
+  *  Copyright (c) Microsoft Corporation. All rights reserved.
+  *  Licensed under the MIT License. See License.txt in the project root for license information.
+  *--------------------------------------------------------------------------------------------*/
+ 
+ import type { AssistantMessageToolRequest, Attachment, SessionEvent, ToolExecutionCompleteContent, ToolExecutionCompleteData } from '@github/copilot-sdk';
+ import { decodeBase64 } from '../../../../base/common/buffer.js';
+ import { Schemas } from '../../../../base/common/network.js';
+ import { basename, isAbsolute, join } from '../../../../base/common/path.js';
+ import { isString } from '../../../../base/common/types.js';
+ import { URI } from '../../../../base/common/uri.js';
+ import { generateUuid } from '../../../../base/common/uuid.js';
+ import { AgentSession } from '../../common/agentService.js';
+ import { stripRedundantCdPrefix } from '../../common/commandLineHelpers.js';
+ import { toToolCallMeta, type IToolCallUiMeta } from '../../common/meta/agentToolCallMeta.js';
+ import { IFileEditRecord, ISessionDatabase } from '../../common/sessionDataService.js';
+ import { MessageAttachmentKind, type MessageAttachment } from '../../common/state/protocol/state.js';
+ import { MessageKind, ResponsePartKind, ToolCallConfirmationReason, ToolCallContributorKind, ToolCallStatus, ToolResultContentType, TurnState, buildSubagentSessionUri, type AgentSelection, type Message, type ModelSelection, type ResponsePart, type StringOrMarkdown, type TerminalCommandResult, type ToolCallCompletedState, type ToolResultContent, type ToolResultTerminalContent, type Turn, type UsageInfo } from '../../common/state/sessionState.js';
+ import { buildNonPtyShellTerminalUri } from './copilotNonPtyShellTerminals.js';
+ import { getInvocationMessage, getPastTenseMessage, getShellIntention, getShellLanguage, getSubagentMetadata, getTaskCompleteMarkdown, getToolDisplayName, getToolInputString, getToolKind, isEditTool, isHiddenTool, isTaskCompleteTool, synthesizeSkillToolCall } from './copilotToolDisplay.js';
+ import { buildSessionDbUri } from '../../common/sessionDbUri.js';
+ import { getMediaMime } from '../../../../base/common/mime.js';
+ import { buildCopilotSystemNotification } from './copilotSystemNotification.js';
+ import { buildMcpChannel, buildMcpTopLevelCustomizationId } from '../shared/mcpCustomizationController.js';
+ import { readSimpleAttachmentDisplayKindFromMimeType } from './copilotAttachmentUtils.js';
+ 
+ function tryStringify(value: unknown): string | undefined {
+ 	try {
+ 		return JSON.stringify(value);
+ 	} catch {
+ 		return undefined;
+ 	}
+ }
+ 
+ function resolveToolDisplayPath(path: string, workingDirectory: URI | undefined): string {
+ 	return isAbsolute(path) || !workingDirectory || workingDirectory.scheme !== Schemas.file
+ 		? path
+ 		: join(workingDirectory.fsPath, path);
+ }
+ 
+diff --git a/src/vs/platform/agentHost/node/copilot/prompts/anthropicPrompt.ts b/src/vs/platform/agentHost/node/copilot/prompts/anthropicPrompt.ts
+index 9308a0f5813..1ee9cd66474 100644
+--- a/src/vs/platform/agentHost/node/copilot/prompts/anthropicPrompt.ts
++++ b/src/vs/platform/agentHost/node/copilot/prompts/anthropicPrompt.ts
+@@ -1,40 +1,42 @@
++// @ts-nocheck
++// Chatero does not ship or activate the upstream Copilot provider.
+ /*---------------------------------------------------------------------------------------------
+  *  Copyright (c) Microsoft Corporation. All rights reserved.
+  *  Licensed under the MIT License. See License.txt in the project root for license information.
+  *--------------------------------------------------------------------------------------------*/
+ 
+ import type { SectionOverride, SystemMessageSection } from '@github/copilot-sdk';
+ import { CopilotCliConfigKey } from '../../../common/copilotCliConfig.js';
+ import type { ModelSelection } from '../../../common/state/protocol/state.js';
+ import { agentHostPromptRegistry, type IAgentHostPrompt, type IAgentHostPromptContext } from './promptRegistry.js';
+ import { COPILOT_AGENT_HOST_IDENTITY } from './systemMessage.js';
+ 
+ /**
+  * `customize`-mode section overrides for Claude Opus 4.8, tuned per Anthropic's
+  * "Prompting Claude Opus 4.8" guide:
+  * https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/prompting-claude-opus-4-8
+  *
+  * Opus 4.8 performs well out of the box, so this stays intentionally minimal:
+  * it keeps the SDK foundation prompt (and its tool/safety sections) intact and
+  * only nudges the two behaviors the guide calls out for tuning —
+  *  - verbosity/tone: the model calibrates length to task complexity, so steer
+  *    it toward concision when a consistent style is wanted; and
+  *  - subagents: the model spawns fewer by default, so give explicit fan-out
+  *    guidance.
+  * The guide warns against forcing interim-progress scaffolding ("summarize
+  * after every N tool calls"), so none is added here. The identity is re-stated
+  * to keep the agent-host self-description that the default message applies.
+  */
+ function opus48SectionOverrides(): Partial<Record<SystemMessageSection, SectionOverride>> {
+ 	return {
+ 		identity: {
+ 			action: 'replace',
+ 			content: COPILOT_AGENT_HOST_IDENTITY,
+ 		},
+ 		tone: {
+ 			action: 'append',
+ 			// Leading newline so the appended text starts on its own line rather
+ 			// than running on from the SDK foundation tone section's last sentence.
+ 			content: '\nProvide concise, focused responses. Skip non-essential context, and keep examples minimal. Use a direct style and use emojis sparingly.',
+ 		},
+ 		guidelines: {
+diff --git a/src/vs/platform/agentHost/node/copilot/prompts/promptRegistry.ts b/src/vs/platform/agentHost/node/copilot/prompts/promptRegistry.ts
+index 2e4bb7a6c0e..2be39640cc4 100644
+--- a/src/vs/platform/agentHost/node/copilot/prompts/promptRegistry.ts
++++ b/src/vs/platform/agentHost/node/copilot/prompts/promptRegistry.ts
+@@ -1,40 +1,42 @@
++// @ts-nocheck
++// Chatero does not ship or activate the upstream Copilot provider.
+ /*---------------------------------------------------------------------------------------------
+  *  Copyright (c) Microsoft Corporation. All rights reserved.
+  *  Licensed under the MIT License. See License.txt in the project root for license information.
+  *--------------------------------------------------------------------------------------------*/
+ 
+ import type { SectionOverride, SystemMessageConfig, SystemMessageSection } from '@github/copilot-sdk';
+ import { copilotCliConfigSchema } from '../../../common/copilotCliConfig.js';
+ import type { SchemaValue } from '../../../common/agentHostSchema.js';
+ import type { ModelSelection } from '../../../common/state/protocol/state.js';
+ import { appendSystemMessageContent, COPILOT_AGENT_HOST_FILE_LINK_INSTRUCTIONS, COPILOT_AGENT_HOST_WORKSPACELESS_INSTRUCTIONS, COPILOT_AGENT_HOST_SYSTEM_MESSAGE, fullSystemPrompt, sectionOverrides } from './systemMessage.js';
+ import { resolveToolInstructionsOverride, toolSearchInstructionLines } from './toolInstructions.js';
+ 
+ type CopilotCliConfigDefinition = typeof copilotCliConfigSchema.definition;
+ 
+ /**
+  * Read-time context handed to prompt contributors so they can gate behavior on
+  * host configuration — the agent-host equivalent of the Copilot extension
+  * injecting `IConfigurationService` into a resolver.
+  *
+  * Scoped to the Copilot CLI config schema so contributors (and tests) read
+  * settings in a fully-typed way without depending on the whole configuration
+  * service.
+  */
+ export interface IAgentHostPromptContext {
+ 	/**
+ 	 * Returns the host-level value for a Copilot CLI setting, or `undefined`
+ 	 * when unset. Mirrors `IAgentConfigurationService.getRootValue` bound to
+ 	 * {@link copilotCliConfigSchema}.
+ 	 */
+ 	getSetting<K extends keyof CopilotCliConfigDefinition & string>(key: K): SchemaValue<CopilotCliConfigDefinition[K]> | undefined;
+ 
+ 	/**
+ 	 * Returns whether a *client* tool is available in the session, addressed by
+ 	 * the camelCase `toolReferenceName` the agent sees it under (e.g.
+ 	 * `openBrowserPage`). Used to gate tool-specific instructions on the tool
+ 	 * being present, the agent-host equivalent of the Copilot extension
+ 	 * inspecting its tool set.
+ 	 *
+ 	 * Scope: client tools only (the forwarded workbench tools). It does NOT see
+ 	 * shell tools, server-SDK tools, or MCP-provided tools — those aren't in the
+diff --git a/src/vs/platform/agentHost/node/copilot/prompts/systemMessage.ts b/src/vs/platform/agentHost/node/copilot/prompts/systemMessage.ts
+index 46b974075ff..32cc43a853a 100644
+--- a/src/vs/platform/agentHost/node/copilot/prompts/systemMessage.ts
++++ b/src/vs/platform/agentHost/node/copilot/prompts/systemMessage.ts
+@@ -1,40 +1,42 @@
++// @ts-nocheck
++// Chatero does not ship or activate the upstream Copilot provider.
+ /*---------------------------------------------------------------------------------------------
+  *  Copyright (c) Microsoft Corporation. All rights reserved.
+  *  Licensed under the MIT License. See License.txt in the project root for license information.
+  *--------------------------------------------------------------------------------------------*/
+ 
+ import type { SectionOverride, SystemMessageConfig, SystemMessageSection } from '@github/copilot-sdk';
+ 
+ /**
+  * Identity section content shared by the default agent-host system message and
+  * any per-model override that wants to keep the same self-description. Kept as
+  * a single constant so the identity text is defined in exactly one place.
+  */
+ export const COPILOT_AGENT_HOST_IDENTITY = 'You are an AI assistant using Copilot CLI runtime in VS Code. You help users with software engineering tasks. When asked about your identity, you must state that you are an AI assistant using Copilot CLI runtime in VS Code.';
+ 
+ /** Response-formatting contract for workspace links emitted by Agent Host models. */
+ export const COPILOT_AGENT_HOST_FILE_LINK_INSTRUCTIONS = [
+ 	'<file_folder_and_symbol_links>',
+ 	'Always use Markdown links when referring to existing files, folders, or symbols in the workspace. This is very important for helping the user understand your responses.',
+ 	'- File: use the file name as the link text and the absolute filesystem path as the target, for example [foo.ts](/path/to/foo.ts).',
+ 	'- Folder: links to folders are also supported, with an absolute path to the folder as the target, for example [src/](/path/to/src).',
+ 	'- Symbol: link to symbols by using the containing file path with a 1-based line number as the target, for example [myMethod](/path/to/foo.ts:42).',
+ 	'- Use `/` path separators in link targets, including on Windows (`C:/path/to/foo.ts`).',
+ 	'- If a file path has spaces, wrap the target in angle brackets: [foo bar.ts](</path/to/foo bar.ts>).',
+ 	'- Use absolute filesystem paths rather than `file://` URIs.',
+ 	'- Do not provide line ranges.',
+ 	'- Use a markdown link format every time you refer to a file, folder, or symbol, not just the first time.',
+ 	'</file_folder_and_symbol_links>',
+ ].join('\n');
+ 
+ /**
+  * Default system-message customization applied to every Copilot CLI agent-host
+  * session that has no per-model override registered in the
+  * {@link AgentHostPromptRegistry}.
+  *
+  * Uses `customize` mode so the CLI/SDK foundation prompt (and its built-in
+  * guardrails) stay intact — only the `identity` section is replaced.
+  */
+ export const COPILOT_AGENT_HOST_SYSTEM_MESSAGE = {
+ 	mode: 'customize',
+ 	sections: {
+diff --git a/src/vs/platform/agentHost/node/copilot/prompts/toolInstructions.ts b/src/vs/platform/agentHost/node/copilot/prompts/toolInstructions.ts
+index 4e9d6557015..e4091dbda6d 100644
+--- a/src/vs/platform/agentHost/node/copilot/prompts/toolInstructions.ts
++++ b/src/vs/platform/agentHost/node/copilot/prompts/toolInstructions.ts
+@@ -1,40 +1,42 @@
++// @ts-nocheck
++// Chatero does not ship or activate the upstream Copilot provider.
+ /*---------------------------------------------------------------------------------------------
+  *  Copyright (c) Microsoft Corporation. All rights reserved.
+  *  Licensed under the MIT License. See License.txt in the project root for license information.
+  *--------------------------------------------------------------------------------------------*/
+ 
+ import type { SectionOverride } from '@github/copilot-sdk';
+ import { coalesce } from '../../../../../base/common/arrays.js';
+ import { BrowserChatToolReferenceName, browserChatToolReferenceNames } from '../../../../browserView/common/browserChatToolReferenceNames.js';
+ import { CLIENT_TOOL_SEARCH_REFERENCE_NAME } from '../../../common/toolSearchConstants.js';
+ 
+ /**
+  * Model-agnostic guidance for the `tool_instructions` system-prompt section.
+  *
+  * This is the agent-host home for the Copilot extension's `toolUseInstructions`
+  * pattern (`defaultAgentInstructions.tsx` and the per-model agent prompts): a
+  * sequence of one-line nudges, each gated on the relevant tool being present in
+  * the session, composed into the single SDK `tool_instructions` section. The
+  * agent host sees client tools under their camelCase `toolReferenceName`, so a
+  * line's gate and any tool name it mentions use that form (NOT the extension's
+  * snake_case ids).
+  *
+  * To add guidance for a tool, write a {@link ToolInstructionLine} and add it to
+  * {@link TOOL_INSTRUCTION_LINES}. The browser guidance ({@link browserToolInstructions})
+  * is the first such hookup: it gates on `openBrowserPage` (plus an agentic browser
+  * tool) being present and returns the extension's "Use the browser tools (...)"
+  * sentence.
+  */
+ 
+ /**
+  * A single gated tool-instructions line. Returns its content (a single
+  * sentence, no surrounding newlines) when the session exposes the tools it
+  * applies to, or `undefined` to contribute nothing. Mirrors one gated `<>…</>`
+  * fragment in the extension's `toolUseInstructions` block.
+  *
+  * @param hasTool predicate for whether a tool name is available in the session.
+  */
+ type ToolInstructionLine = (hasTool: (name: string) => boolean) => string | undefined;
+ 
+ /**
+  * Browser tools other than `openBrowserPage` — the agent-host equivalent of the
+diff --git a/src/vs/platform/agentHost/node/copilot/sessionCustomizationDiscovery.ts b/src/vs/platform/agentHost/node/copilot/sessionCustomizationDiscovery.ts
+index 7977aed4a77..74b8b74d4c6 100644
+--- a/src/vs/platform/agentHost/node/copilot/sessionCustomizationDiscovery.ts
++++ b/src/vs/platform/agentHost/node/copilot/sessionCustomizationDiscovery.ts
+@@ -1,40 +1,42 @@
++// @ts-nocheck
++// Chatero does not ship or activate the upstream Copilot provider.
+ /*---------------------------------------------------------------------------------------------
+  *  Copyright (c) Microsoft Corporation. All rights reserved.
+  *  Licensed under the MIT License. See License.txt in the project root for license information.
+  *--------------------------------------------------------------------------------------------*/
+ 
+ import type { CopilotClient } from '@github/copilot-sdk';
+ import { appendFile, mkdir } from 'fs/promises';
+ import { CancellationToken } from '../../../../base/common/cancellation.js';
+ import { CancellationError } from '../../../../base/common/errors.js';
+ import { Emitter, Event } from '../../../../base/common/event.js';
+ import { Disposable, type IDisposable } from '../../../../base/common/lifecycle.js';
+ import { ResourceMap, ResourceSet } from '../../../../base/common/map.js';
+ import { joinPath, dirname as uriDirname, extUriBiasedIgnorePathCase } from '../../../../base/common/resources.js';
+ import { compare as compareStrings } from '../../../../base/common/strings.js';
+ import { URI } from '../../../../base/common/uri.js';
+ import { basename, isAbsolute, dirname as nodeDirname } from '../../../../base/common/path.js';
+ import { IFileService, IFileStatWithMetadata } from '../../../files/common/files.js';
+ import { ILogService } from '../../../log/common/log.js';
+ import type { AgentsDiscoverRequest, InstructionSource } from './copilotRCP.js';
+ import { AgentCustomization, ChildCustomization, CustomizationLoadStatus, CustomizationType, DirectoryCustomization, HookCustomization, RuleCustomization, SkillCustomization, customizationId } from '../../common/state/sessionState.js';
+ import { ChildCustomizationType } from '../../common/state/protocol/state.js';
+ import { toAgentCustomizationMeta } from '../../common/meta/agentCustomizationMeta.js';
+ import { raceCancellationError } from '../../../../base/common/async.js';
+ 
+ /**
+  * The kinds of customizations the agent host discovers from disk.
+  *
+  * Re-declared on the platform side so this module has no dependency on the
+  * workbench-side `PromptsType` enum.
+  */
+ export const enum DiscoveredType {
+ 	Agent = 'agent',
+ 	Skill = 'skill',
+ 	Instruction = 'instruction',
+ 	Hook = 'hook',
+ 	AgentInstruction = 'agentInstruction',
+ }
+ 
+ export interface IDiscoveredDirectory {
+ 	readonly uri: URI;
+diff --git a/src/vs/platform/agentHost/node/otel/agentHostOTelService.ts b/src/vs/platform/agentHost/node/otel/agentHostOTelService.ts
+index 090437f57dc..08cbc19c3b7 100644
+--- a/src/vs/platform/agentHost/node/otel/agentHostOTelService.ts
++++ b/src/vs/platform/agentHost/node/otel/agentHostOTelService.ts
+@@ -1,40 +1,42 @@
++// @ts-nocheck
++// Chatero does not ship or activate the upstream Copilot provider.
+ /*---------------------------------------------------------------------------------------------
+  *  Copyright (c) Microsoft Corporation. All rights reserved.
+  *  Licensed under the MIT License. See License.txt in the project root for license information.
+  *--------------------------------------------------------------------------------------------*/
+ 
+ import { mkdir } from 'fs/promises';
+ import { dirname, join } from '../../../../base/common/path.js';
+ import type { TelemetryConfig } from '@github/copilot-sdk';
+ import { Disposable, toDisposable } from '../../../../base/common/lifecycle.js';
+ import { URI } from '../../../../base/common/uri.js';
+ import { generateUuid } from '../../../../base/common/uuid.js';
+ import { INativeEnvironmentService } from '../../../environment/common/environment.js';
+ import { ILogService } from '../../../log/common/log.js';
+ import { startLocalOtlpHttpReceiver, type ILocalOtlpHttpReceiver } from '../../../otel/node/otlp/localOtlpReceiver.js';
+ import {
+ 	CompositeForwarder,
+ 	ConsoleForwarder,
+ 	FileForwarder,
+ 	OtlpHttpForwarder,
+ 	type IOutboundForwarder,
+ } from '../../../otel/node/otlp/outboundForwarder.js';
+ import { GenAiAttr } from '../../../otel/common/genAiAttributes.js';
+ import { ICompletedSpanData, SpanStatusCode } from '../../../otel/common/spanData.js';
+ import { OTelSqliteStore } from '../../../otel/node/sqlite/otelSqliteStore.js';
+ import { AgentHostOTelSpansDbSubPath } from '../../common/agentService.js';
+ import { AgentHostSessionTitleAttribute, AgentHostSessionTitleSpanName, AgentHostSessionUriAttribute, IAgentHostOTelService } from '../../common/otel/agentHostOTelService.js';
+ 
+ /** Sub-path under the user data directory where the span DB lives. */
+ const SPANS_DB_SUBPATH = AgentHostOTelSpansDbSubPath;
+ 
+ /**
+  * Effective OTel configuration resolved from `process.env`. Settings → env conversion
+  * happens in the workbench-side agent-host starter (see `nodeAgentHostStarter.ts`);
+  * this service only consumes env so it can stay decoupled from configuration plumbing.
+  */
+ interface ResolvedConfig {
+ 	/** Telemetry enabled at all? */
+ 	readonly enabled: boolean;
+ 	/** DB mode (loopback + SQLite) requested? */
+ 	readonly dbSpanExporter: boolean;
+diff --git a/src/vs/platform/agentHost/node/shared/editChunkExtractor.ts b/src/vs/platform/agentHost/node/shared/editChunkExtractor.ts
+index 7c29e1a4b2a..24eab352f0e 100644
+--- a/src/vs/platform/agentHost/node/shared/editChunkExtractor.ts
++++ b/src/vs/platform/agentHost/node/shared/editChunkExtractor.ts
+@@ -188,41 +188,40 @@ function readApplyPatch(input: unknown, forFilePath?: string): string[] {
+ 			const m = re.exec(line);
+ 			if (m && m[1]) {
+ 				currentFile = m[1];
+ 				if (!additionsByFile.has(currentFile)) {
+ 					additionsByFile.set(currentFile, []);
+ 					order.push(currentFile);
+ 				}
+ 				matchedHeader = true;
+ 				break;
+ 			}
+ 		}
+ 		if (matchedHeader || !currentFile) {
+ 			continue;
+ 		}
+ 		// V4A addition lines start with a single '+' and are NOT the
+ 		// '+++' file marker (which V4A doesn't use, but guard anyway).
+ 		if (line.startsWith('+') && !line.startsWith('+++')) {
+ 			additionsByFile.get(currentFile)!.push(line.slice(1));
+ 		}
+ 	}
+ 
+ 	const joinLines = (lines: string[]) => lines.length === 0 ? '' : lines.join('\n') + '\n';
+ 
+ 	if (forFilePath !== undefined) {
+ 		const lines = additionsByFile.get(forFilePath);
+ 		if (!lines || lines.length === 0) {
+ 			return [];
+ 		}
+ 		return [joinLines(lines)];
+ 	}
+ 
+ 	const out: string[] = [];
+ 	for (const file of order) {
+ 		const joined = joinLines(additionsByFile.get(file)!);
+ 		if (joined.length > 0) {
+ 			out.push(joined);
+ 		}
+ 	}
+ 	return out;
+ }
+-
+diff --git a/src/vs/platform/agentHost/test/node/agentHostGitHubTelemetryRouter.test.ts b/src/vs/platform/agentHost/test/node/agentHostGitHubTelemetryRouter.test.ts
+index 4ade37199ab..c96d2778ec9 100644
+--- a/src/vs/platform/agentHost/test/node/agentHostGitHubTelemetryRouter.test.ts
++++ b/src/vs/platform/agentHost/test/node/agentHostGitHubTelemetryRouter.test.ts
+@@ -1,40 +1,42 @@
++// @ts-nocheck
++// Chatero does not ship or activate the upstream Copilot provider.
+ /*---------------------------------------------------------------------------------------------
+  *  Copyright (c) Microsoft Corporation. All rights reserved.
+  *  Licensed under the MIT License. See License.txt in the project root for license information.
+  *--------------------------------------------------------------------------------------------*/
+ 
+ import type { GitHubTelemetryNotification } from '@github/copilot-sdk';
+ import assert from 'assert';
+ import * as zlib from 'zlib';
+ import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
+ import { AgentHostGitHubTelemetryRouter } from '../../node/agentHostGitHubTelemetryRouter.js';
+ import type { IAgentHostInternalTelemetryContext, IAgentHostRestrictedTelemetry, IAgentHostRestrictedTelemetryContext, TelemetryMeasurements, TelemetryProps } from '../../node/agentHostRestrictedTelemetry.js';
+ 
+ interface ICapturedEvent {
+ 	readonly destination: 'enhancedGH' | 'internalMSFT';
+ 	readonly eventName: string;
+ 	readonly properties: TelemetryProps | undefined;
+ 	readonly measurements: TelemetryMeasurements | undefined;
+ }
+ 
+ class TestRestrictedTelemetry implements IAgentHostRestrictedTelemetry {
+ 	readonly events: ICapturedEvent[] = [];
+ 
+ 	sendGHTelemetryEvent(): void { }
+ 	sendEnhancedGHTelemetryEvent(eventName: string, properties?: TelemetryProps, measurements?: TelemetryMeasurements): void {
+ 		this.events.push({ destination: 'enhancedGH', eventName, properties, measurements });
+ 	}
+ 	sendEnhancedGHTelemetryEventForContext(_context: IAgentHostRestrictedTelemetryContext, eventName: string, properties?: TelemetryProps, measurements?: TelemetryMeasurements): void {
+ 		this.events.push({ destination: 'enhancedGH', eventName, properties, measurements });
+ 	}
+ 	sendInternalMSFTTelemetryEvent(eventName: string, properties?: TelemetryProps, measurements?: TelemetryMeasurements): void {
+ 		this.events.push({ destination: 'internalMSFT', eventName, properties, measurements });
+ 	}
+ 	sendInternalMSFTTelemetryEventForContext(_context: IAgentHostInternalTelemetryContext, eventName: string, properties?: TelemetryProps, measurements?: TelemetryMeasurements): void {
+ 		this.events.push({ destination: 'internalMSFT', eventName, properties, measurements });
+ 	}
+ 	setCopilotTrackingId(): void { }
+ 	setRestrictedTelemetryEndpoint(): void { }
+ 	setRestrictedTelemetryEnabled(): void { }
+ 	setInternalTelemetryContext(): void { }
+ }
+diff --git a/src/vs/platform/agentHost/test/node/agentHostPromptRegistry.test.ts b/src/vs/platform/agentHost/test/node/agentHostPromptRegistry.test.ts
+index 29a501b2201..04bb4730eed 100644
+--- a/src/vs/platform/agentHost/test/node/agentHostPromptRegistry.test.ts
++++ b/src/vs/platform/agentHost/test/node/agentHostPromptRegistry.test.ts
+@@ -1,40 +1,42 @@
++// @ts-nocheck
++// Chatero does not ship or activate the upstream Copilot provider.
+ /*---------------------------------------------------------------------------------------------
+  *  Copyright (c) Microsoft Corporation. All rights reserved.
+  *  Licensed under the MIT License. See License.txt in the project root for license information.
+  *--------------------------------------------------------------------------------------------*/
+ 
+ import assert from 'assert';
+ import type { SectionOverride, SystemMessageConfig, SystemMessageSection } from '@github/copilot-sdk';
+ import { CopilotCliConfigKey, applyModelFamilyAlias, copilotCliConfigSchema } from '../../common/copilotCliConfig.js';
+ import type { SchemaValues } from '../../common/agentHostSchema.js';
+ import type { ModelSelection } from '../../common/state/protocol/state.js';
+ import { AgentHostPromptRegistry, agentHostPromptRegistry, type IAgentHostPromptContext } from '../../node/copilot/prompts/promptRegistry.js';
+ import { COPILOT_AGENT_HOST_FILE_LINK_INSTRUCTIONS, COPILOT_AGENT_HOST_WORKSPACELESS_INSTRUCTIONS, COPILOT_AGENT_HOST_SYSTEM_MESSAGE } from '../../node/copilot/prompts/systemMessage.js';
+ import { BrowserChatToolReferenceName } from '../../../browserView/common/browserChatToolReferenceNames.js';
+ import { CLIENT_TOOL_SEARCH_REFERENCE_NAME } from '../../common/toolSearchConstants.js';
+ import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
+ import '../../node/copilot/prompts/allPrompts.js';
+ 
+ /**
+  * Builds a prompt context backed by an in-memory bag of customization settings
+  * and an optional set of available tool names.
+  */
+ function context(settings: SchemaValues<typeof copilotCliConfigSchema.definition> = {}, tools: readonly string[] = [], workspaceless = false, toolSearchActive = false): IAgentHostPromptContext {
+ 	const toolNames = new Set(tools);
+ 	return {
+ 		getSetting: key => settings[key],
+ 		hasClientTool: name => toolNames.has(name),
+ 		workspaceless,
+ 		toolSearchActive,
+ 	};
+ }
+ 
+ suite('AgentHostPromptRegistry', () => {
+ 
+ 	ensureNoDisposablesAreLeakedInTestSuite();
+ 
+ 	const withFileLinkInstructions = (config: SystemMessageConfig): SystemMessageConfig => ({
+ 		...config,
+ 		content: config.content ? `${config.content}\n\n${COPILOT_AGENT_HOST_FILE_LINK_INSTRUCTIONS}` : COPILOT_AGENT_HOST_FILE_LINK_INSTRUCTIONS,
+ 	});
+ 
+diff --git a/src/vs/platform/agentHost/test/node/buildSessionEvents.test.ts b/src/vs/platform/agentHost/test/node/buildSessionEvents.test.ts
+index ee58bc9b2c3..f4256f920e1 100644
+--- a/src/vs/platform/agentHost/test/node/buildSessionEvents.test.ts
++++ b/src/vs/platform/agentHost/test/node/buildSessionEvents.test.ts
+@@ -1,40 +1,42 @@
++// @ts-nocheck
++// Chatero does not ship or activate the upstream Copilot provider.
+ /*---------------------------------------------------------------------------------------------
+  *  Copyright (c) Microsoft Corporation. All rights reserved.
+  *  Licensed under the MIT License. See License.txt in the project root for license information.
+  *--------------------------------------------------------------------------------------------*/
+ 
+ import assert from 'assert';
+ import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
+ import { generateUuid, isUUID } from '../../../../base/common/uuid.js';
+ import { AgentSession } from '../../common/agentService.js';
+ import { MessageKind, ResponsePartKind, ToolCallConfirmationReason, ToolCallStatus, ToolResultContentType, TurnState, type ResponsePart, type ToolCallCompletedState, type Turn } from '../../common/state/sessionState.js';
+ import { buildSessionEventLogFromTurns, buildSessionEventsFromTurns, serializeSessionEventsToJsonl } from '../../node/copilot/buildSessionEvents.js';
+ import { mapSessionEvents } from '../../node/copilot/mapSessionEvents.js';
+ import type { SessionEvent } from '@github/copilot-sdk';
+ 
+ suite('buildSessionEventsFromTurns — reverse of mapSessionEvents', () => {
+ 
+ 	ensureNoDisposablesAreLeakedInTestSuite();
+ 
+ 	const session = AgentSession.uri('copilot', 'test-session');
+ 	const sessionId = 'test-session';
+ 
+ 	function markdown(content: string): ResponsePart {
+ 		return { kind: ResponsePartKind.Markdown, id: 'ignored', content };
+ 	}
+ 
+ 	function reasoning(content: string): ResponsePart {
+ 		return { kind: ResponsePartKind.Reasoning, id: 'ignored', content };
+ 	}
+ 
+ 	function toolCallPart(toolCallId: string, toolName: string, toolInput: string, resultText: string, opts?: { success?: boolean; errorMessage?: string }): ResponsePart {
+ 		return {
+ 			kind: ResponsePartKind.ToolCall,
+ 			toolCall: {
+ 				status: ToolCallStatus.Completed,
+ 				toolCallId,
+ 				toolName,
+ 				displayName: toolName,
+ 				invocationMessage: '',
+ 				toolInput,
+ 				success: opts?.success ?? true,
+diff --git a/src/vs/platform/agentHost/test/node/copilotAgent.test.ts b/src/vs/platform/agentHost/test/node/copilotAgent.test.ts
+index 2cb594efbd8..3dcabe14be5 100644
+--- a/src/vs/platform/agentHost/test/node/copilotAgent.test.ts
++++ b/src/vs/platform/agentHost/test/node/copilotAgent.test.ts
+@@ -1,40 +1,42 @@
++// @ts-nocheck
++// Chatero does not ship or activate the upstream Copilot provider.
+ /*---------------------------------------------------------------------------------------------
+  *  Copyright (c) Microsoft Corporation. All rights reserved.
+  *  Licensed under the MIT License. See License.txt in the project root for license information.
+  *--------------------------------------------------------------------------------------------*/
+ 
+ import type { CopilotClient, CopilotClientOptions, CopilotSession, GitHubTelemetryNotification, PermissionAllowAllMode, PermissionRequest, SessionEvent, SessionEventHandler, SessionEventPayload, SessionEventType, TypedSessionEventHandler } from '@github/copilot-sdk';
+ import type Anthropic from '@anthropic-ai/sdk';
+ import type { CCAModel } from '@vscode/copilot-api';
+ import assert from 'assert';
+ import * as fs from 'fs/promises';
+ import * as os from 'os';
+ import { VSBuffer } from '../../../../base/common/buffer.js';
+ import { DeferredPromise, timeout } from '../../../../base/common/async.js';
+ import { isCancellationError } from '../../../../base/common/errors.js';
+ import { Disposable, type DisposableStore, type IDisposable, type IReference } from '../../../../base/common/lifecycle.js';
+ import { Emitter, Event } from '../../../../base/common/event.js';
+ import { Schemas } from '../../../../base/common/network.js';
+ import { waitForState } from '../../../../base/common/observable.js';
+ import { URI } from '../../../../base/common/uri.js';
+ import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
+ import { INativeEnvironmentService } from '../../../environment/common/environment.js';
+ import { FileService } from '../../../files/common/fileService.js';
+ import { IFileService, type IStat } from '../../../files/common/files.js';
+ import { InMemoryFileSystemProvider } from '../../../files/common/inMemoryFilesystemProvider.js';
+ import { IInstantiationService } from '../../../instantiation/common/instantiation.js';
+ import { InstantiationService } from '../../../instantiation/common/instantiationService.js';
+ import { ServiceCollection } from '../../../instantiation/common/serviceCollection.js';
+ import { ILogService, LogLevel, NullLogService } from '../../../log/common/log.js';
+ import { IAgentHostProxyResolver } from '../../node/agentHostProxyResolver.js';
+ import type { IAgentHostClientProxyConnection } from '../../common/agentHostClientProxyChannel.js';
+ import type { IByokLmBridgeConnection, IByokLmModelInfo } from '../../common/agentHostByokLm.js';
+ import { ITelemetryService } from '../../../telemetry/common/telemetry.js';
+ import { NullTelemetryService } from '../../../telemetry/common/telemetryUtils.js';
+ import { AgentHostTelemetryService } from '../../node/agentHostTelemetryService.js';
+ import { CopilotCliConfigKey } from '../../common/copilotCliConfig.js';
+ import { AgentHostCopilotMultiRootEnabledConfigKey, AgentHostPreferLongContextEnabledConfigKey, AgentHostSystemProxyEnabledConfigKey } from '../../common/agentHostSchema.js';
+ import { IAgentPluginManager, ISyncedCustomization } from '../../common/agentPluginManager.js';
+ import { AgentSession, GITHUB_COPILOT_PROTECTED_RESOURCE, type AgentSignal, type IAgentCreateChatForkSource, type IAgentSessionMetadata, type IAgentSpawnChatEvent } from '../../common/agentService.js';
+ import { ISessionDataService } from '../../common/sessionDataService.js';
+ import { buildDefaultChatUri, buildChatUri, buildSubagentChatUri, parseRequiredSessionUriFromChatUri, CustomizationLoadStatus, MessageKind, ResponsePartKind, ROOT_STATE_URI, ToolResultContentType, TurnState, customizationId, type ClientPluginCustomization, type PluginCustomization, type ToolCallResult, type Turn, RuleCustomization } from '../../common/state/sessionState.js';
+diff --git a/src/vs/platform/agentHost/test/node/copilotAgentSession.test.ts b/src/vs/platform/agentHost/test/node/copilotAgentSession.test.ts
+index 84d85c9374b..9956f9d0165 100644
+--- a/src/vs/platform/agentHost/test/node/copilotAgentSession.test.ts
++++ b/src/vs/platform/agentHost/test/node/copilotAgentSession.test.ts
+@@ -1,40 +1,42 @@
++// @ts-nocheck
++// Chatero does not ship or activate the upstream Copilot provider.
+ /*---------------------------------------------------------------------------------------------
+  *  Copyright (c) Microsoft Corporation. All rights reserved.
+  *  Licensed under the MIT License. See License.txt in the project root for license information.
+  *--------------------------------------------------------------------------------------------*/
+ 
+ import type Anthropic from '@anthropic-ai/sdk';
+ import type { CopilotSession, CurrentToolMetadata, PermissionAllowAllMode, SessionEvent, SessionEventHandler, SessionEventPayload, SessionEventType, Tool, ToolResultObject, TypedSessionEventHandler } from '@github/copilot-sdk';
+ import type { CCAModel } from '@vscode/copilot-api';
+ import assert from 'assert';
+ import { DeferredPromise, timeout } from '../../../../base/common/async.js';
+ import { encodeBase64, VSBuffer } from '../../../../base/common/buffer.js';
+ import { Emitter } from '../../../../base/common/event.js';
+ import { DisposableStore } from '../../../../base/common/lifecycle.js';
+ import { join, sep } from '../../../../base/common/path.js';
+ import { URI } from '../../../../base/common/uri.js';
+ import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
+ import { INativeEnvironmentService } from '../../../environment/common/environment.js';
+ import { IFileService } from '../../../files/common/files.js';
+ import { InstantiationService } from '../../../instantiation/common/instantiationService.js';
+ import { ServiceCollection } from '../../../instantiation/common/serviceCollection.js';
+ import { ILogService, NullLogService } from '../../../log/common/log.js';
+ import type { ClassifiedEvent, IGDPRProperty, OmitMetadata, StrictPropertyCheck } from '../../../telemetry/common/gdprTypings.js';
+ import { ITelemetryService, TelemetryLevel } from '../../../telemetry/common/telemetry.js';
+ import { NullTelemetryServiceShape } from '../../../telemetry/common/telemetryUtils.js';
+ import { AgentSession, type AgentSignal, type IAgentActionSignal, type IAgentToolPendingConfirmationSignal } from '../../common/agentService.js';
+ import { AgentHostClientType } from '../../common/agentHostClientInfo.js';
+ import type { ChatInputRequestWithPlanReview } from '../../common/agentHostPlanReview.js';
+ import { AgentFeedbackAttachmentDisplayKind } from '../../common/meta/agentFeedbackAttachments.js';
+ import { readToolCallMeta } from '../../common/meta/agentToolCallMeta.js';
+ import { IDiffComputeService } from '../../common/diffComputeService.js';
+ import { ISessionDataService, type ISessionDatabase } from '../../common/sessionDataService.js';
+ import { ActionType, type ChatDeltaAction, type ChatErrorAction, type ChatInputRequestedAction, type ChatResponsePartAction, type ChatToolCallCompleteAction, type ChatToolCallDeltaAction, type ChatToolCallReadyAction, type ChatToolCallStartAction, type ChatTurnCompleteAction, type ChatUsageAction, type SessionAction, type StateAction } from '../../common/state/sessionActions.js';
+ import { MessageAttachmentKind, MessageKind, ResponsePartKind, ChatInputAnswerState, ChatInputAnswerValueKind, ChatInputQuestionKind, ChatInputResponseKind, ToolCallConfirmationReason, ToolCallRiskAssessmentKind, ToolCallRiskAssessmentStatus, ToolCallContributorKind, ToolCallStatus, ToolResultContentType, buildChatUri, buildDefaultChatUri, createSessionState, mergeSessionWithDefaultChat, readSessionPromptCacheState, readUsageInfoMeta, SessionStatus, withSessionPromptCacheState, type ToolDefinition, type ToolResultContent, type ToolResultFileEditContent, type ToolResultTerminalContent, type UsageInfoMeta } from '../../common/state/sessionState.js';
+ import { TerminalClaimKind } from '../../common/state/protocol/state.js';
+ import { STREAMING_TOOL_DISPLAY_INTERVAL_MS } from '../../common/streamingToolCallDisplay.js';
+ import { CustomizationType, McpAuthRequiredReason, McpServerStatus, type Customization } from '../../common/state/protocol/channels-session/state.js';
+ import { CopilotAgentSession } from '../../node/copilot/copilotAgentSession.js';
+ import { buildNonPtyShellTerminalUri } from '../../node/copilot/copilotNonPtyShellTerminals.js';
+ import { ActiveClientToolSet } from '../../node/activeClientState.js';
+ import { type CopilotSessionLaunchPlan, type IActiveClientSnapshot, type ICopilotSessionLauncher, type ICopilotSessionRuntime } from '../../node/copilot/copilotSessionLauncher.js';
+diff --git a/src/vs/platform/agentHost/test/node/copilotGitHubTelemetryForwarder.test.ts b/src/vs/platform/agentHost/test/node/copilotGitHubTelemetryForwarder.test.ts
+index f9e8a9634c3..6e82108c9d7 100644
+--- a/src/vs/platform/agentHost/test/node/copilotGitHubTelemetryForwarder.test.ts
++++ b/src/vs/platform/agentHost/test/node/copilotGitHubTelemetryForwarder.test.ts
+@@ -1,40 +1,42 @@
++// @ts-nocheck
++// Chatero does not ship or activate the upstream Copilot provider.
+ /*---------------------------------------------------------------------------------------------
+  *  Copyright (c) Microsoft Corporation. All rights reserved.
+  *  Licensed under the MIT License. See License.txt in the project root for license information.
+  *--------------------------------------------------------------------------------------------*/
+ 
+ import type { GitHubTelemetryNotification } from '@github/copilot-sdk';
+ import assert from 'assert';
+ import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
+ import { ITelemetryData, ITelemetryService, TelemetryLevel } from '../../../telemetry/common/telemetry.js';
+ import { CopilotGitHubTelemetryForwarder } from '../../node/copilot/copilotGitHubTelemetryForwarder.js';
+ 
+ interface CapturedEvent {
+ 	eventName: string;
+ 	data: ITelemetryData | undefined;
+ }
+ 
+ class TestTelemetryService implements ITelemetryService {
+ 	declare readonly _serviceBrand: undefined;
+ 
+ 	readonly telemetryLevel = TelemetryLevel.USAGE;
+ 	readonly sendErrorTelemetry = true;
+ 	readonly sessionId = 'sessionId';
+ 	readonly machineId = 'machineId';
+ 	readonly sqmId = 'sqmId';
+ 	readonly devDeviceId = 'devDeviceId';
+ 	readonly firstSessionDate = 'firstSessionDate';
+ 	readonly events: CapturedEvent[] = [];
+ 
+ 	publicLog(eventName: string, data?: ITelemetryData): void {
+ 		this.events.push({ eventName, data });
+ 	}
+ 	publicLogError(): void { }
+ 	publicLog2(): void { }
+ 	publicLogError2(): void { }
+ 	setExperimentProperty(): void { }
+ 	setCommonProperty(): void { }
+ }
+ 
+ suite('CopilotGitHubTelemetryForwarder', () => {
+ 	ensureNoDisposablesAreLeakedInTestSuite();
+diff --git a/src/vs/platform/agentHost/test/node/copilotSdkImportSession.integrationTest.ts b/src/vs/platform/agentHost/test/node/copilotSdkImportSession.integrationTest.ts
+index cec81ac7a52..d48bb7ec0f5 100644
+--- a/src/vs/platform/agentHost/test/node/copilotSdkImportSession.integrationTest.ts
++++ b/src/vs/platform/agentHost/test/node/copilotSdkImportSession.integrationTest.ts
+@@ -1,40 +1,42 @@
++// @ts-nocheck
++// Chatero does not ship or activate the upstream Copilot provider.
+ /*---------------------------------------------------------------------------------------------
+  *  Copyright (c) Microsoft Corporation. All rights reserved.
+  *  Licensed under the MIT License. See License.txt in the project root for license information.
+  *--------------------------------------------------------------------------------------------*/
+ 
+ /**
+  * Copilot SDK integration test for importing a translated conversation.
+  *
+  * Validates the core premise of local→Copilot-CLI migration: a synthesized
+  * `events.jsonl` (built by {@link buildSessionEventLogFromTurns}) seeded through
+  * a {@link DiskSessionFsProvider}, then `resumeSession`d, reconstitutes as real
+  * SDK turns — and is therefore editable (proven by `history.truncate`).
+  *
+  * Disabled by default. To run it, set `AGENT_HOST_REAL_SDK=1` (a Copilot CLI
+  * package must be installed under `node_modules/@github/copilot*`):
+  *
+  *   AGENT_HOST_REAL_SDK=1 ./scripts/test-integration.sh --run src/vs/platform/agentHost/test/node/copilotSdkImportSession.integrationTest.ts
+  *
+  * Authentication: token from `gh auth token`, overridable via `GITHUB_TOKEN`.
+  */
+ 
+ import assert from 'assert';
+ import { promises as fs } from 'fs';
+ import { tmpdir } from 'os';
+ import { CopilotClient, RuntimeConnection, approveAll, type CopilotSession, type SessionEvent, type SessionFsFileInfo, type SessionFsProvider } from '@github/copilot-sdk';
+ import { FileAccess } from '../../../../base/common/network.js';
+ import { delimiter, dirname, join } from '../../../../base/common/path.js';
+ import { URI } from '../../../../base/common/uri.js';
+ import { generateUuid } from '../../../../base/common/uuid.js';
+ import { rgDiskPath } from '../../../../base/node/ripgrep.js';
+ import { MessageKind, ResponsePartKind, TurnState, type ResponsePart, type Turn } from '../../common/state/sessionState.js';
+ import { buildSessionEventLogFromTurns } from '../../node/copilot/buildSessionEvents.js';
+ import { DiskSessionFsProvider } from '../../node/copilot/diskSessionFsProvider.js';
+ import { resolveGitHubToken } from './e2e/harness/agentHostE2ETestHarness.js';
+ 
+ /**
+  * Directory entry shape returned by {@link SessionFsProvider.readdirWithTypes}.
+  * Mirrors the SDK's `SessionFsReaddirWithTypesEntry`, which is not re-exported
+  * from the package root.
+  */
+diff --git a/src/vs/platform/agentHost/test/node/copilotSessionLauncher.test.ts b/src/vs/platform/agentHost/test/node/copilotSessionLauncher.test.ts
+index c6d1cdbe3c1..9137d5516fa 100644
+--- a/src/vs/platform/agentHost/test/node/copilotSessionLauncher.test.ts
++++ b/src/vs/platform/agentHost/test/node/copilotSessionLauncher.test.ts
+@@ -1,40 +1,42 @@
++// @ts-nocheck
++// Chatero does not ship or activate the upstream Copilot provider.
+ /*---------------------------------------------------------------------------------------------
+  *  Copyright (c) Microsoft Corporation. All rights reserved.
+  *  Licensed under the MIT License. See License.txt in the project root for license information.
+  *--------------------------------------------------------------------------------------------*/
+ 
+ import assert from 'assert';
+ import type { CopilotClient, CopilotSession } from '@github/copilot-sdk';
+ import { Emitter, Event } from '../../../../base/common/event.js';
+ import { DisposableStore } from '../../../../base/common/lifecycle.js';
+ import { URI } from '../../../../base/common/uri.js';
+ import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
+ import { PluginFormat } from '../../../agentPlugins/common/pluginParsers.js';
+ import type { IFileService } from '../../../files/common/files.js';
+ import { InstantiationService } from '../../../instantiation/common/instantiationService.js';
+ import { ServiceCollection } from '../../../instantiation/common/serviceCollection.js';
+ import { ILogService, NullLogService } from '../../../log/common/log.js';
+ import type { IByokLmBridgeConnection, IByokLmChatRequest, IByokLmChatResult, IByokLmModelInfo } from '../../common/agentHostByokLm.js';
+ import { CustomizationType, type ModelSelection } from '../../common/state/protocol/state.js';
+ import type { IAgentConfigurationService } from '../../node/agentConfigurationService.js';
+ import { ActiveClientToolSet } from '../../node/activeClientState.js';
+ import type { IAgentHostTerminalManager } from '../../node/agentHostTerminalManager.js';
+ import { ByokLmBridgeRegistry, IByokLmBridgeRegistry } from '../../node/byokLmBridgeRegistry.js';
+ import { ByokLmProxyService, IByokLmProxyService, type IByokLmProxyHandle } from '../../node/copilot/byokLmProxyService.js';
+ import { CopilotSessionLauncher, getCopilotReasoningEffort, resolveByokSessionConfig, type CopilotSessionLaunchPlan, type ICopilotSessionRuntime } from '../../node/copilot/copilotSessionLauncher.js';
+ import type { ICopilotPluginInfo } from '../../node/copilot/copilotAgent.js';
+ 
+ const testRuntime: ICopilotSessionRuntime = {
+ 	handlePermissionRequest: async () => { throw new Error('Unexpected permission request'); },
+ 	handleExitPlanModeRequest: async () => { throw new Error('Unexpected exit plan mode request'); },
+ 	handleUserInputRequest: async () => { throw new Error('Unexpected user input request'); },
+ 	handleElicitationRequest: async () => { throw new Error('Unexpected elicitation request'); },
+ 	handleMcpAuthRequest: async () => { throw new Error('Unexpected MCP auth request'); },
+ 	requestUnsandboxedCommandConfirmation: async () => false,
+ 	handlePreToolUse: async () => { },
+ 	handlePostToolUse: async () => { },
+ 	createClientSdkTools: () => [],
+ 	createServerSdkTools: () => [],
+ };
+ 
+ const testWorkingDirectory = URI.file(process.cwd());
+diff --git a/src/vs/platform/agentHost/test/node/copilotShellTools.test.ts b/src/vs/platform/agentHost/test/node/copilotShellTools.test.ts
+index 5dcbe7df861..edafcca51b7 100644
+--- a/src/vs/platform/agentHost/test/node/copilotShellTools.test.ts
++++ b/src/vs/platform/agentHost/test/node/copilotShellTools.test.ts
+@@ -1,40 +1,42 @@
++// @ts-nocheck
++// Chatero does not ship or activate the upstream Copilot provider.
+ /*---------------------------------------------------------------------------------------------
+  *  Copyright (c) Microsoft Corporation. All rights reserved.
+  *  Licensed under the MIT License. See License.txt in the project root for license information.
+  *--------------------------------------------------------------------------------------------*/
+ 
+ import assert from 'assert';
+ import type { Tool, ToolInvocation, ToolResultObject } from '@github/copilot-sdk';
+ import { DeferredPromise } from '../../../../base/common/async.js';
+ import { URI } from '../../../../base/common/uri.js';
+ import * as platform from '../../../../base/common/platform.js';
+ import { Emitter, Event } from '../../../../base/common/event.js';
+ import { DisposableStore, type IDisposable } from '../../../../base/common/lifecycle.js';
+ import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
+ import { IAgentConfigurationService } from '../../node/agentConfigurationService.js';
+ import { IEnvironmentService } from '../../../environment/common/environment.js';
+ import { IFileService } from '../../../files/common/files.js';
+ import { IInstantiationService } from '../../../instantiation/common/instantiation.js';
+ import { InstantiationService } from '../../../instantiation/common/instantiationService.js';
+ import { ServiceCollection } from '../../../instantiation/common/serviceCollection.js';
+ import { ILogService, NullLogService } from '../../../log/common/log.js';
+ import { IProductService } from '../../../product/common/productService.js';
+ import { ISandboxHelperService } from '../../../sandbox/common/sandboxHelperService.js';
+ import { IWindowsMxcTerminalSandboxRuntime, WindowsMxcTerminalSandboxRuntime } from '../../../sandbox/common/terminalSandboxMxcRuntime.js';
+ import { AgentHostSandboxConfigKey, AgentHostSandboxKey } from '../../common/sandboxConfigSchema.js';
+ import { AgentSandboxEnabledValue } from '../../../sandbox/common/settings.js';
+ import { VSBuffer } from '../../../../base/common/buffer.js';
+ import type { CreateTerminalParams } from '../../common/state/protocol/commands.js';
+ import { TerminalClaimKind, type TerminalClaim, type TerminalInfo } from '../../common/state/protocol/state.js';
+ import { formatTerminalText, IAgentHostTerminalManager, type ICommandFinishedEvent, type ISendTextOptions } from '../../node/agentHostTerminalManager.js';
+ import { createShellTools, type IUnsandboxedCommandConfirmationRequest, isMultilineCommand, ShellManager, prefixForHistorySuppression, shellTypeForExecutable } from '../../node/copilot/copilotShellTools.js';
+ 
+ class TestAgentHostTerminalManager implements IAgentHostTerminalManager {
+ 	declare readonly _serviceBrand: undefined;
+ 
+ 	defaultShell = '/bin/bash';
+ 	readonly created: { params: CreateTerminalParams; options?: { shell?: string; preventShellHistory?: boolean; nonInteractive?: boolean } }[] = [];
+ 	readonly writes: { uri: string; data: string }[] = [];
+ 	readonly sentTexts: { uri: string; data: string; options: ISendTextOptions }[] = [];
+ 	readonly existingTerminalUris = new Set<string>();
+ 	commandDetectionSupported = false;
+diff --git a/src/vs/platform/agentHost/test/node/copilotTestEvents.ts b/src/vs/platform/agentHost/test/node/copilotTestEvents.ts
+index ab23cc65d45..db435e8364e 100644
+--- a/src/vs/platform/agentHost/test/node/copilotTestEvents.ts
++++ b/src/vs/platform/agentHost/test/node/copilotTestEvents.ts
+@@ -1,40 +1,42 @@
++// @ts-nocheck
++// Chatero does not ship or activate the upstream Copilot provider.
+ /*---------------------------------------------------------------------------------------------
+  *  Copyright (c) Microsoft Corporation. All rights reserved.
+  *  Licensed under the MIT License. See License.txt in the project root for license information.
+  *--------------------------------------------------------------------------------------------*/
+ 
+ import type { Attachment, SessionEvent, SessionEventPayload, ToolExecutionCompleteContent } from '@github/copilot-sdk';
+ 
+ // =============================================================================
+ // Minimal session-event shapes for tests
+ // =============================================================================
+ // Production (`node/copilot/mapSessionEvents.ts`) consumes the real SDK
+ // `SessionEvent` union. The SDK members require envelope fields the mapper
+ // never reads (`parentId`, `timestamp`, `ephemeral`, …) plus stricter `data`
+ // shapes, which makes hand-written event literals noisy. These ergonomic
+ // subsets let tests construct only the fields the mapper actually reads; feed
+ // them to the production mapper via {@link toSessionEvents}.
+ 
+ export interface ISessionEventToolStart {
+ 	type: 'tool.execution_start';
+ 	/** Envelope-level sub-agent instance id; resolved to the parent tool call id via `subagent.started`. */
+ 	agentId?: string;
+ 	/** ISO 8601 envelope timestamp; the mapper uses it to restore turn timing. */
+ 	timestamp?: string;
+ 	data: {
+ 		toolCallId: string;
+ 		toolName: string;
+ 		arguments?: unknown;
+ 		mcpServerName?: string;
+ 		mcpToolName?: string;
+ 		toolDescription?: unknown;
+ 		/** @deprecated Use the envelope-level {@link ISessionEventToolStart.agentId} instead. */
+ 		parentToolCallId?: string;
+ 	};
+ }
+ 
+ export interface ISessionEventToolComplete {
+ 	type: 'tool.execution_complete';
+ 	/** Envelope-level sub-agent instance id. See {@link ISessionEventToolStart.agentId}. */
+ 	agentId?: string;
+ 	/** ISO 8601 envelope timestamp; the mapper uses it to restore turn timing. */
+diff --git a/src/vs/platform/agentHost/test/node/providerIntegration/copilotByokResponses.integrationTest.ts b/src/vs/platform/agentHost/test/node/providerIntegration/copilotByokResponses.integrationTest.ts
+index 93121cc4bf0..0333f50e3ea 100644
+--- a/src/vs/platform/agentHost/test/node/providerIntegration/copilotByokResponses.integrationTest.ts
++++ b/src/vs/platform/agentHost/test/node/providerIntegration/copilotByokResponses.integrationTest.ts
+@@ -1,40 +1,42 @@
++// @ts-nocheck
++// Chatero does not ship or activate the upstream Copilot provider.
+ /*---------------------------------------------------------------------------------------------
+  *  Copyright (c) Microsoft Corporation. All rights reserved.
+  *  Licensed under the MIT License. See License.txt in the project root for license information.
+  *--------------------------------------------------------------------------------------------*/
+ 
+ import assert from 'assert';
+ import { mkdtemp, rm } from 'fs/promises';
+ import { tmpdir } from 'os';
+ import { CopilotClient } from '@github/copilot-sdk';
+ import { Emitter } from '../../../../../base/common/event.js';
+ import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
+ import { NullLogService } from '../../../../log/common/log.js';
+ import type { IByokLmChatRequest, IByokLmModelInfo } from '../../../common/agentHostByokLm.js';
+ import { ByokLmBridgeRegistry } from '../../../node/byokLmBridgeRegistry.js';
+ import { ByokLmProxyService } from '../../../node/copilot/byokLmProxyService.js';
+ 
+ const REAL_SDK_ENABLED = process.env['AGENT_HOST_REAL_SDK'] === '1';
+ 
+ (REAL_SDK_ENABLED ? suite : suite.skip)('Agent Host Provider Integration - Copilot BYOK Responses', function () {
+ 
+ 	const store = ensureNoDisposablesAreLeakedInTestSuite();
+ 
+ 	test('real SDK consumes structured reasoning and text from the proxy', async function () {
+ 		this.timeout(120_000);
+ 
+ 		const sessionId = 'byok-responses-integration';
+ 		const baseDirectory = await mkdtemp(`${tmpdir()}/byok-responses-sdk-`);
+ 		const models = store.add(new Emitter<IByokLmModelInfo[]>());
+ 		const registry = new ByokLmBridgeRegistry();
+ 		const captured: IByokLmChatRequest[] = [];
+ 		const registration = registry.register('client', {
+ 			chat: async request => {
+ 				captured.push(request);
+ 				if (captured.length > 1) {
+ 					return {
+ 						responseId: 'resp_provider_2',
+ 						output: [{ type: 'message', content: [{ type: 'text', text: 'second' }] }],
+ 					};
+ 				}
+ 				return {
+diff --git a/src/vs/platform/agentHost/test/node/sessionCustomizationDiscovery.test.ts b/src/vs/platform/agentHost/test/node/sessionCustomizationDiscovery.test.ts
+index a3411404f1e..dd25ef63897 100644
+--- a/src/vs/platform/agentHost/test/node/sessionCustomizationDiscovery.test.ts
++++ b/src/vs/platform/agentHost/test/node/sessionCustomizationDiscovery.test.ts
+@@ -1,40 +1,42 @@
++// @ts-nocheck
++// Chatero does not ship or activate the upstream Copilot provider.
+ /*---------------------------------------------------------------------------------------------
+  *  Copyright (c) Microsoft Corporation. All rights reserved.
+  *  Licensed under the MIT License. See License.txt in the project root for license information.
+  *--------------------------------------------------------------------------------------------*/
+ 
+ import assert from 'assert';
+ import type { CopilotClient } from '@github/copilot-sdk';
+ import { DeferredPromise, raceTimeout, timeout } from '../../../../base/common/async.js';
+ import { VSBuffer } from '../../../../base/common/buffer.js';
+ import { CancellationToken, CancellationTokenSource } from '../../../../base/common/cancellation.js';
+ import { DisposableStore } from '../../../../base/common/lifecycle.js';
+ import { Schemas } from '../../../../base/common/network.js';
+ import { URI } from '../../../../base/common/uri.js';
+ import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
+ import { FileService } from '../../../files/common/fileService.js';
+ import { IFileService } from '../../../files/common/files.js';
+ import { InMemoryFileSystemProvider } from '../../../files/common/inMemoryFilesystemProvider.js';
+ import { TestInstantiationService } from '../../../instantiation/test/common/instantiationServiceMock.js';
+ import { ILogService, NullLogService } from '../../../log/common/log.js';
+ import { IAgentPluginManager } from '../../common/agentPluginManager.js';
+ import { DiscoveredType, SessionCustomizationDiscovery } from '../../node/copilot/sessionCustomizationDiscovery.js';
+ import type { AgentsDiscoverRequest } from '../../node/copilot/copilotRCP.js';
+ import { SessionPluginBundler } from '../../node/shared/sessionPluginBundler.js';
+ import { mapToParsedPlugin, toDiscoveredDirectoryCustomizations } from '../../node/copilot/copilotAgent.js';
+ 
+ suite('SessionCustomizationDiscovery', () => {
+ 
+ 	const disposables = new DisposableStore();
+ 	let fileService: FileService;
+ 	let instantiationService: TestInstantiationService;
+ 	let workspace: URI;
+ 	let userHome: URI;
+ 	let pluginBasePath: URI;
+ 
+ 	setup(() => {
+ 		fileService = disposables.add(new FileService(new NullLogService()));
+ 		const memFs = disposables.add(new InMemoryFileSystemProvider());
+ 		disposables.add(fileService.registerProvider(Schemas.inMemory, memFs));
+ 
+ 		instantiationService = disposables.add(new TestInstantiationService());
+diff --git a/src/vs/platform/agentHost/test/node/toolInstructions.test.ts b/src/vs/platform/agentHost/test/node/toolInstructions.test.ts
+index a1481e0025b..b82b3a6cffd 100644
+--- a/src/vs/platform/agentHost/test/node/toolInstructions.test.ts
++++ b/src/vs/platform/agentHost/test/node/toolInstructions.test.ts
+@@ -1,40 +1,42 @@
++// @ts-nocheck
++// Chatero does not ship or activate the upstream Copilot provider.
+ /*---------------------------------------------------------------------------------------------
+  *  Copyright (c) Microsoft Corporation. All rights reserved.
+  *  Licensed under the MIT License. See License.txt in the project root for license information.
+  *--------------------------------------------------------------------------------------------*/
+ 
+ import assert from 'assert';
+ import type { SectionOverride } from '@github/copilot-sdk';
+ import { resolveToolInstructionsOverride, toolSearchInstructionLines, universalToolInstructions } from '../../node/copilot/prompts/toolInstructions.js';
+ import { CLIENT_TOOL_SEARCH_REFERENCE_NAME } from '../../common/toolSearchConstants.js';
+ import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
+ 
+ /** Builds a `hasTool` predicate backed by the given available tool names. */
+ function hasTools(...names: string[]): (name: string) => boolean {
+ 	const set = new Set(names);
+ 	return name => set.has(name);
+ }
+ 
+ /** A gated tool-instruction line that renders `use <tool>` when `tool` is present. */
+ function lineFor(tool: string): (hasTool: (name: string) => boolean) => string | undefined {
+ 	return hasTool => hasTool(tool) ? `use ${tool}` : undefined;
+ }
+ 
+ suite('toolInstructions', () => {
+ 
+ 	ensureNoDisposablesAreLeakedInTestSuite();
+ 
+ 	suite('universalToolInstructions', () => {
+ 		test('joins applicable lines in order and drops gated-out ones', () => {
+ 			assert.strictEqual(universalToolInstructions(hasTools('a', 'c'), [lineFor('a'), lineFor('b'), lineFor('c')]), 'use a\nuse c');
+ 		});
+ 
+ 		test('returns undefined when no line applies (including the default registry when its lines do not apply)', () => {
+ 			assert.strictEqual(universalToolInstructions(hasTools('x'), [lineFor('a')]), undefined);
+ 			assert.strictEqual(universalToolInstructions(hasTools('a')), undefined);
+ 		});
+ 
+ 		test('renders the registered browser line from the default registry only when openBrowserPage + an agentic browser tool are present', () => {
+ 			assert.deepStrictEqual(
+ 				[
+ 					universalToolInstructions(hasTools('openBrowserPage', 'readPage')),
