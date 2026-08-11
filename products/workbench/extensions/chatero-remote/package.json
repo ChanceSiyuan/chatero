@@ -1,0 +1,67 @@
+{
+  "name": "chatero-remote",
+  "displayName": "Chatero Remote",
+  "description": "Open SSH Linux workspaces through a signed Chatero Remote Agent.",
+  "version": "0.1.0",
+  "publisher": "chatero",
+  "license": "MIT",
+  "private": true,
+  "engines": {
+    "vscode": "^1.132.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "extensionKind": [
+    "ui"
+  ],
+  "enabledApiProposals": [
+    "resolvers"
+  ],
+  "main": "./extension.cjs",
+  "activationEvents": [
+    "onResolveRemoteAuthority:chatero-remote"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": true
+    },
+    "virtualWorkspaces": true
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "chatero.remote.showLog",
+        "title": "Show Remote Log",
+        "category": "Chatero"
+      },
+      {
+        "command": "chatero.remote.openLoginTerminal",
+        "title": "Open SSH Login Terminal",
+        "category": "Chatero"
+      }
+    ],
+    "menus": {
+      "statusBar/remoteIndicator": [
+        {
+          "command": "chatero.remote.showLog",
+          "when": "remoteName == chatero-remote",
+          "group": "remote_50_chatero@1"
+        }
+      ]
+    },
+    "resourceLabelFormatters": [
+      {
+        "scheme": "vscode-remote",
+        "authority": "chatero-remote+*",
+        "formatting": {
+          "label": "${path}",
+          "separator": "/",
+          "tildify": true,
+          "workspaceSuffix": "Chatero SSH",
+          "workspaceTooltip": "Linux workspace connected through system OpenSSH"
+        }
+      }
+    ]
+  }
+}

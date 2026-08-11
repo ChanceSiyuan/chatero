@@ -24,5 +24,10 @@
   "builtInExtensions": [],
   "builtInExtensionsEnabledWithAutoUpdates": [],
   "defaultChatAgent": null,
+  "extensionEnabledApiProposals": {
+    "chatero.remote": [
+      "resolvers"
+    ]
+  },
   "trustedExtensionAuthAccess": {}
 }

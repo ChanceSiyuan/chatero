@@ -2,6 +2,51 @@
   "schemaVersion": 1,
   "extensions": [
     {
+      "id": "chatero.remote",
+      "files": [
+        {
+          "source": "products/workbench/extensions/chatero-remote/authority.mjs",
+          "destination": "extensions/chatero-remote/authority.mjs"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-remote/extension.cjs",
+          "destination": "extensions/chatero-remote/extension.cjs"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-remote/managed-connection.mjs",
+          "destination": "extensions/chatero-remote/managed-connection.mjs"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-remote/media/remote.svg",
+          "destination": "extensions/chatero-remote/media/remote.svg"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-remote/openssh-targets.mjs",
+          "destination": "extensions/chatero-remote/openssh-targets.mjs"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-remote/package.json",
+          "destination": "extensions/chatero-remote/package.json"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-remote/remote-agent-installer.mjs",
+          "destination": "extensions/chatero-remote/remote-agent-installer.mjs"
+        },
+        {
+          "source": "products/workbench/remote-agent/release-contract.mjs",
+          "destination": "extensions/chatero-remote/runtime/release-contract.mjs"
+        },
+        {
+          "source": "products/workbench/remote-agent/release-public-key.pem",
+          "destination": "extensions/chatero-remote/runtime/release-public-key.pem"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-remote/ssh-session.mjs",
+          "destination": "extensions/chatero-remote/ssh-session.mjs"
+        }
+      ]
+    },
+    {
       "id": "chatero.zotero",
       "files": [
         {
