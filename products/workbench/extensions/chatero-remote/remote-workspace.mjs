@@ -1,11 +1,14 @@
 import { posix } from "node:path";
 
-import { encodeAuthority } from "./authority.mjs";
+import { decodeAuthority, encodeAuthority } from "./authority.mjs";
 import { isPathInside, runFramedBridgeRequest } from "./remote-process.mjs";
 
 const MAX_REMOTE_PATH_BYTES = 16 * 1024;
 const MAX_HELPER_OUTPUT_BYTES = 64 * 1024;
+const MAX_RECENT_TARGETS = 20;
 const HELPER_OPERATIONS = new Set(["probe", "create", "realpath"]);
+const SSH_ALIAS = /^[A-Za-z0-9](?:[A-Za-z0-9._:@-]{0,253}[A-Za-z0-9])?$/u;
+const HOST_FINGERPRINT = /^SHA256:[A-Za-z0-9+/]{43}=?$/u;
 
 // This is constant product-owned source. Workspace paths never appear in this
 // argv string; they are canonical base64url fields in the helper's stdin JSON.
@@ -81,6 +84,128 @@ export function validateRemoteWorkspacePath(value) {
     throw new TypeError("remote workspace path exceeds 16 KiB");
   }
   return value;
+}
+
+/**
+ * Treat extension global state as untrusted input. Only the four fields that
+ * are safe to restore are retained; credentials, tokens, and evidence state
+ * are discarded even when an older or modified extension wrote them.
+ */
+export function sanitizeRecentTargets(value) {
+  if (!Array.isArray(value)) return Object.freeze([]);
+  const seen = new Set();
+  const result = [];
+  for (const candidate of value) {
+    if (result.length >= MAX_RECENT_TARGETS) break;
+    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) continue;
+    const { targetId, alias, lastPath, hostFingerprint } = candidate;
+    if (typeof targetId !== "string" || typeof alias !== "string" || !SSH_ALIAS.test(alias)
+      || targetId !== `profile:${alias}` || seen.has(targetId)) continue;
+    try {
+      // Keep persistence and authority parsing on the same opaque-id grammar.
+      encodeAuthority(targetId);
+      validateRemoteWorkspacePath(lastPath);
+    }
+    catch {
+      continue;
+    }
+    if (hostFingerprint !== null && hostFingerprint !== undefined
+      && (typeof hostFingerprint !== "string" || !HOST_FINGERPRINT.test(hostFingerprint))) continue;
+    seen.add(targetId);
+    result.push(Object.freeze({
+      targetId,
+      alias,
+      lastPath,
+      hostFingerprint: hostFingerprint ?? null,
+    }));
+  }
+  return Object.freeze(result);
+}
+
+export function selectActiveSessionAuthority(requestedAuthority, workspaceFolders) {
+  if (requestedAuthority !== undefined && requestedAuthority !== null) {
+    decodeAuthority(requestedAuthority);
+    return requestedAuthority;
+  }
+  if (!Array.isArray(workspaceFolders)) return null;
+  for (const folder of workspaceFolders) {
+    const uri = folder?.uri;
+    if (uri?.scheme !== "vscode-remote" || typeof uri.authority !== "string") continue;
+    try {
+      decodeAuthority(uri.authority);
+      return uri.authority;
+    }
+    catch {}
+  }
+  return null;
+}
+
+export function formatRemoteFailure(operation, { alias, error } = {}) {
+  if (!["resolve", "connect", "open-folder", "reconnect", "login"].includes(operation)) {
+    throw new TypeError("unknown Chatero Remote operation");
+  }
+  const target = typeof alias === "string" && SSH_ALIAS.test(alias) ? alias : "the SSH target";
+  const code = typeof error?.code === "string" ? error.code : null;
+  const cancelled = error?.name === "AbortError" || code === "ABORT_ERR";
+  let message;
+  if (cancelled) message = "The Chatero Remote operation was cancelled.";
+  else if (code === "SSH_AUTHENTICATION") {
+    message = `OpenSSH authentication requires user action for ${target}.`;
+  }
+  else if (code === "SSH_TRANSPORT") {
+    message = `The SSH transport for ${target} is unavailable.`;
+  }
+  else if (operation === "open-folder") {
+    message = `Chatero Remote could not open the selected folder on ${target}.`;
+  }
+  else if (operation === "reconnect") {
+    message = `Chatero Remote could not reconnect to ${target}.`;
+  }
+  else if (operation === "login") {
+    message = `Chatero Remote could not open the SSH login terminal for ${target}.`;
+  }
+  else message = `Chatero Remote could not connect to ${target}.`;
+  return Object.freeze({ message, resolverMessage: message });
+}
+
+export function formatRemoteStatus(state, { alias, path } = {}) {
+  const target = typeof alias === "string" && SSH_ALIAS.test(alias) ? alias : "SSH target";
+  let workspacePath = null;
+  try {
+    workspacePath = path === undefined ? null : validateRemoteWorkspacePath(path);
+  }
+  catch {}
+  const pathSuffix = workspacePath ? `\n${workspacePath}` : "";
+  const common = { command: "chatero.remote.showLog", isError: false };
+  switch (state) {
+    case "connecting":
+      return Object.freeze({
+        text: `$(sync~spin) Connecting to ${target}`,
+        tooltip: `Chatero Remote is connecting to ${target}`,
+        ...common,
+      });
+    case "connected":
+      return Object.freeze({
+        text: `$(remote) ${target}`,
+        tooltip: `Chatero Remote is connected to ${target}${pathSuffix}`,
+        ...common,
+      });
+    case "reconnecting":
+      return Object.freeze({
+        text: `$(sync~spin) Reconnecting to ${target}`,
+        tooltip: `Chatero Remote is reconnecting to ${target}${pathSuffix}`,
+        ...common,
+      });
+    case "error":
+      return Object.freeze({
+        text: `$(error) ${target}`,
+        tooltip: `Chatero Remote could not connect to ${target}`,
+        command: common.command,
+        isError: true,
+      });
+    default:
+      throw new TypeError("unknown Chatero Remote status");
+  }
 }
 
 function encodePath(value) {
@@ -219,7 +344,10 @@ export async function chooseRemoteWorkspace({
 
   // This is deliberately the same authority-session primitive used by the
   // resolver. There is no second authentication or unauthenticated probe path.
-  const connection = await ensureAuthoritySession(authority, { signal });
+  const connection = await ensureAuthoritySession(authority, {
+    signal,
+    workspacePath: validatedPath,
+  });
   const session = connection?.session ?? connection;
   const state = await probe(session, validatedPath, { signal });
   const created = [];
@@ -245,4 +373,5 @@ export async function chooseRemoteWorkspace({
 export const REMOTE_WORKSPACE_LIMITS = Object.freeze({
   pathBytes: MAX_REMOTE_PATH_BYTES,
   helperOutputBytes: MAX_HELPER_OUTPUT_BYTES,
+  recentTargets: MAX_RECENT_TARGETS,
 });

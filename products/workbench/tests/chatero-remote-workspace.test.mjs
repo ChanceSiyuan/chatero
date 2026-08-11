@@ -6,9 +6,11 @@ import {
   canonicalizeWorkspaceCwd,
   chooseRemoteWorkspace,
   createWorkspace,
+  formatRemoteFailure,
   formatRemoteStatus,
   probeWorkspace,
   sanitizeRecentTargets,
+  selectActiveSessionAuthority,
   validateRemoteWorkspacePath,
 } from "../extensions/chatero-remote/remote-workspace.mjs";
 
@@ -226,7 +228,37 @@ test("remote status formatter exposes connecting, connected, reconnecting, and e
     command: "chatero.remote.showLog",
     isError: false,
   });
-  assert.match(formatRemoteStatus("connected", { alias: "lab-a" }).text, /lab-a/);
-  assert.match(formatRemoteStatus("reconnecting", { alias: "lab-a" }).text, /Reconnect/i);
+  const connected = formatRemoteStatus("connected", { alias: "lab-a", path: "/srv/research" });
+  assert.match(connected.text, /lab-a/);
+  assert.match(connected.tooltip, /\/srv\/research/);
+  const reconnecting = formatRemoteStatus("reconnecting", { alias: "lab-a", path: "/srv/research" });
+  assert.match(reconnecting.text, /Reconnect/i);
+  assert.match(reconnecting.tooltip, /\/srv\/research/);
   assert.equal(formatRemoteStatus("error", { alias: "lab-a" }).isError, true);
+});
+
+test("remote UI failures never interpolate transport details, tokens, paths, or controls", () => {
+  const hostile = Object.assign(new Error("token=secret\n/private/id_ed25519\u0007"), {
+    code: "UNCLASSIFIED_REMOTE_FAILURE",
+  });
+  for (const operation of ["resolve", "connect", "open-folder", "reconnect", "login"]) {
+    const failure = formatRemoteFailure(operation, { alias: "lab-a", error: hostile });
+    assert.doesNotMatch(JSON.stringify(failure), /secret|id_ed25519|private|\u0007/i);
+    assert.doesNotMatch(failure.message, /[\u0000-\u001f\u007f]/u);
+    assert.match(failure.message, /lab-a|cancelled/i);
+  }
+});
+
+test("candidate connections never replace the authority of the actual workspace", () => {
+  const authorityA = encodeAuthority("profile:lab-a");
+  const authorityB = encodeAuthority("profile:lab-b");
+  const folders = [{ uri: { scheme: "vscode-remote", authority: authorityA, path: "/srv/a" } }];
+
+  // A picker may authenticate B before the user declines folder creation. The
+  // default authority remains derived solely from the actual A workspace.
+  const connectedCandidate = authorityB;
+  assert.ok(connectedCandidate);
+  assert.equal(selectActiveSessionAuthority(undefined, folders), authorityA);
+  assert.equal(selectActiveSessionAuthority(undefined, []), null);
+  assert.equal(selectActiveSessionAuthority(authorityB, folders), authorityB);
 });

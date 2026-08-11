@@ -33,6 +33,14 @@
           "destination": "extensions/chatero-remote/remote-agent-installer.mjs"
         },
         {
+          "source": "products/workbench/extensions/chatero-remote/remote-process.mjs",
+          "destination": "extensions/chatero-remote/remote-process.mjs"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-remote/remote-workspace.mjs",
+          "destination": "extensions/chatero-remote/remote-workspace.mjs"
+        },
+        {
           "source": "products/workbench/remote-agent/release-contract.mjs",
           "destination": "extensions/chatero-remote/runtime/release-contract.mjs"
         },

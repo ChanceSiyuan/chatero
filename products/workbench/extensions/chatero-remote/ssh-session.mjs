@@ -344,9 +344,8 @@ export class SshSession {
     return connection;
   }
 
-  openProcessBridge({ signal } = {}) {
+  openProcessBridge() {
     if (!this.ready) throw new Error("SSH session is not ready");
-    if (signal?.aborted) throw signal.reason ?? new Error("remote process was cancelled");
     const state = this.ready;
     const command = processBridgeRemoteCommand(state.installRelativePath);
     const process = this.spawn(OPENSSH_EXECUTABLE, [
@@ -367,7 +366,6 @@ export class SshSession {
     );
     this.processChannels.add(channel);
     channel.onClose(() => this.processChannels.delete(channel));
-    signal?.addEventListener("abort", () => channel.close(), { once: true });
     return channel;
   }
 

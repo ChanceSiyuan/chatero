@@ -31,6 +31,21 @@
   "contributes": {
     "commands": [
       {
+        "command": "chatero.remote.connect",
+        "title": "Connect to SSH…",
+        "category": "Chatero"
+      },
+      {
+        "command": "chatero.remote.openFolder",
+        "title": "Open Remote Folder…",
+        "category": "Chatero"
+      },
+      {
+        "command": "chatero.remote.reconnect",
+        "title": "Reconnect",
+        "category": "Chatero"
+      },
+      {
         "command": "chatero.remote.showLog",
         "title": "Show Remote Log",
         "category": "Chatero"
@@ -44,9 +59,24 @@
     "menus": {
       "statusBar/remoteIndicator": [
         {
+          "command": "chatero.remote.connect",
+          "when": "remoteName != chatero-remote",
+          "group": "remote_50_chatero-remote_connect"
+        },
+        {
+          "command": "chatero.remote.openFolder",
+          "when": "remoteName == chatero-remote",
+          "group": "remote_50_chatero-remote_open-folder"
+        },
+        {
+          "command": "chatero.remote.reconnect",
+          "when": "remoteName == chatero-remote",
+          "group": "remote_51_chatero-remote_reconnect"
+        },
+        {
           "command": "chatero.remote.showLog",
           "when": "remoteName == chatero-remote",
-          "group": "remote_50_chatero-remote_log"
+          "group": "remote_52_chatero-remote_log"
         }
       ]
     },

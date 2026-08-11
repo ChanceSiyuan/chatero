@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { once } from "node:events";
+import { EventEmitter, getEventListeners, once } from "node:events";
+import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 
@@ -8,6 +9,7 @@ import {
   RemoteProcessService,
   runFramedBridgeRequest,
 } from "../extensions/chatero-remote/remote-process.mjs";
+import { SshSession } from "../extensions/chatero-remote/ssh-session.mjs";
 
 function jsonLine(value) {
   return Buffer.from(`${JSON.stringify(value)}\n`, "utf8");
@@ -234,6 +236,51 @@ test("cancellation closes only its bridge channel", async () => {
   assert.equal(channel.closed, 1);
 });
 
+test("SshSession leaves cancellation ownership to the framed request and removes its listener", async () => {
+  class FakeSshProcess extends EventEmitter {
+    constructor() {
+      super();
+      this.stdin = new PassThrough();
+      this.stdout = new PassThrough();
+      this.stderr = new PassThrough();
+      this.killCalls = [];
+    }
+
+    kill(signal) {
+      this.killCalls.push(signal);
+      queueMicrotask(() => this.emit("close", null, signal));
+      return true;
+    }
+  }
+
+  for (const abortBeforeChannel of [false, true]) {
+    const process = new FakeSshProcess();
+    const session = new SshSession({ spawn: () => process });
+    session.generation = 1;
+    session.ready = {
+      alias: "lab-a",
+      generation: 1,
+      controlPath: "/tmp/chatero-test-control",
+      installRelativePath: `.chatero-server/bin/${"a".repeat(40)}/linux-x86_64`,
+    };
+    const controller = new AbortController();
+    if (abortBeforeChannel) controller.abort(new Error("turn cancelled before channel creation"));
+    const channel = session.openProcessBridge({ signal: controller.signal });
+    const running = runFramedBridgeRequest(channel, {
+      protocolVersion: 1,
+      command: "sleep",
+      args: ["60"],
+      cwd: "/srv/work",
+      env: {},
+    }, {}, { signal: controller.signal });
+
+    if (!abortBeforeChannel) controller.abort(new Error("turn cancelled"));
+    await assert.rejects(running, error => error?.name === "AbortError" && error?.code === "ABORT_ERR");
+    assert.deepEqual(process.killCalls, ["SIGTERM"]);
+    assert.equal(getEventListeners(controller.signal, "abort").length, 0);
+  }
+});
+
 test("stale connection generations reject and ignore late bytes", async () => {
   const fixture = serviceFixture();
   const output = [];
@@ -249,12 +296,26 @@ test("stale connection generations reject and ignore late bytes", async () => {
   assert.equal(fixture.channels[0].closed, 1);
 });
 
-test("the process bridge reaps a detached child group on SIGHUP", { skip: process.platform === "win32" }, async () => {
+async function withTimeout(promise, milliseconds, message) {
+  let timer;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(message)), milliseconds); }),
+    ]);
+  }
+  finally {
+    clearTimeout(timer);
+  }
+}
+
+async function assertBridgeReapsStubbornDescendant(signal, { leaderExitsFirst = false } = {}) {
   const bridgePath = fileURLToPath(new URL("../remote-agent/runtime/chatero-process-bridge.mjs", import.meta.url));
   const bridge = spawn(process.execPath, [bridgePath], { stdio: ["pipe", "pipe", "pipe"] });
-  let childPid = null;
+  let leaderPid = null;
+  let descendantPid = null;
   let buffered = "";
-  const pid = new Promise((resolve, reject) => {
+  const pids = new Promise((resolve, reject) => {
     bridge.stdout.on("data", bytes => {
       buffered += bytes.toString("utf8");
       for (;;) {
@@ -264,8 +325,10 @@ test("the process bridge reaps a detached child group on SIGHUP", { skip: proces
         buffered = buffered.slice(newline + 1);
         const value = JSON.parse(line);
         if (value.type === "stdout") {
-          childPid = Number(Buffer.from(value.data, "base64").toString("utf8").trim());
-          resolve(childPid);
+          const reported = JSON.parse(Buffer.from(value.data, "base64").toString("utf8").trim());
+          leaderPid = reported.leaderPid;
+          descendantPid = reported.descendantPid;
+          resolve(reported);
         }
         if (value.type === "error") reject(new Error(value.message));
       }
@@ -275,30 +338,64 @@ test("the process bridge reaps a detached child group on SIGHUP", { skip: proces
   bridge.stdin.write(`${JSON.stringify({
     protocolVersion: 1,
     command: process.execPath,
-    args: ["-e", "console.log(process.pid); setInterval(() => {}, 1000)"],
+    args: ["-e", String.raw`
+      const { spawn } = require("node:child_process");
+      const source = ${JSON.stringify(String.raw`
+        for (const signal of ["SIGHUP", "SIGINT", "SIGTERM"]) process.on(signal, () => {});
+        process.send?.("ready");
+        setInterval(() => {}, 1000);
+      `)};
+      const descendant = spawn(process.execPath, ["-e", source], {
+        stdio: ["ignore", ${leaderExitsFirst ? '"inherit"' : '"ignore"'}, ${leaderExitsFirst ? '"inherit"' : '"ignore"'}, "ipc"],
+      });
+      descendant.once("message", () => {
+        console.log(JSON.stringify({ leaderPid: process.pid, descendantPid: descendant.pid }));
+        ${leaderExitsFirst ? "setImmediate(() => process.exit(0));" : ""}
+      });
+      ${leaderExitsFirst ? "" : "setInterval(() => {}, 1000);"}
+    `],
     cwd: "/",
     env: {},
   })}\n`);
   bridge.stdin.end();
 
   try {
-    await Promise.race([
-      pid,
-      new Promise((_, reject) => setTimeout(() => reject(new Error("bridge child did not report its pid")), 3_000)),
-    ]);
-    bridge.kill("SIGHUP");
-    await Promise.race([
-      once(bridge, "exit"),
-      new Promise((_, reject) => setTimeout(() => reject(new Error("bridge did not exit")), 3_000)),
-    ]);
+    await withTimeout(pids, 3_000, "bridge descendants did not report their pids");
+    if (leaderExitsFirst) {
+      const deadline = Date.now() + 3_000;
+      for (;;) {
+        try { process.kill(leaderPid, 0); }
+        catch (error) {
+          if (error?.code === "ESRCH") break;
+          throw error;
+        }
+        if (Date.now() >= deadline) throw new Error("bridge group leader did not exit first");
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+    }
+    bridge.kill(signal);
+    await withTimeout(once(bridge, "exit"), 5_000, "bridge did not exit");
     await new Promise(resolve => setTimeout(resolve, 50));
-    assert.throws(() => process.kill(childPid, 0), error => error?.code === "ESRCH");
+    assert.throws(() => process.kill(descendantPid, 0), error => error?.code === "ESRCH");
   }
   finally {
     if (bridge.exitCode === null && bridge.signalCode === null) bridge.kill("SIGKILL");
-    if (childPid) {
-      try { process.kill(-childPid, "SIGKILL"); }
+    if (leaderPid) {
+      try { process.kill(-leaderPid, "SIGKILL"); }
+      catch {}
+    }
+    if (descendantPid) {
+      try { process.kill(descendantPid, "SIGKILL"); }
       catch {}
     }
   }
-});
+}
+
+for (const signal of ["SIGHUP", "SIGINT", "SIGTERM"]) {
+  test(`the process bridge reaps an ignoring descendant group on ${signal}`,
+    { skip: process.platform === "win32" }, () => assertBridgeReapsStubbornDescendant(signal));
+}
+
+test("the process bridge kills a surviving group after its leader exits before SIGHUP",
+  { skip: process.platform === "win32" }, () =>
+    assertBridgeReapsStubbornDescendant("SIGHUP", { leaderExitsFirst: true }));

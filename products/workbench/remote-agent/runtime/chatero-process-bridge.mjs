@@ -100,6 +100,36 @@ function forward(stream, type) {
   });
 }
 
+function childGroupExists() {
+  if (process.platform === "win32" || !child?.pid) return false;
+  try {
+    process.kill(-child.pid, 0);
+    return true;
+  }
+  catch (error) {
+    if (error?.code === "ESRCH") return false;
+    // EPERM still proves that a process group with this id exists.
+    if (error?.code === "EPERM") return true;
+    throw error;
+  }
+}
+
+function clearForceKillIfGroupExited() {
+  if (!forceKillTimer) return;
+  let exists = false;
+  try {
+    exists = childGroupExists();
+  }
+  catch (error) {
+    fail(error);
+    return;
+  }
+  if (!exists) {
+    clearTimeout(forceKillTimer);
+    forceKillTimer = null;
+  }
+}
+
 function launch(request, remainder) {
   const options = {
     cwd: request.cwd,
@@ -115,10 +145,9 @@ function launch(request, remainder) {
   forward(child.stderr, "stderr");
   child.once("error", fail);
   child.once("close", (code, signal) => {
-    if (forceKillTimer) {
-      clearTimeout(forceKillTimer);
-      forceKillTimer = null;
-    }
+    // A detached grandchild can keep the process group alive after the direct
+    // child closes. Keep the referenced second-phase timer in that case.
+    if (forceKillTimer) clearForceKillIfGroupExited();
     if (settled) {
       return;
     }
@@ -176,18 +205,22 @@ function terminateChildGroup(signal) {
   if (terminationSignal) return;
   terminationSignal = signal;
   process.exitCode = SIGNAL_EXIT_CODES[signal];
-  if (!child || child.exitCode !== null || child.signalCode !== null) {
-    process.stdin.destroy();
-    return;
-  }
+  process.stdin.destroy();
+  if (!child) return;
   try {
     if (process.platform === "win32") {
+      if (child.exitCode !== null || child.signalCode !== null) return;
       child.kill(signal === "SIGHUP" ? "SIGTERM" : signal);
     }
     else {
+      // The group may outlive its leader. ChildProcess.exitCode is therefore
+      // not a sufficient liveness check while descendants retain inherited
+      // pipes or continue running in the detached group.
+      if (!childGroupExists()) return;
       process.kill(-child.pid, signal);
     }
     forceKillTimer = setTimeout(() => {
+      forceKillTimer = null;
       try {
         if (process.platform === "win32") child.kill("SIGKILL");
         else process.kill(-child.pid, "SIGKILL");
@@ -196,7 +229,6 @@ function terminateChildGroup(signal) {
         if (error?.code !== "ESRCH") fail(error);
       }
     }, 2_000);
-    forceKillTimer.unref();
   }
   catch (error) {
     if (error?.code !== "ESRCH") fail(error);

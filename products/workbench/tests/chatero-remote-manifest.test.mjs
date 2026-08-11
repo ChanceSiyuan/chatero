@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
+import Module, { createRequire } from "node:module";
 import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { test } from "node:test";
+
+import { encodeAuthority } from "../extensions/chatero-remote/authority.mjs";
 
 const extensionRoot = new URL("../extensions/chatero-remote/", import.meta.url);
 
@@ -27,9 +31,15 @@ test("the extension registers the native managed authority and publishes the bou
   const source = await readFile(new URL("extension.cjs", extensionRoot), "utf8");
   assert.match(source, /registerRemoteAuthorityResolver\("chatero-remote"/);
   assert.match(source, /new vscode\.ManagedResolvedAuthority/);
-  for (const method of ["ensureAuthoritySession", "getActiveSession", "runProcess", "stageEvidence", "revokeEvidence"]) {
+  for (const method of ["getActiveSession", "runProcess", "stageEvidence", "revokeEvidence"]) {
     assert.match(source, new RegExp(method));
   }
+  const publicApi = source.slice(source.lastIndexOf("\n  return Object.freeze({"));
+  assert.deepEqual(
+    [...publicApi.matchAll(/^ {4}(?:async )?([A-Za-z][A-Za-z0-9]*)\(/gmu)].map(match => match[1]),
+    ["getActiveSession", "runProcess", "stageEvidence", "revokeEvidence"],
+  );
+  assert.doesNotMatch(publicApi, /ensureAuthoritySession|openProcessBridge/);
   assert.doesNotMatch(source, /StrictHostKeyChecking=no|password|Microsoft Remote/i);
   assert.match(source, /showErrorMessage/);
   assert.match(source, /Show Remote Log/);
@@ -39,6 +49,83 @@ test("the extension registers the native managed authority and publishes the bou
   assert.match(source, /isWorkspaceTrusted:\s*\(\)\s*=>\s*vscode\.workspace\.isTrusted/);
   assert.match(source, /vscode\.Uri\.from/);
   assert.match(source, /vscode\.openFolder/);
+});
+
+test("extension activation derives status from the real remote workspace without cached candidate state", async () => {
+  const commands = new Map();
+  const workspaceListeners = new Set();
+  const status = {
+    text: "",
+    tooltip: "",
+    command: null,
+    backgroundColor: undefined,
+    shown: 0,
+    hidden: 0,
+    show() { this.shown++; },
+    hide() { this.hidden++; },
+    dispose() {},
+  };
+  const output = { appendLine() {}, show() {}, dispose() {} };
+  const authority = encodeAuthority("profile:lab-a");
+  const vscode = {
+    StatusBarAlignment: { Left: 1 },
+    ThemeColor: class ThemeColor {},
+    window: {
+      createOutputChannel: () => output,
+      createStatusBarItem: () => status,
+    },
+    workspace: {
+      isTrusted: true,
+      workspaceFolders: [{ uri: { scheme: "vscode-remote", authority, path: "/srv/a" } }],
+      registerRemoteAuthorityResolver: () => ({ dispose() {} }),
+      onDidChangeWorkspaceFolders(listener) {
+        workspaceListeners.add(listener);
+        return { dispose: () => workspaceListeners.delete(listener) };
+      },
+    },
+    commands: {
+      registerCommand(id, callback) {
+        commands.set(id, callback);
+        return { dispose: () => commands.delete(id) };
+      },
+      executeCommand: async () => undefined,
+    },
+    Uri: { from: value => Object.freeze({ ...value }) },
+  };
+  const context = {
+    subscriptions: [],
+    globalState: {
+      get: () => [],
+      update: async () => undefined,
+    },
+    asAbsolutePath: value => value,
+  };
+  const require = createRequire(import.meta.url);
+  const extensionPath = fileURLToPath(new URL("../extensions/chatero-remote/extension.cjs", import.meta.url));
+  delete require.cache[require.resolve(extensionPath)];
+  const originalLoad = Module._load;
+  let extension;
+  Module._load = function load(request, parent, isMain) {
+    if (request === "vscode") return vscode;
+    return originalLoad.call(this, request, parent, isMain);
+  };
+  try {
+    extension = require(extensionPath);
+  }
+  finally {
+    Module._load = originalLoad;
+  }
+
+  const api = await extension.activate(context);
+  assert.deepEqual(Object.keys(api), ["getActiveSession", "runProcess", "stageEvidence", "revokeEvidence"]);
+  assert.match(status.text, /Reconnect.*lab-a/i);
+  assert.match(String(status.tooltip), /\/srv\/a/);
+  assert.equal(commands.has("chatero.remote.connect"), true);
+
+  vscode.workspace.workspaceFolders = [];
+  for (const listener of workspaceListeners) listener();
+  assert.equal(status.hidden, 1);
+  for (const disposable of context.subscriptions.reverse()) disposable?.dispose?.();
 });
 
 test("first-party materialization and product proposal allowlist include chatero.remote exactly", async () => {
@@ -73,9 +160,16 @@ test("first-party materialization and product proposal allowlist include chatero
 test("remote indicator contribution uses Code-OSS remote group grammar", async () => {
   const manifest = JSON.parse(await readFile(new URL("package.json", extensionRoot), "utf8"));
   const entries = manifest.contributes.menus["statusBar/remoteIndicator"];
-  assert.equal(entries.length, 1);
-  assert.match(entries[0].group, /^remote_\d\d_[a-z][a-z0-9+.-]*_.+$/);
-  assert.equal(entries[0].group.includes("chatero-remote"), true);
+  assert.deepEqual(entries.map(value => [value.command, value.when]), [
+    ["chatero.remote.connect", "remoteName != chatero-remote"],
+    ["chatero.remote.openFolder", "remoteName == chatero-remote"],
+    ["chatero.remote.reconnect", "remoteName == chatero-remote"],
+    ["chatero.remote.showLog", "remoteName == chatero-remote"],
+  ]);
+  for (const entry of entries) {
+    assert.match(entry.group, /^remote_\d\d_[a-z][a-z0-9+.-]*_.+$/);
+    assert.equal(entry.group.includes("chatero-remote"), true);
+  }
 });
 
 test("agent launch policy enables only the embedded Codex SDK and a private agent-host path", async () => {
