@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
+import { Writable } from "node:stream";
 import { test } from "node:test";
 
 import { decodeAuthority, encodeAuthority } from "../extensions/chatero-remote/authority.mjs";
@@ -13,6 +14,7 @@ import {
 } from "../extensions/chatero-remote/managed-connection.mjs";
 import {
   parseRemotePlatform,
+  pumpInput,
   RemoteAgentInstaller,
 } from "../extensions/chatero-remote/remote-agent-installer.mjs";
 import { SshSession } from "../extensions/chatero-remote/ssh-session.mjs";
@@ -165,6 +167,35 @@ test("managed connection keeps stderr away from protocol bytes and exposes backp
   assert.equal(process.stdin.endCount, 1);
 });
 
+test("managed connection waits for process status before graceful end and reports every abnormal exit", () => {
+  const failedProcess = new FakeProcess();
+  const failed = createManagedConnection(failedProcess);
+  const failedEvents = [];
+  failed.onDidEnd(() => failedEvents.push("end"));
+  failed.onDidClose(error => failedEvents.push(error ? `close:${error.message}` : "close:ok"));
+  failedProcess.stdout.emit("end");
+  assert.deepEqual(failedEvents, []);
+  failedProcess.emit("close", 23, null);
+  assert.deepEqual(failedEvents, ["close:SSH channel exited with code 23"]);
+
+  const signaledProcess = new FakeProcess();
+  const signaled = createManagedConnection(signaledProcess);
+  const signals = [];
+  signaled.onDidEnd(() => signals.push("end"));
+  signaled.onDidClose(error => signals.push(error?.message));
+  signaledProcess.stdout.emit("end");
+  signaledProcess.emit("close", null, "SIGKILL");
+  assert.deepEqual(signals, ["SSH channel exited with signal SIGKILL"]);
+
+  const cleanProcess = new FakeProcess();
+  const clean = createManagedConnection(cleanProcess);
+  const cleanEvents = [];
+  clean.onDidEnd(() => cleanEvents.push("end"));
+  clean.onDidClose(error => cleanEvents.push(error ? "close:error" : "close:ok"));
+  cleanProcess.emit("close", 0, null);
+  assert.deepEqual(cleanEvents, ["end", "close:ok"]);
+});
+
 test("a master loss closes dependent channels once and stale epochs are ignored", async () => {
   const masterProcesses = [];
   const channelProcesses = [];
@@ -227,6 +258,66 @@ test("a master loss closes dependent channels once and stale epochs are ignored"
   assert.doesNotMatch(bridgeArgs.join(" "), /token-|\/srv\/|codex exec/);
 });
 
+test("session cache is bound to effective SSH configuration and forwarding failure invalidates a dead server", async () => {
+  const masters = [];
+  const channels = [];
+  const spawn = (_command, args) => {
+    const process = new FakeProcess();
+    (args.includes("-MN") ? masters : channels).push(process);
+    return process;
+  };
+  let runtime = 0;
+  let installs = 0;
+  const session = new SshSession({
+    spawn,
+    createMasterRuntime: async () => ({
+      directory: `/tmp/chatero-endpoint-${++runtime}`,
+      controlPath: `/tmp/chatero-endpoint-${runtime}/master.sock`,
+      logPath: `/tmp/chatero-endpoint-${runtime}/master.log`,
+    }),
+    waitForMaster: async () => ({ hostFingerprint: `SHA256:${"A".repeat(43)}` }),
+    installer: {
+      async ensureInstalled() {
+        installs++;
+        return {
+          remotePort: 42000 + installs,
+          connectionToken: `token-${"x".repeat(32)}-${installs}`,
+          agentHostPath: `/run/user/1000/chatero-${installs}.sock`,
+          installRelativePath: `.chatero-server/bin/${"a".repeat(40)}/linux-x86_64`,
+        };
+      },
+    },
+  });
+  const target = overrides => ({
+    alias: "lab-a",
+    hostname: "host-a.example",
+    user: "alice",
+    port: 22,
+    identityFiles: ["~/.ssh/id_a"],
+    proxyJump: null,
+    proxyCommand: null,
+    ...overrides,
+  });
+
+  await session.ensureReady({ target: target(), release: {} });
+  await session.ensureReady({ target: target({ hostname: "host-b.example" }), release: {} });
+  assert.equal(masters.length, 2);
+  assert.equal(masters[0].killCount, 1);
+  assert.equal(installs, 2);
+
+  const forwarding = session.makeConnection();
+  let forwardingError;
+  forwarding.onDidClose(error => { forwardingError = error; });
+  channels.at(-1).stdout.emit("end");
+  channels.at(-1).emit("close", 255, null);
+  assert.match(forwardingError.message, /code 255/);
+  assert.equal(session.getPublicSession(), null);
+
+  await session.ensureReady({ target: target({ hostname: "host-b.example" }), release: {} });
+  assert.equal(masters.length, 3);
+  assert.equal(installs, 3);
+});
+
 test("host fingerprint selection ignores an earlier ProxyJump handshake", () => {
   const proxy = "SHA256:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
   const target = "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
@@ -281,11 +372,18 @@ test("installer verifies the signed release before upload and keeps installation
         calls.push(["part", input]);
         return 3;
       },
+      async probeInstalled(input) {
+        calls.push(["installed", input]);
+        return false;
+      },
       async upload(input) {
         calls.push(["upload", input]);
       },
       async finalize(input) {
         calls.push(["finalize", input]);
+      },
+      async discardPart(input) {
+        calls.push(["discard", input]);
       },
       async createRuntime(input) {
         calls.push(["runtime", { ...input, connectionToken: "[redacted]" }]);
@@ -293,6 +391,7 @@ test("installer verifies the signed release before upload and keeps installation
       },
     },
     randomToken: () => privateToken,
+    randomTransactionId: () => "c".repeat(24),
   });
   const release = {
     manifestText: "signed",
@@ -323,4 +422,168 @@ test("installer verifies the signed release before upload and keeps installation
     tuple: "linux-x86_64",
     hostPlatform: { os: "linux", arch: "x86_64", kernel: "6.8", tuple: "linux-x86_64" },
   });
+});
+
+function releaseFixture() {
+  return {
+    manifestText: "signed",
+    signature: Buffer.from("signature"),
+    publicKey: "public",
+    readArtifact: async () => Buffer.from("artifact"),
+    manifest: {
+      codeOssCommit: "a".repeat(40),
+      artifacts: [{
+        tuple: "linux-x86_64",
+        filename: "chatero-agent-linux-x86_64.tar.gz",
+        sha256: "b".repeat(64),
+        size: 8,
+      }],
+    },
+  };
+}
+
+test("installer probes a valid digest before upload and skips the archive transaction", async () => {
+  const calls = [];
+  const installer = new RemoteAgentInstaller({
+    verifyRelease: async release => release.manifest,
+    selectArtifact: manifest => manifest.artifacts[0],
+    randomToken: () => "t".repeat(43),
+    randomTransactionId: () => "d".repeat(24),
+    remote: {
+      async probe() { return "Linux\nx86_64\n6.8\n"; },
+      async probeInstalled(input) { calls.push(["installed", input]); return true; },
+      async partSize() { throw new Error("valid install must not inspect a partial"); },
+      async upload() { throw new Error("valid install must not upload"); },
+      async finalize() { throw new Error("valid install must not finalize"); },
+      async discardPart() { throw new Error("valid install must not discard"); },
+      async createRuntime() { return { remotePort: 41001, agentHostPath: "/run/user/1000/a.sock" }; },
+    },
+  });
+
+  await installer.ensureInstalled({ alias: "lab-a", controlPath: "/tmp/master.sock", release: releaseFixture() });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][1].sha256, "b".repeat(64));
+});
+
+test("installer uses a unique transaction and discards a corrupt completed partial before retry", async () => {
+  const calls = [];
+  let partProbe = 0;
+  let finalize = 0;
+  const corrupt = new Error("remote artifact digest mismatch");
+  corrupt.remoteExitCode = 76;
+  const installer = new RemoteAgentInstaller({
+    verifyRelease: async release => release.manifest,
+    selectArtifact: manifest => manifest.artifacts[0],
+    randomToken: () => "t".repeat(43),
+    randomTransactionId: () => "e".repeat(24),
+    remote: {
+      async probe() { return "Linux\nx86_64\n6.8\n"; },
+      async probeInstalled() { return false; },
+      async partSize(input) { calls.push(["part", input.partRelativePath]); return partProbe++ === 0 ? 8 : 0; },
+      async upload(input) { calls.push(["upload", input.partRelativePath, input.offset]); },
+      async finalize(input) {
+        calls.push(["finalize", input.partRelativePath]);
+        if (finalize++ === 0) throw corrupt;
+      },
+      async discardPart(input) { calls.push(["discard", input.partRelativePath]); },
+      async createRuntime() { return { remotePort: 41002, agentHostPath: "/run/user/1000/b.sock" }; },
+    },
+  });
+
+  await installer.ensureInstalled({ alias: "lab-a", controlPath: "/tmp/master.sock", release: releaseFixture() });
+  const paths = calls.filter(call => ["part", "upload", "finalize", "discard"].includes(call[0])).map(call => call[1]);
+  assert.ok(paths.every(path => path.includes("/.transactions/eeeeeeeeeeeeeeeeeeeeeeee.part")));
+  assert.deepEqual(calls.map(call => call[0]), ["part", "finalize", "discard", "part", "upload", "finalize"]);
+});
+
+test("installer reuses its transaction after an interrupted upload and resumes from the remote byte count", async () => {
+  const paths = [];
+  const offsets = [];
+  let transactionIds = 0;
+  let invocation = 0;
+  const transactionState = new Map();
+  const interrupted = new Error("forwarding lost");
+  interrupted.code = "SSH_TRANSPORT";
+  const remote = {
+    async probe() { return "Linux\nx86_64\n6.8\n"; },
+    async probeInstalled() { return false; },
+    async partSize(input) {
+      paths.push(input.partRelativePath);
+      return invocation++ === 0 ? 0 : 5;
+    },
+    async upload(input) {
+      paths.push(input.partRelativePath);
+      offsets.push(input.offset);
+      if (offsets.length === 1) throw interrupted;
+    },
+    async finalize(input) { paths.push(input.partRelativePath); },
+    async discardPart() {},
+    async createRuntime() { return { remotePort: 41003, agentHostPath: "/run/user/1000/c.sock" }; },
+  };
+  const createInstaller = () => new RemoteAgentInstaller({
+    verifyRelease: async release => release.manifest,
+    selectArtifact: manifest => manifest.artifacts[0],
+    randomToken: () => "t".repeat(43),
+    randomTransactionId: () => `${++transactionIds}`.padStart(24, "0"),
+    transactionState,
+    remote,
+  });
+
+  await assert.rejects(
+    createInstaller().ensureInstalled({ alias: "lab-a", controlPath: "/tmp/master.sock", release: releaseFixture() }),
+    /forwarding lost/,
+  );
+  await createInstaller().ensureInstalled({ alias: "lab-a", controlPath: "/tmp/master.sock", release: releaseFixture() });
+  assert.equal(transactionIds, 1);
+  assert.ok(paths.every(path => path === paths[0]));
+  assert.deepEqual(offsets, [0, 5]);
+});
+
+test("concurrent installer calls use separate upload transaction paths", async () => {
+  const paths = [];
+  let transactionIds = 10;
+  let releaseUploads;
+  const bothUploading = new Promise(resolve => { releaseUploads = resolve; });
+  const installer = new RemoteAgentInstaller({
+    verifyRelease: async release => release.manifest,
+    selectArtifact: manifest => manifest.artifacts[0],
+    randomToken: () => "t".repeat(43),
+    randomTransactionId: () => `${++transactionIds}`.padStart(24, "0"),
+    remote: {
+      async probe() { return "Linux\nx86_64\n6.8\n"; },
+      async probeInstalled() { return false; },
+      async partSize() { return 0; },
+      async upload(input) {
+        paths.push(input.partRelativePath);
+        if (paths.length === 2) releaseUploads();
+        await bothUploading;
+      },
+      async finalize() {},
+      async discardPart() {},
+      async createRuntime() { return { remotePort: 41004, agentHostPath: "/run/user/1000/d.sock" }; },
+    },
+  });
+
+  await Promise.all([
+    installer.ensureInstalled({ alias: "lab-a", controlPath: "/tmp/master.sock", release: releaseFixture() }),
+    installer.ensureInstalled({ alias: "lab-a", controlPath: "/tmp/master.sock", release: releaseFixture() }),
+  ]);
+  assert.equal(new Set(paths).size, 2);
+});
+
+test("stdin pumping rejects channel loss and abort while backpressured", async () => {
+  const blocked = () => new Writable({
+    highWaterMark: 1,
+    write(_chunk, _encoding, _callback) {},
+  });
+  const lost = blocked();
+  const lostPump = pumpInput(lost, [Buffer.alloc(1024)]);
+  lost.destroy(new Error("SSH stdin closed"));
+  await assert.rejects(lostPump, /SSH stdin closed/);
+
+  const cancelled = blocked();
+  const controller = new AbortController();
+  const cancelledPump = pumpInput(cancelled, [Buffer.alloc(1024)], controller.signal);
+  controller.abort(new Error("upload cancelled"));
+  await assert.rejects(cancelledPump, /upload cancelled|aborted/i);
 });

@@ -76,9 +76,6 @@ export function createManagedConnection(process, {
   process.stdout.on("data", bytes => {
     if (!closed && isCurrent()) dataEvent.fire(Uint8Array.from(bytes));
   });
-  process.stdout.on("end", () => {
-    if (isCurrent()) emitEnd();
-  });
   process.stderr.on("data", bytes => {
     if (isCurrent()) log(redactRemoteLog(Buffer.from(bytes).toString("utf8")));
   });
@@ -86,9 +83,21 @@ export function createManagedConnection(process, {
   process.on("error", error => {
     if (isCurrent()) emitClose(error instanceof Error ? error : new Error(String(error)));
   });
-  process.on("close", code => {
+  process.on("close", (code, signal) => {
     resolveDrain();
-    if (isCurrent()) emitClose(code && code !== 0 ? new Error(`SSH channel exited with code ${code}`) : undefined);
+    if (!isCurrent()) return;
+    if (signal) {
+      emitClose(new Error(`SSH channel exited with signal ${signal}`));
+      return;
+    }
+    if (code !== 0) {
+      emitClose(new Error(code === null
+        ? "SSH channel exited without a status"
+        : `SSH channel exited with code ${code}`));
+      return;
+    }
+    emitEnd();
+    emitClose(undefined);
   });
 
   const connection = {

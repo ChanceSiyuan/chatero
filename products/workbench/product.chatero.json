@@ -25,7 +25,7 @@
   "builtInExtensionsEnabledWithAutoUpdates": [],
   "defaultChatAgent": null,
   "extensionEnabledApiProposals": {
-    "chatero.remote": [
+    "chatero.chatero-remote": [
       "resolvers"
     ]
   },

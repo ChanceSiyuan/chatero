@@ -23,6 +23,8 @@ test("the extension registers the native managed authority and publishes the bou
     assert.match(source, new RegExp(method));
   }
   assert.doesNotMatch(source, /StrictHostKeyChecking=no|password|Microsoft Remote/i);
+  assert.match(source, /showErrorMessage/);
+  assert.match(source, /Show Remote Log/);
 });
 
 test("first-party materialization and product proposal allowlist include chatero.remote exactly", async () => {
@@ -45,9 +47,19 @@ test("first-party materialization and product proposal allowlist include chatero
   assert.deepEqual(destinations, actualFiles);
 
   const product = JSON.parse(await readFile(new URL("../product.chatero.json", import.meta.url), "utf8"));
-  assert.deepEqual(product.extensionEnabledApiProposals, { "chatero.remote": ["resolvers"] });
+  const packageManifest = JSON.parse(await readFile(new URL("package.json", extensionRoot), "utf8"));
+  const actualExtensionId = `${packageManifest.publisher}.${packageManifest.name}`;
+  assert.deepEqual(product.extensionEnabledApiProposals, { [actualExtensionId]: ["resolvers"] });
   const serialized = JSON.stringify(product);
   assert.doesNotMatch(serialized, /marketplace\.visualstudio\.com|ms-vscode-remote\.remote-ssh|ms-python\.vscode-pylance/i);
+});
+
+test("remote indicator contribution uses Code-OSS remote group grammar", async () => {
+  const manifest = JSON.parse(await readFile(new URL("package.json", extensionRoot), "utf8"));
+  const entries = manifest.contributes.menus["statusBar/remoteIndicator"];
+  assert.equal(entries.length, 1);
+  assert.match(entries[0].group, /^remote_\d\d_[a-z][a-z0-9+.-]*_.+$/);
+  assert.equal(entries[0].group.includes("chatero-remote"), true);
 });
 
 test("agent launch policy enables only the embedded Codex SDK and a private agent-host path", async () => {

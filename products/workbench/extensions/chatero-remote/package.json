@@ -46,7 +46,7 @@
         {
           "command": "chatero.remote.showLog",
           "when": "remoteName == chatero-remote",
-          "group": "remote_50_chatero@1"
+          "group": "remote_50_chatero-remote_log"
         }
       ]
     },

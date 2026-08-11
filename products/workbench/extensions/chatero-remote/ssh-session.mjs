@@ -135,6 +135,19 @@ function processBridgeRemoteCommand(installRelativePath) {
   return `exec "$HOME/${installRelativePath}/node" "$HOME/${installRelativePath}/bin/chatero-process-bridge.mjs"`;
 }
 
+function targetIdentity(target) {
+  if (!target || typeof target !== "object") throw new TypeError("resolved SSH target is required");
+  return JSON.stringify({
+    alias: assertConcreteAlias(target.alias),
+    hostname: target.hostname ?? null,
+    user: target.user ?? null,
+    port: target.port ?? null,
+    identityFiles: Array.isArray(target.identityFiles) ? [...target.identityFiles] : [],
+    proxyJump: target.proxyJump ?? null,
+    proxyCommand: target.proxyCommand ?? null,
+  });
+}
+
 function makeRawChannel(process, generation, isCurrent, log) {
   let closed = false;
   const closeListeners = new Set();
@@ -208,19 +221,33 @@ export class SshSession {
     this.connections = new Set();
     this.processChannels = new Set();
     this.connecting = null;
+    this.connectingIdentity = null;
+    this.installTransactions = new Map();
   }
 
   ensureReady(input) {
-    if (this.ready && this.ready.alias === input.target.alias) {
+    const identity = targetIdentity(input.target);
+    if (this.ready && this.ready.targetIdentity === identity) {
       return Promise.resolve(this.publicReadyState());
     }
-    if (this.connecting) return this.connecting;
-    this.connecting = this.#connect(input).finally(() => { this.connecting = null; });
-    return this.connecting;
+    if (this.connecting) {
+      if (this.connectingIdentity === identity) return this.connecting;
+      return this.connecting.catch(() => {}).then(() => this.ensureReady(input));
+    }
+    this.connectingIdentity = identity;
+    const connecting = this.#connect(input).finally(() => {
+      if (this.connecting === connecting) {
+        this.connecting = null;
+        this.connectingIdentity = null;
+      }
+    });
+    this.connecting = connecting;
+    return connecting;
   }
 
   async #connect({ target, release, signal }) {
     const alias = assertConcreteAlias(target?.alias);
+    const identity = targetIdentity(target);
     if (this.ready || this.master) await this.dispose();
     if (signal?.aborted) throw signal.reason ?? new Error("SSH connection was cancelled");
     const runtime = await this.createMasterRuntime();
@@ -244,6 +271,7 @@ export class SshSession {
         alias,
         controlPath: runtime.controlPath,
         log: this.log,
+        transactionState: this.installTransactions,
       }) ?? new RemoteAgentInstaller({
         remote: new SshRemoteAgentRuntime({
           alias,
@@ -251,6 +279,7 @@ export class SshSession {
           spawn: this.spawn,
           log: this.log,
         }),
+        transactionState: this.installTransactions,
       });
       const installed = await installer.ensureInstalled({
         alias,
@@ -261,6 +290,7 @@ export class SshSession {
       });
       this.ready = Object.freeze({
         alias,
+        targetIdentity: identity,
         controlPath: runtime.controlPath,
         generation,
         hostFingerprint: authenticated.hostFingerprint,
@@ -307,7 +337,10 @@ export class SshSession {
       log: this.log,
     });
     this.connections.add(connection);
-    connection.onDidClose(() => this.connections.delete(connection));
+    connection.onDidClose(error => {
+      this.connections.delete(connection);
+      if (error) this.#invalidate(state.generation, error);
+    });
     return connection;
   }
 
@@ -364,4 +397,4 @@ export class SshSession {
   }
 }
 
-export { masterArguments, parseAuthenticatedFingerprint, processBridgeRemoteCommand };
+export { masterArguments, parseAuthenticatedFingerprint, processBridgeRemoteCommand, targetIdentity };

@@ -150,7 +150,14 @@ async function activate(context) {
         if (error?.code === "SSH_TRANSPORT") {
           throw vscode.RemoteAuthorityResolverError.TemporarilyNotAvailable("The SSH transport is unavailable");
         }
-        throw vscode.RemoteAuthorityResolverError.NotAvailable(error?.message ?? "Chatero Remote could not connect", true);
+        const message = error?.message ?? "Chatero Remote could not connect";
+        const action = "Show Remote Log";
+        const selected = await vscode.window.showErrorMessage(
+          `Chatero Remote could not connect: ${message}`,
+          action,
+        );
+        if (selected === action) output.show();
+        throw vscode.RemoteAuthorityResolverError.NotAvailable(message, true);
       }
     },
   };

@@ -1,6 +1,8 @@
 import { spawn as spawnChild } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { isAbsolute } from "node:path";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 
 import { assertConcreteAlias, OPENSSH_EXECUTABLE } from "./openssh-targets.mjs";
 
@@ -8,6 +10,7 @@ const MAX_REMOTE_OUTPUT = 1024 * 1024;
 const SAFE_CONTROL_PATH = /^\/[A-Za-z0-9_./-]+$/;
 const SAFE_RELEASE_TOKEN = /^[A-Za-z0-9._/-]+$/;
 const SHA256 = /^[0-9a-f]{64}$/;
+const TRANSACTION_ID = /^[0-9a-f]{24}$/;
 
 export const REMOTE_PLATFORM_PROBE = "uname -s; uname -m; uname -r";
 
@@ -39,6 +42,26 @@ const UPLOAD_SCRIPT = [
   "chmod 600 \"$p\"",
 ].join("; ");
 
+const PROBE_INSTALLED_SCRIPT = [
+  "set -eu",
+  "destination=\"$HOME/$1\"",
+  "digest=$2",
+  "if [ -L \"$destination\" ] || [ ! -d \"$destination\" ]; then printf 'missing\\n'; exit 0; fi",
+  "marker=\"$destination/.chatero-release-sha256\"",
+  "bridge=\"$destination/bin/chatero-process-bridge.mjs\"",
+  "if [ -L \"$marker\" ] || [ ! -f \"$marker\" ] || [ \"$(cat \"$marker\" 2>/dev/null || true)\" != \"$digest\" ]; then printf 'missing\\n'; exit 0; fi",
+  "if [ ! -x \"$destination/bin/chatero-server\" ] || [ ! -x \"$destination/node\" ] || [ -L \"$bridge\" ] || [ ! -f \"$bridge\" ]; then printf 'missing\\n'; exit 0; fi",
+  "printf 'ready\\n'",
+].join("\n");
+
+const DISCARD_PART_SCRIPT = [
+  "set -eu",
+  "p=\"$HOME/$1\"",
+  "[ ! -L \"$p\" ] || exit 77",
+  "if [ -e \"$p\" ] && [ ! -f \"$p\" ]; then exit 78; fi",
+  "rm -f -- \"$p\"",
+].join("; ");
+
 const FINALIZE_SCRIPT = [
   "set -eu",
   "umask 077",
@@ -47,8 +70,8 @@ const FINALIZE_SCRIPT = [
   "root=$3",
   "digest=$4",
   "actual=$(sha256sum \"$part\" | awk '{print $1}')",
-  "[ \"$actual\" = \"$digest\" ]",
-  "if [ -d \"$destination\" ] && [ ! -L \"$destination\" ] && [ \"$(cat \"$destination/.chatero-release-sha256\" 2>/dev/null || true)\" = \"$digest\" ]; then rm -f \"$part\"; exit 0; fi",
+  "if [ \"$actual\" != \"$digest\" ]; then exit 76; fi",
+  "if [ -d \"$destination\" ] && [ ! -L \"$destination\" ] && [ \"$(cat \"$destination/.chatero-release-sha256\" 2>/dev/null || true)\" = \"$digest\" ] && [ -x \"$destination/bin/chatero-server\" ] && [ -x \"$destination/node\" ] && [ -f \"$destination/bin/chatero-process-bridge.mjs\" ] && [ ! -L \"$destination/bin/chatero-process-bridge.mjs\" ]; then rm -f \"$part\"; exit 0; fi",
   "[ ! -e \"$destination\" ]",
   "parent=$(dirname \"$destination\")",
   "mkdir -p \"$parent\"",
@@ -60,9 +83,11 @@ const FINALIZE_SCRIPT = [
   "tar -xzf \"$part\" -C \"$tmp\"",
   "[ -d \"$tmp/$root\" ] && [ ! -L \"$tmp/$root\" ]",
   "[ -x \"$tmp/$root/bin/chatero-server\" ]",
+  "[ -x \"$tmp/$root/node\" ]",
+  "[ -f \"$tmp/$root/bin/chatero-process-bridge.mjs\" ] && [ ! -L \"$tmp/$root/bin/chatero-process-bridge.mjs\" ]",
   "printf '%s\\n' \"$digest\" >\"$tmp/$root/.chatero-release-sha256\"",
   "if ! mv -T \"$tmp/$root\" \"$destination\"; then",
-  "  if [ -d \"$destination\" ] && [ ! -L \"$destination\" ] && [ \"$(cat \"$destination/.chatero-release-sha256\" 2>/dev/null || true)\" = \"$digest\" ]; then rm -rf \"$tmp/$root\"; else exit 75; fi",
+  "  if [ -d \"$destination\" ] && [ ! -L \"$destination\" ] && [ \"$(cat \"$destination/.chatero-release-sha256\" 2>/dev/null || true)\" = \"$digest\" ] && [ -x \"$destination/bin/chatero-server\" ] && [ -x \"$destination/node\" ] && [ -f \"$destination/bin/chatero-process-bridge.mjs\" ] && [ ! -L \"$destination/bin/chatero-process-bridge.mjs\" ]; then rm -rf \"$tmp/$root\"; else exit 75; fi",
   "fi",
   "rmdir \"$tmp\"",
   "rm -f \"$part\"",
@@ -110,6 +135,8 @@ const CREATE_RUNTIME_SCRIPT = [
 export const REMOTE_AGENT_SCRIPTS = Object.freeze({
   partSize: PART_SIZE_SCRIPT,
   upload: UPLOAD_SCRIPT,
+  probeInstalled: PROBE_INSTALLED_SCRIPT,
+  discardPart: DISCARD_PART_SCRIPT,
   finalize: FINALIZE_SCRIPT,
   createRuntime: CREATE_RUNTIME_SCRIPT,
 });
@@ -157,21 +184,22 @@ function sshBaseArguments(controlPath, alias) {
   return ["-T", "-S", controlPath, "-o", "BatchMode=yes", "--", alias];
 }
 
-async function writeInput(stream, input) {
-  if (input === undefined || input === null) {
-    stream.end();
-    return;
-  }
+async function* inputChunks(input) {
+  if (input === undefined || input === null) return;
   const chunks = Buffer.isBuffer(input) || input instanceof Uint8Array ? [input] : input;
   for await (const chunk of chunks) {
     if (!Buffer.isBuffer(chunk) && !(chunk instanceof Uint8Array)) {
       throw new TypeError("remote stdin source returned non-byte data");
     }
-    if (!stream.write(Buffer.from(chunk))) {
-      await new Promise(resolve => stream.once("drain", resolve));
-    }
+    yield Buffer.from(chunk);
   }
-  stream.end();
+}
+
+export async function pumpInput(stream, input, signal) {
+  if (!stream || typeof stream.write !== "function" || typeof stream.end !== "function") {
+    throw new TypeError("remote stdin must be a writable stream");
+  }
+  await pipeline(Readable.from(inputChunks(input)), stream, signal ? { signal } : {});
 }
 
 async function skipBytes(source, offset) {
@@ -232,28 +260,59 @@ export class SshRemoteAgentRuntime {
     };
     child.stdout.on("data", collect(stdout));
     child.stderr.on("data", collect(stderr));
-    const writing = writeInput(child.stdin, input).catch(error => {
-      child.kill("SIGTERM");
-      throw error;
+    const transfer = new AbortController();
+    const onAbort = () => transfer.abort(signal.reason ?? new Error("remote bootstrap was cancelled"));
+    signal?.addEventListener("abort", onAbort, { once: true });
+    let complete;
+    let completed = false;
+    const completion = new Promise(resolve => {
+      complete = value => {
+        if (completed) return;
+        completed = true;
+        resolve(value);
+      };
     });
-    const result = await new Promise((resolve, reject) => {
-      child.once("error", reject);
-      child.once("close", (code, closeSignal) => resolve({ code, signal: closeSignal }));
-    });
-    await writing;
+    child.on("error", error => complete({ source: "process", error, code: null, signal: null }));
+    child.on("close", (code, closeSignal) => complete({ source: "process", error: null, code, signal: closeSignal }));
+    const writing = pumpInput(child.stdin, input, transfer.signal).then(
+      () => null,
+      error => {
+        child.kill("SIGTERM");
+        complete({ source: "input", error, code: null, signal: null });
+        return error;
+      },
+    );
+    const result = await completion;
+    transfer.abort(result.error ?? new Error("remote SSH channel closed"));
+    const inputError = await writing;
+    signal?.removeEventListener("abort", onAbort);
     if (size > MAX_REMOTE_OUTPUT) throw new Error("remote bootstrap output exceeded 1 MiB");
     const errorText = Buffer.concat(stderr).toString("utf8").trim();
     if (errorText) this.log(errorText);
-    if (result.code !== 0) {
-      const error = new Error(`remote bootstrap exited with ${result.code ?? result.signal}`);
+    if (result.source === "input") throw result.error;
+    if (result.error) throw result.error;
+    if (result.code !== 0 || result.signal) {
+      const error = new Error(`remote bootstrap exited with ${result.code ?? result.signal ?? "unknown status"}`);
       error.code = result.code === 255 ? "SSH_TRANSPORT" : "REMOTE_BOOTSTRAP";
+      error.remoteExitCode = result.code;
+      error.remoteSignal = result.signal;
       throw error;
     }
+    if (inputError) throw inputError;
     return Buffer.concat(stdout).toString("utf8");
   }
 
   probe({ signal } = {}) {
     return this.#exec(REMOTE_PLATFORM_PROBE, [], { signal });
+  }
+
+  async probeInstalled({ installRelativePath, sha256, signal }) {
+    const output = await this.#exec(PROBE_INSTALLED_SCRIPT, [installRelativePath, sha256], { signal });
+    const state = output.trim();
+    if (state !== "ready" && state !== "missing") {
+      throw new Error("remote install probe returned an invalid state");
+    }
+    return state === "ready";
   }
 
   async partSize({ partRelativePath, artifactSize, signal }) {
@@ -271,6 +330,10 @@ export class SshRemoteAgentRuntime {
   async upload({ partRelativePath, source, offset, signal }) {
     const input = await skipBytes(await source(), offset);
     await this.#exec(UPLOAD_SCRIPT, [partRelativePath, String(offset)], { input, signal });
+  }
+
+  async discardPart({ partRelativePath, signal }) {
+    await this.#exec(DISCARD_PART_SCRIPT, [partRelativePath], { signal });
   }
 
   async finalize({
@@ -313,12 +376,17 @@ export class RemoteAgentInstaller {
     verifyRelease,
     selectArtifact,
     randomToken = () => randomBytes(32).toString("base64url"),
+    randomTransactionId = () => randomBytes(12).toString("hex"),
+    transactionState = new Map(),
   }) {
     if (!remote) throw new TypeError("remote runtime is required");
+    if (!(transactionState instanceof Map)) throw new TypeError("transaction state must be a Map");
     this.remote = remote;
     this.verify = verifyRelease;
     this.select = selectArtifact;
     this.randomToken = randomToken;
+    this.randomTransactionId = randomTransactionId;
+    this.resumeTransactions = transactionState;
   }
 
   async ensureInstalled({ alias, controlPath, release, signal }) {
@@ -339,35 +407,91 @@ export class RemoteAgentInstaller {
     if (!SHA256.test(artifact.sha256) || !Number.isSafeInteger(artifact.size) || artifact.size < 1) {
       throw new TypeError("verified artifact metadata is malformed");
     }
-    const partRelativePath = `.chatero-server/cache/${manifest.codeOssCommit}/${artifact.filename}.part`;
     const installRelativePath = `.chatero-server/bin/${manifest.codeOssCommit}/${hostPlatform.tuple}`;
     const archiveRoot = `chatero-agent-${hostPlatform.tuple}`;
-    const offset = await this.remote.partSize({
+    const transactionKey = `${manifest.codeOssCommit}/${hostPlatform.tuple}/${artifact.sha256}`;
+    const installed = await this.remote.probeInstalled({
       alias,
       controlPath,
-      partRelativePath,
-      artifactSize: artifact.size,
-      signal,
-    });
-    if (offset < artifact.size) {
-      await this.remote.upload({
-        alias,
-        controlPath,
-        partRelativePath,
-        offset,
-        source: () => release.readArtifact(artifact.filename),
-        signal,
-      });
-    }
-    await this.remote.finalize({
-      alias,
-      controlPath,
-      partRelativePath,
       installRelativePath,
-      archiveRoot,
       sha256: artifact.sha256,
       signal,
     });
+    if (installed) {
+      const staleTransaction = this.resumeTransactions.get(transactionKey);
+      if (staleTransaction) {
+        const stalePart = `.chatero-server/cache/${manifest.codeOssCommit}/.transactions/${staleTransaction}.part`;
+        await this.remote.discardPart({ alias, controlPath, partRelativePath: stalePart, signal });
+        this.resumeTransactions.delete(transactionKey);
+      }
+    }
+    else {
+      const transactionId = this.resumeTransactions.get(transactionKey) ?? this.randomTransactionId();
+      this.resumeTransactions.delete(transactionKey);
+      if (typeof transactionId !== "string" || !TRANSACTION_ID.test(transactionId)) {
+        throw new Error("transaction id generator returned invalid material");
+      }
+      const partRelativePath = `.chatero-server/cache/${manifest.codeOssCommit}/.transactions/${transactionId}.part`;
+      let completed = false;
+      let reusable = true;
+      try {
+        for (let attempt = 0; attempt < 2; attempt++) {
+          const offset = await this.remote.partSize({
+            alias,
+            controlPath,
+            partRelativePath,
+            artifactSize: artifact.size,
+            signal,
+          });
+          if (offset < artifact.size) {
+            await this.remote.upload({
+              alias,
+              controlPath,
+              partRelativePath,
+              offset,
+              source: () => release.readArtifact(artifact.filename),
+              signal,
+            });
+          }
+          try {
+            await this.remote.finalize({
+              alias,
+              controlPath,
+              partRelativePath,
+              installRelativePath,
+              archiveRoot,
+              sha256: artifact.sha256,
+              signal,
+            });
+            completed = true;
+            break;
+          }
+          catch (error) {
+            if (error?.remoteExitCode !== 76) throw error;
+            reusable = false;
+            await this.remote.discardPart({
+              alias,
+              controlPath,
+              partRelativePath,
+              signal,
+            });
+            if (attempt !== 0) throw error;
+            reusable = true;
+          }
+        }
+      }
+      finally {
+        if (!completed && reusable) {
+          const retained = this.resumeTransactions.get(transactionKey);
+          if (!retained) this.resumeTransactions.set(transactionKey, transactionId);
+          else if (retained !== transactionId) {
+            // One failed transaction is enough for a future resume. Avoid
+            // leaking a second concurrent partial without masking the cause.
+            await this.remote.discardPart({ alias, controlPath, partRelativePath, signal }).catch(() => {});
+          }
+        }
+      }
+    }
     const connectionToken = this.randomToken();
     if (typeof connectionToken !== "string" || !/^[A-Za-z0-9_-]{32,256}$/u.test(connectionToken)) {
       throw new Error("connection token generator returned invalid secret material");
