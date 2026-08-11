@@ -49,6 +49,37 @@ Zotero.QLab = Zotero.QLab || {};
 		return token;
 	};
 
+	Zotero.QLab.composeWorkspaceDocumentRouteStage = function (
+		primary, {
+			beforeCommit = () => true,
+			afterRollback = () => true,
+		} = {}
+	) {
+		if (!pendingRouteStage(primary)) return null;
+		synchronousCallback(beforeCommit, 'composed preflight');
+		synchronousCallback(afterRollback, 'composed after-rollback');
+		let settled = false;
+		return Zotero.QLab.createWorkspaceDocumentRouteStage({
+			commit() {
+				if (settled) return false;
+				let ready = false;
+				try { ready = beforeCommit() === true; }
+				catch (error) { Zotero.logError && Zotero.logError(error); }
+				if (!ready || !invokeRouteStage(primary, 'commit')) return false;
+				settled = true;
+				return true;
+			},
+			rollback() {
+				if (settled) return false;
+				settled = true;
+				let rolledBack = invokeRouteStage(primary, 'rollback');
+				try { afterRollback(); }
+				catch (error) { Zotero.logError && Zotero.logError(error); }
+				return rolledBack;
+			},
+		});
+	};
+
 	function pendingRouteStage(value) {
 		let state = value && ROUTE_STAGES.get(value);
 		return state && state.status === 'pending' ? state : null;
@@ -410,6 +441,24 @@ Zotero.QLab = Zotero.QLab || {};
 					if (!sameSelection(initialSelection, finalSelection)) {
 						invokeRouteStage(routeStage, 'rollback');
 						return refuse('selected-repository-changed');
+					}
+					if (typeof bridges.validateStagedRoute === 'function') {
+						let current = false;
+						try {
+							current = bridges.validateStagedRoute(Object.freeze({
+								decision: stagedDecision,
+								requestedURL: input.requestedURL || '',
+								source,
+								root: initialSelection.root,
+								epoch: initialSelection.epoch,
+							}));
+						}
+						catch (error) { current = false; }
+						if (current && typeof current.then === 'function') current = false;
+						if (current !== true) {
+							invokeRouteStage(routeStage, 'rollback');
+							return refuse('routing-context-changed');
+						}
 					}
 					if (!invokeRouteStage(routeStage, 'commit')) {
 						invokeRouteStage(routeStage, 'rollback');

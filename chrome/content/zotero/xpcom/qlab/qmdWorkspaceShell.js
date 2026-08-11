@@ -427,6 +427,10 @@ Zotero.QLab = Zotero.QLab || {};
 				if (disposed || ownPreparation !== preparationGeneration) return null;
 				throw error;
 			}
+			return prepareVerifiedRead(descriptor, read, ownPreparation);
+		}
+
+		function prepareVerifiedRead(descriptor, read, ownPreparation) {
 			if (disposed || ownPreparation !== preparationGeneration) return null;
 			let session = Zotero.QLab.createQmdDocumentSession({
 				verifiedRead: read,
@@ -522,6 +526,17 @@ Zotero.QLab = Zotero.QLab || {};
 			});
 		}
 
+		async function prepareVerifiedDocument(spec = {}, read) {
+			if (disposed) return null;
+			let ownPreparation = ++preparationGeneration;
+			reloadGeneration += 1;
+			let descriptor = Zotero.QLab.createWorkspaceDocumentDescriptor({
+				relativePath: spec.relativePath || spec.path,
+			});
+			if (!Zotero.QLab.isVerifiedReadonlyDocumentRead?.(read, descriptor)) return null;
+			return prepareVerifiedRead(descriptor, read, ownPreparation);
+		}
+
 		return Object.freeze({
 			prepareDraftActivation,
 			async prepareWorkspaceDocument(spec = {}, capability) {
@@ -530,6 +545,19 @@ Zotero.QLab = Zotero.QLab || {};
 			},
 			async openWorkspaceDocument(spec = {}, capability) {
 				let prepared = await prepareDocument(spec, capability);
+				if (!prepared) return false;
+				try {
+					let committed = prepared.commit();
+					if (!committed) prepared.rollback();
+					return committed;
+				}
+				catch (error) {
+					prepared.rollback();
+					throw error;
+				}
+			},
+			async openVerifiedWorkspaceDocument(spec = {}, read) {
+				let prepared = await prepareVerifiedDocument(spec, read);
 				if (!prepared) return false;
 				try {
 					let committed = prepared.commit();
@@ -1568,6 +1596,7 @@ Zotero.QLab = Zotero.QLab || {};
 		layout = {},
 		readonlyIO = null,
 		readonlyDocumentIO = null,
+		preparedReadonlyMount = null,
 		isCurrent = () => true,
 	} = {}) {
 		if (!host || !root || !isCurrent()) return null;
@@ -3093,6 +3122,23 @@ Zotero.QLab = Zotero.QLab || {};
 			rollbackPreparedDraftRoute,
 			openWorkspaceDocument,
 			prepareWorkspaceDocument,
+			async openPreparedReadonlyDocument(prepared) {
+				if (!documentManager || !prepared || typeof prepared !== 'object') return false;
+				let relativePath = String(prepared.relativePath || '');
+				let claimed = Zotero.QLab.consumePreparedReadonlyDocumentMount?.(
+					prepared.token, verifiedReadonlyIO, relativePath
+				);
+				if (!claimed || claimed.descriptor.relativePath !== relativePath) return false;
+				try {
+					return await documentManager.openVerifiedWorkspaceDocument(
+						{ relativePath }, claimed.read
+					);
+				}
+				catch (error) {
+					setPersistenceStatus('error', error && error.message || String(error));
+					return false;
+				}
+			},
 			document() {
 				return sessionDocument(activeSession);
 			},
@@ -3390,15 +3436,32 @@ Zotero.QLab = Zotero.QLab || {};
 			workspace.dispose();
 			return null;
 		}
-		await watcher.start();
+		try {
+			await watcher.start();
+		}
+		catch (error) {
+			workspace.dispose();
+			throw error;
+		}
 		if (!isCurrent()) {
 			workspace.dispose();
 			return null;
 		}
+		let openedPrepared = false;
+		if (preparedReadonlyMount) {
+			openedPrepared = await workspace.openPreparedReadonlyDocument(preparedReadonlyMount);
+			if (!openedPrepared) {
+				Zotero.QLab.disposePreparedReadonlyDocumentMount?.(
+					preparedReadonlyMount.token
+				);
+				workspace.dispose();
+				return null;
+			}
+		}
 		let firstPath = initialPath
 			|| host.querySelector('[data-qlab-draft-row]')?.dataset.qlabDraftRow
 			|| '';
-		if (firstPath) await openDraft(firstPath);
+		if (!preparedReadonlyMount && firstPath) await openDraft(firstPath);
 		if (!isCurrent()) {
 			workspace.dispose();
 			return null;

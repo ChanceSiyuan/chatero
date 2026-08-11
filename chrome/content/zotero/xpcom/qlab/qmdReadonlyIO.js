@@ -20,6 +20,7 @@ Zotero.QLab = Zotero.QLab || {};
 	const CONSUMED_READS = new WeakSet();
 	const CONSUMED_CAPABILITIES = new WeakSet();
 	const CONSUMED_ACCESS = new WeakSet();
+	const PREPARED_READONLY_MOUNTS = new WeakMap();
 	const READONLY_CAPABILITIES = Object.freeze({
 		read: true,
 		reload: true,
@@ -1186,6 +1187,53 @@ Zotero.QLab = Zotero.QLab || {};
 		let ioContext = io && READONLY_IO_CONTEXTS.get(io);
 		let sessionContext = session && READONLY_SESSION_CONTEXTS.get(session);
 		return !!ioContext && ioContext === sessionContext;
+	};
+
+	Zotero.QLab.prepareReadonlyDocumentMount = async function ({
+		io,
+		capability,
+		relativePath,
+		root,
+	} = {}) {
+		let descriptor = Zotero.QLab.createWorkspaceDocumentDescriptor({ relativePath });
+		if (!Zotero.QLab.readonlyDocumentIOOwnsRoot(io, root)) {
+			throw new Error('Prepared read-only mount does not belong to the selected repository');
+		}
+		let read = await io.read(capability, descriptor);
+		if (!Zotero.QLab.isVerifiedReadonlyDocumentRead(read, descriptor)) {
+			throw new Error('Prepared read-only mount requires an unconsumed verified read');
+		}
+		let token = Object.freeze(Object.create(null));
+		PREPARED_READONLY_MOUNTS.set(token, {
+			io,
+			descriptor,
+			read,
+			state: 'pending',
+		});
+		return token;
+	};
+
+	Zotero.QLab.consumePreparedReadonlyDocumentMount = function (
+		token, io, relativePath
+	) {
+		let record = token && PREPARED_READONLY_MOUNTS.get(token);
+		if (!record || record.state !== 'pending' || record.io !== io
+				|| record.descriptor.relativePath !== relativePath
+				|| !Zotero.QLab.isVerifiedReadonlyDocumentRead(record.read, record.descriptor)) {
+			return null;
+		}
+		record.state = 'consumed';
+		PREPARED_READONLY_MOUNTS.delete(token);
+		return Object.freeze({ descriptor: record.descriptor, read: record.read });
+	};
+
+	Zotero.QLab.disposePreparedReadonlyDocumentMount = function (token) {
+		let record = token && PREPARED_READONLY_MOUNTS.get(token);
+		if (!record || record.state !== 'pending') return false;
+		record.state = 'disposed';
+		record.read = null;
+		PREPARED_READONLY_MOUNTS.delete(token);
+		return true;
 	};
 
 	Zotero.QLab.createReadonlyDocumentIO = function ({

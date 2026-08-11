@@ -63,6 +63,11 @@ async function mountProductionWorkspace(QLab, t, {
 	failReadonlyResourceCommit = false,
 	trackTimers = false,
 	throwVisualClear = false,
+	initialPath = "drafts/active.qmd",
+	preparedReadonlyMount = null,
+	watcherStartFailure = null,
+	onHost = null,
+	mountLifecycle = null,
 } = {}) {
 	const readonly = readonlyManagerHarness(QLab, { read: readReadonly });
 	const root = readonly.root;
@@ -144,6 +149,7 @@ async function mountProductionWorkspace(QLab, t, {
 			return node ? [node] : [];
 		},
 	});
+	onHost?.(host);
 
 	const replacements = [];
 	function replace(target, key, value) {
@@ -270,9 +276,12 @@ async function mountProductionWorkspace(QLab, t, {
 	});
 
 	const watcher = {
-		start: async () => true,
+		start: async () => {
+			if (watcherStartFailure) throw watcherStartFailure;
+			return true;
+		},
 		poll: async () => true,
-		dispose() {},
+		dispose() { if (mountLifecycle) mountLifecycle.watcherDisposals++; },
 	};
 	replace(QLab, "createQmdExplorerWatcher", () => watcher);
 	replace(QLab, "createGeckoQmdExplorerHost", () => ({}));
@@ -333,8 +342,9 @@ async function mountProductionWorkspace(QLab, t, {
 
 	const workspace = await QLab.mountQmdWorkspace(host, {
 		root,
-		initialPath: "drafts/active.qmd",
+		initialPath,
 		readonlyDocumentIO: readonly.io,
+		preparedReadonlyMount,
 	});
 	return {
 		root,
@@ -429,6 +439,43 @@ test("three resident surface resources survive a complete mode cycle", async () 
 		["watcher", "monaco", "visual", "preview", "session"],
 		"a standalone controller owns its explicitly supplied resident resources",
 	);
+});
+
+test("a refused prepared readonly mount never falls through to an unrelated first Draft", async t => {
+	const QLab = await loadQLab();
+	let draftReads = 0;
+	const fixture = await mountProductionWorkspace(QLab, t, {
+		readDraft: async () => {
+			draftReads++;
+			return { text: "unrelated Draft\n", revision: "draft-r1" };
+		},
+		initialPath: "drafts/active.qmd",
+		preparedReadonlyMount: {
+			token: Object.freeze(Object.create(null)),
+			relativePath: "knowledge/topic.qmd",
+		},
+	});
+
+	assert.equal(fixture.workspace, null);
+	assert.equal(draftReads, 0);
+	assert.equal(fixture.host._qlabQmdWorkspace, null);
+});
+
+test("production mount disposes its host-owned workspace when watcher startup rejects", async t => {
+	const QLab = await loadQLab();
+	let host = null;
+	const lifecycle = { watcherDisposals: 0 };
+	await assert.rejects(
+		mountProductionWorkspace(QLab, t, {
+			watcherStartFailure: new Error("watcher startup refused"),
+			onHost: value => { host = value; },
+			mountLifecycle: lifecycle,
+		}),
+		/watcher startup refused/,
+	);
+	await new Promise(resolve => setImmediate(resolve));
+	assert.equal(host._qlabQmdWorkspace, null);
+	assert.equal(lifecycle.watcherDisposals, 1);
 });
 
 test("Website Preview starts once on first entry and remains warm across mode changes", async () => {

@@ -609,12 +609,25 @@ Zotero.QLab = Zotero.QLab || {};
 	};
 
 	Zotero.QLab.mainSiteTabDataForUpdate = function (current = {}, update = {}) {
-		let next = { ...update };
+		let combined = { ...current, ...update };
+		let next = {};
+		if (typeof combined.setupRoot === 'string') next.setupRoot = combined.setupRoot;
+		if (typeof combined.repositoryIdentity === 'string') {
+			next.repositoryIdentity = combined.repositoryIdentity;
+		}
+		if ((Number.isSafeInteger(combined.targetEpoch) && combined.targetEpoch >= 0)
+				|| (typeof combined.targetEpoch === 'string' && combined.targetEpoch.trim())) {
+			next.targetEpoch = combined.targetEpoch;
+		}
+		let sitePath = Zotero.QLab.normalizeMainSitePath
+			? Zotero.QLab.normalizeMainSitePath(combined.sitePath)
+			: '';
+		if (sitePath) next.sitePath = sitePath;
 		let changesRoot = Object.prototype.hasOwnProperty.call(update, 'setupRoot')
 			&& String(update.setupRoot || '') !== String(current.setupRoot || '');
 		if (changesRoot) {
 			next.repositoryIdentity = '';
-			next.siteURL = '';
+			next.sitePath = '';
 		}
 		return Object.freeze(next);
 	};
@@ -685,6 +698,13 @@ Zotero.QLab = Zotero.QLab || {};
 			let tab = tabs && tabs._tabs && tabs._tabs.find(item => item.id === container.id);
 			let setupRoot = tab && tab.data && tab.data.setupRoot || root;
 			let repositoryIdentity = tab && tab.data && tab.data.repositoryIdentity;
+			let targetEpoch = container._qlabTargetEpoch;
+			if (targetEpoch === undefined || targetEpoch === null) {
+				targetEpoch = tab && tab.data && tab.data.targetEpoch;
+			}
+			if (targetEpoch === undefined || targetEpoch === null) {
+				targetEpoch = tabs && tabs._qlab && tabs._qlab._workspaceTargetEpoch;
+			}
 			let controller = tabs && tabs._qlab && tabs._qlab.restoreWorkspaceSetup
 				? await tabs._qlab.restoreWorkspaceSetup(setupRoot)
 				: null;
@@ -702,7 +722,7 @@ Zotero.QLab = Zotero.QLab || {};
 					if (tabs.setTabData) {
 						tabs.setTabData(tab.id, {
 							repositoryIdentity: authority.identity,
-							...(authority.mismatch ? { siteURL: '' } : {}),
+							...(authority.mismatch ? { sitePath: '' } : {}),
 						});
 					}
 					repositoryIdentity = authority.ok ? authority.identity : null;
@@ -732,18 +752,27 @@ Zotero.QLab = Zotero.QLab || {};
 							host,
 							{
 								service: service,
-								target: { identity: repositoryIdentity, root: setupRoot },
-								initialURL: tab.data.siteURL || '',
-								onPersist: siteURL => tabs.setTabData
-									&& tabs.setTabData(tab.id, { siteURL }),
+								target: {
+									identity: repositoryIdentity, root: setupRoot, epoch: targetEpoch,
+								},
+								initialPath: tab.data.sitePath || '',
+								onPersist: sitePath => tabs.setTabData
+									&& tabs.setTabData(tab.id, { sitePath }),
 								openExternal: url => Zotero.launchURL(url),
 								openNative: url => container.ownerDocument.defaultView.ZoteroPane
 									?.loadURI?.(url),
-								openSourceBesideSite: () => tabs._qlab?.openSiteSourceBesideSite?.(),
+								sourceRoutingReady: true,
+								openSourceBesideSite: requestedURL => tabs._qlab?.openWorkspaceDocument?.({
+									requestedURL,
+									source: 'site',
+									placement: 'beside',
+								}),
 							}
 						);
 						host._qlabMountedKind = kind;
 						host._qlabMountRoot = setupRoot;
+						host._qlabMountEpoch = targetEpoch;
+						host._qlabRepositoryIdentity = repositoryIdentity;
 						host._qlabMountWorkspaceState = workspaceState;
 						return host._qlabMainSiteView;
 					}
@@ -3392,6 +3421,276 @@ Zotero.QLab = Zotero.QLab || {};
 			return workspace && host._qlabMountRoot === root
 				&& host._qlabMountEpoch === epoch ? workspace : null;
 		}
+		function mountedMainSiteView(root, epoch, repositoryIdentity = '') {
+			let siteTab = (tabsAPI?._tabs || []).find(tab => tab.type === 'qlabsite');
+			let container = siteTab && doc?.getElementById?.(siteTab.id);
+			let host = container?.querySelector?.('.qlab-shell-host');
+			let view = host?._qlabMainSiteView;
+			if (!view || host._qlabMountRoot !== root || host._qlabMountEpoch !== epoch) return null;
+			let expectedIdentity = String(repositoryIdentity || '').toLowerCase();
+			if (expectedIdentity
+					&& String(host._qlabRepositoryIdentity || '').toLowerCase() !== expectedIdentity) {
+				return null;
+			}
+			return view;
+		}
+		function currentMainSiteRouteState(root, epoch = windowController._workspaceTargetEpoch) {
+			let siteTab = (tabsAPI?._tabs || []).find(tab => tab.type === 'qlabsite');
+			let identity = String(siteTab?.data?.repositoryIdentity
+				|| setupCoordinator.activeRepositoryIdentity || '');
+			let view = mountedMainSiteView(root, epoch, identity);
+			let snapshot = view?.snapshot?.();
+			let target = snapshot?.target;
+			if (!snapshot || !target || target.root !== root || target.epoch !== epoch
+					|| String(target.identity || '').toLowerCase() !== identity.toLowerCase()) return null;
+			return Object.freeze({ view, snapshot, identity });
+		}
+		function collectKnowledgePaths(nodes, result = new Set()) {
+			for (let node of Array.isArray(nodes) ? nodes : []) {
+				if (node?.kind === 'qmd' && typeof node.path === 'string'
+						&& node.path.startsWith('knowledge/')) result.add(node.path);
+				collectKnowledgePaths(node?.children, result);
+			}
+			return result;
+		}
+		function adjacentGroupFor(tabID) {
+			let snapshot = groups.snapshot();
+			let roles = snapshot.paneCount === 1
+				? ['left'] : snapshot.paneCount === 2
+					? ['left', 'right'] : ['left', 'center', 'right'];
+			let source = groups.groupOf(tabID);
+			let index = roles.indexOf(source);
+			if (index < 0) return 'right';
+			if (roles.length === 1) return 'right';
+			return roles[index + 1] || roles[index - 1] || 'right';
+		}
+		function restoreRouteGroups(serialized) {
+			let state = serialized;
+			if (Array.isArray(serialized?.splitRatios) && !serialized.splitRatios.length) {
+				state = { ...serialized };
+				delete state.splitRatio;
+			}
+			groups.restore(state);
+		}
+		function qmdRoutePayloadFingerprint(tab) {
+			if (!tab) return '';
+			let data = tab.data || {};
+			let document = data.workspaceDocument;
+			return JSON.stringify({
+				id: tab.id,
+				draftPath: typeof data.draftPath === 'string' ? data.draftPath : null,
+				workspaceDocument: document && typeof document === 'object'
+					? {
+						path: String(document.path || ''),
+						authority: String(document.authority || ''),
+						format: String(document.format || ''),
+						readOnly: document.readOnly === true,
+					}
+					: null,
+				targetEpoch: Number.isSafeInteger(data.targetEpoch) ? data.targetEpoch : null,
+			});
+		}
+		async function prepareDetachedReadonlyQmdWorkspace({
+			root, targetEpoch, relativePath, readonlyDocumentIO, capability,
+		}) {
+			if (controllerDestroyed || targetEpoch !== windowController._workspaceTargetEpoch
+					|| !doc?.createElementNS || !Zotero.QLab.qlabRepositoryState
+					|| !Zotero.QLab.createGeckoQLabPathHost
+					|| !Zotero.QLab.mountQmdWorkspace) return null;
+			let token = null;
+			let workspace = null;
+			let host = null;
+			let staging = null;
+			let current = true;
+			let dispose = () => {
+				if (!current) return false;
+				current = false;
+				let ownedWorkspace = workspace || host?._qlabQmdWorkspace || null;
+				try { ownedWorkspace?.dispose?.(); }
+				catch (error) { Zotero.logError && Zotero.logError(error); }
+				workspace = null;
+				if (host) host._qlabQmdWorkspace = null;
+				if (token) {
+					try { Zotero.QLab.disposePreparedReadonlyDocumentMount?.(token); }
+					catch (error) { Zotero.logError && Zotero.logError(error); }
+					token = null;
+				}
+				try { host?.remove?.(); }
+				catch (error) { Zotero.logError && Zotero.logError(error); }
+				try { staging?.remove?.(); }
+				catch (error) { Zotero.logError && Zotero.logError(error); }
+				return true;
+			};
+			try {
+				let repositoryState = await Zotero.QLab.qlabRepositoryState(
+					root, Zotero.QLab.createGeckoQLabPathHost()
+				);
+				if (repositoryState !== 'ready' || controllerDestroyed
+						|| targetEpoch !== windowController._workspaceTargetEpoch) return null;
+				token = await Zotero.QLab.prepareReadonlyDocumentMount({
+					io: readonlyDocumentIO,
+					capability,
+					relativePath,
+					root,
+				});
+				if (!token || controllerDestroyed
+						|| targetEpoch !== windowController._workspaceTargetEpoch) {
+					dispose();
+					return null;
+				}
+				host = doc.createElementNS('http://www.w3.org/1999/xhtml', 'div');
+				host.className = 'qlab-shell-host';
+				staging = doc.createElementNS('http://www.w3.org/1999/xhtml', 'div');
+				staging.className = 'qlab-private-mount-stage';
+				staging.setAttribute?.('aria-hidden', 'true');
+				if (staging.style) {
+					staging.style.position = 'fixed';
+					staging.style.left = '-100000px';
+					staging.style.top = '0';
+					staging.style.width = '1200px';
+					staging.style.height = '900px';
+					staging.style.visibility = 'hidden';
+					staging.style.pointerEvents = 'none';
+				}
+				if (!doc.documentElement?.appendChild || !staging.appendChild) {
+					dispose();
+					return null;
+				}
+				staging.appendChild(host);
+				doc.documentElement.appendChild(staging);
+				Zotero.QLab.setHTML(host, Zotero.QLab.renderShellHTML({
+					kind: 'qlabqmd', workspaceState: 'ready', root, drafts: [],
+				}));
+				Zotero.QLab.ensureKatexStyles(host.ownerDocument);
+				host._qlabMountedKind = 'qlabqmd';
+				host._qlabMountRoot = root;
+				host._qlabMountEpoch = targetEpoch;
+				host._qlabMountWorkspaceState = 'ready';
+				workspace = await Zotero.QLab.mountQmdWorkspace(host, {
+					root,
+					readonlyDocumentIO,
+					preparedReadonlyMount: { token, relativePath },
+					isCurrent: () => current && !controllerDestroyed
+						&& targetEpoch === windowController._workspaceTargetEpoch,
+				});
+				let document = workspace?.document?.();
+				if (!workspace || host._qlabQmdWorkspace !== workspace || !document
+						|| document.relativePath !== relativePath || document.readOnly !== true
+						|| controllerDestroyed
+						|| targetEpoch !== windowController._workspaceTargetEpoch) {
+					dispose();
+					return null;
+				}
+				// The verified read has been consumed into the workspace session. Keeping
+				// the stale token reference is unnecessary and must never reach tab data.
+				token = null;
+				let releaseStaging = () => {
+					try { staging?.remove?.(); }
+					catch (error) { Zotero.logError && Zotero.logError(error); }
+					staging = null;
+				};
+				return Object.freeze({ host, workspace, document, dispose, releaseStaging });
+			}
+			catch (error) {
+				dispose();
+				Zotero.logError && Zotero.logError(error);
+				return null;
+			}
+		}
+		async function prepareKnowledgeSite(decision) {
+			let sitePath = Zotero.QLab.normalizeMainSitePath?.(decision.sitePath) || '';
+			if (!sitePath || sitePath !== decision.sitePath || controllerDestroyed) return null;
+			let targetEpoch = windowController._workspaceTargetEpoch;
+			let authority;
+			try {
+				authority = await Zotero.QLab.authoritativeMainSiteIdentity({
+					root: decision.root,
+					host: Zotero.QLab.createGeckoQLabPathHost(),
+				});
+			}
+			catch (error) { return null; }
+			if (!authority?.ok || !authority.identity || controllerDestroyed
+					|| targetEpoch !== windowController._workspaceTargetEpoch) return null;
+			let initialTab = (tabsAPI._tabs || []).find(tab => tab.type === 'qlabsite') || null;
+			let focusedGroup = null;
+			let beforeGroups = null;
+			let beforeSelectedID = null;
+			let beforeTabData = null;
+			let committedTabID = null;
+			let createdTab = false;
+			let groupsChanged = false;
+			let state = 'pending';
+			function restoreMutation() {
+				if (!committedTabID) return true;
+				if (createdTab) {
+					try { tabsAPI.close && tabsAPI.close(committedTabID); }
+					catch (error) { Zotero.logError && Zotero.logError(error); }
+				}
+				else {
+					let tab = (tabsAPI._tabs || []).find(item => item.id === committedTabID);
+					if (tab) tab.data = { ...(beforeTabData || {}) };
+				}
+				if (groupsChanged) {
+					try { restoreRouteGroups(beforeGroups); }
+					catch (error) { Zotero.logError && Zotero.logError(error); }
+				}
+				try { tabsAPI._applySplitVisibility && tabsAPI._applySplitVisibility(); }
+				catch (error) { Zotero.logError && Zotero.logError(error); }
+				try {
+					if (beforeSelectedID && tabsAPI.select) tabsAPI.select(beforeSelectedID);
+				}
+				catch (error) { Zotero.logError && Zotero.logError(error); }
+				committedTabID = null;
+				return true;
+			}
+			return Zotero.QLab.createWorkspaceDocumentRouteStage({
+				commit() {
+					if (state !== 'pending' || controllerDestroyed
+							|| targetEpoch !== windowController._workspaceTargetEpoch) return false;
+					let currentTab = (tabsAPI._tabs || []).find(tab => tab.type === 'qlabsite') || null;
+					if (currentTab !== initialTab) return false;
+					focusedGroup = groups.snapshot().focusedGroup;
+					beforeGroups = groups.serialize();
+					beforeSelectedID = tabsAPI._selectedID;
+					beforeTabData = currentTab ? { ...(currentTab.data || {}) } : null;
+					let id = windowController.ensureShellTab('qlabsite', {
+						setupRoot: decision.root,
+						repositoryIdentity: authority.identity,
+						targetEpoch,
+						sitePath,
+					});
+					if (id) {
+						committedTabID = id;
+						createdTab = !initialTab;
+						groupsChanged = createdTab;
+					}
+					if (!id || !groups.tab(id)) return false;
+					if (decision.placement === 'current' && groups.groupOf(id) !== focusedGroup) {
+						groups.moveTab(id, focusedGroup);
+						groupsChanged = true;
+					}
+					else {
+						groups.activateTab(id);
+						groupsChanged = true;
+					}
+					tabsAPI._applySplitVisibility && tabsAPI._applySplitVisibility();
+					tabsAPI.select && tabsAPI.select(id);
+					let view = mountedMainSiteView(
+						decision.root, targetEpoch, authority.identity
+					);
+					if (view && typeof view.navigatePath === 'function'
+							&& view.navigatePath(sitePath) === 'refuse') return false;
+					state = 'committed';
+					return true;
+				},
+				rollback() {
+					if (state !== 'pending') return false;
+					state = 'rolled-back';
+					restoreMutation();
+					return true;
+				},
+			});
+		}
 		function refuseWorkspaceDocument(reason) {
 			return Object.freeze({
 				action: 'refuse', reason: String(reason || 'workspace-document-router-unavailable'),
@@ -3571,7 +3870,8 @@ Zotero.QLab = Zotero.QLab || {};
 					|| (Zotero.QLab.Settings && Zotero.QLab.Settings.getRoot()) || '');
 				let payload = { setupRoot };
 				if (options.repositoryIdentity) payload.repositoryIdentity = options.repositoryIdentity;
-				if (options.siteURL) payload.siteURL = options.siteURL;
+				if (options.sitePath) payload.sitePath = options.sitePath;
+				payload.targetEpoch = this._workspaceTargetEpoch;
 				let id = this.ensureShellTab('qlabsite', payload);
 				if (id && tabsAPI.select) tabsAPI.select(id);
 				return id;
@@ -3595,14 +3895,26 @@ Zotero.QLab = Zotero.QLab || {};
 				return !Zotero.QLab.Settings || Zotero.QLab.Settings.isEnabled();
 			},
 			
-			ensureShellTab(kind, payload) {
+			ensureShellTab(kind, payload, privateMount = null) {
 				if (!this.isEnabled() || !tabsAPI) {
 					return null;
 				}
 				let existing = tabsAPI._tabs.find(tab => tab.type === kind);
 				if (existing) {
-					if (payload && tabsAPI.setTabData) {
-						tabsAPI.setTabData(existing.id, payload);
+					let previousData = { ...(existing.data || {}) };
+					let preparedContainer = privateMount?.skipMount
+						? (tabsAPI.deck && tabsAPI.deck.ownerDocument
+							? tabsAPI.deck.ownerDocument.getElementById(existing.id)
+							: null)
+						: null;
+					if (privateMount?.skipMount && !preparedContainer) return null;
+					try {
+						if (payload && tabsAPI.setTabData) tabsAPI.setTabData(existing.id, payload);
+					}
+					catch (error) {
+						existing.data = previousData;
+						Zotero.logError && Zotero.logError(error);
+						return null;
 					}
 					// Heal TabGroups if it still keys the singleton by kind name
 					// while the live tab kept a restored random id.
@@ -3629,10 +3941,10 @@ Zotero.QLab = Zotero.QLab || {};
 						groups.openTab({ kind, id: existing.id, payload: existing.data || payload || null });
 					}
 					try {
-						let container = tabsAPI.deck && tabsAPI.deck.ownerDocument
+						let container = preparedContainer || (tabsAPI.deck && tabsAPI.deck.ownerDocument
 							? tabsAPI.deck.ownerDocument.getElementById(existing.id)
-							: null;
-						if (container) {
+							: null);
+						if (container && !privateMount?.skipMount) {
 							if (Number.isSafeInteger(payload?.targetEpoch)) {
 								container._qlabTargetEpoch = payload.targetEpoch;
 							}
@@ -3640,7 +3952,9 @@ Zotero.QLab = Zotero.QLab || {};
 						}
 					}
 					catch (e) {
+						existing.data = previousData;
 						Zotero.logError && Zotero.logError(e);
+						return null;
 					}
 					return existing.id;
 				}
@@ -3681,7 +3995,7 @@ Zotero.QLab = Zotero.QLab || {};
 				}
 				else {
 					if (!groups.tab(id)) groups.openTab({ kind, id, payload: payload || null });
-					Zotero.QLab.mountShellTab(container, kind);
+					if (!privateMount?.skipMount) Zotero.QLab.mountShellTab(container, kind);
 				}
 				return id;
 			},
@@ -3936,22 +4250,267 @@ Zotero.QLab = Zotero.QLab || {};
 					let workspace = mountedQmdWorkspace(
 						decision.root, windowController._workspaceTargetEpoch
 					);
-					if (!workspace
-							|| typeof workspace.prepareWorkspaceDocument !== 'function') return null;
-					let verifiedDraft = decision.action === 'open-draft'
-						? await workspaceDocumentAccess.readVerifiedDraft(capability)
+					if (workspace && typeof workspace.prepareWorkspaceDocument === 'function') {
+						let verifiedDraft = decision.action === 'open-draft'
+							? await workspaceDocumentAccess.readVerifiedDraft(capability)
+							: null;
+						let stage = await workspace.prepareWorkspaceDocument(
+							decision, capability, verifiedDraft
+						);
+						if (decision.placement !== 'beside') return stage;
+						let qmdTab = (tabsAPI._tabs || []).find(tab => tab.type === 'qlabqmd');
+						let sourceSite = (tabsAPI._tabs || []).find(tab => tab.type === 'qlabsite');
+						let qmdContainer = qmdTab && doc?.getElementById?.(qmdTab.id);
+						let sourceContainer = sourceSite && doc?.getElementById?.(sourceSite.id);
+						if (!qmdTab || !sourceSite || !qmdContainer || !sourceContainer
+								|| !groups.tab(qmdTab.id) || !groups.tab(sourceSite.id)
+								|| !groups.groupOf(sourceSite.id)) return null;
+						let placement = null;
+						function restorePlacement() {
+							if (!placement) return true;
+							try { restoreRouteGroups(placement.groups); }
+							catch (error) { Zotero.logError && Zotero.logError(error); }
+							try { tabsAPI._applySplitVisibility(); }
+							catch (error) { Zotero.logError && Zotero.logError(error); }
+							try {
+								if (placement.selectedID) tabsAPI.select(placement.selectedID);
+							}
+							catch (error) { Zotero.logError && Zotero.logError(error); }
+							placement = null;
+							return true;
+						}
+						return Zotero.QLab.composeWorkspaceDocumentRouteStage(stage, {
+							beforeCommit() {
+								if (!(tabsAPI._tabs || []).includes(qmdTab)
+										|| !(tabsAPI._tabs || []).includes(sourceSite)
+										|| doc?.getElementById?.(qmdTab.id) !== qmdContainer
+										|| doc?.getElementById?.(sourceSite.id) !== sourceContainer
+										|| !groups.tab(qmdTab.id) || !groups.tab(sourceSite.id)
+										|| !groups.groupOf(sourceSite.id)
+										|| typeof tabsAPI._applySplitVisibility !== 'function'
+										|| typeof tabsAPI.select !== 'function') return false;
+								let targetGroup = adjacentGroupFor(sourceSite.id);
+								if (!targetGroup) return false;
+								placement = {
+									groups: groups.serialize(),
+									selectedID: tabsAPI._selectedID || null,
+								};
+								try {
+									if (groups.groupOf(qmdTab.id) !== targetGroup) {
+										groups.moveTab(qmdTab.id, targetGroup);
+									}
+									if (groups.groupOf(qmdTab.id) !== targetGroup) return false;
+									tabsAPI._applySplitVisibility();
+									tabsAPI.select(qmdTab.id);
+									return true;
+								}
+								catch (error) {
+									Zotero.logError && Zotero.logError(error);
+									return false;
+								}
+							},
+							afterRollback: restorePlacement,
+						});
+					}
+					if (decision.action === 'open-draft') return null;
+					let targetEpoch = windowController._workspaceTargetEpoch;
+					let initialQmdTab = (tabsAPI._tabs || []).find(tab => tab.type === 'qlabqmd') || null;
+					if (!initialQmdTab && doc?.getElementById?.('qlabqmd')) return null;
+					let initialQmdContainer = initialQmdTab
+						? doc?.getElementById?.(initialQmdTab.id) : null;
+					if (initialQmdTab && (!initialQmdContainer
+							|| typeof initialQmdContainer.replaceChildren !== 'function')) return null;
+					let initialQmdHost = initialQmdContainer
+						?.querySelector?.('.qlab-shell-host') || null;
+					let initialQmdFingerprint = qmdRoutePayloadFingerprint(initialQmdTab);
+					let sourceSite = decision.placement === 'beside'
+						? (tabsAPI._tabs || []).find(tab => tab.type === 'qlabsite')
 						: null;
-					return workspace.prepareWorkspaceDocument(
-						decision, capability, verifiedDraft
+					if (decision.placement === 'beside'
+							&& (!sourceSite || !groups.tab(sourceSite.id)
+								|| !groups.groupOf(sourceSite.id))) return null;
+					let readonlyIO = await workspaceDocumentAccess.readonlyDocumentIOForRoot(
+						decision.root
 					);
+					if (!readonlyIO || controllerDestroyed
+							|| targetEpoch !== windowController._workspaceTargetEpoch) return null;
+					let descriptor = Zotero.QLab.createWorkspaceDocumentDescriptor({
+						relativePath: decision.relativePath,
+					});
+					let detached = await prepareDetachedReadonlyQmdWorkspace({
+						root: decision.root,
+						targetEpoch,
+						relativePath: descriptor.relativePath,
+						readonlyDocumentIO: readonlyIO,
+						capability,
+					});
+					if (!detached) return null;
+					let currentQmdTab = (tabsAPI._tabs || []).find(tab => tab.type === 'qlabqmd') || null;
+					let currentQmdContainer = currentQmdTab
+						? doc?.getElementById?.(currentQmdTab.id) : null;
+					if (currentQmdTab !== initialQmdTab
+							|| (currentQmdTab && (currentQmdContainer !== initialQmdContainer
+								|| currentQmdContainer?.querySelector?.('.qlab-shell-host') !== initialQmdHost
+								|| qmdRoutePayloadFingerprint(currentQmdTab) !== initialQmdFingerprint))) {
+						detached.dispose();
+						return null;
+					}
+					let state = 'pending';
+					let mutation = null;
+					function rollbackMutation() {
+						if (!mutation) return true;
+						let current = (tabsAPI._tabs || []).find(tab => tab.type === 'qlabqmd') || null;
+						if (mutation.created) {
+							try { detached.dispose(); }
+							catch (error) { Zotero.logError && Zotero.logError(error); }
+							try { tabsAPI.close?.(current?.id || mutation.id); }
+							catch (error) { Zotero.logError && Zotero.logError(error); }
+						}
+						else {
+							try {
+								if (mutation.container && mutation.children) {
+									mutation.container.replaceChildren(...mutation.children);
+								}
+								if (mutation.container) {
+									if (mutation.mountGeneration === undefined) {
+										delete mutation.container._qlabMountGeneration;
+									}
+									else mutation.container._qlabMountGeneration = mutation.mountGeneration;
+									if (mutation.targetEpoch === undefined) {
+										delete mutation.container._qlabTargetEpoch;
+									}
+									else mutation.container._qlabTargetEpoch = mutation.targetEpoch;
+								}
+							}
+							catch (error) { Zotero.logError && Zotero.logError(error); }
+							if (current === initialQmdTab) current.data = { ...(mutation.tabData || {}) };
+							try { detached.dispose(); }
+							catch (error) { Zotero.logError && Zotero.logError(error); }
+							if (mutation.container && initialQmdHost
+									&& !initialQmdHost._qlabQmdWorkspace) {
+								try { void Zotero.QLab.mountShellTab(mutation.container, 'qlabqmd'); }
+								catch (error) { Zotero.logError && Zotero.logError(error); }
+							}
+						}
+						try { restoreRouteGroups(mutation.groups); }
+						catch (error) { Zotero.logError && Zotero.logError(error); }
+						if (mutation.layoutApplied) {
+							try { tabsAPI._applySplitVisibility?.(); }
+							catch (error) { Zotero.logError && Zotero.logError(error); }
+						}
+						try {
+							if (mutation.selectedID && tabsAPI.select) {
+								tabsAPI.select(mutation.selectedID);
+							}
+						}
+						catch (error) { Zotero.logError && Zotero.logError(error); }
+						mutation = null;
+						return true;
+					}
+					return Zotero.QLab.createWorkspaceDocumentRouteStage({
+						commit() {
+							if (state !== 'pending' || controllerDestroyed
+									|| targetEpoch !== windowController._workspaceTargetEpoch
+									|| (decision.placement === 'beside'
+										&& (!(tabsAPI._tabs || []).includes(sourceSite)
+											|| !groups.tab(sourceSite.id)
+											|| !groups.groupOf(sourceSite.id)))) return false;
+							let beforeTab = (tabsAPI._tabs || []).find(tab => tab.type === 'qlabqmd') || null;
+							let beforeContainer = beforeTab ? doc?.getElementById?.(beforeTab.id) : null;
+							if (beforeTab !== initialQmdTab
+									|| (beforeTab && (beforeContainer !== initialQmdContainer
+										|| beforeContainer?.querySelector?.('.qlab-shell-host') !== initialQmdHost
+										|| qmdRoutePayloadFingerprint(beforeTab) !== initialQmdFingerprint))) {
+								return false;
+							}
+							if (!beforeTab && typeof tabsAPI.close !== 'function') return false;
+							mutation = {
+								created: !beforeTab,
+								id: beforeTab?.id || 'qlabqmd',
+								tabData: beforeTab ? { ...(beforeTab.data || {}) } : null,
+								groups: groups.serialize(),
+								selectedID: tabsAPI._selectedID || null,
+								container: beforeContainer,
+								children: beforeContainer ? Array.from(beforeContainer.childNodes || []) : null,
+								mountGeneration: beforeContainer?._qlabMountGeneration,
+								targetEpoch: beforeContainer?._qlabTargetEpoch,
+								layoutApplied: false,
+							};
+							let id = windowController.ensureShellTab('qlabqmd', {
+								draftPath: null,
+								workspaceDocument: {
+									path: descriptor.relativePath,
+									authority: descriptor.authority,
+									format: descriptor.format,
+									readOnly: true,
+								},
+								targetEpoch,
+							}, { skipMount: true });
+							if (!id || !groups.tab(id)) return false;
+							mutation.id = id;
+							let container = doc?.getElementById?.(id);
+							if (!container || typeof container.replaceChildren !== 'function') return false;
+							mutation.container = container;
+							if (!mutation.children) mutation.children = Array.from(container.childNodes || []);
+							container._qlabMountGeneration = (container._qlabMountGeneration || 0) + 1;
+							container._qlabTargetEpoch = targetEpoch;
+							detached.host._qlabMountTabID = id;
+							detached.host._qlabMountContainer = container;
+							container.replaceChildren(detached.host);
+							detached.releaseStaging();
+							let targetGroup = decision.placement === 'beside' && sourceSite
+								? adjacentGroupFor(sourceSite.id) : mutation.groups.focusedGroup;
+							groups.moveTab(id, targetGroup);
+							if (groups.groupOf(id) !== targetGroup) return false;
+							mutation.layoutApplied = true;
+							tabsAPI._applySplitVisibility && tabsAPI._applySplitVisibility();
+							tabsAPI.select && tabsAPI.select(id);
+							state = 'committed';
+							if (initialQmdHost && initialQmdHost !== detached.host) {
+								try { initialQmdHost._qlabQmdWorkspace?.dispose?.(); }
+								catch (error) { Zotero.logError && Zotero.logError(error); }
+							}
+							return true;
+						},
+						rollback() {
+							if (state !== 'pending') return false;
+							state = 'rolled-back';
+							if (mutation) rollbackMutation();
+							else detached.dispose();
+							return true;
+						},
+					});
+				};
+				let getCurrentSiteOrigin = ({ root }) => {
+					let state = currentMainSiteRouteState(root);
+					return state?.snapshot?.currentOrigin || '';
+				};
+				let getKnowledgePaths = async ({ root }) => {
+					let initialEpoch = windowController._workspaceTargetEpoch;
+					if (!currentMainSiteRouteState(root, initialEpoch)) return new Set();
+					let snapshot = await Zotero.QLab.buildQmdExplorerSnapshot(
+						root, Zotero.QLab.createGeckoQmdExplorerHost()
+					);
+					if (controllerDestroyed || initialEpoch !== windowController._workspaceTargetEpoch
+							|| !currentMainSiteRouteState(root, initialEpoch)) return new Set();
+					return collectKnowledgePaths(snapshot);
+				};
+				let validateStagedRoute = context => {
+					if (context.source !== 'site') return true;
+					let state = currentMainSiteRouteState(context.root, context.epoch);
+					return !!state && state.snapshot.lastEmbeddedURL === context.requestedURL;
 				};
 				let actionBridges = {
+					getCurrentSiteOrigin,
+					getKnowledgePaths,
+					validateStagedRoute,
 					openDraft: prepareCurrentQmdDocument,
 					openReadonlyQmd: prepareCurrentQmdDocument,
 					openReadonlyBib: prepareCurrentQmdDocument,
+					openKnowledgeSite: prepareKnowledgeSite,
 				};
 				for (let name of [
-					'getCurrentSiteOrigin', 'getKnowledgePaths', 'findAttachment',
+					'getCurrentSiteOrigin', 'getKnowledgePaths', 'validateStagedRoute', 'findAttachment',
 					'openDraft', 'openReadonlyQmd', 'openReadonlyBib',
 					'openKnowledgeSite', 'openNativeReader', 'reviewPDFLink',
 				]) {

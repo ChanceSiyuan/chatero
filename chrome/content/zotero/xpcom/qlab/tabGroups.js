@@ -157,7 +157,16 @@ Zotero.QLab = Zotero.QLab || {};
 			if (typeof progress?.claimNativeRestore === 'function') {
 				progress.claimNativeRestore();
 			}
-			await tabsAPI.restoreState(Array.isArray(state.tabs) ? state.tabs : []);
+			let nativeTabs = (Array.isArray(state.tabs) ? state.tabs : []).map(tab => {
+				if (tab?.type !== 'qlabsite' || !Zotero.QLab.mainSiteTabDataForUpdate) {
+					return tab;
+				}
+				return {
+					...tab,
+					data: { ...Zotero.QLab.mainSiteTabDataForUpdate(tab.data || {}, {}) },
+				};
+			});
+			await tabsAPI.restoreState(nativeTabs);
 		}
 		let reconciled = null;
 		if (state.qlabGroups && typeof tabsAPI.restoreQLabGroupsState === 'function') {

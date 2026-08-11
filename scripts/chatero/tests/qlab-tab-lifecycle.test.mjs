@@ -94,7 +94,7 @@ test("QMD remount preserves only the canonical document state authority", () => 
 
 test("new docked QLab tab close handlers capture their container instead of global document", () => {
 	const ensureShellTab = moduleSource.slice(
-		moduleSource.indexOf("ensureShellTab(kind, payload)"),
+		moduleSource.indexOf("ensureShellTab(kind, payload, privateMount = null)"),
 		moduleSource.indexOf("dockShellTab(kind, role, payload)"),
 	);
 	assert.match(ensureShellTab, /cancelShellTabMount\(shellContainer\)/);
@@ -137,19 +137,41 @@ test("Main Site always replaces tab identity from Git-private authority and fail
 	);
 });
 
-test("changing a Main Site setup root clears repository authority and prior page", async () => {
+test("Main Site tab migration drops legacy absolute URLs and root changes clear authority", async () => {
 	const QLab = await import("../lib/load-qlab.mjs").then(module => module.loadQLab());
 	assert.deepEqual(JSON.parse(JSON.stringify(QLab.mainSiteTabDataForUpdate(
-		{ setupRoot: "/repo/a", repositoryIdentity: "id-a", siteURL: "http://127.0.0.1:4180/knowledge/" },
-		{ setupRoot: "/repo/b", repositoryIdentity: "untrusted-id-b", siteURL: "http://127.0.0.1:4180/evil/" },
+		{
+			setupRoot: "/repo/a",
+			repositoryIdentity: "id-a",
+			siteURL: "http://127.0.0.1:4180/knowledge/secret.html",
+			sitePath: "/knowledge/old.html",
+		},
+		{
+			setupRoot: "/repo/b",
+			repositoryIdentity: "untrusted-id-b",
+			siteURL: "http://127.0.0.1:4180/evil/",
+			sitePath: "/knowledge/new.html",
+		},
 	))), {
 		setupRoot: "/repo/b",
 		repositoryIdentity: "",
-		siteURL: "",
+		sitePath: "",
+	});
+	const migrated = QLab.mainSiteTabDataForUpdate({
+		setupRoot: "/repo/a",
+		repositoryIdentity: "id-a",
+		targetEpoch: 4,
+		siteURL: "http://127.0.0.1:4180/knowledge/private.html",
+	}, { sitePath: "/knowledge/topic.html#proof" });
+	assert.deepEqual(JSON.parse(JSON.stringify(migrated)), {
+		setupRoot: "/repo/a",
+		repositoryIdentity: "id-a",
+		targetEpoch: 4,
+		sitePath: "/knowledge/topic.html#proof",
 	});
 });
 
-test("Open Source Beside Site remains disabled until Knowledge routing lands", async () => {
+test("Open Source Beside Site remains disabled when no trusted routing bridge is mounted", async () => {
 	const QLab = await import("../lib/load-qlab.mjs").then(module => module.loadQLab());
 	const document = {
 		createElementNS(_ns, tag) {
@@ -185,7 +207,7 @@ test("Open Source Beside Site remains disabled until Knowledge routing lands", a
 	walk(host);
 	const source = all.find(node => node.getAttribute?.("aria-label") === "Open Source Beside Site");
 	assert.equal(source.disabled, true);
-	assert.match(source.getAttribute("title"), /Task 7|Knowledge routing/i);
+	assert.match(source.getAttribute("title"), /Knowledge source routing is unavailable/i);
 	view.dispose();
 });
 

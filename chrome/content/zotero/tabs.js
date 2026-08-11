@@ -489,12 +489,15 @@ var Zotero_Tabs = new function () {
 				return { itemID: null };
 			},
 			qlabsite: async (tab, tabIndex) => {
+				let data = Zotero.QLab?.mainSiteTabDataForUpdate
+					? { ...Zotero.QLab.mainSiteTabDataForUpdate(tab.data || {}, {}) }
+					: {};
 				this.add({
 					id: 'qlabsite',
 					type: 'qlabsite',
 					title: tab.title || 'Knowledge Site',
 					index: tabIndex,
-					data: tab.data || {},
+					data,
 					select: tab.selected
 				});
 				return { itemID: null };
@@ -785,7 +788,9 @@ var Zotero_Tabs = new function () {
 			return;
 		}
 		if (tab.type === 'qlabsite' && Zotero.QLab?.mainSiteTabDataForUpdate) {
-			data = Zotero.QLab.mainSiteTabDataForUpdate(tab.data || {}, data || {});
+			tab.data = { ...Zotero.QLab.mainSiteTabDataForUpdate(tab.data || {}, data || {}) };
+			Zotero.Session.debounceSave();
+			return;
 		}
 		tab.data = tab.data || {};
 		Object.assign(tab.data, data);

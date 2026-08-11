@@ -81,6 +81,16 @@ class FakeDocument {
 	}
 }
 
+function findByClass(root, className) {
+	if (!root) return null;
+	if (String(root.className || "").split(/\s+/).includes(className)) return root;
+	for (const child of root.children || []) {
+		const found = findByClass(child, className);
+		if (found) return found;
+	}
+	return null;
+}
+
 function fakeService() {
 	const calls = { check: 0, start: 0, rebuild: 0, unsubscribed: 0 };
 	let listener = null;
@@ -405,7 +415,7 @@ test("Main Site frame script executes popup and subframe guards before content n
 	assert.equal(frame.listeners.get("submit").size, 0);
 });
 
-test("top-level same-origin location changes persist without reloading the browser", async () => {
+test("top-level same-origin location changes persist only a safe site path without reloading", async () => {
 	const QLab = await loadQLab();
 	const document = new FakeDocument();
 	const host = new FakeElement("div", document);
@@ -422,8 +432,78 @@ test("top-level same-origin location changes persist without reloading the brows
 	const listener = [...browser.webProgress.listeners][0];
 	listener.onLocationChange({ isTopLevel: true }, null, { spec: `${ORIGIN}/knowledge/topic.html#proof` });
 	assert.deepEqual(browser.loaded, [`${ORIGIN}/`]);
-	assert.equal(persisted.at(-1), `${ORIGIN}/knowledge/topic.html#proof`);
+	assert.equal(persisted.at(-1), "/knowledge/topic.html#proof");
 	assert.equal(view.snapshot().lastEmbeddedURL, `${ORIGIN}/knowledge/topic.html#proof`);
+	view.dispose();
+});
+
+test("stopped Main Site queues Explorer navigation until the matching service is ready", async () => {
+	const QLab = await loadQLab();
+	const document = new FakeDocument();
+	const host = new FakeElement("div", document);
+	const service = fakeService();
+	const view = QLab.createMainSiteView(document, host, {
+		service,
+		target: {
+			identity: "12345678-1234-4123-8123-123456789abc",
+			root: "/tmp/research-loop",
+			epoch: 7,
+		},
+	});
+	await view.ready;
+	service.emit({
+		state: "idle", url: "", lastGoodURL: `${ORIGIN}/`, diagnosticTail: "", error: null,
+	});
+	const browser = document.browsers[0];
+	assert.equal(view.navigatePath("/knowledge/queued.html#proof"), "queued");
+	assert.deepEqual(browser.loaded, [], "a stopped server URL is never loaded");
+
+	service.emit({
+		state: "ready", url: `${ORIGIN}/`, lastGoodURL: `${ORIGIN}/`, diagnosticTail: "", error: null,
+	});
+	assert.deepEqual(browser.loaded, [`${ORIGIN}/knowledge/queued.html#proof`]);
+	view.dispose();
+});
+
+test("Open Source Beside receives the exact committed Knowledge URL and refusal is inline", async () => {
+	const QLab = await loadQLab();
+	const document = new FakeDocument();
+	const host = new FakeElement("div", document);
+	const service = fakeService();
+	const routed = [];
+	const view = QLab.createMainSiteView(document, host, {
+		service,
+		target: {
+			identity: "12345678-1234-4123-8123-123456789abc",
+			root: "/tmp/research-loop",
+			epoch: 7,
+		},
+		sourceRoutingReady: true,
+		openSourceBesideSite: async requestedURL => {
+			routed.push(requestedURL);
+			return Object.freeze({ action: "refuse", reason: "unsafe-or-missing-knowledge-route" });
+		},
+	});
+	await view.ready;
+	service.emit({ state: "ready", url: `${ORIGIN}/`, lastGoodURL: `${ORIGIN}/`, diagnosticTail: "", error: null });
+	const browser = document.browsers[0];
+	const source = findByClass(host, "qlab-main-site__source");
+	const status = findByClass(host, "qlab-main-site__status");
+	assert.equal(source.disabled, true, "a requested load is not yet the visible top-level page");
+	const listener = [...browser.webProgress.listeners][0];
+	listener.onLocationChange(
+		{ isTopLevel: true }, null,
+		{ spec: `${ORIGIN}/knowledge/nested/topic.html?view=1#proof` },
+	);
+	assert.equal(source.disabled, false);
+	const loadedBefore = browser.loaded.slice();
+	source.dispatch("click");
+	source.dispatch("click");
+	await new Promise(resolve => setImmediate(resolve));
+	assert.deepEqual(routed, [`${ORIGIN}/knowledge/nested/topic.html?view=1#proof`]);
+	assert.match(status.textContent, /Source unavailable.*unsafe-or-missing-knowledge-route/i);
+	assert.deepEqual(browser.loaded, loadedBefore);
+	assert.equal(view.snapshot().lastEmbeddedURL, `${ORIGIN}/knowledge/nested/topic.html?view=1#proof`);
 	view.dispose();
 });
 

@@ -35,12 +35,13 @@ function legacyState() {
 	};
 }
 
-test("native qlabsite restore preserves only its repository target and same-origin page", async () => {
+test("native qlabsite restore drops legacy absolute URLs and preserves only a safe relative page", async () => {
 	const QLab = await loadQLab();
 	const payload = {
 		setupRoot: "/tmp/research-loop",
 		repositoryIdentity: "12345678-1234-4123-8123-123456789abc",
 		siteURL: "http://127.0.0.1:4180/knowledge/topic.html",
+		sitePath: "/knowledge/topic.html",
 	};
 	let restoredTabs = null;
 	const tabsAPI = {
@@ -60,7 +61,11 @@ test("native qlabsite restore preserves only its repository target and same-orig
 			{ type: "qlabsite", title: "Knowledge Site", data: payload, selected: true },
 		],
 	});
-	assert.deepEqual(plain(restoredTabs[1].data), payload);
+	assert.deepEqual(plain(restoredTabs[1].data), {
+		setupRoot: "/tmp/research-loop",
+		repositoryIdentity: "12345678-1234-4123-8123-123456789abc",
+		sitePath: "/knowledge/topic.html",
+	});
 });
 
 test("native tab restoration finishes before legacy groups reconcile onto the minted Reader id", async () => {

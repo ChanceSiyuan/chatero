@@ -282,6 +282,37 @@ Zotero.QLab = Zotero.QLab || {};
 		return parsed ? parsed.origin : '';
 	}
 
+	Zotero.QLab.normalizeMainSitePath = function (value) {
+		let path = String(value || '');
+		if (!path.startsWith('/knowledge/') || path.startsWith('//')
+				|| path.includes(String.fromCharCode(92)) || path.includes(String.fromCharCode(0))
+				|| /%(?:2e|2f|5c)/iu.test(path)) return '';
+		let parsed;
+		try { parsed = new URL(path, 'http://127.0.0.1:4180'); }
+		catch (error) { return ''; }
+		if (parsed.origin !== 'http://127.0.0.1:4180'
+				|| !parsed.pathname.startsWith('/knowledge/')) return '';
+		let pieces;
+		try { pieces = decodeURIComponent(parsed.pathname).split('/').filter(Boolean); }
+		catch (error) { return ''; }
+		if (pieces.some(piece => piece === '.' || piece === '..')) return '';
+		return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+	};
+
+	function safeEmbeddedSitePath(currentOrigin, requestedURL) {
+		let routed = Zotero.QLab.mainSiteNavigationDecision({ currentOrigin, requestedURL });
+		if (routed.action !== 'embed') return '';
+		let parsed = parsedURL(routed.url);
+		return parsed
+			? Zotero.QLab.normalizeMainSitePath(`${parsed.pathname}${parsed.search}${parsed.hash}`)
+			: '';
+	}
+
+	function isKnowledgePage(currentOrigin, requestedURL) {
+		let path = safeEmbeddedSitePath(currentOrigin, requestedURL);
+		return path === '/knowledge/' || path.startsWith('/knowledge/');
+	}
+
 	function loadBrowser(browser, url) {
 		if (!browser || !url) return;
 		try {
@@ -314,9 +345,12 @@ Zotero.QLab = Zotero.QLab || {};
 		let snapshot = service.snapshot ? service.snapshot(target.identity) : { state: 'idle' };
 		let activeOrigin = originFor(snapshot);
 		let lastEmbeddedURL = '';
-		let restoredURL = String(options.initialURL || '');
+		let lastRequestedURL = '';
+		let restoredPath = Zotero.QLab.normalizeMainSitePath(options.initialPath);
 		let cleanups = [];
 		let navigationBridge = null;
+		let sourceRequestGeneration = 0;
+		let sourceRequestPending = false;
 
 		let root = htmlElement(document, 'section', 'qlab-main-site');
 		root.setAttribute('data-qlab-kind', 'qlabsite');
@@ -330,14 +364,17 @@ Zotero.QLab = Zotero.QLab || {};
 		let source = button(document, 'Open Source Beside Site', 'qlab-main-site__source');
 		let sourceRoutingReady = options.sourceRoutingReady === true
 			&& typeof options.openSourceBesideSite === 'function';
-		source.disabled = !sourceRoutingReady;
-		source.setAttribute('aria-disabled', sourceRoutingReady ? 'false' : 'true');
-		source.setAttribute(
-			'title',
-			sourceRoutingReady
+		function updateSourceAvailability() {
+			let ready = snapshot.state === 'ready'
+				&& sourceRoutingReady && !sourceRequestPending
+				&& isKnowledgePage(activeOrigin, lastEmbeddedURL);
+			source.disabled = !ready;
+			source.setAttribute('aria-disabled', ready ? 'false' : 'true');
+			source.setAttribute('title', sourceRoutingReady
 				? 'Open Source Beside Site'
-				: 'Available after Task 7 Knowledge routing is enabled'
-		);
+				: 'Knowledge source routing is unavailable');
+		}
+		updateSourceAvailability();
 		for (let element of [back, forward, home, reload, status, primary, source]) toolbar.appendChild(element);
 
 		let browser = document.createXULElement
@@ -366,11 +403,10 @@ Zotero.QLab = Zotero.QLab || {};
 				requestedURL: url,
 			});
 			if (result.action === 'embed') {
-				if (load && result.url !== lastEmbeddedURL) {
-					lastEmbeddedURL = result.url;
+				if (load && result.url !== lastRequestedURL) {
+					lastRequestedURL = result.url;
 					loadBrowser(browser, result.url);
 				}
-				options.onPersist && options.onPersist(result.url);
 			}
 			else if (result.action === 'external') {
 				(options.openExternal || Zotero.launchURL || (() => {}))(result.url);
@@ -393,6 +429,7 @@ Zotero.QLab = Zotero.QLab || {};
 				activeOrigin = nextOrigin;
 				navigationBridge && navigationBridge.updateOrigin(activeOrigin);
 			}
+			updateSourceAvailability();
 			status.textContent = next.error || ({
 				idle: 'Main Site is stopped', checking: 'Checking Main Site…',
 				installing: 'Installing dependencies…', building: 'Building…',
@@ -410,12 +447,15 @@ Zotero.QLab = Zotero.QLab || {};
 			// exact last-good document already on screen.
 			if (next.state === 'ready' && next.url) {
 				let requested = next.url;
-				if (restoredURL) {
+				if (restoredPath) {
+					let restoredURL = '';
+					try { restoredURL = new URL(restoredPath, activeOrigin).href; }
+					catch (error) {}
 					let restored = Zotero.QLab.mainSiteNavigationDecision({
 						currentOrigin: activeOrigin, requestedURL: restoredURL,
 					});
 					if (restored.action === 'embed') requested = restoredURL;
-					restoredURL = '';
+					restoredPath = '';
 				}
 				decideAndRoute(requested);
 			}
@@ -438,7 +478,12 @@ Zotero.QLab = Zotero.QLab || {};
 				let topLevel = !_progress || _progress.isTopLevel !== false;
 				if (result.action === 'embed' && topLevel) {
 					lastEmbeddedURL = result.url;
-					options.onPersist && options.onPersist(result.url);
+					lastRequestedURL = result.url;
+					sourceRequestGeneration += 1;
+					sourceRequestPending = false;
+					updateSourceAvailability();
+					let sitePath = safeEmbeddedSitePath(activeOrigin, result.url);
+					if (sitePath) options.onPersist && options.onPersist(sitePath);
 				}
 				else if (result.action !== 'embed') {
 					try { _request && typeof _request.cancel === 'function' && _request.cancel(abortCode); }
@@ -496,7 +541,31 @@ Zotero.QLab = Zotero.QLab || {};
 		listen(reload, 'click', () => browser.reload && browser.reload());
 		listen(primary, 'click', () => { void buildAndStart(); });
 		listen(source, 'click', () => {
-			if (sourceRoutingReady) options.openSourceBesideSite(target);
+			if (!sourceRoutingReady || sourceRequestPending
+					|| !isKnowledgePage(activeOrigin, lastEmbeddedURL)) {
+				status.textContent = 'Source unavailable · open a Knowledge page first';
+				return;
+			}
+			let requestedURL = lastEmbeddedURL;
+			let generation = ++sourceRequestGeneration;
+			sourceRequestPending = true;
+			updateSourceAvailability();
+			void Promise.resolve(options.openSourceBesideSite(requestedURL)).then(result => {
+				if (disposed || generation !== sourceRequestGeneration
+						|| requestedURL !== lastEmbeddedURL) return;
+				if (!result || result.action === 'refuse') {
+					let reason = result && result.reason || 'source-route-refused';
+					status.textContent = `Source unavailable · ${reason}`;
+				}
+			}, error => {
+				if (disposed || generation !== sourceRequestGeneration
+						|| requestedURL !== lastEmbeddedURL) return;
+				status.textContent = `Source unavailable · ${error && error.message || String(error)}`;
+			}).finally(() => {
+				if (disposed || generation !== sourceRequestGeneration) return;
+				sourceRequestPending = false;
+				updateSourceAvailability();
+			});
 		});
 
 		async function buildAndStart() {
@@ -518,11 +587,34 @@ Zotero.QLab = Zotero.QLab || {};
 			ready,
 			buildAndStart,
 			navigate: url => decideAndRoute(url),
+			navigatePath(sitePath) {
+				let path = Zotero.QLab.normalizeMainSitePath(sitePath);
+				if (!path) return 'refuse';
+				if (snapshot.state !== 'ready' || !activeOrigin) {
+					restoredPath = path;
+					return 'queued';
+				}
+				let requested;
+				try { requested = new URL(path, activeOrigin).href; }
+				catch (error) { return 'refuse'; }
+				return decideAndRoute(requested);
+			},
 			home: () => home.dispatchEvent ? home.dispatchEvent(new Event('click')) : null,
-			snapshot: () => ({ ...snapshot, lastEmbeddedURL }),
+			snapshot: () => ({
+				...snapshot,
+				lastEmbeddedURL,
+				currentOrigin: activeOrigin,
+				target: Object.freeze({
+					identity: String(target.identity || ''),
+					root: String(target.root || ''),
+					epoch: target.epoch,
+				}),
+			}),
 			dispose() {
 				if (disposed) return;
 				disposed = true;
+				sourceRequestGeneration += 1;
+				sourceRequestPending = false;
 				for (let cleanup of cleanups.splice(0).reverse()) {
 					try { cleanup(); }
 					catch (error) { Zotero.logError && Zotero.logError(error); }
