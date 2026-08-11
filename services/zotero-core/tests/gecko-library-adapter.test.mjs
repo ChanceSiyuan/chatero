@@ -27,8 +27,11 @@ function item({
   filename = "",
   noteHTML = "",
   annotation = {},
+  deleted = false,
+  inTrash = false,
 }) {
   return Object.freeze({
+    deleted,
     id,
     itemTypeID: type,
     key,
@@ -55,6 +58,7 @@ function item({
     isAnnotation: () => type === "annotation",
     isAttachment: () => type === "attachment",
     isFileAttachment: () => type === "attachment" && Boolean(path),
+    isInTrash: () => inTrash,
     isNote: () => type === "note",
     isRegularItem: () => !["attachment", "note", "annotation"].includes(type),
   });
@@ -72,7 +76,12 @@ function collection({ id, key, libraryID, name, parentKey, childCollections = []
   });
 }
 
-function fixture() {
+function fixture({
+  attachmentDeleted = false,
+  attachmentInTrash = false,
+  noteDeleted = false,
+  noteInTrash = false,
+} = {}) {
   const highlight = item({
     id: 92,
     key: "ANN00001",
@@ -101,6 +110,8 @@ function fixture() {
     path: "/Users/example/Zotero/storage/PDF00001/paper.pdf",
     contentType: "application/pdf",
     filename: "paper.pdf",
+    deleted: attachmentDeleted,
+    inTrash: attachmentInTrash,
   });
   const childNote = item({
     id: 93,
@@ -110,6 +121,8 @@ function fixture() {
     type: "note",
     parentItemID: 11,
     noteHTML: "<div data-schema-version=\"9\"><p>Trusted Zotero note</p></div>",
+    deleted: noteDeleted,
+    inTrash: noteInTrash,
   });
   const alpha = item({
     id: 11,
@@ -280,7 +293,25 @@ test("looks up one file attachment by exact composite identity", async () => {
   });
   assert.equal((await adapter.attachment({ libraryId: 2, attachmentKey: "PDF00001" })).title, "Group PDF");
   await assert.rejects(adapter.attachment({ libraryId: 1, attachmentKey: "NOTE0002" }), /file attachment/);
-  await assert.rejects(adapter.attachment({ libraryId: 3, attachmentKey: "PDF00001" }), /not found/);
+  await assert.rejects(
+    adapter.attachment({ libraryId: 3, attachmentKey: "PDF00001" }),
+    error => error?.code === "UNAVAILABLE" && /not found/.test(error.message),
+  );
+});
+
+test("exact attachment and Note lookup rejects deleted or trashed Zotero items as unavailable", async () => {
+  const cases = [
+    ["attachment", { attachmentDeleted: true }, { attachmentKey: "PDF00001", libraryId: 1 }],
+    ["attachment", { attachmentInTrash: true }, { attachmentKey: "PDF00001", libraryId: 1 }],
+    ["note", { noteDeleted: true }, { libraryId: 1, noteKey: "NOTE0002" }],
+    ["note", { noteInTrash: true }, { libraryId: 1, noteKey: "NOTE0002" }],
+  ];
+
+  for (const [method, fixtureOptions, params] of cases) {
+    const adapter = createZoteroLibraryAdapter(fixture(fixtureOptions));
+    await assert.rejects(adapter[method](params), error =>
+      error?.code === "UNAVAILABLE" && /unavailable/.test(error.message));
+  }
 });
 
 test("returns a Note and PDF annotations without crossing libraries", async () => {
@@ -322,7 +353,10 @@ test("rejects malformed requests before touching Zotero APIs", async () => {
   await assert.rejects(adapter.collections({ libraryId: 1 }), /parentKey/);
   await assert.rejects(adapter.itemChildren({ libraryId: 1, itemKey: "" }), /itemKey/);
   await assert.rejects(adapter.attachment({ libraryId: 1, attachmentKey: "pdf00001" }), /attachmentKey/);
-  await assert.rejects(adapter.note({ libraryId: 2, noteKey: "NOTE0002" }), /not found/);
+  await assert.rejects(
+    adapter.note({ libraryId: 2, noteKey: "NOTE0002" }),
+    error => error?.code === "UNAVAILABLE" && /not found/.test(error.message),
+  );
   await assert.rejects(adapter.annotations({ attachmentKey: "PDF00001", libraryId: 1, extra: true }), /unknown field/);
   assert.equal(calls, 0);
 });

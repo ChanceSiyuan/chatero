@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { createGeckoCoreRequestRouter } from "../../../chrome/content/zotero/xpcom/chateroCoreRequestRouter.mjs";
+import {
+  createGeckoCoreRequestRouter,
+  mapGeckoCoreError,
+} from "../../../chrome/content/zotero/xpcom/chateroCoreRequestRouter.mjs";
 
 function request(session, method, params = {}, overrides = {}) {
   return {
@@ -105,6 +108,26 @@ test("routes read-only PDF children, Note, and annotation methods through librar
   assert.deepEqual((await router.handle(request(session, "library.annotations", { attachmentKey: "PDF00001", libraryId: 1 }))).result, { annotations: [] });
   assert.equal((await router.handle(request(session, "library.note", { libraryId: 1, noteKey: "NOTE0001" }))).result.html, "<p>Note</p>");
   assert.deepEqual(calls.map(value => value[0]), ["itemChildren", "attachment", "annotations", "note"]);
+});
+
+test("maps deleted or trashed exact-item failures to an unavailable response", async () => {
+  const unavailable = Object.assign(new Error("Zotero attachment 1/PDF00001 is unavailable"), {
+    code: "UNAVAILABLE",
+  });
+  const { router } = createRouter({
+    adapter: { async attachment() { throw unavailable; } },
+  });
+  const session = await handshake(router);
+
+  await assert.rejects(
+    router.handle(request(session, "library.attachment", { attachmentKey: "PDF00001", libraryId: 1 })),
+    error => error === unavailable,
+  );
+  assert.deepEqual(mapGeckoCoreError(unavailable), {
+    code: "UNAVAILABLE",
+    message: "Zotero attachment 1/PDF00001 is unavailable",
+    retriable: false,
+  });
 });
 
 test("cancels an in-flight search without changing the session", async () => {

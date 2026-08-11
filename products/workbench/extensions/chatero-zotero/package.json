@@ -85,16 +85,19 @@
         "chatero.zotero.profilePath": {
           "type": "string",
           "default": "",
+          "scope": "machine",
           "description": "Absolute path to the Zotero profile owned by Chatero Core."
         },
         "chatero.zotero.coreExecutable": {
           "type": "string",
           "default": "",
+          "scope": "machine",
           "description": "Absolute path to the bundled or development Chatero/Zotero Gecko executable."
         },
         "chatero.zotero.developerFixtureCore": {
           "type": "boolean",
           "default": false,
+          "scope": "machine",
           "description": "Use the data-free fixture Core while developing the Gecko adapter."
         }
       }

@@ -49,6 +49,12 @@ function sameIdentity(identity, record) {
   }
 }
 
+function unavailableEvidence(message) {
+  const error = new Error(message);
+  error.code = "UNAVAILABLE";
+  return error;
+}
+
 export function parseEvidenceDocumentUri(uri) {
   const value = uriText(uri);
   const match = /^(chatero-zotero-(pdf|note)):\/([1-9][0-9]*)\/([A-Z0-9]{8})\/(paper\.chatero-zotero-pdf|note\.chatero-zotero-note)$/.exec(value);
@@ -84,6 +90,260 @@ export function createEnsureCore({ getCurrent, start } = {}) {
   };
 }
 
+export function readCoreLaunchConfiguration(configuration) {
+  if (!configuration || typeof configuration.inspect !== "function") {
+    throw new Error("Zotero Core configuration must support global inspection");
+  }
+  const globalValue = (key, fallback) => {
+    const value = configuration.inspect(key)?.globalValue;
+    return typeof value === typeof fallback ? value : fallback;
+  };
+  return Object.freeze({
+    coreExecutable: globalValue("coreExecutable", ""),
+    developerFixtureCore: globalValue("developerFixtureCore", false),
+    profilePath: globalValue("profilePath", ""),
+  });
+}
+
+function localFilePath(uri, label) {
+  if (!uri || uri.scheme !== "file" || uri.authority
+      || typeof uri.fsPath !== "string" || uri.fsPath.length === 0) {
+    throw new Error(`${label} must be selected from the local file system`);
+  }
+  return uri.fsPath;
+}
+
+export async function selectLocalCoreConfigurationPath({
+  defaultUri,
+  dialogOptions,
+  label,
+  showOpenDialog,
+  update,
+} = {}) {
+  if (typeof showOpenDialog !== "function" || typeof update !== "function"
+      || !dialogOptions || typeof dialogOptions !== "object" || typeof label !== "string") {
+    throw new Error("Zotero Core local picker configuration is invalid");
+  }
+  localFilePath(defaultUri, `${label} default`);
+  const selection = await showOpenDialog({ ...dialogOptions, defaultUri });
+  if (!selection?.[0]) return null;
+  const path = localFilePath(selection[0], label);
+  await update(path);
+  return path;
+}
+
+export function createCoreLifecycle({
+  start,
+  publish = () => {},
+  unpublish = () => {},
+  onUnexpectedStop = () => {},
+} = {}) {
+  if (typeof start !== "function" || typeof publish !== "function"
+      || typeof unpublish !== "function" || typeof onUnexpectedStop !== "function") {
+    throw new Error("Zotero Core lifecycle requires start and lifecycle callbacks");
+  }
+  let current = null;
+  let disposed = false;
+  let disposePromise = null;
+  let epoch = 0;
+  let pendingLaunch = null;
+  let publicationCleanup = null;
+  let stopping = null;
+
+  const validateCore = core => {
+    if (!core || typeof core.stop !== "function" || typeof core.whenStopped?.then !== "function") {
+      throw new Error("Zotero Core startup returned an invalid lifecycle handle");
+    }
+  };
+
+  const clearPublication = (core, details) => {
+    if (current !== core) return false;
+    current = null;
+    const cleanup = publicationCleanup;
+    publicationCleanup = null;
+    let cleanupError = null;
+    try {
+      cleanup?.();
+    }
+    catch (error) {
+      cleanupError = error;
+    }
+    try {
+      unpublish(details);
+    }
+    catch (error) {
+      cleanupError ||= error;
+    }
+    if (cleanupError) throw cleanupError;
+    return true;
+  };
+
+  const reportUnexpectedStop = details => {
+    try {
+      onUnexpectedStop(details);
+    }
+    catch (_) {}
+  };
+
+  const discardPublishedCore = async (core, cleanup, reason, initialError = null) => {
+    let failure = initialError;
+    try {
+      cleanup?.();
+    }
+    catch (error) {
+      failure ||= error;
+    }
+    try {
+      unpublish({ core, reason });
+    }
+    catch (error) {
+      failure ||= error;
+    }
+    try {
+      await core.stop();
+    }
+    catch (error) {
+      failure ||= error;
+    }
+    if (failure) throw failure;
+  };
+
+  const watchCore = core => {
+    void Promise.resolve(core.whenStopped).then(result => {
+      if (current !== core) return;
+      epoch += 1;
+      let cleanupError = null;
+      try {
+        clearPublication(core, { core, reason: "stopped", result });
+      }
+      catch (error) {
+        cleanupError = error;
+      }
+      if (result?.expected !== true || cleanupError) {
+        reportUnexpectedStop({ core, error: cleanupError, result });
+      }
+    }, error => {
+      if (current !== core) return;
+      epoch += 1;
+      let cleanupError = null;
+      try {
+        clearPublication(core, { core, error, reason: "stopped" });
+      }
+      catch (value) {
+        cleanupError = value;
+      }
+      reportUnexpectedStop({ core, error: cleanupError || error });
+    });
+  };
+
+  const launchForEpoch = async launchEpoch => {
+    const launched = await start();
+    if (launched === null || launched === undefined) return null;
+    validateCore(launched);
+    if (disposed || launchEpoch !== epoch) {
+      await launched.stop();
+      return null;
+    }
+
+    let cleanup = null;
+    try {
+      cleanup = publish(launched) || null;
+      if (cleanup !== null && typeof cleanup !== "function") {
+        throw new Error("Zotero Core publication cleanup must be a function");
+      }
+    }
+    catch (error) {
+      await discardPublishedCore(launched, cleanup, "publish-failed", error);
+    }
+    if (disposed || launchEpoch !== epoch) {
+      await discardPublishedCore(launched, cleanup, "stale-start");
+      return null;
+    }
+
+    current = launched;
+    publicationCleanup = cleanup;
+    watchCore(launched);
+    return launched;
+  };
+
+  async function ensureCore() {
+    if (disposed) throw new Error("Zotero Core lifecycle is disposed");
+    if (stopping) await stopping;
+    if (disposed) throw new Error("Zotero Core lifecycle is disposed");
+    if (current) return current;
+    if (!pendingLaunch) {
+      const launchEpoch = epoch;
+      const launch = Promise.resolve().then(() => launchForEpoch(launchEpoch));
+      const tracked = launch.finally(() => {
+        if (pendingLaunch === tracked) pendingLaunch = null;
+      });
+      pendingLaunch = tracked;
+    }
+    return pendingLaunch;
+  }
+
+  function stopCore() {
+    if (stopping) return stopping;
+    epoch += 1;
+    const active = current;
+    const launch = pendingLaunch;
+    let transitionError = null;
+    if (active) {
+      try {
+        clearPublication(active, { core: active, reason: "stop" });
+      }
+      catch (error) {
+        transitionError = error;
+      }
+    }
+    else {
+      try {
+        unpublish({ core: null, reason: "stop" });
+      }
+      catch (error) {
+        transitionError = error;
+      }
+    }
+    const operation = (async () => {
+      if (active) {
+        try {
+          await active.stop();
+        }
+        catch (error) {
+          transitionError ||= error;
+        }
+      }
+      if (launch) {
+        try {
+          await launch;
+        }
+        catch (error) {
+          transitionError ||= error;
+        }
+      }
+      if (transitionError) throw transitionError;
+    })();
+    const tracked = operation.finally(() => {
+      if (stopping === tracked) stopping = null;
+    });
+    stopping = tracked;
+    return tracked;
+  }
+
+  function dispose() {
+    disposed = true;
+    disposePromise ||= stopCore();
+    return disposePromise;
+  }
+
+  return Object.freeze({
+    dispose,
+    ensureCore,
+    getCurrent: () => current,
+    stopCore,
+  });
+}
+
 export function createEvidenceDocumentResolver({ ensureCore, getModel, registry } = {}) {
   if (typeof ensureCore !== "function" || typeof getModel !== "function"
       || !(registry instanceof EvidenceDocumentRegistry)) {
@@ -117,8 +377,8 @@ export class EvidenceDocumentRegistry {
     const identity = identityFromRecord(kind, record);
     const uri = canonicalUri(identity);
     const existing = this.#documents.get(uri);
-    if (existing && existing.record !== record) {
-      throw new Error("A different Zotero evidence record already owns this document tab");
+    if (existing && existing.kind !== kind) {
+      throw new Error("A different Zotero evidence kind already owns this document tab");
     }
     this.#documents.set(uri, Object.freeze({ kind, record }));
     return uri;
@@ -132,6 +392,17 @@ export class EvidenceDocumentRegistry {
       throw new Error("The evidence document does not belong to the active Zotero Core session");
     }
     return entry.record;
+  }
+
+  release(uri, kind, record) {
+    const identity = parseEvidenceDocumentUri(uri);
+    const key = canonicalUri(identity);
+    const entry = this.#documents.get(key);
+    if (!entry || entry.kind !== kind || identity.kind !== kind || entry.record !== record) {
+      return false;
+    }
+    this.#documents.delete(key);
+    return true;
   }
 
   async resolveOrHydrate(uri, kind, resolver) {
@@ -152,10 +423,10 @@ export class EvidenceDocumentRegistry {
         throw new Error("The active Zotero Core session changed while restoring evidence");
       }
       if (!sameIdentity(identity, record)) {
-        throw new Error("Zotero Core returned a different evidence identity");
+        throw unavailableEvidence("Zotero Core returned a different evidence identity");
       }
       if (this.stage(kind, record) !== key) {
-        throw new Error("Zotero Core returned a noncanonical evidence identity");
+        throw unavailableEvidence("Zotero Core returned a noncanonical evidence identity");
       }
       return this.resolve(key, kind);
     });

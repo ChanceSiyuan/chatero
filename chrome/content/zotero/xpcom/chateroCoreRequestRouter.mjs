@@ -62,6 +62,7 @@ function validateRouterOptions(options) {
 export function mapGeckoCoreError(error) {
 	let message = String(error?.message || error).slice(0, MAX_ERROR_MESSAGE);
 	if (error?.code === "CANCELLED") return { code: "CANCELLED", message, retriable: false };
+	if (error?.code === "UNAVAILABLE") return { code: "UNAVAILABLE", message, retriable: false };
 	if (/missing capability/.test(message)) return { code: "FORBIDDEN", message, retriable: false };
 	if (/deadline|profile epoch|session|authentication|bootstrap|protocol version/.test(message)) {
 		return { code: "UNAUTHORIZED", message, retriable: false };
