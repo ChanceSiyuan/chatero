@@ -78,6 +78,14 @@
           "destination": "extensions/chatero-zotero/evidence-editors.cjs"
         },
         {
+          "source": "products/workbench/extensions/chatero-zotero/pdf-context-broker.mjs",
+          "destination": "extensions/chatero-zotero/pdf-context-broker.mjs"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/pdf-context-format.mjs",
+          "destination": "extensions/chatero-zotero/pdf-context-format.mjs"
+        },
+        {
           "source": "products/workbench/extensions/chatero-zotero/library-tree-model.mjs",
           "destination": "extensions/chatero-zotero/library-tree-model.mjs"
         },

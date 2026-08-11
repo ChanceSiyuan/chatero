@@ -231,7 +231,10 @@ test("first-party materialization and product proposal allowlist include chatero
   const product = JSON.parse(await readFile(new URL("../product.chatero.json", import.meta.url), "utf8"));
   const packageManifest = JSON.parse(await readFile(new URL("package.json", extensionRoot), "utf8"));
   const actualExtensionId = `${packageManifest.publisher}.${packageManifest.name}`;
-  assert.deepEqual(product.extensionEnabledApiProposals, { [actualExtensionId]: ["resolvers"] });
+  assert.deepEqual(product.extensionEnabledApiProposals, {
+    [actualExtensionId]: ["resolvers"],
+    "chatero.chatero-zotero": ["chatContextProvider"],
+  });
   const serialized = JSON.stringify(product);
   assert.doesNotMatch(serialized, /marketplace\.visualstudio\.com|ms-vscode-remote\.remote-ssh|ms-python\.vscode-pylance/i);
 });

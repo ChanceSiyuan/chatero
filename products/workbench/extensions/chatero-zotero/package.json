@@ -14,13 +14,25 @@
   "extensionKind": [
     "ui"
   ],
+  "enabledApiProposals": [
+    "chatContextProvider"
+  ],
   "main": "./extension.cjs",
   "activationEvents": [
     "onView:chatero.zotero.library",
     "onCustomEditor:chatero.zotero.pdf",
-    "onCustomEditor:chatero.zotero.note"
+    "onCustomEditor:chatero.zotero.note",
+    "onChatContextProvider:zotero-pdf-evidence",
+    "onChatContextProvider:chatero.chatero-zotero-zotero-pdf-evidence"
   ],
   "contributes": {
+    "chatContext": [
+      {
+        "id": "zotero-pdf-evidence",
+        "icon": "$(file-pdf)",
+        "displayName": "Zotero PDF evidence"
+      }
+    ],
     "customEditors": [
       {
         "viewType": "chatero.zotero.pdf",
@@ -77,6 +89,16 @@
         "title": "Search Library",
         "category": "Chatero",
         "icon": "$(search)"
+      },
+      {
+        "command": "chatero.zotero.addPdfContextToChat",
+        "title": "Add PDF Page or Selection to Chat",
+        "category": "Chatero"
+      },
+      {
+        "command": "chatero.zotero.sendFullPaperToRemote",
+        "title": "Send Full Paper to Remote…",
+        "category": "Chatero"
       }
     ],
     "configuration": {

@@ -43,6 +43,9 @@ function fakeVscode(withProgress) {
     fire() {}
   }
   return {
+    chat: {
+      registerChatAttachContextProvider: () => ({ dispose() {} }),
+    },
     commands: {
       executeCommand: async () => {},
       registerCommand(command, handler) {
@@ -53,6 +56,7 @@ function fakeVscode(withProgress) {
     commandsForTest: commands,
     ConfigurationTarget: { Global: 1 },
     EventEmitter,
+    extensions: { getExtension: () => undefined },
     ProgressLocation: { Window: 1 },
     ThemeIcon: class ThemeIcon { constructor(id) { this.id = id; } },
     TreeItem: class TreeItem { constructor(label) { this.label = label; } },
@@ -66,11 +70,13 @@ function fakeVscode(withProgress) {
       registerCustomEditorProvider: () => ({ dispose() {} }),
       registerTreeDataProvider: () => ({ dispose() {} }),
       showErrorMessage: async () => {},
+      showInformationMessage: async () => {},
       showInputBox: async () => undefined,
       showOpenDialog: async () => undefined,
       withProgress,
     },
     workspace: {
+      workspaceFolders: [],
       getConfiguration: () => ({
         inspect: key => ({
           globalValue: key === "profilePath" ? "/tmp/chatero-profile"
@@ -849,4 +855,142 @@ test("PDF provider exposes only the authorized file and packaged viewer roots", 
   assert.equal(pdfSource.authority, "");
   assert.equal(rendering.viewerUri, "vscode-webview:/extension/media/pdf-viewer/pdf-viewer.mjs");
   assert.equal(rendering.workerUri, "vscode-webview:/extension/media/pdf-viewer/pdf.worker.mjs");
+});
+
+test("PDF editor messages use the host document identity and never attach on passive updates", async () => {
+  const providers = await import("../extensions/chatero-zotero/evidence-editors.cjs");
+  const panelNonce = "AAAAAAAAAAAAAAAAAAAAAAAA";
+  const trustedAnnotations = Object.freeze([]);
+  const brokerCalls = [];
+  const attached = [];
+  let releaseAttachment;
+  const attachmentBarrier = new Promise(resolve => { releaseAttachment = resolve; });
+  let disposed = 0;
+  const snapshot = Object.freeze({
+    kind: "pdf-selection",
+    libraryId: 7,
+    attachmentKey: "PDF00001",
+    title: "Paper",
+    pageIndex: 6,
+    pageLabel: "7",
+    selectedText: "bounded evidence",
+    pageText: "whole page",
+    annotations: Object.freeze([]),
+    capturedAt: "2026-08-11T12:00:00.000Z",
+  });
+  const contextBroker = {
+    open(uri, record, nonceValue, trustedAnnotations) {
+      brokerCalls.push(["open", uri, record, nonceValue, trustedAnnotations]);
+      return { dispose() { disposed += 1; } };
+    },
+    update(uri, record, nonceValue, message) {
+      brokerCalls.push(["update", uri, record, nonceValue, message]);
+      return snapshot;
+    },
+  };
+  const fileUri = value => ({ authority: "", fsPath: value, path: value, scheme: "file", value, toString: () => `file://${value}` });
+  const provider = new providers.PdfEditorProvider({
+    attachPdfContext: async value => { attached.push(value); await attachmentBarrier; },
+    contextBroker,
+    extensionUri: fileUri("/extension"),
+    getModel: () => ({ annotations: async () => trustedAnnotations }),
+    makePanelNonce: () => panelNonce,
+    registry: { release: () => true },
+    renderPdfEditorHTML: value => { brokerCalls.push(["render", value]); return "<html>PDF</html>"; },
+    vscode: { Uri: { file: fileUri, joinPath: (base, ...parts) => fileUri(`${base.value}/${parts.join("/")}`) } },
+  });
+  const document = { record: attachment, uri: { toString: () => "chatero-zotero-pdf:/7/PDF00001/paper.chatero-zotero-pdf" } };
+  let receiveMessage;
+  let disposePanel;
+  let changeViewState;
+  const panel = {
+    active: true,
+    onDidChangeViewState(listener) { changeViewState = listener; return { dispose() {} }; },
+    onDidDispose(listener) { disposePanel = listener; return { dispose() {} }; },
+    webview: {
+      asWebviewUri: value => ({ toString: () => `vscode-webview:${value.value}` }),
+      cspSource: "vscode-webview://unit-test",
+      onDidReceiveMessage(listener) { receiveMessage = listener; return { dispose() {} }; },
+    },
+  };
+
+  await provider.resolveCustomEditor(document, panel);
+  assert.equal(brokerCalls[0][0], "open");
+  assert.equal(brokerCalls[0][1], document.uri);
+  assert.equal(brokerCalls[0][2], document.record);
+  assert.equal(brokerCalls[0][3], panelNonce);
+  assert.equal(brokerCalls[0][4], trustedAnnotations);
+  assert.equal(brokerCalls[1][1].panelNonce, panelNonce);
+
+  const update = {
+    type: "pdf-context",
+    panelNonce,
+    sequence: 1,
+    pageIndex: 6,
+    pageLabel: "7",
+    pageText: "whole page",
+    selectedText: "bounded evidence",
+  };
+  await receiveMessage(update);
+  assert.equal(attached.length, 0);
+  assert.deepEqual(brokerCalls.at(-1), ["update", document.uri, document.record, panelNonce, update]);
+  changeViewState({ webviewPanel: { active: false } });
+  assert.equal(attached.length, 0);
+
+  const firstAttach = receiveMessage({ type: "pdf-context-attach", panelNonce, sequence: 1 });
+  await new Promise(resolve => setImmediate(resolve));
+  const replayAttach = receiveMessage({ type: "pdf-context-attach", panelNonce, sequence: 1 });
+  await new Promise(resolve => setImmediate(resolve));
+  const attachmentCountBeforeRelease = attached.length;
+  releaseAttachment();
+  const [firstResult, replayResult] = await Promise.allSettled([firstAttach, replayAttach]);
+  assert.equal(attachmentCountBeforeRelease, 1);
+  assert.equal(firstResult.status, "fulfilled");
+  assert.equal(replayResult.status, "rejected");
+  assert.deepEqual(attached, [snapshot]);
+  await assert.rejects(receiveMessage({ type: "pdf-context-attach", panelNonce, sequence: 2 }), /sequence/);
+  disposePanel();
+  assert.equal(disposed, 1);
+});
+
+test("PDF context setup rolls back its broker lease and listeners when editor rendering fails", async () => {
+  const providers = await import("../extensions/chatero-zotero/evidence-editors.cjs");
+  const fileUri = value => ({ authority: "", fsPath: value, path: value, scheme: "file", value, toString: () => `file://${value}` });
+  for (const failure of ["render", "assignment"]) {
+    let leaseDisposals = 0;
+    let listenerDisposals = 0;
+    const provider = new providers.PdfEditorProvider({
+      attachPdfContext: async () => {},
+      contextBroker: {
+        open() { return { dispose() { leaseDisposals += 1; } }; },
+        update() { throw new Error("not reached"); },
+      },
+      extensionUri: fileUri("/extension"),
+      getModel: () => ({ annotations: async () => Object.freeze([]) }),
+      makePanelNonce: () => "AAAAAAAAAAAAAAAAAAAAAAAA",
+      registry: { release: () => true },
+      renderPdfEditorHTML: () => {
+        if (failure === "render") throw new Error("render failed");
+        return "<html>PDF</html>";
+      },
+      vscode: { Uri: { file: fileUri, joinPath: (base, ...parts) => fileUri(`${base.value}/${parts.join("/")}`) } },
+    });
+    const webview = {
+      asWebviewUri: value => ({ toString: () => `vscode-webview:${value.value}` }),
+      cspSource: "vscode-webview://unit-test",
+      onDidReceiveMessage() { return { dispose() { listenerDisposals += 1; } }; },
+    };
+    if (failure === "assignment") {
+      Object.defineProperty(webview, "html", { set() { throw new Error("assignment failed"); } });
+    }
+    const panel = {
+      active: true,
+      onDidChangeViewState() { return { dispose() { listenerDisposals += 1; } }; },
+      onDidDispose() { return { dispose() { listenerDisposals += 1; } }; },
+      webview,
+    };
+    await assert.rejects(provider.resolveCustomEditor({ record: attachment, uri: { toString: () => "chatero-zotero-pdf:/7/PDF00001/paper.chatero-zotero-pdf" } }, panel), new RegExp(`${failure} failed`));
+    assert.equal(leaseDisposals, 1);
+    assert.equal(listenerDisposals, 3);
+  }
 });

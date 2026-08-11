@@ -28,6 +28,9 @@
   "extensionEnabledApiProposals": {
     "chatero.chatero-remote": [
       "resolvers"
+    ],
+    "chatero.chatero-zotero": [
+      "chatContextProvider"
     ]
   },
   "trustedExtensionAuthAccess": {}

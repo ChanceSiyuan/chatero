@@ -14,17 +14,21 @@ test("declares native Library views and commands without a webview", async () =>
   assert.equal(manifest.publisher, "chatero");
   assert.equal(manifest.engines.vscode, "^1.132.0");
   assert.deepEqual(manifest.activationEvents.sort(), [
+    "onChatContextProvider:chatero.chatero-zotero-zotero-pdf-evidence",
+    "onChatContextProvider:zotero-pdf-evidence",
     "onCustomEditor:chatero.zotero.note",
     "onCustomEditor:chatero.zotero.pdf",
     "onView:chatero.zotero.library",
   ]);
   assert.deepEqual(commands, [
+    "chatero.zotero.addPdfContextToChat",
     "chatero.zotero.openAttachment",
     "chatero.zotero.openNote",
     "chatero.zotero.refreshLibrary",
     "chatero.zotero.searchLibrary",
     "chatero.zotero.selectCoreExecutable",
     "chatero.zotero.selectProfile",
+    "chatero.zotero.sendFullPaperToRemote",
     "chatero.zotero.startCore",
     "chatero.zotero.stopCore",
   ]);

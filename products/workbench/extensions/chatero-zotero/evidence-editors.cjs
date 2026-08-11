@@ -20,13 +20,32 @@ function nonce() {
 }
 
 class PdfEditorProvider {
-  constructor({ vscode, registry, getModel, resolveDocument, renderPdfEditorHTML, extensionUri }) {
+  constructor({
+    vscode,
+    registry,
+    getModel,
+    resolveDocument,
+    renderPdfEditorHTML,
+    extensionUri,
+    contextBroker = null,
+    attachPdfContext = null,
+    makePanelNonce = nonce,
+    onContextError = () => {},
+  }) {
     this.vscode = vscode;
     this.registry = registry;
     this.getModel = getModel;
     this.resolveDocument = resolveDocument || ((uri, kind) => registry.resolve(uri, kind));
     this.renderPdfEditorHTML = renderPdfEditorHTML;
     this.viewerRoot = vscode.Uri.joinPath(extensionUri, "media", "pdf-viewer");
+    this.contextBroker = contextBroker;
+    this.attachPdfContext = attachPdfContext;
+    this.makePanelNonce = makePanelNonce;
+    this.onContextError = onContextError;
+    if ((contextBroker === null) !== (attachPdfContext === null)
+        || typeof makePanelNonce !== "function" || typeof onContextError !== "function") {
+      throw new TypeError("PDF editor context bridge configuration is invalid");
+    }
   }
 
   async openCustomDocument(uri) {
@@ -44,16 +63,78 @@ class PdfEditorProvider {
       localResourceRoots: [this.vscode.Uri.file(dirname(record.path)), this.viewerRoot],
     };
     const annotations = await model.annotations({ attachmentKey: record.attachmentKey, libraryId: record.libraryId });
-    panel.webview.html = this.renderPdfEditorHTML({
-      annotations,
-      attachment: record,
-      cspSource: panel.webview.cspSource,
-      nonce: nonce(),
-      pdfJsUri: panel.webview.asWebviewUri(this.vscode.Uri.joinPath(this.viewerRoot, "pdf.mjs")).toString(),
-      pdfUri: panel.webview.asWebviewUri(file).toString(),
-      viewerUri: panel.webview.asWebviewUri(this.vscode.Uri.joinPath(this.viewerRoot, "pdf-viewer.mjs")).toString(),
-      workerUri: panel.webview.asWebviewUri(this.vscode.Uri.joinPath(this.viewerRoot, "pdf.worker.mjs")).toString(),
-    });
+    const panelNonce = this.makePanelNonce();
+    const contextLease = this.contextBroker?.open(document.uri, document.record, panelNonce, annotations) ?? null;
+    let lastSequence = 0;
+    let lastAttachSequence = 0;
+    let lastSnapshot = null;
+    let disposed = false;
+    let messageSubscription = null;
+    let viewStateSubscription = null;
+    let panelDisposeSubscription = null;
+    const cleanup = () => {
+      if (disposed) return;
+      disposed = true;
+      let failure = null;
+      for (const disposable of [messageSubscription, viewStateSubscription, panelDisposeSubscription, contextLease]) {
+        try { disposable?.dispose(); } catch (error) { failure ||= error; }
+      }
+      lastSnapshot = null;
+      if (failure) throw failure;
+    };
+    try {
+      this.contextBroker?.activate?.(document.uri, panelNonce, panel.active === true);
+      messageSubscription = this.contextBroker && typeof panel.webview.onDidReceiveMessage === "function"
+        ? panel.webview.onDidReceiveMessage(message => {
+        const operation = (async () => {
+          if (message?.type === "pdf-context") {
+            lastSnapshot = this.contextBroker.update(document.uri, document.record, panelNonce, message);
+            lastSequence = message.sequence;
+            return;
+          }
+          if (message?.type !== "pdf-context-attach") {
+            throw new TypeError("PDF editor message type is invalid");
+          }
+          const keys = Object.keys(message).sort();
+          if (keys.length !== 3 || keys[0] !== "panelNonce" || keys[1] !== "sequence" || keys[2] !== "type"
+              || message.panelNonce !== panelNonce
+              || !Number.isSafeInteger(message.sequence)
+              || message.sequence !== lastSequence
+              || message.sequence <= lastAttachSequence
+              || !lastSnapshot
+              || lastSnapshot.kind !== "pdf-selection"
+              || lastSnapshot.selectedText.trim().length === 0) {
+            throw new Error("PDF context attach sequence is invalid");
+          }
+          lastAttachSequence = message.sequence;
+          await this.attachPdfContext(lastSnapshot);
+        })();
+        void operation.catch(this.onContextError);
+        return operation;
+      })
+        : null;
+      viewStateSubscription = typeof panel.onDidChangeViewState === "function"
+        ? panel.onDidChangeViewState(event => {
+          this.contextBroker?.activate?.(document.uri, panelNonce, event?.webviewPanel?.active === true);
+        })
+        : null;
+      panelDisposeSubscription = panel.onDidDispose?.(cleanup) ?? null;
+      panel.webview.html = this.renderPdfEditorHTML({
+        annotations,
+        attachment: record,
+        cspSource: panel.webview.cspSource,
+        nonce: nonce(),
+        panelNonce,
+        pdfJsUri: panel.webview.asWebviewUri(this.vscode.Uri.joinPath(this.viewerRoot, "pdf.mjs")).toString(),
+        pdfUri: panel.webview.asWebviewUri(file).toString(),
+        viewerUri: panel.webview.asWebviewUri(this.vscode.Uri.joinPath(this.viewerRoot, "pdf-viewer.mjs")).toString(),
+        workerUri: panel.webview.asWebviewUri(this.vscode.Uri.joinPath(this.viewerRoot, "pdf.worker.mjs")).toString(),
+      });
+    }
+    catch (error) {
+      try { cleanup(); } catch (_) {}
+      throw error;
+    }
   }
 }
 

@@ -4,6 +4,7 @@ const { NoteEditorProvider, PdfEditorProvider } = require("./evidence-editors.cj
 
 let activeLifecycle = null;
 let deactivationPromise = null;
+const PDF_CONTEXT_PROVIDER_ID = "zotero-pdf-evidence";
 
 class LibraryProvider {
   constructor(evidenceAuthority) {
@@ -101,11 +102,13 @@ class LibraryProvider {
 }
 
 async function activate(context) {
-  const [{ LibraryTreeModel }, { EvidenceRecordAuthority }, registryModule, html] = await Promise.all([
+  const [{ LibraryTreeModel }, { EvidenceRecordAuthority }, registryModule, html, brokerModule, contextFormat] = await Promise.all([
     import("./library-tree-model.mjs"),
     import("./evidence-authority.mjs"),
     import("./evidence-editor-registry.mjs"),
     import("./evidence-editor-html.mjs"),
+    import("./pdf-context-broker.mjs"),
+    import("./pdf-context-format.mjs"),
   ]);
   const {
     EvidenceDocumentRegistry,
@@ -116,9 +119,33 @@ async function activate(context) {
   } = registryModule;
   const evidenceAuthority = new EvidenceRecordAuthority();
   const evidenceDocuments = new EvidenceDocumentRegistry();
+  const pdfContexts = new brokerModule.PdfContextBroker();
   const provider = new LibraryProvider(evidenceAuthority);
-  context.subscriptions.push(provider);
+  context.subscriptions.push(provider, pdfContexts);
   context.subscriptions.push(vscode.window.registerTreeDataProvider("chatero.zotero.library", provider));
+
+  const getRemoteAlias = async () => {
+    const folder = vscode.workspace.workspaceFolders?.find(value =>
+      value?.uri?.scheme === "vscode-remote"
+      && typeof value.uri.authority === "string"
+      && value.uri.authority.startsWith("chatero-remote+"));
+    if (!folder) return null;
+    const remoteExtension = vscode.extensions.getExtension("chatero.chatero-remote");
+    if (!remoteExtension) throw new Error("Chatero Remote is unavailable");
+    const remote = remoteExtension.isActive ? remoteExtension.exports : await remoteExtension.activate();
+    const session = remote?.getActiveSession?.(folder.uri.authority);
+    if (!session || typeof session.alias !== "string") throw new Error("The active Chatero SSH target is unavailable");
+    return session.alias;
+  };
+  const attachPdfSnapshot = async snapshot => {
+    const attachment = contextFormat.makePdfContextAttachment(snapshot, await getRemoteAlias());
+    return vscode.commands.executeCommand("chatero.chat.attachTextContext", attachment);
+  };
+  const pdfAttachProvider = contextFormat.createPdfAttachContextProvider({
+    broker: pdfContexts,
+    getRemoteAlias,
+  });
+  context.subscriptions.push(vscode.chat.registerChatAttachContextProvider(PDF_CONTEXT_PROVIDER_ID, pdfAttachProvider));
 
   const selectProfile = async () => {
     try {
@@ -221,6 +248,11 @@ async function activate(context) {
     resolveDocument,
     renderPdfEditorHTML: html.renderPdfEditorHTML,
     extensionUri: context.extensionUri,
+    contextBroker: pdfContexts,
+    attachPdfContext: attachPdfSnapshot,
+    onContextError: () => {
+      void vscode.window.showErrorMessage("Could not attach the bounded Zotero PDF context.");
+    },
   }), { supportsMultipleEditorsPerDocument: false }));
   context.subscriptions.push(vscode.window.registerCustomEditorProvider("chatero.zotero.note", new NoteEditorProvider({
     registry: evidenceDocuments,
@@ -234,6 +266,17 @@ async function activate(context) {
   context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.startCore", () => ensureCore().catch(error => vscode.window.showErrorMessage(`Could not start Zotero Core: ${error.message}`))));
   context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.stopCore", () => lifecycle.stopCore().catch(error => vscode.window.showErrorMessage(`Could not stop Zotero Core: ${error.message}`))));
   context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.refreshLibrary", () => provider.refresh()));
+  context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.addPdfContextToChat", async () => {
+    try {
+      return await attachPdfSnapshot(pdfContexts.captureActive());
+    }
+    catch (_) {
+      void vscode.window.showErrorMessage("Could not attach the bounded Zotero PDF context.");
+      return null;
+    }
+  }));
+  context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.sendFullPaperToRemote", () =>
+    vscode.window.showInformationMessage("Full-paper transfer requires a separate explicit authorization and is not enabled yet.")));
   context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.openAttachment", record => {
     const trusted = evidenceAuthority.authorize(record, "attachment");
     const uri = vscode.Uri.parse(evidenceDocuments.stage("pdf", trusted));
