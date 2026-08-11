@@ -4,9 +4,9 @@
 
 **Goal:** Make Chatero open arbitrary local or SSH Linux workspaces, run Codex beside the active workspace, and explicitly bridge bounded local Zotero PDF context to a remote turn without exposing local paths.
 
-**Architecture:** A local built-in `chatero-remote` extension resolves a normal Code-OSS remote authority using system OpenSSH and a signed, commit-matched Code-OSS Remote Agent. A local built-in `chatero-agent` extension owns conversations and delegates execution to the active authority. The existing local `chatero-zotero` PDF editor captures selectable PDF.js text and sends immutable bounded snapshots to the Agent only after a user gesture; complete PDFs use an explicit digest-addressed remote cache transaction.
+**Architecture:** A local built-in `chatero-remote` extension resolves a normal Code-OSS remote authority using system OpenSSH and a signed, commit-matched Code-OSS Remote Agent. Code-OSS's built-in Agent Host and Codex provider remain the single conversation, approval, history, diff, tool, and cancellation implementation; the remote server starts that Agent Host on a private Unix socket so Codex runs beside the remote workspace. The existing local `chatero-zotero` PDF editor captures selectable PDF.js text and adds immutable bounded snapshots to native Chat only after a user gesture; complete PDFs use an explicit digest-addressed remote cache transaction.
 
-**Tech Stack:** Code-OSS 1.132 proposed resolver API, Node.js 24 ESM/CommonJS, system OpenSSH, Code-OSS REH server, Ed25519 signatures, SHA-256, PDF.js, Codex CLI JSONL, Node test runner.
+**Tech Stack:** Code-OSS 1.132 proposed resolver and chat-context APIs, Node.js 24 ESM/CommonJS, system OpenSSH, Code-OSS REH server and Agent Host, Ed25519 signatures, SHA-256, PDF.js, embedded `@openai/codex` 0.142.0, Node test runner.
 
 ## Global Constraints
 
@@ -14,7 +14,7 @@
 - Never read or write `zotero.sqlite` from Electron renderers or extensions.
 - Never commit personal Zotero profiles, Knowledge, Drafts, Literature, chat history, credentials, research output, generated Code-OSS checkouts, Remote Agent archives, or signing private keys.
 - Do not add Microsoft Marketplace endpoints, Pylance, Microsoft Remote-SSH code/binaries/services, or Microsoft product branding.
-- Use Open VSX and a Chatero-built Code-OSS Remote Agent for Linux `x86_64` and `aarch64` at exact Code-OSS commit `df53daabb18cd157bdb08c7f01c34df936cf12f4`.
+- Use Open VSX and a Chatero-built Code-OSS Remote Agent for Linux `x86_64` and `aarch64` at exact Code-OSS commit `df53daabb18cd157bdb08c7f01c34df936cf12f4`; embed the matching Linux `@openai/codex` 0.142.0 package and never use a runtime Microsoft download.
 - OpenSSH owns host-key and credential decisions; Chatero never silently accepts an unknown host key.
 - Local and remote processes are launched with executable-plus-argv arrays; user input never extends a shell command.
 - Existing remote folders open unchanged. A missing absolute folder is created only after explicit confirmation. No QLab marker or Git repository is required.
@@ -167,7 +167,7 @@ Authentication failure must offer the user an action that opens an integrated te
 
 - [ ] **Step 4: Implement verified, atomic Remote Agent installation**
 
-Probe with the fixed command `uname -s; uname -m; uname -r` and accept only Linux `x86_64|amd64` or `aarch64|arm64`. Select the exact signed artifact from Task 1. Resume an interrupted upload from the verified `.part` byte count, verify remote SHA-256, extract into a sibling temporary directory, then atomically rename to `~/.chatero-server/bin/<commit>/<tuple>/`. Never write in the selected workspace. Create an owner-only token file below `~/.chatero-server/data/<commit>/` and launch `bin/chatero-server --host=127.0.0.1 --port=0 --connection-token-file=<file>`.
+Probe with the fixed command `uname -s; uname -m; uname -r` and accept only Linux `x86_64|amd64` or `aarch64|arm64`. Select the exact signed artifact from Task 1. Resume an interrupted upload from the verified `.part` byte count, verify remote SHA-256, extract into a sibling temporary directory, then atomically rename to `~/.chatero-server/bin/<commit>/<tuple>/`. Never write in the selected workspace. Create an owner-only token file and a short owner-only Agent Host socket below `$XDG_RUNTIME_DIR` (with a 0700 `/tmp/chatero-$UID` fallback). Launch `bin/chatero-server --host=127.0.0.1 --port=0 --connection-token-file=<file> --agent-host-path=<socket>` with fixed environment that enables the embedded Codex SDK, disables Claude/BYOK, and never exposes the token in logs.
 
 - [ ] **Step 5: Implement the proposed resolver and managed SSH byte stream**
 
@@ -267,10 +267,51 @@ Commit: `feat(workbench): open arbitrary remote workspaces`
 
 ---
 
-### Task 4: Selectable PDF.js evidence snapshots
+### Task 4: Native remote Codex runtime and policy
+
+**Files:**
+- Create: `products/workbench/patches/code-oss/0003-chatero-native-codex.patch`
+- Create: `products/workbench/tests/remote-agent-runtime.test.mjs`
+- Modify: `products/workbench/patches/code-oss/series.json`
+- Modify: `products/workbench/remote-agent/scripts/build-linux-agent.mjs`
+- Modify: `products/workbench/extensions/chatero-remote/package.json`
+- Modify: `products/workbench/product.chatero.json`
+- Modify: `products/workbench/tests/upstream-copilot-quarantine.test.mjs`
+- Modify: `products/workbench/tests/patch-series.test.mjs`
+
+**Interfaces:**
+- The signed release contains Code-OSS REH plus architecture-matched `agent-sdk/codex/node_modules/@openai/codex` and its Linux native package at exactly 0.142.0.
+- `chatero-server --agent-host-path=<socket>` spawns and bridges the built-in Agent Host; no `chatero-agent` extension exists.
+- Native Chat exposes Codex without requiring Copilot sign-in and defaults to OpenAI authentication only.
+- Native command `chatero.chat.attachTextContext` adds one explicit, visible, removable `Simple` attachment to the current Chat input.
+
+- [ ] **Step 1: Write failing runtime, SDK, policy, and attachment-command tests**
+
+Assert the pinned server contains `agentHostMain` and registers `agentHostProxy`; Node Agent Host inherits the parent Codex env even when login-shell resolution is empty; Codex usage source defaults/falls back to `openai`; signed-out OpenAI never falls back to Copilot; Codex chat does not require Copilot sign-in; and the explicit attachment command creates one `kind:"string"` entry without sending it.
+
+- [ ] **Step 2: Run focused tests and confirm RED**
+
+Run: `node --test products/workbench/tests/remote-agent-{release,runtime}.test.mjs products/workbench/tests/{patch-series,upstream-copilot-quarantine}.test.mjs`
+
+- [ ] **Step 3: Embed exact Codex SDK before signing**
+
+Reuse the pinned Code-OSS `build/agent-sdk/agents/codex` lock and packaging helpers without running their Microsoft CDN upload/production scripts. The x64 release must contain `@openai/codex-linux-x64`; arm64 must contain `@openai/codex-linux-arm64`. Verify the expected ELF architecture, executable bit, license, and `codex --version` on a native runner. Hash/sign only after SDK injection.
+
+- [ ] **Step 4: Patch Agent Host policy and native Chat attachment**
+
+Patch `NodeAgentHostStarter` to inherit parent env before shell env and SDK env. Make OpenAI the Codex default/fallback, prohibit silent Copilot fallback, and set `requiresCopilotSignIn:false` for Codex. Add the narrowly-scoped explicit text-context command; it accepts exact bounded fields, adds a visible attachment, focuses Chat, and never auto-sends. Add extension `configurationDefaults` for Agent Host on, Codex on, Codex preferred, Codex multi-root on, BYOK off.
+
+- [ ] **Step 5: Run Task 4 tests and commit**
+
+Commit: `feat(workbench): run native Codex on remote workspaces`
+
+---
+
+### Task 5: Selectable PDF.js evidence in native Chat
 
 **Files:**
 - Create: `products/workbench/extensions/chatero-zotero/pdf-context-broker.mjs`
+- Create: `products/workbench/extensions/chatero-zotero/pdf-context-format.mjs`
 - Create: `products/workbench/tests/zotero-pdf-context.test.mjs`
 - Modify: `products/workbench/extensions/chatero-zotero/media/pdf-viewer/pdf-viewer.mjs`
 - Modify: `products/workbench/extensions/chatero-zotero/evidence-editor-html.mjs`
@@ -278,188 +319,73 @@ Commit: `feat(workbench): open arbitrary remote workspaces`
 - Modify: `products/workbench/extensions/chatero-zotero/extension.cjs`
 - Modify: `products/workbench/extensions/chatero-zotero/package.json`
 - Modify: `products/workbench/first-party-extensions.json`
+- Modify: `products/workbench/product.chatero.json`
 - Modify: `products/workbench/tests/zotero-evidence-editors.test.mjs`
 
 **Interfaces:**
-- Produces `PdfContextBroker.update(record, payload)` and `captureActive({preferSelection}): PdfEvidenceSnapshot`.
-- Snapshot keys are exactly `kind`, `libraryId`, `attachmentKey`, `title`, `pageIndex`, `pageLabel`, `selectedText`, `pageText`, and `capturedAt`.
-- Produces commands `chatero.zotero.addPdfContextToAgent` and `chatero.zotero.sendFullPaperToRemote` available only for an active authorized PDF editor.
+- Produces `PdfContextBroker.update(documentUri, trustedRecord, panelNonce, payload)` and `capture(documentUri): PdfEvidenceSnapshot`.
+- Snapshot keys are exactly `kind`, `libraryId`, `attachmentKey`, `title`, `pageIndex`, `pageLabel`, `selectedText`, `pageText`, `annotations`, and `capturedAt`.
+- Contributes `Zotero PDF evidence` to native Add Context and commands `chatero.zotero.addPdfContextToChat` and `chatero.zotero.sendFullPaperToRemote`.
 
-- [ ] **Step 1: Write failing context boundary and editor-message tests**
+- [ ] **Step 1: Write failing boundary, multi-tab, and editor-message tests**
 
-```js
-test("PDF context is immutable, byte bounded, and path free", () => {
-  const snapshot = broker.update(attachmentWithPrivatePath, {
-    pageIndex: 2, pageLabel: "3", selectedText: "x".repeat(40_000), pageText: "y".repeat(140_000)
-  });
-  assert.ok(Buffer.byteLength(snapshot.selectedText) <= 32 * 1024);
-  assert.ok(Buffer.byteLength(snapshot.pageText) <= 128 * 1024);
-  assert.equal(JSON.stringify(snapshot).includes("/tmp/private"), false);
-  assert.ok(Object.isFrozen(snapshot));
-});
-```
-
-Assert the provider ignores webview-supplied `libraryId`, `attachmentKey`, `path`, and `title`, and uses only the authorized record from `EvidenceDocumentRegistry`.
+Assert UTF-8 byte limits, deep immutability, no local path/PDF bytes, authoritative identity from `document.record`, nonce plus monotonic-sequence rejection, independent simultaneous PDF tabs, and no passive send on focus/page changes.
 
 - [ ] **Step 2: Run focused tests and confirm RED**
 
 Run: `node --test products/workbench/tests/zotero-{pdf-context,evidence-editors}.test.mjs`
-
-Expected: FAIL because the broker and text-layer message flow do not exist.
 
 - [ ] **Step 3: Render a selectable PDF.js text layer**
 
-For each rendered page call `page.getTextContent()` and render PDF.js `TextLayer` into a positioned `.text-layer` above the canvas and below noninteractive Zotero highlights. Preserve normal selection. On page render and debounced `selectionchange`, post `{type:"pdf-context",pageIndex,pageLabel,pageText,selectedText}`. On `Meta+K` with a nonempty selection post the same payload with `openAgent:true`. Never post the PDF URI.
+For each page call `page.getTextContent()` and render PDF.js `TextLayer` above the canvas and below noninteractive Zotero highlights. On page render and debounced `selectionchange`, post only `{type:"pdf-context",panelNonce,sequence,pageIndex,pageLabel,pageText,selectedText}`. On Meta-K with nonempty selection request explicit Chat attachment. Never post a PDF URI or authoritative Zotero identity.
 
-- [ ] **Step 4: Implement the local broker and user gesture**
+- [ ] **Step 4: Register explicit native Chat context**
 
-Track the active provider panel via `onDidChangeViewState`. Apply UTF-8-safe truncation at the exact global limits and freeze every snapshot. `addPdfContextToAgent` captures the active snapshot then executes `chatero.agent.addContext`; no context moves merely because focus or page changes. A missing/deleted item remains an unavailable identity rather than rebinding to another PDF.
+Use `vscode.chat.registerChatAttachContextProvider` with the `chatContextProvider` proposal to expose the frozen active/last PDF snapshot through Add Context. The PDF command and Meta-K call `chatero.chat.attachTextContext`; no custom chat view or history store is added. Format content as escaped `<chatero-context trust="untrusted-evidence">` and label remote chips `Local Zotero → <SSH alias>`.
 
-- [ ] **Step 5: Run Task 4 tests and commit**
+- [ ] **Step 5: Run Task 5 tests and commit**
 
-Run: `node --test products/workbench/tests/zotero-{pdf-context,evidence-editors}.test.mjs`
+Run: `node --test products/workbench/tests/zotero-{pdf-context,evidence-editors}.test.mjs products/workbench/tests/first-party-extensions.test.mjs`
 
-Expected: all tests PASS and existing PDF annotation navigation remains green.
-
-Commit: `feat(workbench): capture bounded PDF evidence`
-
----
-
-### Task 5: Authority-scoped Codex Agent and chat surface
-
-**Files:**
-- Create: `products/workbench/extensions/chatero-agent/package.json`
-- Create: `products/workbench/extensions/chatero-agent/extension.cjs`
-- Create: `products/workbench/extensions/chatero-agent/context-manifest.mjs`
-- Create: `products/workbench/extensions/chatero-agent/codex-runner.mjs`
-- Create: `products/workbench/extensions/chatero-agent/conversation-store.mjs`
-- Create: `products/workbench/extensions/chatero-agent/agent-view.cjs`
-- Create: `products/workbench/extensions/chatero-agent/agent-view-html.mjs`
-- Create: `products/workbench/extensions/chatero-agent/media/agent.svg`
-- Create: `products/workbench/tests/chatero-agent-context.test.mjs`
-- Create: `products/workbench/tests/chatero-agent-runner.test.mjs`
-- Create: `products/workbench/tests/chatero-agent-manifest.test.mjs`
-- Modify: `products/workbench/first-party-extensions.json`
-
-**Interfaces:**
-- Produces `buildContextManifest({workspace,resources,grants})` and `renderPrompt(manifest,userText)`.
-- Produces `CodexRunner.run(turn, observer, signal)` that snapshots authority/root at Send and uses local `spawn` for local workspaces or `chatero.remote.runProcess` for SSH workspaces.
-- Produces commands `chatero.agent.open`, `chatero.agent.addContext`, `chatero.agent.newConversation`, and `chatero.agent.cancelTurn`.
-- Conversation storage records messages, authority/root identity, and stable context metadata; it omits context text/bytes, paths from Zotero, tokens, and credentials.
-
-- [ ] **Step 1: Write failing manifest, prompt, runner, and history tests**
-
-```js
-test("remote turn receives bounded evidence but never a local path", async () => {
-  const turn = makeTurn({ authority:"chatero-remote+lab", pdf:{ selectedText:"claim", localPath:"/Users/me/paper.pdf" } });
-  await runner.run(turn, observer, signal);
-  assert.equal(remote.request.cwd, "/srv/work");
-  assert.match(remote.request.args.at(-1), /claim/);
-  assert.doesNotMatch(JSON.stringify(remote.request), /\/Users\/me|paper\.pdf/);
-});
-
-test("focus changes do not move or cancel an in-flight turn", async () => {
-  const running = runner.run(makeTurn({authority:"chatero-remote+lab"}), observer, signal);
-  workspaceAuthority = "local";
-  await remote.finish();
-  await running;
-  assert.equal(remote.cancelled, false);
-});
-```
-
-- [ ] **Step 2: Run focused tests and confirm RED**
-
-Run: `node --test products/workbench/tests/chatero-agent-{context,runner,manifest}.test.mjs`
-
-Expected: FAIL because the Agent extension does not exist.
-
-- [ ] **Step 3: Implement immutable context manifests and prompt framing**
-
-Treat all resource text as untrusted evidence. Render:
-
-```text
-<chatero-context trust="untrusted-evidence" authority="chatero-remote+lab">
-[PDF selection · ABCD1234 · page 7]
-bounded text
-</chatero-context>
-
-<user-request>
-the user's request
-</user-request>
-```
-
-Escape literal closing tags in evidence and user text, enforce the Task 4 limits again, and reject resources whose stable identity or authority does not match the captured turn. Context chips are removable before Send and visibly label `Local Zotero → <SSH alias>`.
-
-- [ ] **Step 4: Implement local/remote Codex execution and cancellation**
-
-Use exact argv `codex exec --json -C <canonical root> --sandbox workspace-write <rendered prompt>` and `shell:false`. Probe the executable before enabling Send. Parse Codex JSONL into one ordered stream of assistant text, reasoning/status, tool activity, error, and terminal exit. A turn owns its AbortController and process/channel; changing PDF, editor, Agent conversation tab, or workspace focus does not cancel it. Cancel kills only that turn.
-
-If remote Codex is absent or unauthenticated, show actions to open a remote integrated terminal for installation or `codex login --device-auth`; do not collect credentials in the Agent webview.
-
-- [ ] **Step 5: Implement the Chatero Agent view**
-
-Use a workbench view with conversation tabs, history button, context chips, streaming transcript, input, Send, and Stop. It may float/pin through existing workbench layout behavior, but this task must at minimum remain usable beside a PDF and source editor. `Command-K` from the PDF opens it with the captured context; Code-OSS editor selection uses `window.activeTextEditor.selection` and the same command. Persist history in extension global storage, never in the repository.
-
-- [ ] **Step 6: Materialize the extension and run Task 5 tests**
-
-Run: `node --test products/workbench/tests/chatero-agent-{context,runner,manifest}.test.mjs products/workbench/tests/first-party-extensions.test.mjs`
-
-Expected: all tests PASS, with one assistant message per streamed event and no duplicate output.
-
-Commit: `feat(workbench): run Codex on the active authority`
+Commit: `feat(workbench): attach bounded Zotero PDF evidence`
 
 ---
 
 ### Task 6: Explicit complete-paper remote cache
 
 **Files:**
+- Create: `products/workbench/remote-agent/runtime/chatero-evidence-cache.mjs`
 - Create: `products/workbench/extensions/chatero-remote/evidence-cache.mjs`
 - Create: `products/workbench/tests/chatero-remote-evidence-cache.test.mjs`
+- Modify: `products/workbench/remote-agent/scripts/build-linux-agent.mjs`
+- Modify: `products/workbench/remote-agent/scripts/stage-release.mjs`
 - Modify: `products/workbench/extensions/chatero-remote/extension.cjs`
 - Modify: `products/workbench/extensions/chatero-zotero/extension.cjs`
-- Modify: `products/workbench/extensions/chatero-zotero/evidence-editors.cjs`
-- Modify: `products/workbench/extensions/chatero-agent/context-manifest.mjs`
 
 **Interfaces:**
-- Produces `stageEvidence({sourcePath,libraryId,attachmentKey,targetId,ttlSeconds}, signal): Promise<{kind:"remote-pdf-cache",digest,size,expiresAt,targetId}>`.
+- Produces `stageEvidence({sourcePath,libraryId,attachmentKey,targetId,ttlSeconds}, signal): Promise<{kind:"remote-pdf-cache",digest,size,expiresAt,targetId,remotePath}>`.
 - Produces `revokeEvidence({digest,targetId}, signal): Promise<void>` and `cleanupExpiredEvidence(session): Promise<number>`.
-- Only `chatero-zotero` may initiate staging from an authorized active attachment record, after confirmation; the Agent receives only the returned opaque cache record.
+- Only `chatero-zotero` may initiate staging from an authorized active attachment after confirmation; native Chat receives a bounded simple attachment containing only opaque identity, expiry, and the canonical remote path.
 
 - [ ] **Step 1: Write failing explicit-grant and cache-transaction tests**
 
-```js
-test("ordinary Send never stages the full PDF", async () => {
-  await agent.send({ resources:[boundedPdfSelection] });
-  assert.equal(remote.stageCalls.length, 0);
-});
-
-test("confirmed staging verifies digest and stores outside the workspace", async () => {
-  const record = await cache.stageEvidence(request, signal);
-  assert.match(remote.finalPath, /^~\/\.cache\/chatero\/evidence\/[a-f0-9]{64}\.pdf$/);
-  assert.equal(remote.workspaceWrites.length, 0);
-  assert.equal(record.expiresAt - now, 24 * 60 * 60 * 1000);
-});
-```
+Assert ordinary selection context never stages bytes; decline writes nothing; confirmed staging writes outside the workspace; local and remote SHA-256 match; expiry is 24 hours; cancellation deletes `.part`; and revoke is target-bound and idempotent.
 
 - [ ] **Step 2: Run focused tests and confirm RED**
 
 Run: `node --test products/workbench/tests/chatero-remote-evidence-cache.test.mjs`
 
-Expected: FAIL because `evidence-cache.mjs` does not exist.
+- [ ] **Step 3: Implement the signed fixed cache helper**
 
-- [ ] **Step 3: Implement local hash, resumable upload, remote verification, and revoke**
+The helper accepts only fixed `stage`, `revoke`, and `cleanup` operations, lowercase 64-hex digest, decimal size, and bounded TTL. It constructs `~/.cache/chatero/evidence/` itself, rejects symlinks, resumes only a verified prefix, streams/hash-checks stdin, atomically renames, and emits bounded JSON. It never accepts a workspace path or arbitrary shell command.
 
-Show one confirmation containing paper title, target alias, byte size, remote cache scope, and 24-hour expiry. Hash the authorized local file with streaming SHA-256. Upload to `<digest>.pdf.part`, resume only when the remote prefix size is valid, verify remote size and SHA-256, then atomically rename. The remote helper accepts only lowercase 64-hex digests, decimal sizes, and bounded TTL; it constructs the cache path itself. On cancellation or mismatch delete `.part`. Revoke deletes only that digest. Cleanup deletes expired cache records without following symlinks.
+- [ ] **Step 4: Add confirmation, native Chat chip, expiry, and revoke**
 
-- [ ] **Step 4: Add opaque full-paper context and UI state**
-
-After a successful transaction execute `chatero.agent.addContext` with the opaque `remote-pdf-cache` record and display expiry plus Revoke. The prompt may identify the remote cache URI but must not include the original local path. Missing/expired cache becomes an unavailable chip and is never silently re-uploaded.
+Confirm paper title, SSH alias, byte count, cache scope, and expiry. After staging, call `chatero.chat.attachTextContext` with an injection-aware message referencing only `remote-cache://<digest>` and `@<canonical remote path>`. Missing or expired cache becomes unavailable and is never re-uploaded silently.
 
 - [ ] **Step 5: Run Task 6 tests and commit**
 
-Run: `node --test products/workbench/tests/chatero-remote-evidence-cache.test.mjs products/workbench/tests/chatero-agent-context.test.mjs products/workbench/tests/zotero-pdf-context.test.mjs`
-
-Expected: all tests PASS, including decline, cancel, bad prefix, bad digest, symlink refusal, expiry, revoke idempotence, and target mismatch.
+Run: `node --test products/workbench/tests/chatero-remote-evidence-cache.test.mjs products/workbench/tests/zotero-pdf-context.test.mjs products/workbench/tests/remote-agent-release.test.mjs`
 
 Commit: `feat(workbench): stage explicit remote PDF evidence`
 
@@ -490,7 +416,7 @@ test("local PDF selection reaches remote Codex in an empty SSH workspace", async
   const system = await startFixture({remotePath:"/srv/empty",pathExists:false});
   await system.confirmCreate();
   system.pdf.select({pageIndex:6,text:"the bounded claim"});
-  await system.agent.send("Check this claim against the code");
+  await system.nativeChat.send("Check this claim against the code");
   assert.equal(system.remote.workspace.created, true);
   assert.equal(system.remote.codex.cwd, "/srv/empty");
   assert.match(system.remote.codex.prompt, /the bounded claim/);
@@ -512,7 +438,7 @@ Use `ubuntu-24.04` matrix values `x64` and `arm64`, bootstrap the exact pinned C
 
 - [ ] **Step 4: Add product verification and user documentation**
 
-`workbench:verify` must fail if `chatero.remote` lacks the resolver proposal allowlist, either built-in is absent, a Microsoft Remote-SSH identifier/endpoint appears, or a packaged release manifest is unsigned/wrong-commit. Document connect, first authentication, arbitrary/empty folder behavior, remote Codex probe/login, bounded PDF context, explicit full-paper transfer/revoke, logs, reconnection, and the fact that Zotero/profile/PDF remain local by default.
+`workbench:verify` must fail if `chatero.remote` lacks the resolver proposal allowlist, `chatero.zotero` lacks the chat-context proposal allowlist, either built-in is absent, the native Codex/OpenAI policy patch is absent, a Microsoft Remote-SSH identifier/endpoint appears, or a packaged release manifest is unsigned/wrong-commit. Document connect, first authentication, arbitrary/empty folder behavior, remote Codex probe/login, bounded PDF context, explicit full-paper transfer/revoke, logs, reconnection, and the fact that Zotero/profile/PDF remain local by default.
 
 - [ ] **Step 5: Run focused and full regression gates**
 
@@ -539,4 +465,4 @@ Commit: `test(workbench): gate remote Zotero Codex bridge`
 
 - Spec coverage: release supply chain, both Linux architectures, system OpenSSH, native Code-OSS authority, terminal/Git/LSP ownership, arbitrary and empty folders, remote Codex, bounded PDF selection/page text, explicit complete-paper transfer, reconnect, history survival, security, product wiring, CI, docs, and regressions each map to a task.
 - Placeholder scan: this plan contains no deferred implementation marker; every required behavior has a file, interface, failing test, implementation step, and verification command.
-- Type consistency: `chatero-remote` owns `runProcess`, `stageEvidence`, and `revokeEvidence`; `chatero-zotero` owns authorized local evidence; `chatero-agent` owns manifests/conversations and consumes only those interfaces.
+- Type consistency: `chatero-remote` owns transport, installation, workspace selection, `runProcess`, `stageEvidence`, and `revokeEvidence`; `chatero-zotero` owns authorized local evidence; native Code-OSS Agent Host/Codex owns conversations, prompts, approvals, tools, history, and changesets.
