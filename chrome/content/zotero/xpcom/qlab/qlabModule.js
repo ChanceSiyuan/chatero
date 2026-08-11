@@ -672,6 +672,10 @@ Zotero.QLab = Zotero.QLab || {};
 			host.className = 'qlab-shell-host';
 			container.appendChild(host);
 		}
+		// Publish the real mount owner before any host-scoped asynchronous work.
+		// Window shutdown must cancel the container guard, never the child host.
+		host._qlabMountTabID = container.id;
+		host._qlabMountContainer = container;
 
 		// qlabsite is a native tab whose first responsibility is safe workspace
 		// setup. The view/controller live in qlabWorkspaceSetupView; this module
@@ -771,9 +775,21 @@ Zotero.QLab = Zotero.QLab || {};
 			}
 		}
 		
+		let tabsForMount = container.ownerDocument?.defaultView?.Zotero_Tabs;
+		let tabForMount = tabsForMount && tabsForMount._tabs
+			&& tabsForMount._tabs.find(item => item.id === container.id);
+		let targetEpoch = container._qlabTargetEpoch;
+		if (targetEpoch === undefined || targetEpoch === null) {
+			targetEpoch = tabForMount && tabForMount.data && tabForMount.data.targetEpoch;
+		}
+		if (targetEpoch === undefined || targetEpoch === null) {
+			targetEpoch = tabsForMount && tabsForMount._qlab
+				&& tabsForMount._qlab._workspaceTargetEpoch;
+		}
 		let sameRoot = host._qlabMountRoot === root;
+		let sameEpoch = kind !== 'qlabqmd' || host._qlabMountEpoch === targetEpoch;
 		let sameKindMounted = host._qlabMountedKind === kind
-			&& (kind !== 'qlabqmd' || sameRoot)
+			&& (kind !== 'qlabqmd' || (sameRoot && sameEpoch))
 			&& host.querySelector(`[data-qlab-kind="${kind}"]`);
 		if (sameKindMounted) {
 			Zotero.QLab.refreshShellWorkspaceChrome(host, {
@@ -784,6 +800,7 @@ Zotero.QLab = Zotero.QLab || {};
 			});
 			host._qlabMountRoot = root;
 			host._qlabMountWorkspaceState = workspaceState;
+			if (kind === 'qlabqmd') host._qlabMountEpoch = targetEpoch;
 			if (kind === 'qlabchat' && !sameRoot) {
 				reloadChatApprovalPolicy(host, root, mountIsCurrent);
 			}
@@ -792,9 +809,10 @@ Zotero.QLab = Zotero.QLab || {};
 		
 		if (host._qlabQmdWorkspace && !sameKindMounted) {
 			host._qlabQmdWorkspace.dispose();
+			host._qlabQmdWorkspace = null;
 		}
 		let preserve = host._qlabMountedKind === kind
-			&& (kind !== 'qlabqmd' || sameRoot);
+			&& (kind !== 'qlabqmd' || (sameRoot && sameEpoch));
 		let preserved = preserve
 			? {
 				documentState: host._qlabDocumentState,
@@ -822,6 +840,9 @@ Zotero.QLab = Zotero.QLab || {};
 		host._qlabMountedKind = kind;
 		host._qlabMountRoot = root;
 		host._qlabMountWorkspaceState = workspaceState;
+		host._qlabMountEpoch = kind === 'qlabqmd'
+			? targetEpoch
+			: host._qlabMountEpoch;
 		
 		if (preserve && preserved) {
 			host._qlabDocumentState = preserved.documentState || null;
@@ -855,11 +876,25 @@ Zotero.QLab = Zotero.QLab || {};
 		if (kind === 'qlabqmd' && Zotero.QLab.mountQmdWorkspace && root && workspaceState === 'ready') {
 			let tabs = container.ownerDocument.defaultView.Zotero_Tabs;
 			let tab = tabs && tabs._tabs.find(item => item.id === container.id);
-			host._qlabMountTabID = container.id;
+			let readonlyDocumentIO = null;
+			if (tabs && tabs._qlab
+					&& typeof tabs._qlab.readonlyDocumentIOForRoot === 'function') {
+				try {
+					readonlyDocumentIO = await tabs._qlab.readonlyDocumentIOForRoot(root);
+				}
+				catch (error) {
+					// Native read-only access is optional for core Draft/Zotero use,
+					// but Knowledge/Literature will remain closed without it.
+					Zotero.logError && Zotero.logError(error);
+				}
+				if (!mountIsCurrent()
+						|| tabs._qlab?.isDestroyed?.() === true) return null;
+			}
 			await Zotero.QLab.mountQmdWorkspace(host, {
 				root,
 				initialPath: tab && tab.data && tab.data.draftPath,
 				layout: tab && tab.data && tab.data.qmdWorkspace,
+				readonlyDocumentIO,
 				isCurrent: mountIsCurrent,
 			});
 			if (!mountIsCurrent()) {
@@ -3333,12 +3368,68 @@ Zotero.QLab = Zotero.QLab || {};
 				return true;
 			},
 		});
+		let workspaceDocumentAccess = null;
+		let workspaceDocumentLeaseHost = null;
+		let controllerDestroyed = false;
+		let getSelectedRepositoryState = async () => ({
+			root: String(Zotero.QLab.Settings && Zotero.QLab.Settings.getRoot() || ''),
+			epoch: windowController && windowController._workspaceTargetEpoch !== undefined
+				? windowController._workspaceTargetEpoch
+				: setupCoordinator.targetEpoch,
+		});
+		try {
+			if (typeof Zotero.QLab.createGeckoWorkspaceDocumentLeaseHost === 'function'
+					&& typeof Zotero.QLab.createWindowWorkspaceDocumentAccess === 'function') {
+				workspaceDocumentLeaseHost = Zotero.QLab.createGeckoWorkspaceDocumentLeaseHost({
+					currentRepositoryState: getSelectedRepositoryState,
+				});
+				workspaceDocumentAccess = Zotero.QLab.createWindowWorkspaceDocumentAccess({
+					leaseHost: workspaceDocumentLeaseHost,
+					getSelectedRepositoryState,
+				});
+			}
+		}
+		catch (error) {
+			// Native Knowledge/Literature reads fail closed. Draft editing, Zotero,
+			// and the rest of the window remain available.
+			workspaceDocumentAccess = null;
+			if (workspaceDocumentLeaseHost
+					&& typeof workspaceDocumentLeaseHost.destroy === 'function') {
+				void Promise.resolve(workspaceDocumentLeaseHost.destroy()).catch(closeError => {
+					Zotero.logError && Zotero.logError(closeError);
+				});
+			}
+			workspaceDocumentLeaseHost = null;
+			Zotero.logError && Zotero.logError(error);
+		}
 		
 		windowController = {
 			groups,
 			chatUtility,
 			chatOutsideInteraction,
 			_workspaceTargetEpoch: setupCoordinator.targetEpoch,
+
+			isDestroyed() {
+				return controllerDestroyed;
+			},
+
+			readonlyDocumentIOForRoot(root) {
+				return workspaceDocumentAccess
+					? workspaceDocumentAccess.readonlyDocumentIOForRoot(root)
+					: Promise.resolve(null);
+			},
+
+			acquireVerifiedDocument(request) {
+				return workspaceDocumentAccess
+					? workspaceDocumentAccess.acquireVerifiedDocument(request)
+					: Promise.resolve(null);
+			},
+
+			releaseVerifiedDocument(capability) {
+				return workspaceDocumentAccess
+					? workspaceDocumentAccess.releaseVerifiedDocument(capability)
+					: Promise.resolve(false);
+			},
 
 			workspaceSwitchBlocker() {
 				return setupCoordinator.workspaceSwitchBlocker();
@@ -3620,6 +3711,9 @@ Zotero.QLab = Zotero.QLab || {};
 			},
 
 			async refreshWorkspace({ targetEpoch = null } = {}) {
+				this._workspaceTargetEpoch = targetEpoch === null
+					? setupCoordinator.targetEpoch
+					: targetEpoch;
 				await chatUtility.refreshWorkspace();
 				let chatContent = doc && doc.getElementById('qlab-chat-utility-content');
 				let chatHost = chatContent && chatContent.querySelector('.qlab-shell-host');
@@ -3681,13 +3775,50 @@ Zotero.QLab = Zotero.QLab || {};
 			},
 
 			destroy() {
+				if (controllerDestroyed) return false;
+				controllerDestroyed = true;
 				unregisterMainSiteController();
+				let cancelledMounts = new Set();
+				for (let tab of tabsAPI && tabsAPI._tabs || []) {
+					if (!SHELL_TYPES.includes(tab.type)) continue;
+					let container = doc?.getElementById?.(tab.id);
+					if (!container || cancelledMounts.has(container)) continue;
+					try {
+						Zotero.QLab.cancelShellTabMount?.(container);
+						cancelledMounts.add(container);
+					}
+					catch (error) { Zotero.logError && Zotero.logError(error); }
+				}
 				for (let host of doc?.querySelectorAll?.('.qlab-shell-host') || []) {
-					host._qlabMainSiteView?.dispose();
+					let mountContainer = host._qlabMountContainer
+						|| (host._qlabMountTabID && doc?.getElementById
+							? doc.getElementById(host._qlabMountTabID)
+							: null);
+					try {
+						let target = mountContainer || host;
+						if (!cancelledMounts.has(target)) {
+							Zotero.QLab.cancelShellTabMount?.(target);
+							cancelledMounts.add(target);
+						}
+					}
+					catch (error) { Zotero.logError && Zotero.logError(error); }
+					try {
+						host._qlabQmdWorkspace?.dispose();
+						host._qlabQmdWorkspace = null;
+					}
+					catch (error) { Zotero.logError && Zotero.logError(error); }
+					try { host._qlabMainSiteView?.dispose(); }
+					catch (error) { Zotero.logError && Zotero.logError(error); }
+				}
+				if (workspaceDocumentAccess) {
+					void Promise.resolve(workspaceDocumentAccess.destroy()).catch(error => {
+						Zotero.logError && Zotero.logError(error);
+					});
 				}
 				chatOutsideInteraction.dispose();
 				chatUtility.destroy();
 				setupCoordinator.dispose();
+				return true;
 			},
 		};
 		if (Zotero.QLab.registerMainSiteController) {

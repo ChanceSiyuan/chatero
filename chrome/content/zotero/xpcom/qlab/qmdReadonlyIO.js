@@ -121,6 +121,846 @@ Zotero.QLab = Zotero.QLab || {};
 		});
 	};
 
+	function routeClassification(relativePath) {
+		let document = Zotero.QLab.classifyWorkspaceDocument
+			? Zotero.QLab.classifyWorkspaceDocument(relativePath)
+			: null;
+		if (!document
+				|| !['draft', 'knowledge', 'literature'].includes(document.authority)
+				|| !['qmd', 'markdown', 'bib', 'pdf'].includes(document.kind)) {
+			throw new Error('Unsupported or unsafe workspace document route');
+		}
+		return document;
+	}
+
+	function canonicalRepositoryRoot(value) {
+		let root = String(value || '');
+		if (!root || root === '/' || !root.startsWith('/')
+				|| root.endsWith('/') || root.includes(String.fromCharCode(92))
+				|| root.includes(String.fromCharCode(0))) {
+			throw new Error('Workspace document repository root is unsafe');
+		}
+		let segments = root.split('/').slice(1);
+		if (segments.some(segment => !segment || segment === '.' || segment === '..')) {
+			throw new Error('Workspace document repository root is unsafe');
+		}
+		return root;
+	}
+
+	function validRepositoryEpoch(value) {
+		return (Number.isSafeInteger(value) && value >= 0)
+			|| (typeof value === 'string' && value.trim().length > 0);
+	}
+
+	function nativeStatType(stat) {
+		if (!stat || typeof stat !== 'object') return '';
+		if (stat.type === 'file' || stat.type === 'directory') return stat.type;
+		if (stat.isFile === true || (typeof stat.isFile === 'function' && stat.isFile())) {
+			return 'file';
+		}
+		if (stat.isDirectory === true
+				|| (typeof stat.isDirectory === 'function' && stat.isDirectory())) {
+			return 'directory';
+		}
+		return String(stat.type || '');
+	}
+
+	function nativeStatSize(stat) {
+		let size = Number(stat && stat.size);
+		return Number.isSafeInteger(size) && size >= 0 ? size : -1;
+	}
+
+	function nativeFileIdentity(stat) {
+		let size = nativeStatSize(stat);
+		if (nativeStatType(stat) !== 'file' || size < 0) return null;
+		let identity = { size };
+		for (let name of ['device', 'inode', 'mtimeNs', 'ctimeNs']) {
+			let value = stat && stat[name];
+			let normalized = null;
+			if (typeof value === 'number') {
+				if (Number.isSafeInteger(value) && value >= 0) normalized = String(value);
+			}
+			else if (typeof value === 'bigint') {
+				if (value >= 0n) normalized = value.toString(10);
+			}
+			else if (typeof value === 'string' && /^(?:0|[1-9][0-9]*)$/u.test(value)) {
+				normalized = value;
+			}
+			if (normalized === null) return null;
+			identity[name] = normalized;
+		}
+		return Object.freeze(identity);
+	}
+
+	function sameNativeFileIdentity(left, right) {
+		return !!left && !!right
+			&& left.device === right.device
+			&& left.inode === right.inode
+			&& left.size === right.size
+			&& left.mtimeNs === right.mtimeNs
+			&& left.ctimeNs === right.ctimeNs;
+	}
+
+	/**
+	 * Pure handle-bound broker. `nativeOps` is deliberately descriptor-shaped:
+	 * open `/`, descend one segment at a time with openat/no-follow semantics,
+	 * retain every handle for the lease, and read only from the retained leaf.
+	 */
+	Zotero.QLab.createHandleBoundWorkspaceDocumentLeaseHost = function (nativeOps) {
+		if (!nativeOps || typeof nativeOps.openRoot !== 'function'
+				|| typeof nativeOps.openAt !== 'function'
+				|| typeof nativeOps.stat !== 'function'
+				|| typeof nativeOps.canonicalPath !== 'function'
+				|| typeof nativeOps.read !== 'function'
+				|| typeof nativeOps.close !== 'function'
+				|| typeof nativeOps.currentRepositoryState !== 'function') {
+			throw new Error('Handle-bound workspace document leases require native descriptor operations');
+		}
+		let maxTextBytes = Number(nativeOps.maxTextBytes);
+		if (!Number.isSafeInteger(maxTextBytes) || maxTextBytes <= 0) maxTextBytes = 4 * 1024 * 1024;
+		let Decoder = nativeOps.TextDecoder
+			|| (typeof TextDecoder !== 'undefined' ? TextDecoder : null);
+		if (typeof Decoder !== 'function') {
+			throw new Error('Handle-bound workspace document leases require fatal UTF-8 decoding');
+		}
+		const records = new WeakMap();
+		const activeRecords = new Set();
+		let lifecycle = 'active';
+		let inFlight = 0;
+		let idleWaiters = [];
+		let generation = 0;
+
+		function beginOperation() {
+			if (lifecycle !== 'active') return null;
+			inFlight++;
+			let ended = false;
+			return () => {
+				if (ended) return;
+				ended = true;
+				inFlight--;
+				if (inFlight === 0) {
+					let waiters = idleWaiters;
+					idleWaiters = [];
+					for (let resolve of waiters) resolve();
+				}
+			};
+		}
+
+		function waitForIdle() {
+			if (inFlight === 0) return Promise.resolve();
+			return new Promise(resolve => idleWaiters.push(resolve));
+		}
+
+		async function runRecordOperation(record, operation) {
+			let previous = record.operationTail;
+			let release;
+			record.operationTail = new Promise(resolve => { release = resolve; });
+			await previous;
+			try { return await operation(); }
+			finally { release(); }
+		}
+
+		async function repositoryState() {
+			let state = await nativeOps.currentRepositoryState();
+			if (!state || typeof state !== 'object' || !validRepositoryEpoch(state.epoch)) {
+				throw new Error('Workspace document repository epoch is unavailable');
+			}
+			return { root: canonicalRepositoryRoot(state.root), epoch: state.epoch };
+		}
+
+		async function closeHandles(handles) {
+			let ok = true;
+			for (let index = handles.length - 1; index >= 0; index--) {
+				try { await nativeOps.close(handles[index]); }
+				catch (error) { ok = false; }
+			}
+			return ok;
+		}
+
+		async function openPinnedDocument(root, relativePath) {
+			let expected = '/';
+			let handles = [];
+			let segments = root.split('/').filter(Boolean).concat(relativePath.split('/'));
+			try {
+				let handle = await nativeOps.openRoot(Object.freeze({
+					readOnly: true, noFollow: true, closeOnExec: true,
+					directory: true, nonBlocking: false,
+				}));
+				handles.push(handle);
+				let rootStat = await nativeOps.stat(handle);
+				let rootPath = await nativeOps.canonicalPath(handle);
+				if (nativeStatType(rootStat) !== 'directory' || String(rootPath) !== '/') {
+					throw new Error('Workspace document filesystem root is not canonical');
+				}
+				for (let index = 0; index < segments.length; index++) {
+					let segment = segments[index];
+					if (!segment || segment === '.' || segment === '..'
+							|| segment.includes('/') || segment.includes(String.fromCharCode(92))
+							|| segment.includes(String.fromCharCode(0))) {
+						throw new Error('Workspace document path segment is unsafe');
+					}
+					let directory = index < segments.length - 1;
+					handle = await nativeOps.openAt(handle, segment, Object.freeze({
+						readOnly: true, noFollow: true, closeOnExec: true,
+						directory, nonBlocking: !directory,
+					}));
+					handles.push(handle);
+					expected = expected === '/' ? `/${segment}` : `${expected}/${segment}`;
+					let stat = await nativeOps.stat(handle);
+					let path = await nativeOps.canonicalPath(handle);
+					if (String(path) !== expected) {
+						throw new Error('Workspace document handle escaped its canonical path');
+					}
+					if (directory && nativeStatType(stat) !== 'directory') {
+						throw new Error('Workspace document ancestor is not a directory');
+					}
+				}
+				return { handles, leaf: handles[handles.length - 1], canonicalPath: expected };
+			}
+			catch (error) {
+				await closeHandles(handles);
+				throw error;
+			}
+		}
+
+		function privateRecord(access, capability, { allowClosing = false } = {}) {
+			let record = access && records.get(access);
+			return record && record.active && record.capability === capability
+				&& (allowClosing || !record.closing) ? record : null;
+		}
+
+		async function recordIsCurrent(record) {
+			if (!record || !record.active || lifecycle !== 'active') return false;
+			try {
+				let current = await repositoryState();
+				return current.root === record.binding.root && current.epoch === record.binding.epoch;
+			}
+			catch (error) { return false; }
+		}
+
+		async function acquireVerifiedDocument(request = {}) {
+			let endOperation = beginOperation();
+			if (!endOperation) throw new Error('Workspace document lease host was destroyed');
+			let opened = null;
+			try {
+				let current = await repositoryState();
+				let requestedRoot = canonicalRepositoryRoot(request.root);
+				if (requestedRoot !== current.root) {
+					throw new Error('Workspace document repository root is stale');
+				}
+				if (!validRepositoryEpoch(request.epoch) || request.epoch !== current.epoch) {
+					throw new Error('Workspace document repository epoch is stale');
+				}
+				let document = routeClassification(request.relativePath);
+				if (request.relativePath !== document.path
+						|| request.authority !== document.authority
+						|| request.kind !== document.kind
+						|| request.writable !== document.writable) {
+					throw new Error('Workspace document route metadata does not match its path');
+				}
+				opened = await openPinnedDocument(current.root, document.path);
+				let leafStat = await nativeOps.stat(opened.leaf);
+				let leafIdentity = nativeFileIdentity(leafStat);
+				if (!leafIdentity) {
+					throw new Error('Workspace document leaf regular file identity is invalid');
+				}
+				let readableText = document.writable === false
+					&& ['knowledge', 'literature'].includes(document.authority)
+					&& ['qmd', 'markdown', 'bib'].includes(document.kind);
+				if (readableText && leafIdentity.size > maxTextBytes) {
+					throw new Error('Workspace document text exceeds the size limit');
+				}
+				let confirmed = await repositoryState();
+				if (lifecycle !== 'active'
+						|| confirmed.root !== current.root || confirmed.epoch !== current.epoch) {
+					throw new Error('Workspace document repository binding became stale');
+				}
+				let access = Object.freeze(Object.create(null));
+				let capability = Object.freeze({
+					root: current.root,
+					relativePath: document.path,
+					canonicalPath: opened.canonicalPath,
+					authority: document.authority,
+					kind: document.kind,
+					writable: document.writable,
+					access,
+				});
+				let record = {
+					active: true,
+					closing: false,
+					readConsumed: false,
+					capability,
+					access,
+					handles: opened.handles,
+					leaf: opened.leaf,
+					identity: leafIdentity,
+					readableText,
+					operationTail: Promise.resolve(),
+					binding: Object.freeze({
+						root: current.root,
+						epoch: current.epoch,
+						generation: ++generation,
+					}),
+				};
+				records.set(access, record);
+				activeRecords.add(record);
+				return capability;
+			}
+			catch (error) {
+				if (opened) await closeHandles(opened.handles);
+				throw error;
+			}
+			finally { endOperation(); }
+		}
+
+		async function releaseVerifiedDocument(capability) {
+			let endOperation = beginOperation();
+			if (!endOperation) return false;
+			try {
+				let access = opaqueAccess(capability);
+				let record = privateRecord(access, capability);
+				if (!record) return false;
+				record.closing = true;
+				return await runRecordOperation(record, async () => {
+					record.active = false;
+					activeRecords.delete(record);
+					return closeHandles(record.handles);
+				});
+			}
+			finally { endOperation(); }
+		}
+
+		async function readVerified(access, capability) {
+			let endOperation = beginOperation();
+			if (!endOperation) throw new Error('Workspace document lease host was destroyed');
+			try {
+				let record = privateRecord(access, capability);
+				if (!record) throw new Error('Workspace document lease access was revoked');
+				if (!record.readableText) {
+					throw new Error('Workspace document lease is not readable read-only text');
+				}
+				if (record.readConsumed) {
+					throw new Error('Workspace document read access was already consumed');
+				}
+				// Claim before the first await so concurrent callers cannot both read.
+				record.readConsumed = true;
+				return await runRecordOperation(record, async () => {
+					if (!await recordIsCurrent(record)) {
+						throw new Error('Workspace document repository binding is stale or revoked');
+					}
+					let before = await nativeOps.stat(record.leaf);
+					let beforeIdentity = nativeFileIdentity(before);
+					if (!sameNativeFileIdentity(record.identity, beforeIdentity)
+							|| beforeIdentity.size > maxTextBytes) {
+						throw new Error('Workspace document identity changed before its verified read');
+					}
+					let raw = await nativeOps.read(record.leaf, maxTextBytes + 1);
+					let bytes;
+					if (raw && typeof ArrayBuffer !== 'undefined' && ArrayBuffer.isView(raw)) {
+						bytes = new Uint8Array(raw.buffer, raw.byteOffset || 0, raw.byteLength);
+					}
+					else throw new Error('Workspace document native read returned invalid bytes');
+					if (bytes.byteLength > maxTextBytes) {
+						throw new Error('Workspace document text grew beyond the read limit');
+					}
+					let after = await nativeOps.stat(record.leaf);
+					let afterIdentity = nativeFileIdentity(after);
+					if (!sameNativeFileIdentity(record.identity, afterIdentity)
+							|| !sameNativeFileIdentity(beforeIdentity, afterIdentity)
+							|| bytes.byteLength !== afterIdentity.size) {
+						throw new Error('Workspace document changed during its verified read');
+					}
+					if (!await recordIsCurrent(record)) {
+						throw new Error('Workspace document repository binding changed during read');
+					}
+					let text;
+					try { text = new Decoder('utf-8', { fatal: true }).decode(bytes); }
+					catch (error) { throw new Error('Workspace document contains invalid UTF-8 encoding'); }
+					return Object.freeze({
+						text,
+						size: afterIdentity.size,
+						lastModified: Number(after.lastModified) || 0,
+					});
+				});
+			}
+			finally { endOperation(); }
+		}
+
+		async function verifyRecord(access, capability, canonical) {
+			let endOperation = beginOperation();
+			if (!endOperation) return false;
+			try {
+				let record = privateRecord(access, capability);
+				return !!record
+					&& (!canonical
+						|| capability.canonicalPath === `${record.binding.root}/${capability.relativePath}`)
+					&& await recordIsCurrent(record);
+			}
+			finally { endOperation(); }
+		}
+
+		let host = {
+			acquireVerifiedDocument,
+			verifyAccess: (access, capability) => verifyRecord(access, capability, false),
+			verifyCanonicalAccess: (access, capability) => verifyRecord(access, capability, true),
+			readVerified,
+			releaseVerifiedDocument,
+			revokeVerifiedAccess: releaseVerifiedDocument,
+			async destroy() {
+				if (lifecycle !== 'active') return false;
+				lifecycle = 'destroying';
+				await waitForIdle();
+				let ok = true;
+				for (let record of Array.from(activeRecords)) {
+					record.active = false;
+					activeRecords.delete(record);
+					if (!await closeHandles(record.handles)) ok = false;
+				}
+				if (typeof nativeOps.destroy === 'function') {
+					try { await nativeOps.destroy(); }
+					catch (error) { ok = false; }
+				}
+				lifecycle = 'destroyed';
+				return ok;
+			},
+		};
+		return Object.freeze(host);
+	};
+
+	/**
+	 * Own the small Darwin libc surface needed by the descriptor broker.
+	 * The wrapper deliberately exposes byte buffers rather than raw ctypes
+	 * pointers so the security-sensitive parsing remains independently testable.
+	 */
+	Zotero.QLab.createDarwinWorkspaceDocumentCtypesBindings = function ({
+		ctypes,
+		library = null,
+		architecture,
+	} = {}) {
+		if (!ctypes || typeof ctypes !== 'object') {
+			throw new Error('Darwin workspace document access requires ctypes');
+		}
+		let libc = library;
+		let closed = false;
+		let closeLibrary = () => {
+			if (closed || !libc) return false;
+			closed = true;
+			libc.close();
+			return true;
+		};
+		try {
+			if (!libc) {
+				if (typeof ctypes.open !== 'function') {
+					throw new Error('Darwin ctypes library loader is unavailable');
+				}
+				libc = ctypes.open('/usr/lib/libSystem.B.dylib');
+			}
+			if (!libc || typeof libc.declare !== 'function'
+					|| typeof libc.close !== 'function') {
+				throw new Error('Darwin ctypes library is invalid');
+			}
+			let normalizedArchitecture = String(architecture || '').toLowerCase();
+			let fstatSymbol;
+			if (normalizedArchitecture === 'arm64' || normalizedArchitecture === 'aarch64') {
+				fstatSymbol = 'fstat';
+			}
+			else if (normalizedArchitecture === 'x86_64' || normalizedArchitecture === 'amd64') {
+				fstatSymbol = 'fstat$INODE64';
+			}
+			else {
+				throw new Error('Unsupported Darwin architecture for workspace document access');
+			}
+
+			let open = libc.declare(
+				'open', ctypes.default_abi, ctypes.int, ctypes.char.ptr, ctypes.int
+			);
+			let openat = libc.declare(
+				'openat', ctypes.default_abi, ctypes.int,
+				ctypes.int, ctypes.char.ptr, ctypes.int
+			);
+			let fstat = libc.declare(
+				fstatSymbol, ctypes.default_abi, ctypes.int, ctypes.int, ctypes.voidptr_t
+			);
+			let read = libc.declare(
+				'read', ctypes.default_abi, ctypes.ssize_t,
+				ctypes.int, ctypes.voidptr_t, ctypes.size_t
+			);
+			let close = libc.declare(
+				'close', ctypes.default_abi, ctypes.int, ctypes.int
+			);
+			let fcntl = libc.declare(
+				'fcntl', ctypes.default_abi, ctypes.int,
+				ctypes.int, ctypes.int, ctypes.voidptr_t
+			);
+
+			function createBuffer(size) {
+				if (!Number.isSafeInteger(size) || size <= 0) {
+					throw new Error('Darwin native buffer size is invalid');
+				}
+				let BufferType = ctypes.ArrayType(ctypes.uint8_t, size);
+				return new BufferType();
+			}
+
+			function byteArray(buffer, length) {
+				if (!Number.isSafeInteger(length) || length < 0) {
+					throw new Error('Darwin native byte length is invalid');
+				}
+				let result = new Uint8Array(length);
+				for (let index = 0; index < length; index++) {
+					result[index] = Number(buffer[index]);
+				}
+				return result;
+			}
+
+			return Object.freeze({
+				open: (path, flags) => Number(open(path, flags)),
+				openat: (fd, segment, flags) => Number(openat(fd, segment, flags)),
+				fstat: (fd, buffer) => Number(fstat(fd, buffer.address())),
+				fcntl: (fd, command, buffer) => Number(fcntl(fd, command, buffer.address())),
+				read(fd, buffer, offset, length) {
+					let pointer = offset === 0 ? buffer.address() : buffer.addressOfElement(offset);
+					return Number(read(fd, pointer, length));
+				},
+				close: fd => Number(close(fd)),
+				createBuffer,
+				bytes: byteArray,
+				errno: () => Number(ctypes.errno) || 0,
+				destroy: closeLibrary,
+			});
+		}
+		catch (error) {
+			try { closeLibrary(); }
+			catch (closeError) {}
+			throw error;
+		}
+	};
+
+	/** Darwin descriptor operations backed by the owned ctypes bindings above. */
+	Zotero.QLab.createDarwinWorkspaceDocumentNativeOps = function ({
+		bindings,
+		currentRepositoryState,
+		maxTextBytes = 4 * 1024 * 1024,
+		TextDecoder: Decoder = typeof TextDecoder !== 'undefined' ? TextDecoder : null,
+	} = {}) {
+		for (let name of [
+			'open', 'openat', 'fstat', 'fcntl', 'read', 'close',
+			'createBuffer', 'bytes', 'errno', 'destroy',
+		]) {
+			if (!bindings || typeof bindings[name] !== 'function') {
+				throw new Error(`Darwin workspace document binding is missing ${name}`);
+			}
+		}
+		if (typeof currentRepositoryState !== 'function' || typeof Decoder !== 'function') {
+			throw new Error('Darwin workspace document operations require repository state and UTF-8 decoding');
+		}
+		if (!Number.isSafeInteger(maxTextBytes) || maxTextBytes <= 0) {
+			throw new Error('Darwin workspace document text limit is invalid');
+		}
+
+		const O_RDONLY = 0x0000;
+		const O_NONBLOCK = 0x0004;
+		const O_NOFOLLOW = 0x0100;
+		const O_DIRECTORY = 0x00100000;
+		const O_CLOEXEC = 0x01000000;
+		const F_GETPATH = 50;
+		const PATH_MAX = 1024;
+		const DARWIN_STAT_SIZE = 144;
+		const S_IFMT = 0xf000;
+		const S_IFREG = 0x8000;
+		const S_IFDIR = 0x4000;
+		const openHandles = new WeakMap();
+		let destroyed = false;
+
+		function nativeError(operation) {
+			let errno = Number(bindings.errno()) || 0;
+			return new Error(`${operation} failed for workspace document descriptor (errno ${errno})`);
+		}
+
+		function flags(options = {}) {
+			if (options.readOnly !== true) {
+				throw new Error('Darwin workspace document descriptors must be read-only');
+			}
+			let value = O_RDONLY;
+			if (options.noFollow === true) value |= O_NOFOLLOW;
+			if (options.closeOnExec === true) value |= O_CLOEXEC;
+			if (options.directory === true) value |= O_DIRECTORY;
+			if (options.nonBlocking === true) value |= O_NONBLOCK;
+			return value;
+		}
+
+		function makeHandle(fd) {
+			if (!Number.isInteger(fd) || fd < 0) throw nativeError('open');
+			let handle = Object.freeze(Object.create(null));
+			openHandles.set(handle, { fd, open: true });
+			return handle;
+		}
+
+		function descriptor(handle) {
+			let record = handle && openHandles.get(handle);
+			if (!record || !record.open) {
+				throw new Error('Darwin workspace document descriptor is closed or invalid');
+			}
+			return record;
+		}
+
+		function safeSegment(segment) {
+			let value = String(segment || '');
+			if (!value || value === '.' || value === '..'
+					|| value.includes('/') || value.includes(String.fromCharCode(92))
+					|| value.includes(String.fromCharCode(0))) {
+				throw new Error('Darwin workspace document path segment is unsafe');
+			}
+			return value;
+		}
+
+		function bufferBytes(buffer, length) {
+			let bytes = bindings.bytes(buffer, length);
+			if (!bytes || typeof ArrayBuffer === 'undefined' || !ArrayBuffer.isView(bytes)
+					|| bytes.byteLength < length) {
+				throw new Error('Darwin workspace document native bytes are invalid');
+			}
+			return new Uint8Array(bytes.buffer, bytes.byteOffset || 0, length);
+		}
+
+		return Object.freeze({
+			maxTextBytes,
+			TextDecoder: Decoder,
+			currentRepositoryState,
+			async openRoot(options) {
+				if (destroyed) throw new Error('Darwin workspace document operations were destroyed');
+				return makeHandle(bindings.open('/', flags(options)));
+			},
+			async openAt(parent, segment, options) {
+				if (destroyed) throw new Error('Darwin workspace document operations were destroyed');
+				let parentRecord = descriptor(parent);
+				let fd = bindings.openat(parentRecord.fd, safeSegment(segment), flags(options));
+				return makeHandle(fd);
+			},
+			async stat(handle) {
+				let record = descriptor(handle);
+				let buffer = bindings.createBuffer(DARWIN_STAT_SIZE);
+				if (bindings.fstat(record.fd, buffer) !== 0) throw nativeError('fstat');
+				let bytes = bufferBytes(buffer, DARWIN_STAT_SIZE);
+				let view = new DataView(bytes.buffer, bytes.byteOffset, DARWIN_STAT_SIZE);
+				let mode = view.getUint16(4, true) & S_IFMT;
+				let size = view.getBigInt64(96, true);
+				let mtimeSeconds = view.getBigInt64(48, true);
+				let mtimeNanoseconds = view.getBigInt64(56, true);
+				let ctimeSeconds = view.getBigInt64(64, true);
+				let ctimeNanoseconds = view.getBigInt64(72, true);
+				if (size < 0n || size > BigInt(Number.MAX_SAFE_INTEGER)
+						|| mtimeNanoseconds < 0n || mtimeNanoseconds >= 1000000000n
+						|| ctimeNanoseconds < 0n || ctimeNanoseconds >= 1000000000n) {
+					throw new Error('Darwin workspace document stat identity is invalid');
+				}
+				let mtimeNs = mtimeSeconds * 1000000000n + mtimeNanoseconds;
+				let ctimeNs = ctimeSeconds * 1000000000n + ctimeNanoseconds;
+				return Object.freeze({
+					type: mode === S_IFREG ? 'file' : mode === S_IFDIR ? 'directory' : 'other',
+					size: Number(size),
+					device: String(view.getUint32(0, true)),
+					inode: view.getBigUint64(8, true).toString(10),
+					mtimeNs: mtimeNs.toString(10),
+					ctimeNs: ctimeNs.toString(10),
+					lastModified: Number(mtimeSeconds) * 1000 + Number(mtimeNanoseconds) / 1000000,
+				});
+			},
+			async canonicalPath(handle) {
+				let record = descriptor(handle);
+				let buffer = bindings.createBuffer(PATH_MAX);
+				if (bindings.fcntl(record.fd, F_GETPATH, buffer) !== 0) throw nativeError('fcntl F_GETPATH');
+				let bytes = bufferBytes(buffer, PATH_MAX);
+				let end = bytes.indexOf(0);
+				if (end <= 0) throw new Error('Darwin workspace document canonical path is invalid');
+				try { return new Decoder('utf-8', { fatal: true }).decode(bytes.subarray(0, end)); }
+				catch (error) { throw new Error('Darwin workspace document canonical path is not UTF-8'); }
+			},
+			async read(handle, limit) {
+				let record = descriptor(handle);
+				if (!Number.isSafeInteger(limit) || limit <= 0) {
+					throw new Error('Darwin workspace document read limit is invalid');
+				}
+				let buffer = bindings.createBuffer(limit);
+				let offset = 0;
+				while (offset < limit) {
+					let count = Number(bindings.read(record.fd, buffer, offset, limit - offset));
+					if (!Number.isSafeInteger(count) || count < 0 || count > limit - offset) {
+						throw nativeError('read');
+					}
+					if (count === 0) break;
+					offset += count;
+				}
+				return bufferBytes(buffer, offset);
+			},
+			async close(handle) {
+				let record = descriptor(handle);
+				// POSIX leaves descriptor state ambiguous after an interrupted close;
+				// consume it before calling libc and never retry.
+				record.open = false;
+				if (bindings.close(record.fd) !== 0) throw nativeError('close');
+			},
+			async destroy() {
+				if (destroyed) return false;
+				destroyed = true;
+				return await bindings.destroy() === true;
+			},
+		});
+	};
+
+	Zotero.QLab.createGeckoWorkspaceDocumentLeaseHost = function (options = {}) {
+		let platform = String(options.platform
+			|| (typeof Services !== 'undefined' && Services.appinfo && Services.appinfo.OS)
+			|| '');
+		if (platform !== 'Darwin') {
+			throw new Error('Native workspace document leases are supported only on Darwin/macOS');
+		}
+		if (options.nativeOps) {
+			return Zotero.QLab.createHandleBoundWorkspaceDocumentLeaseHost(options.nativeOps);
+		}
+		let bindings = null;
+		try {
+			let ctypes = options.ctypes;
+			if (!ctypes) {
+				if (typeof ChromeUtils === 'undefined'
+						|| typeof ChromeUtils.importESModule !== 'function') {
+					throw new Error('Darwin ctypes module is unavailable');
+				}
+				({ ctypes } = ChromeUtils.importESModule('resource://gre/modules/ctypes.sys.mjs'));
+			}
+			let architecture = String(options.architecture
+				|| (typeof Services !== 'undefined' && Services.appinfo && Services.appinfo.XPCOMABI)
+				|| '');
+			if (/^(?:arm64|aarch64)(?:-|$)/iu.test(architecture)) architecture = 'arm64';
+			else if (/^(?:x86_64|amd64)(?:-|$)/iu.test(architecture)) architecture = 'x86_64';
+			bindings = Zotero.QLab.createDarwinWorkspaceDocumentCtypesBindings({
+				ctypes,
+				library: options.library || null,
+				architecture,
+			});
+			let currentRepositoryState = options.currentRepositoryState
+				|| options.getSelectedRepositoryState;
+			let nativeOps = Zotero.QLab.createDarwinWorkspaceDocumentNativeOps({
+				bindings,
+				currentRepositoryState,
+				maxTextBytes: options.maxTextBytes || 4 * 1024 * 1024,
+				TextDecoder: options.TextDecoder
+					|| (typeof TextDecoder !== 'undefined' ? TextDecoder : null),
+			});
+			return Zotero.QLab.createHandleBoundWorkspaceDocumentLeaseHost(nativeOps);
+		}
+		catch (error) {
+			if (bindings) {
+				try { bindings.destroy(); }
+				catch (closeError) {}
+			}
+			throw error;
+		}
+	};
+
+	/**
+	 * Window-owned facade. Repository epochs never cross this boundary as public
+	 * caller input: the current live selection is sampled here and privately
+	 * captured by each readonly IO instance.
+	 */
+	Zotero.QLab.createWindowWorkspaceDocumentAccess = function ({
+		leaseHost,
+		getSelectedRepositoryState,
+	} = {}) {
+		if (!leaseHost || typeof leaseHost.acquireVerifiedDocument !== 'function'
+				|| typeof leaseHost.releaseVerifiedDocument !== 'function'
+				|| typeof leaseHost.destroy !== 'function'
+				|| typeof getSelectedRepositoryState !== 'function') {
+			throw new Error('Window workspace document access requires an owned lease host');
+		}
+		let lifecycle = 'active';
+		let destroyPromise = null;
+		const ioByRoot = new Map();
+
+		async function selectedState() {
+			let state = await getSelectedRepositoryState();
+			if (!state || typeof state !== 'object' || !validRepositoryEpoch(state.epoch)) {
+				throw new Error('Selected workspace repository epoch is unavailable');
+			}
+			return Object.freeze({
+				root: canonicalRepositoryRoot(state.root),
+				epoch: state.epoch,
+			});
+		}
+
+		function sameBinding(left, right) {
+			return !!left && !!right && left.root === right.root && left.epoch === right.epoch;
+		}
+
+		async function acquireForBinding(binding, request = {}) {
+			if (lifecycle !== 'active') {
+				throw new Error('Window workspace document access was destroyed');
+			}
+			let before = await selectedState();
+			if (!sameBinding(binding, before)) {
+				throw new Error('Window workspace document repository epoch is stale');
+			}
+			let capability = await leaseHost.acquireVerifiedDocument(Object.freeze({
+				...request,
+				root: binding.root,
+				epoch: binding.epoch,
+			}));
+			let after;
+			try { after = await selectedState(); }
+			catch (error) { after = null; }
+			if (lifecycle !== 'active' || !sameBinding(binding, after)) {
+				try { await leaseHost.releaseVerifiedDocument(capability); }
+				catch (error) {}
+				throw new Error('Window workspace document repository binding changed during acquisition');
+			}
+			return capability;
+		}
+
+		let access = {
+			async acquireVerifiedDocument(request = {}) {
+				let binding = await selectedState();
+				let requestedRoot = canonicalRepositoryRoot(request.root || binding.root);
+				if (requestedRoot !== binding.root) {
+					throw new Error('Window workspace document repository root is stale');
+				}
+				return acquireForBinding(binding, request);
+			},
+			releaseVerifiedDocument: capability => leaseHost.releaseVerifiedDocument(capability),
+			async readonlyDocumentIOForRoot(root) {
+				if (lifecycle !== 'active') return null;
+				let canonicalRoot = canonicalRepositoryRoot(root);
+				let binding = await selectedState();
+				if (binding.root !== canonicalRoot || lifecycle !== 'active') return null;
+				let cached = ioByRoot.get(canonicalRoot);
+				if (cached && sameBinding(cached.binding, binding)) return cached.io;
+				let privateBinding = Object.freeze({ root: binding.root, epoch: binding.epoch });
+				let io = Zotero.QLab.createReadonlyDocumentIO({
+					root: privateBinding.root,
+					host: leaseHost,
+					acquireVerifiedDocument: request => acquireForBinding(privateBinding, request),
+					releaseVerifiedDocument: capability => (
+						leaseHost.releaseVerifiedDocument(capability)
+					),
+				});
+				ioByRoot.set(canonicalRoot, { binding: privateBinding, io });
+				return io;
+			},
+			async destroy() {
+				if (lifecycle !== 'active') return false;
+				lifecycle = 'destroying';
+				ioByRoot.clear();
+				destroyPromise = Promise.resolve(leaseHost.destroy()).then(result => {
+					lifecycle = 'destroyed';
+					return result === true;
+				}, error => {
+					lifecycle = 'destroyed';
+					throw error;
+				});
+				return destroyPromise;
+			},
+		};
+		return Object.freeze(access);
+	};
+
 	/**
 	 * Node/test broker that retains a leaf O_NOFOLLOW handle for each lease.
 	 * It does not claim openat-style ancestor pinning and is not a Gecko fallback;
@@ -311,9 +1151,13 @@ Zotero.QLab = Zotero.QLab || {};
 		onRead = () => {},
 	} = {}) {
 		let canonicalRoot = stripTrailingSeparators(root);
+		let hasCapabilityBoundary = host
+			&& typeof host.verifyCanonicalAccess === 'function';
+		let hasLegacyPathBoundary = host && typeof host.realPath === 'function';
 		if (!canonicalRoot || canonicalRoot === '/'
 				|| !host || typeof host.verifyAccess !== 'function'
-				|| typeof host.realPath !== 'function' || typeof host.readVerified !== 'function') {
+				|| (!hasCapabilityBoundary && !hasLegacyPathBoundary)
+				|| typeof host.readVerified !== 'function') {
 			throw new Error('Read-only document IO requires an atomic readVerified lease host');
 		}
 		let context = Object.freeze({
@@ -345,19 +1189,26 @@ Zotero.QLab = Zotero.QLab || {};
 				throw new Error('Verified read-only document access was revoked');
 			}
 			onRead(capability);
-			let boundary = descriptor.authority;
-			let [realRoot, realBoundary, realPath] = await Promise.all([
-				host.realPath(canonicalRoot),
-				host.realPath(`${canonicalRoot}/${boundary}`),
-				host.realPath(verified.expectedPath),
-			]);
-			realRoot = stripTrailingSeparators(realRoot);
-			realBoundary = stripTrailingSeparators(realBoundary);
-			realPath = String(realPath || '');
-			if (realRoot !== canonicalRoot
-					|| realBoundary !== `${realRoot}/${boundary}`
-					|| realPath !== `${realRoot}/${descriptor.relativePath}`) {
-				throw new Error('Read-only document uses a symbolic link or resolves outside its canonical authority boundary');
+			if (hasCapabilityBoundary) {
+				if (await host.verifyCanonicalAccess(verified.access, capability) !== true) {
+					throw new Error('Read-only document capability-bound canonical access was revoked');
+				}
+			}
+			else {
+				let boundary = descriptor.authority;
+				let [realRoot, realBoundary, realPath] = await Promise.all([
+					host.realPath(canonicalRoot),
+					host.realPath(`${canonicalRoot}/${boundary}`),
+					host.realPath(verified.expectedPath),
+				]);
+				realRoot = stripTrailingSeparators(realRoot);
+				realBoundary = stripTrailingSeparators(realBoundary);
+				realPath = String(realPath || '');
+				if (realRoot !== canonicalRoot
+						|| realBoundary !== `${realRoot}/${boundary}`
+						|| realPath !== `${realRoot}/${descriptor.relativePath}`) {
+					throw new Error('Read-only document uses a symbolic link or resolves outside its canonical authority boundary');
+				}
 			}
 			if (await host.verifyAccess(verified.access, capability) !== true) {
 				throw new Error('Verified read-only document access was revoked before read');
@@ -369,6 +1220,10 @@ Zotero.QLab = Zotero.QLab || {};
 			}
 			if (await host.verifyAccess(verified.access, capability) !== true) {
 				throw new Error('Verified read-only document access was revoked during read');
+			}
+			if (hasCapabilityBoundary
+					&& await host.verifyCanonicalAccess(verified.access, capability) !== true) {
+				throw new Error('Read-only document canonical access changed during read');
 			}
 			let text = atomicRead.text;
 			let metadata = `${Number(atomicRead.size) || 0}:${Number(atomicRead.lastModified) || 0}`;
