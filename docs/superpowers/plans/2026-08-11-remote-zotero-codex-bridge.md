@@ -398,6 +398,7 @@ Commit: `feat(workbench): attach bounded Zotero PDF evidence`
 **Files:**
 - Create: `products/workbench/remote-agent/runtime/chatero-evidence-cache.mjs`
 - Create: `products/workbench/extensions/chatero-remote/evidence-cache.mjs`
+- Create: `products/workbench/extensions/chatero-zotero/authorized-pdf-source.mjs`
 - Create: `products/workbench/tests/chatero-remote-evidence-cache.test.mjs`
 - Modify: `products/workbench/remote-agent/scripts/build-linux-agent.mjs`
 - Modify: `products/workbench/remote-agent/scripts/stage-release.mjs`
@@ -405,13 +406,14 @@ Commit: `feat(workbench): attach bounded Zotero PDF evidence`
 - Modify: `products/workbench/extensions/chatero-zotero/extension.cjs`
 
 **Interfaces:**
-- Produces `stageEvidence({sourcePath,libraryId,attachmentKey,targetId,ttlSeconds}, signal): Promise<{kind:"remote-pdf-cache",digest,size,expiresAt,targetId,remotePath}>`.
+- Produces a 256-bit, 60-second, single-use, target-bound Zotero evidence grant only after modal confirmation. The grant holds an already-open read-only file source and is never a path capability.
+- Produces `stageEvidence({grantId,targetId,ttlSeconds:86400}, signal): Promise<{kind:"remote-pdf-cache",digest,size,expiresAt,targetId,remotePath}>`; `sourcePath`, arbitrary URI, and arbitrary byte-source fields are rejected.
 - Produces `revokeEvidence({digest,targetId}, signal): Promise<void>` and `cleanupExpiredEvidence(session): Promise<number>`.
-- Only `chatero-zotero` may initiate staging from an authorized active attachment after confirmation; native Chat receives a bounded simple attachment containing only opaque identity, expiry, and the canonical remote path.
+- Only `chatero-zotero` may issue/redeem a grant from an exact rehydrated attachment identity after confirmation; native Chat receives a bounded simple attachment containing only opaque identity, expiry, and the canonical remote path.
 
 - [ ] **Step 1: Write failing explicit-grant and cache-transaction tests**
 
-Assert ordinary selection context never stages bytes; decline writes nothing; confirmed staging writes outside the workspace; local and remote SHA-256 match; expiry is 24 hours; cancellation deletes `.part`; and revoke is target-bound and idempotent.
+Assert ordinary selection context never stages bytes; decline opens no cache channel; random, expired, wrong-target, and reused grants fail; the remote API rejects `sourcePath`; confirmed staging writes outside the workspace; local paths never enter SSH/log/result/Chat data; local and remote SHA-256 match; expiry is exactly 24 hours; cancellation deletes `.part`; reconnect resumes only a matching prefix/fingerprint; and revoke is target-bound, idempotent, and wins a concurrent finalize race.
 
 - [ ] **Step 2: Run focused tests and confirm RED**
 
@@ -419,11 +421,11 @@ Run: `node --test products/workbench/tests/chatero-remote-evidence-cache.test.mj
 
 - [ ] **Step 3: Implement the signed fixed cache helper**
 
-The helper accepts only fixed `stage`, `revoke`, and `cleanup` operations, lowercase 64-hex digest, decimal size, and bounded TTL. It constructs `~/.cache/chatero/evidence/` itself, rejects symlinks, resumes only a verified prefix, streams/hash-checks stdin, atomically renames, and emits bounded JSON. It never accepts a workspace path or arbitrary shell command.
+The helper accepts only fixed `stage`, `revoke`, and `cleanup` operations, lowercase 64-hex digest, decimal size, random transfer ID, and exact `86400` TTL. It constructs `~/.cache/chatero/evidence/` itself, rejects symlinks/hardlinks/non-regular files, uses owner-only directories and `0600` files, resumes only after local and remote prefix digests match, streams/hash-checks stdin, publishes without replacing an existing final, and emits strict bounded JSON. Per-digest state/locking makes revoke invalidate in-flight finalize. It never accepts a workspace path or arbitrary shell command. Every session runs cleanup before the authority becomes usable; an expiry watcher plus next-connect cleanup handles powered-off hosts.
 
 - [ ] **Step 4: Add confirmation, native Chat chip, expiry, and revoke**
 
-Confirm paper title, SSH alias, byte count, cache scope, and expiry. After staging, call `chatero.chat.attachTextContext` with an injection-aware message referencing only `remote-cache://<digest>` and `@<canonical remote path>`. Missing or expired cache becomes unavailable and is never re-uploaded silently.
+Rehydrate the exact attachment through Zotero Core, open/fix the local handle, then confirm paper title, SSH alias, byte count, cache scope, and expiry. The Zotero extension issues the one-use grant and the Remote extension redeems it; errors never include the local path. After staging, call `chatero.chat.attachTextContext` with an injection-aware message referencing only `remote-cache://<digest>` and `@<canonical remote path>`. The title is display-only. Missing, revoked, or expired cache becomes unavailable and is never re-uploaded silently; revoke also removes an unsent chip through `chatero.chat.removeTextContext`.
 
 - [ ] **Step 5: Run Task 6 tests and commit**
 

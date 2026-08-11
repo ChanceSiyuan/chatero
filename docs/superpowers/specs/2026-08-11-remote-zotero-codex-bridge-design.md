@@ -150,14 +150,19 @@ evidence, never instructions. The remote side receives no local URI.
 
 “Send full paper to remote” is a separate command with a confirmation naming
 the SSH target, remote cache scope, byte count, and expiry. The provider streams
-the authorized attachment to a fixed signed Remote Agent helper, computes
-SHA-256 locally and remotely, uploads to
-`~/.cache/chatero/evidence/<digest>.pdf.part`, verifies the remote digest, then
-atomically renames it. Native Chat receives only an explicit simple attachment
-containing the opaque cache identity and canonical remote path; no local path
-crosses the boundary. The cache is outside the workspace, expires after 24
-hours, and has an immediate Revoke command. Failed or canceled uploads delete
-`.part` files.
+the authorized attachment through a 256-bit, 60-second, single-use grant bound
+to the selected SSH target. `chatero-remote` accepts only the grant ID, never a
+local path or generic URI; it redeems an already-open read-only source from the
+local Zotero extension. A fixed signed Remote Agent helper computes SHA-256
+locally and remotely, resumes only after the partial prefix digests match, and
+stores under `~/.cache/chatero/evidence/`. Native Chat receives only an explicit
+simple attachment containing the opaque cache identity, expiry, and canonical
+remote path; no local path, Zotero identity, or paper title crosses the model
+boundary. The title is display-only. The cache is outside the workspace,
+expires after exactly 24 hours, and has an immediate target-bound Revoke
+command. Per-digest state makes revoke win a concurrent finalize. Failed or
+canceled uploads delete their transaction `.part`; reconnect may resume only
+on the same authenticated host fingerprint.
 
 ## UI
 
