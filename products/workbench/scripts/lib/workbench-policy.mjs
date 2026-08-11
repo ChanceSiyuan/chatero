@@ -4,7 +4,7 @@ import { extname, join, relative, resolve, sep } from "node:path";
 const SCANNED_EXTENSIONS = new Set([".cjs", ".js", ".json", ".mjs", ".patch", ".sh", ".ts"]);
 const MAX_SCANNED_FILE_BYTES = 4 * 1024 * 1024;
 const FORBIDDEN_HOST = /https?:\/\/(?:[a-z0-9-]+\.)*gallerycdn\.vsassets\.io\b|https?:\/\/marketplace\.visualstudio\.com\b/gi;
-const FORBIDDEN_EXTENSION = /\b(?:ms-python\.vscode-pylance|ms-vscode-remote\.remote-ssh)\b/g;
+const FORBIDDEN_EXTENSION = /\b(?:github\.copilot(?:-chat)?|ms-python\.vscode-pylance|ms-vscode-remote\.remote-ssh)\b/gi;
 
 function displayPath(root, path) {
   const value = relative(root, path);
@@ -59,25 +59,63 @@ async function collectPolicyFiles(root, path, files, violations) {
 }
 
 function scanText(root, path, text, violations) {
+  const unifiedPatch = extname(path) === ".patch" && /^diff --git /m.test(text);
   for (const [index, line] of text.split(/\r?\n/).entries()) {
+    if (unifiedPatch && (line.startsWith("-") || !line.startsWith("+"))) {
+      continue;
+    }
+    const policyLine = unifiedPatch && line.startsWith("+")
+      ? line.slice(1)
+      : line;
     FORBIDDEN_HOST.lastIndex = 0;
-    if (FORBIDDEN_HOST.test(line)) {
+    if (FORBIDDEN_HOST.test(policyLine)) {
       violations.push({
         rule: "forbidden-host",
         path: displayPath(root, path),
         line: index + 1,
-        excerpt: excerpt(line),
+        excerpt: excerpt(policyLine),
       });
     }
     FORBIDDEN_EXTENSION.lastIndex = 0;
-    if (FORBIDDEN_EXTENSION.test(line)) {
+    if (FORBIDDEN_EXTENSION.test(policyLine)) {
       violations.push({
         rule: "forbidden-extension",
         path: displayPath(root, path),
         line: index + 1,
-        excerpt: excerpt(line),
+        excerpt: excerpt(policyLine),
       });
     }
+  }
+}
+
+async function verifyBuildScripts(root, checkout, violations) {
+  if (!checkout) return;
+  const packagePath = join(resolve(checkout), "package.json");
+  let text;
+  let pkg;
+  try {
+    text = await readFile(packagePath, "utf8");
+    pkg = JSON.parse(text);
+  }
+  catch (error) {
+    violations.push({
+      rule: "invalid-build-package",
+      path: displayPath(root, packagePath),
+      line: 1,
+      excerpt: error.message.slice(0, 160),
+    });
+    return;
+  }
+  const lines = text.split(/\r?\n/);
+  for (const [name, command] of Object.entries(pkg?.scripts || {})) {
+    if (typeof command !== "string" || !/copilot/i.test(command)) continue;
+    const lineIndex = Math.max(0, lines.findIndex(line => line.includes(`"${name}"`)));
+    violations.push({
+      rule: "forbidden-agent-build",
+      path: displayPath(root, packagePath),
+      line: lineIndex + 1,
+      excerpt: excerpt(lines[lineIndex] ?? `${name}: ${command}`),
+    });
   }
 }
 
@@ -128,7 +166,7 @@ function verifyGallery(root, productPath, text, violations) {
   }
 }
 
-export async function verifyWorkbenchPolicy({ root, productPath }) {
+export async function verifyWorkbenchPolicy({ root, productPath, checkout = null }) {
   const canonicalRoot = resolve(root);
   const canonicalProductPath = resolve(productPath);
   const files = [];
@@ -169,6 +207,7 @@ export async function verifyWorkbenchPolicy({ root, productPath }) {
   else {
     verifyGallery(canonicalRoot, canonicalProductPath, productText, violations);
   }
+  await verifyBuildScripts(canonicalRoot, checkout, violations);
 
   violations.sort((left, right) => (
     left.path.localeCompare(right.path)

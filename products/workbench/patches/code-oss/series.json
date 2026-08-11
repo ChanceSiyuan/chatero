@@ -1,4 +1,9 @@
 {
   "schemaVersion": 1,
-  "patches": []
+  "patches": [
+    {
+      "file": "0001-disable-upstream-copilot.patch",
+      "sha256": "70085d267ecb0599a88a92af3697d36e904c6221e199034b0ffb2b1f020de8d9"
+    }
+  ]
 }

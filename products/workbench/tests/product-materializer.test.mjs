@@ -27,6 +27,14 @@ async function fixture() {
     licenseName: "MIT",
     licenseUrl: "https://github.com/microsoft/vscode/blob/main/LICENSE.txt",
     builtInExtensions: [{ name: "downloaded-upstream-extension" }],
+    builtInExtensionsEnabledWithAutoUpdates: ["GitHub.copilot-chat"],
+    defaultChatAgent: {
+      chatExtensionId: "GitHub.copilot-chat",
+      extensionId: "GitHub.copilot",
+    },
+    trustedExtensionAuthAccess: {
+      github: ["GitHub.copilot-chat"],
+    },
     preservedBuildField: { enabled: true },
   }, null, "\t")}\n`);
   const { loadUpstreamContract } = await import("../scripts/lib/upstream-contract.mjs");
@@ -60,6 +68,9 @@ test("brands Code-OSS as Chatero and selects only Open VSX", async () => {
     serviceUrl: "https://open-vsx.org/vscode/gallery",
   });
   assert.deepEqual(product.builtInExtensions, []);
+  assert.deepEqual(product.builtInExtensionsEnabledWithAutoUpdates, []);
+  assert.equal(product.defaultChatAgent, null);
+  assert.deepEqual(product.trustedExtensionAuthAccess, {});
   assert.deepEqual(product.preservedBuildField, { enabled: true });
   assert.equal(result.outputPath, input.outputPath);
   assert.equal(result.sha256, createHash("sha256").update(bytes).digest("hex"));

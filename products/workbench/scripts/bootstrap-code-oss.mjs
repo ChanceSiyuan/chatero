@@ -126,6 +126,7 @@ export async function bootstrapCodeOss({
   const policy = await verifyWorkbenchPolicy({
     root: workbenchRoot,
     productPath,
+    checkout: canonicalDestination,
   });
   if (!policy.ok) {
     throw new Error(`workbench policy rejected generated product: ${policy.violations.map(value => value.rule).join(", ")}`);

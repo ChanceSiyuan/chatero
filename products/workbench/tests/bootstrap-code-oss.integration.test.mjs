@@ -50,7 +50,15 @@ async function createFixture() {
     licenseName: "MIT",
     builtInExtensions: [{ name: "upstream-download" }],
   }, null, 2)}\n`);
-  await git(upstream, "add", "product.json");
+  await writeFile(join(upstream, "package.json"), `${JSON.stringify({
+    name: "code-oss-dev",
+    version: "1.132.0",
+    scripts: {
+      compile: "npm run compile-client",
+      watch: "npm-run-all2 -lp watch-client-transpile watch-client watch-extensions",
+    },
+  }, null, 2)}\n`);
+  await git(upstream, "add", "package.json", "product.json");
   await git(upstream, "commit", "-m", "fixture Code-OSS");
   const commit = await git(upstream, "rev-parse", "HEAD");
   await git(upstream, "tag", "1.132.0");
