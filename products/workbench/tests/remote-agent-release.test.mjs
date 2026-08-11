@@ -8,12 +8,13 @@ import {
   mkdtemp,
   readFile,
   rm,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, test } from "node:test";
 
 import {
@@ -141,6 +142,32 @@ test("release verification requires both exact pinned Linux tuples", async () =>
   const signed = await signedFixture({ tuples: ["linux-x86_64"] });
 
   await assert.rejects(() => verifyRelease(signed), /linux-aarch64/);
+});
+
+test("release verification requires artifacts in pinned tuple order", async () => {
+  const signed = await signedFixture({
+    tuples: ["linux-aarch64", "linux-x86_64"],
+  });
+
+  await assert.rejects(
+    () => verifyRelease(signed),
+    /artifacts\[0\]\.tuple must equal linux-x86_64/
+  );
+});
+
+test("release parsing rejects duplicate root and nested object keys", async () => {
+  const signed = await signedFixture();
+  const duplicateRoot = signed.manifestText.replace(
+    '"product":"chatero"',
+    '"product":"chatero","product":"chatero"'
+  );
+  const duplicateNested = signed.manifestText.replace(
+    '"filename":"chatero-agent-linux-x86_64.tar.gz"',
+    '"filename":"chatero-agent-linux-x86_64.tar.gz","filename":"chatero-agent-linux-x86_64.tar.gz"'
+  );
+
+  assert.throws(() => parseReleaseManifest(duplicateRoot), /duplicate object key product/);
+  assert.throws(() => parseReleaseManifest(duplicateNested), /duplicate object key filename/);
 });
 
 test("release verification rejects a changed manifest or artifact", async () => {
@@ -350,6 +377,47 @@ test("release staging injects the bridge and signs the final archive bytes", asy
   }
 });
 
+test("release staging rejects a bridge destination symlink without changing its target", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "chatero-stage-symlink-"));
+  temporaryDirectories.push(directory);
+  const inputs = join(directory, "inputs");
+  const output = join(directory, "output");
+  const sentinel = join(directory, "outside-sentinel");
+  await mkdir(inputs);
+  await writeFile(sentinel, "unchanged\n", "utf8");
+  const archives = {};
+  for (const [arch, tuple] of [["x64", "linux-x86_64"], ["arm64", "linux-aarch64"]]) {
+    const root = `chatero-agent-${tuple}`;
+    const source = join(directory, `${arch}-symlink-source`);
+    const bin = join(source, root, "bin");
+    await mkdir(bin, { recursive: true });
+    await writeFile(join(bin, "chatero-server"), `${tuple}\n`, "utf8");
+    if (arch === "x64") {
+      await symlink(sentinel, join(bin, "chatero-process-bridge.mjs"));
+    }
+    archives[arch] = join(inputs, `${arch}.tar.gz`);
+    const packed = await run("tar", ["-czf", archives[arch], "-C", source, root]);
+    assert.equal(packed.code, 0, packed.stderr);
+  }
+  const { privateKey } = generateKeyPairSync("ed25519");
+  const privateKeyPath = join(directory, "release.private.pem");
+  await writeFile(privateKeyPath, privateKey.export({ type: "pkcs8", format: "pem" }), {
+    mode: 0o600,
+  });
+
+  const staged = await run(process.execPath, [
+    STAGE_PATH,
+    "--x64", archives.x64,
+    "--arm64", archives.arm64,
+    "--private-key", privateKeyPath,
+    "--out", output,
+  ]);
+
+  assert.equal(staged.code, 1);
+  assert.match(staged.stderr, /bridge destination.*regular file/);
+  assert.equal(await readFile(sentinel, "utf8"), "unchanged\n");
+});
+
 test("Linux agent builder rejects unsupported hosts before doing build work", async () => {
   const result = await run(process.execPath, [BUILD_PATH]);
 
@@ -358,4 +426,82 @@ test("Linux agent builder rejects unsupported hosts before doing build work", as
     result.stderr,
     process.platform === "linux" ? /--arch is required/ : /only runs on Linux/
   );
+});
+
+test("Linux agent builder rejects tracked and untracked checkout changes but allows ignored output", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "chatero-builder-checkout-"));
+  temporaryDirectories.push(directory);
+  const checkout = join(directory, "code-oss");
+  await mkdir(checkout);
+  for (const args of [
+    ["init", "--quiet", checkout],
+    ["-C", checkout, "config", "user.name", "Chatero Test"],
+    ["-C", checkout, "config", "user.email", "chatero@example.invalid"],
+  ]) {
+    const result = await run("git", args);
+    assert.equal(result.code, 0, result.stderr);
+  }
+  await writeFile(join(checkout, ".gitignore"), "generated/\n", "utf8");
+  await writeFile(join(checkout, "tracked.txt"), "clean\n", "utf8");
+  let result = await run("git", ["-C", checkout, "add", "."]);
+  assert.equal(result.code, 0, result.stderr);
+  result = await run("git", [
+    "-C", checkout,
+    "-c", "commit.gpgSign=false",
+    "commit", "--quiet", "-m", "fixture",
+  ]);
+  assert.equal(result.code, 0, result.stderr);
+  await mkdir(join(checkout, "generated"));
+  await writeFile(join(checkout, "generated", "bundle"), "ignored\n", "utf8");
+
+  const validationProgram = [
+    `import { assertCleanCheckout } from ${JSON.stringify(pathToFileURL(BUILD_PATH).href)};`,
+    "await assertCleanCheckout(process.argv[1]);",
+  ].join(" ");
+  const clean = await run(process.execPath, [
+    "--input-type=module", "-e", validationProgram, checkout,
+  ]);
+  assert.equal(clean.code, 0, clean.stderr);
+
+  await writeFile(join(checkout, "tracked.txt"), "dirty\n", "utf8");
+  const tracked = await run(process.execPath, [
+    "--input-type=module", "-e", validationProgram, checkout,
+  ]);
+  assert.equal(tracked.code, 1);
+  assert.match(tracked.stderr, /dirty.*tracked\.txt/s);
+
+  await writeFile(join(checkout, "tracked.txt"), "clean\n", "utf8");
+  await writeFile(join(checkout, "untracked.txt"), "dirty\n", "utf8");
+  const untracked = await run(process.execPath, [
+    "--input-type=module", "-e", validationProgram, checkout,
+  ]);
+  assert.equal(untracked.code, 1);
+  assert.match(untracked.stderr, /dirty.*untracked\.txt/s);
+});
+
+test("Linux agent builder selects only the pinned REH targets and Chatero output roots", async () => {
+  const planProgram = [
+    `import { makeBuildPlan } from ${JSON.stringify(pathToFileURL(BUILD_PATH).href)};`,
+    "process.stdout.write(JSON.stringify([",
+    "makeBuildPlan({arch:'x64',checkout:'/srv/code-oss',output:'/out/x64.tar.gz'}),",
+    "makeBuildPlan({arch:'arm64',checkout:'/srv/code-oss',output:'/out/arm64.tar.gz'})",
+    "]));",
+  ].join(" ");
+  const result = await run(process.execPath, ["--input-type=module", "-e", planProgram]);
+
+  assert.equal(result.code, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout), [
+    {
+      target: "vscode-reh-linux-x64-min-ci",
+      upstreamRoot: "/srv/vscode-reh-linux-x64",
+      rootName: "chatero-agent-linux-x86_64",
+      output: "/out/x64.tar.gz",
+    },
+    {
+      target: "vscode-reh-linux-arm64-min-ci",
+      upstreamRoot: "/srv/vscode-reh-linux-arm64",
+      rootName: "chatero-agent-linux-aarch64",
+      output: "/out/arm64.tar.gz",
+    },
+  ]);
 });

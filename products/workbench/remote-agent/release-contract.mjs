@@ -51,11 +51,138 @@ function freezeRecursively(value) {
   return Object.freeze(value);
 }
 
+function assertNoDuplicateObjectKeys(text) {
+  let index = 0;
+
+  function invalidJSON() {
+    throw new SyntaxError(`unexpected token at character ${index}`);
+  }
+
+  function skipWhitespace() {
+    while (/[\t\n\r ]/.test(text[index] ?? "")) {
+      index++;
+    }
+  }
+
+  function parseString() {
+    const start = index;
+    if (text[index++] !== '"') {
+      invalidJSON();
+    }
+    while (index < text.length) {
+      const character = text[index++];
+      if (character === '"') {
+        return JSON.parse(text.slice(start, index));
+      }
+      if (character === "\\") {
+        if (index >= text.length) {
+          invalidJSON();
+        }
+        if (text[index] === "u") {
+          index += 5;
+        }
+        else {
+          index++;
+        }
+      }
+    }
+    invalidJSON();
+  }
+
+  function parseArray() {
+    index++;
+    skipWhitespace();
+    if (text[index] === "]") {
+      index++;
+      return;
+    }
+    while (true) {
+      parseValue();
+      skipWhitespace();
+      if (text[index] === "]") {
+        index++;
+        return;
+      }
+      if (text[index++] !== ",") {
+        invalidJSON();
+      }
+      skipWhitespace();
+    }
+  }
+
+  function parseObject() {
+    index++;
+    const keys = new Set();
+    skipWhitespace();
+    if (text[index] === "}") {
+      index++;
+      return;
+    }
+    while (true) {
+      const key = parseString();
+      if (keys.has(key)) {
+        throw new TypeError(`duplicate object key ${key}`);
+      }
+      keys.add(key);
+      skipWhitespace();
+      if (text[index++] !== ":") {
+        invalidJSON();
+      }
+      parseValue();
+      skipWhitespace();
+      if (text[index] === "}") {
+        index++;
+        return;
+      }
+      if (text[index++] !== ",") {
+        invalidJSON();
+      }
+      skipWhitespace();
+    }
+  }
+
+  function parseValue() {
+    skipWhitespace();
+    const character = text[index];
+    if (character === "{") {
+      parseObject();
+      return;
+    }
+    if (character === "[") {
+      parseArray();
+      return;
+    }
+    if (character === '"') {
+      parseString();
+      return;
+    }
+    for (const literal of ["true", "false", "null"]) {
+      if (text.startsWith(literal, index)) {
+        index += literal.length;
+        return;
+      }
+    }
+    const number = text.slice(index).match(/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/);
+    if (number) {
+      index += number[0].length;
+      return;
+    }
+    invalidJSON();
+  }
+
+  parseValue();
+  skipWhitespace();
+  if (index !== text.length) {
+    invalidJSON();
+  }
+}
+
 function parseJSON(text) {
   if (typeof text !== "string") {
     throw new TypeError("release manifest must be UTF-8 text");
   }
   try {
+    assertNoDuplicateObjectKeys(text);
     return JSON.parse(text);
   }
   catch (error) {
@@ -86,6 +213,9 @@ function validateManifest(manifest) {
   for (const [index, artifact] of manifest.artifacts.entries()) {
     const field = `artifacts[${index}]`;
     assertExactFields(artifact, ARTIFACT_FIELDS, field);
+    if (artifact.tuple !== REMOTE_AGENT_TUPLES[index]) {
+      throw new TypeError(`${field}.tuple must equal ${REMOTE_AGENT_TUPLES[index]}`);
+    }
     if (!REMOTE_AGENT_TUPLES.includes(artifact.tuple)) {
       throw new TypeError(`${field}.tuple must be one of ${REMOTE_AGENT_TUPLES.join(", ")}`);
     }

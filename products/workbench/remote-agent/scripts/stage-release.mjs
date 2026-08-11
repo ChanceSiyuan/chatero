@@ -3,7 +3,7 @@
 import { spawn } from "node:child_process";
 import { createHash, createPrivateKey, sign } from "node:crypto";
 import { once } from "node:events";
-import { createReadStream } from "node:fs";
+import { constants, createReadStream } from "node:fs";
 import {
   chmod,
   copyFile,
@@ -12,12 +12,13 @@ import {
   mkdtemp,
   readFile,
   readdir,
+  realpath,
   rename,
   rm,
   stat,
   writeFile,
 } from "node:fs/promises";
-import { basename, isAbsolute, join, resolve } from "node:path";
+import { basename, isAbsolute, join, relative, resolve } from "node:path";
 
 import {
   REMOTE_AGENT_TUPLES,
@@ -139,9 +140,33 @@ async function stageArchive({ archive, tuple, workDirectory }) {
   if (!binStat.isDirectory() || binStat.isSymbolicLink()) {
     throw new Error(`${expectedRoot}/bin must be a directory`);
   }
+  const rootPath = await realpath(root);
+  const binPath = await realpath(bin);
+  const binRelative = relative(rootPath, binPath);
+  if (binRelative === "" || binRelative.startsWith("..") || isAbsolute(binRelative)) {
+    throw new Error(`${expectedRoot}/bin escapes the extracted archive root`);
+  }
   const bridgeDestination = join(bin, "chatero-process-bridge.mjs");
-  await copyFile(BRIDGE_PATH, bridgeDestination);
-  await chmod(bridgeDestination, 0o755);
+  try {
+    const destinationStat = await lstat(bridgeDestination);
+    if (!destinationStat.isFile() || destinationStat.isSymbolicLink()) {
+      throw new Error("bridge destination must be a regular file when it already exists");
+    }
+  }
+  catch (error) {
+    if (error.code !== "ENOENT") {
+      throw error;
+    }
+  }
+  const temporaryBridge = join(bin, `.chatero-process-bridge.${process.pid}.tmp`);
+  try {
+    await copyFile(BRIDGE_PATH, temporaryBridge, constants.COPYFILE_EXCL);
+    await chmod(temporaryBridge, 0o755);
+    await rename(temporaryBridge, bridgeDestination);
+  }
+  finally {
+    await rm(temporaryBridge, { force: true });
+  }
 
   const filename = `${expectedRoot}.tar.gz`;
   const destination = join(workDirectory, filename);
