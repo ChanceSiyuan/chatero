@@ -24,18 +24,20 @@ export class LibraryTreeModel {
     this.#request = request;
   }
 
-  async collections(parentKey) {
+  async collections({ libraryId, parentKey } = {}) {
     const result = await this.#request("library.collections", {
+      ...(libraryId !== undefined && { libraryId }),
       ...(parentKey !== undefined && { parentKey }),
     });
     if (!result || !Array.isArray(result.collections)) throw new Error("Zotero Core returned invalid collections");
     return Object.freeze(result.collections.map(validateCollection));
   }
 
-  async items({ collectionKey, query = "", limit = 50, cursor } = {}) {
+  async items({ collectionKey, libraryId, query = "", limit = 50, cursor } = {}) {
     const result = await this.#request("library.search", {
       ...(collectionKey !== undefined && { collectionKey }),
       ...(cursor !== undefined && { cursor }),
+      ...(libraryId !== undefined && { libraryId }),
       limit,
       query,
     });

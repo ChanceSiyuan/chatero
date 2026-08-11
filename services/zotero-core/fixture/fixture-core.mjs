@@ -53,6 +53,12 @@ function validateSearchParams(params) {
   if (params.collectionKey !== undefined && typeof params.collectionKey !== "string") {
     throw new Error("library.search collectionKey must be a string");
   }
+  if (params.libraryId !== undefined && (!Number.isSafeInteger(params.libraryId) || params.libraryId <= 0)) {
+    throw new Error("library.search libraryId must be a positive safe integer");
+  }
+  if ((params.collectionKey === undefined) !== (params.libraryId === undefined)) {
+    throw new Error("library.search collectionKey and libraryId must be provided together");
+  }
 }
 
 async function main() {
@@ -129,11 +135,14 @@ async function main() {
     }
     if (message.method === "library.collections") {
       if (!message.params || typeof message.params !== "object" || Array.isArray(message.params)
-        || Object.keys(message.params).some(key => key !== "parentKey")
-        || (message.params.parentKey !== undefined && typeof message.params.parentKey !== "string")) {
-        throw new Error("library.collections params may contain only parentKey");
+        || Object.keys(message.params).some(key => !["libraryId", "parentKey"].includes(key))
+        || (message.params.parentKey !== undefined && typeof message.params.parentKey !== "string")
+        || (message.params.libraryId !== undefined && (!Number.isSafeInteger(message.params.libraryId) || message.params.libraryId <= 0))
+        || ((message.params.parentKey === undefined) !== (message.params.libraryId === undefined))) {
+        throw new Error("library.collections requires a valid libraryId with parentKey");
       }
       const collections = fixtureCollections
+        .filter(collection => message.params.libraryId === undefined || collection.libraryId === message.params.libraryId)
         .filter(collection => message.params.parentKey === undefined
           ? collection.parentKey === undefined
           : collection.parentKey === message.params.parentKey)
@@ -155,7 +164,8 @@ async function main() {
       }
       const query = message.params.query.trim().toLocaleLowerCase("en-US");
       const matches = fixtureItems
-        .filter(item => message.params.collectionKey === undefined || item.collectionKeys?.includes(message.params.collectionKey))
+        .filter(item => message.params.collectionKey === undefined
+          || (item.libraryId === message.params.libraryId && item.collectionKeys?.includes(message.params.collectionKey)))
         .filter(item => !query || [item.title, ...(item.creators || [])].some(value => String(value).toLocaleLowerCase("en-US").includes(query)))
         .sort((left, right) => String(left.title).localeCompare(String(right.title)) || String(left.itemKey).localeCompare(String(right.itemKey)));
       const offset = Number(message.params.cursor || 0);

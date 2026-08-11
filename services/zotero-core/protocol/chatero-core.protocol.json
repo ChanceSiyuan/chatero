@@ -92,6 +92,7 @@
       "fields": {
         "collectionKey?": "string",
         "cursor?": "string",
+        "libraryId?": "number",
         "limit": "number",
         "query": "string"
       }
@@ -123,6 +124,7 @@
     "LibraryCollectionsParams": {
       "kind": "object",
       "fields": {
+        "libraryId?": "number",
         "parentKey?": "string"
       }
     },

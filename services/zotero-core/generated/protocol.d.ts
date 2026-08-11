@@ -26,6 +26,7 @@ export interface CoreHandshakeResult {
 }
 
 export interface LibraryCollectionsParams {
+  readonly libraryId?: number;
   readonly parentKey?: string;
 }
 
@@ -56,6 +57,7 @@ export interface LibraryItemSummary {
 export interface LibrarySearchParams {
   readonly collectionKey?: string;
   readonly cursor?: string;
+  readonly libraryId?: number;
   readonly limit: number;
   readonly query: string;
 }

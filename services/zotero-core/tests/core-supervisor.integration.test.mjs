@@ -77,7 +77,7 @@ test("supervises an authenticated fixture Core over an owner-only Unix socket", 
   assert.deepEqual(await core.client.request("library.collections", {}), {
     collections: [fixtureCollections[0]],
   });
-  assert.deepEqual(await core.client.request("library.collections", { parentKey: "PHYSICS" }), {
+  assert.deepEqual(await core.client.request("library.collections", { libraryId: 1, parentKey: "PHYSICS" }), {
     collections: [fixtureCollections[1]],
   });
 });

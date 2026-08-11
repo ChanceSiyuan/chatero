@@ -55,8 +55,8 @@ class LibraryProvider {
     }
     if (element.kind !== "collection") return [];
     const [collections, result] = await Promise.all([
-      this.model.collections(element.value.collectionKey),
-      this.model.items({ collectionKey: element.value.collectionKey, query: this.query }),
+      this.model.collections({ libraryId: element.value.libraryId, parentKey: element.value.collectionKey }),
+      this.model.items({ collectionKey: element.value.collectionKey, libraryId: element.value.libraryId, query: this.query }),
     ]);
     return [
       ...collections.map(value => ({ kind: "collection", value })),

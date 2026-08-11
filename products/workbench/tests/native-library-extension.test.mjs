@@ -33,22 +33,24 @@ test("Library model queries root collections, nested collections, and collection
     request: async (method, params) => {
       calls.push({ method, params });
       if (method === "library.collections") {
-        return { collections: params.parentKey ? [{ collectionKey: "CHILD", name: "Child" }] : [{ collectionKey: "ROOT", name: "Root" }] };
+        return { collections: params.parentKey
+          ? [{ collectionKey: "CHILD", libraryId: 7, name: "Child" }]
+          : [{ collectionKey: "ROOT", libraryId: 7, name: "Root" }] };
       }
-      return { items: [{ itemKey: "ITEM", title: "Paper" }], total: 1 };
+      return { items: [{ itemKey: "ITEM", libraryId: 7, title: "Paper" }], total: 1 };
     },
   });
 
-  assert.deepEqual(await model.collections(), [{ collectionKey: "ROOT", name: "Root" }]);
-  assert.deepEqual(await model.collections("ROOT"), [{ collectionKey: "CHILD", name: "Child" }]);
-  assert.deepEqual(await model.items({ collectionKey: "ROOT", query: "tensor", limit: 50 }), {
-    items: [{ itemKey: "ITEM", title: "Paper" }],
+  assert.deepEqual(await model.collections(), [{ collectionKey: "ROOT", libraryId: 7, name: "Root" }]);
+  assert.deepEqual(await model.collections({ libraryId: 7, parentKey: "ROOT" }), [{ collectionKey: "CHILD", libraryId: 7, name: "Child" }]);
+  assert.deepEqual(await model.items({ collectionKey: "ROOT", libraryId: 7, query: "tensor", limit: 50 }), {
+    items: [{ itemKey: "ITEM", libraryId: 7, title: "Paper" }],
     total: 1,
   });
   assert.deepEqual(calls, [
     { method: "library.collections", params: {} },
-    { method: "library.collections", params: { parentKey: "ROOT" } },
-    { method: "library.search", params: { collectionKey: "ROOT", limit: 50, query: "tensor" } },
+    { method: "library.collections", params: { libraryId: 7, parentKey: "ROOT" } },
+    { method: "library.search", params: { collectionKey: "ROOT", libraryId: 7, limit: 50, query: "tensor" } },
   ]);
 });
 
