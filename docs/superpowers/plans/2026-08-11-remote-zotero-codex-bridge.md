@@ -214,6 +214,7 @@ Commit: `feat(workbench): resolve signed SSH workspaces`
 - Create: `products/workbench/tests/chatero-remote-process.test.mjs`
 - Modify: `products/workbench/extensions/chatero-remote/package.json`
 - Modify: `products/workbench/extensions/chatero-remote/extension.cjs`
+- Modify: `products/workbench/remote-agent/runtime/chatero-process-bridge.mjs`
 
 **Interfaces:**
 - Produces `validateRemoteWorkspacePath(path): string`, accepting POSIX absolute paths without NUL/newline and rejecting relative paths.
@@ -245,13 +246,13 @@ Expected: FAIL because workspace and process services do not exist.
 
 - [ ] **Step 3: Implement picker and create-if-confirmed flow**
 
-Contribute `Chatero: Connect to SSH…`, `Chatero: Open Remote Folder…`, `Chatero: Reconnect`, and `Chatero: Show Remote Log`. Show recent targets first, then concrete SSH aliases, then “Add user@host…”. Prompt for an absolute remote path. For a missing path show `Create empty folder on <alias>?` with the full path; cancel performs no write. Reject existing files. Open with `vscode.openFolder(vscode.Uri.parse("vscode-remote://<authority><encoded path>"), {forceNewWindow:false})` and let normal Code-OSS workspace trust run.
+Contribute `Chatero: Connect to SSH…`, `Chatero: Open Remote Folder…`, `Chatero: Reconnect`, and `Chatero: Show Remote Log`. Show recent targets first, then concrete SSH aliases, then “Add user@host…”. Resolver and picker must share one `ensureAuthoritySession(authority, {signal})`: the picker establishes the authenticated session before it probes or creates a path, while resolver wraps that same epoch in `ManagedResolvedAuthority`. Prompt for an absolute remote path. For a missing path show `Create empty folder on <alias>?` with the full path; cancel performs no write. Reject existing files. Construct the URI with `vscode.Uri.from({scheme:"vscode-remote",authority,path})`, call `vscode.openFolder(uri, {forceReuseWindow:true})`, and let normal Code-OSS workspace trust run.
 
 Persist only alias/opaque target id, last path, and host fingerprint in extension global state. Do not persist passwords, tokens, key contents, or PDF context.
 
 - [ ] **Step 4: Implement framed remote process execution**
 
-Open only the fixed installed bridge path through the authenticated SSH master. Send one bounded request frame, map base64 stdout/stderr frames to the observer, enforce one terminal exit, and on cancellation close the channel and make the bridge terminate/reap the child process group. Canonicalize `cwd` remotely and reject a result outside the selected root for workspace-scoped calls.
+Open only the fixed installed bridge path through the authenticated SSH master. Send one bounded request frame, map base64 stdout/stderr frames to the observer, enforce one terminal exit, and on cancellation close the channel and make the bridge terminate/reap the child process group. Canonicalize `cwd` remotely and reject a result outside the selected root for workspace-scoped calls. The bridge must reap its child process group on `SIGHUP`, `SIGINT`, and `SIGTERM`, because an SSH channel loss commonly reaches the bridge as `SIGHUP`.
 
 - [ ] **Step 5: Add status and error UX**
 
@@ -264,6 +265,47 @@ Run: `node --test products/workbench/tests/chatero-remote-{workspace,process}.te
 Expected: all tests PASS, including missing-declined, file-at-path, control characters, stale epoch, cancellation, malformed frame, and nonzero exit.
 
 Commit: `feat(workbench): open arbitrary remote workspaces`
+
+---
+
+### Task 3B: Rehydrate local Zotero tabs across remote workspace reloads
+
+**Files:**
+- Modify: `services/zotero-core/protocol/chatero-core.protocol.json`
+- Modify: `services/zotero-core/generated/protocol.mjs`
+- Modify: `services/zotero-core/generated/protocol.d.ts`
+- Modify: `chrome/content/zotero/modules/chateroCoreProtocol.mjs`
+- Modify: `chrome/content/zotero/xpcom/chateroCoreLibraryAdapter.mjs`
+- Modify: `chrome/content/zotero/xpcom/chateroCoreRequestRouter.mjs`
+- Modify: `services/zotero-core/fixture/fixture-core.mjs`
+- Modify: `products/workbench/extensions/chatero-zotero/library-tree-model.mjs`
+- Modify: `products/workbench/extensions/chatero-zotero/evidence-editor-registry.mjs`
+- Modify: `products/workbench/extensions/chatero-zotero/evidence-editors.cjs`
+- Modify: `products/workbench/extensions/chatero-zotero/extension.cjs`
+- Modify: `products/workbench/tests/zotero-evidence-editors.test.mjs`
+
+**Interfaces:**
+- Produces Core request `library.attachment({libraryId,attachmentKey})`, returning the existing trusted attachment-summary shape.
+- Produces strict canonical evidence-URI parsing to `{kind,libraryId,key}` and lazy `EvidenceDocumentRegistry.resolveOrHydrate(uri, kind, resolver)`.
+- Produces a single-flight `ensureCore()` so restored PDF and Note editors cannot race-start multiple Core instances.
+
+- [ ] **Step 1: Write failing extension-host restart and identity tests**
+
+Reset the evidence registry after staging PDF and Note documents, then restore both solely from their canonical custom-editor URIs. Assert the PDF path is fetched from Core, neither URI nor extension state contains that path, two simultaneous restorations start Core once, a missing/deleted item fails without rebinding, and a remote workspace never converts the local PDF `file:` URI to the remote authority.
+
+- [ ] **Step 2: Add direct attachment lookup to the Core protocol**
+
+Add and regenerate `library.attachment`. The Gecko adapter must fetch by exact `(libraryId, attachmentKey)`, require a file attachment, and return the same frozen validated summary used by item children. The request remains under `library:read`; no renderer reads `zotero.sqlite`.
+
+- [ ] **Step 3: Implement lazy trusted rehydration**
+
+Strictly parse the canonical custom-document URI. On a registry miss, `openCustomDocument` awaits single-flight Core startup, fetches the exact Note or attachment, verifies the returned identity byte-for-byte, stages the frozen record, and resolves it. If profile/Core configuration is missing, offer the existing setup action; never persist attachment paths, records, PDF bytes, or Note HTML in global state.
+
+- [ ] **Step 4: Run restoration and Core protocol tests and commit**
+
+Run: `npm run core:check && node --test services/zotero-core/tests/*.test.mjs products/workbench/tests/zotero-evidence-editors.test.mjs`
+
+Commit: `fix(workbench): restore local Zotero tabs after remote reload`
 
 ---
 
@@ -293,9 +335,9 @@ Assert the pinned server contains `agentHostMain` and registers `agentHostProxy`
 
 Run: `node --test products/workbench/tests/remote-agent-{release,runtime}.test.mjs products/workbench/tests/{patch-series,upstream-copilot-quarantine}.test.mjs`
 
-- [ ] **Step 3: Embed exact Codex SDK before signing**
+- [ ] **Step 3: Verify the patched checkout and embed the exact Codex SDK before signing**
 
-Reuse the pinned Code-OSS `build/agent-sdk/agents/codex` lock and packaging helpers without running their Microsoft CDN upload/production scripts. The x64 release must contain `@openai/codex-linux-x64`; arm64 must contain `@openai/codex-linux-arm64`. Verify the expected ELF architecture, executable bit, license, and `codex --version` on a native runner. Hash/sign only after SDK injection.
+The canonical bootstrapped checkout is intentionally modified by the pinned Chatero patch series, product overlay, and first-party extensions. Validate its `.chatero-provenance.json` with the existing `verifyCodeOss` gate instead of requiring an empty Git porcelain; alternatively build a fresh isolated clone and apply the same verified materialization. Reuse the pinned Code-OSS `build/agent-sdk/agents/codex` lock and packaging helpers without running their Microsoft CDN upload/production scripts. The x64 release must contain `@openai/codex-linux-x64`; arm64 must contain `@openai/codex-linux-arm64`, with no wrong-architecture native package beside it. Inject the Code-OSS MIT `LICENSE.txt`, `ThirdPartyNotices.txt`, and the missing ripgrep MIT/Unlicense notice for Codex's bundled `rg` into each release. Verify the expected ELF architecture, executable bits for Codex and `rg`, licenses/notices, and `codex --version` on a native runner. Hash/sign only after SDK and notices are injected.
 
 - [ ] **Step 4: Patch Agent Host policy and native Chat attachment**
 

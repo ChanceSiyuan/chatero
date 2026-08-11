@@ -76,7 +76,11 @@ never writes inside the selected workspace.
 
 Workspace trust remains a Code-OSS decision. The extension does not auto-trust
 remote folders. Local Zotero tabs can remain open in the same window because
-their custom editor providers stay in the local extension host.
+their custom editor providers stay in the local extension host. Opening a
+remote folder restarts that local extension host, so restored custom-editor
+URIs are resolved again through Zotero Core by exact `(libraryId, itemKey)`.
+The URI/state contains no attachment path; a deleted item fails unavailable
+instead of being rebound to whichever paper is currently focused.
 
 ## Codex execution
 
@@ -181,6 +185,9 @@ hours, and has an immediate Revoke command. Failed or canceled uploads delete
   leaves existing remote files untouched.
 - Local PDF context remains an unavailable chip if the Zotero item disappears;
   it is not silently rebound to the currently focused paper.
+- SSH channel loss makes the fixed remote process bridge reap its child process
+  group on `SIGHUP`, `SIGINT`, or `SIGTERM`; long-running Codex/tool processes
+  must not survive a disconnected channel unintentionally.
 
 ## Verification gates
 
