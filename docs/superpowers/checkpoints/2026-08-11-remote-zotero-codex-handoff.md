@@ -13,8 +13,10 @@ claim.
     contract, hardened system-OpenSSH resolver/installer, and the reviewed
     Task 3 workspace/process implementation.
 - `feat/remote-zotero-rehydrate`
-  - Checkpoint head: `0140cce14`
-  - Contains the isolated Task 3B Zotero PDF/Note tab rehydration work.
+  - Reviewed completion head: `d8e7bc87f`
+  - The original isolated checkpoint remains `0140cce14` for audit history.
+  - Both commits have been cherry-picked onto `feat/remote-zotero-codex` as
+    `910a660b9` and `10bf38188`.
 
 Do not merge either branch into `main` merely because it is present remotely.
 Finish the gates and reviews below first.
@@ -35,6 +37,13 @@ Finish the gates and reviews below first.
   - Task 1-3, first-party extension, and policy regression: 76/76 tests passed.
   - Independent final review reported no remaining Critical/Important
     findings for Task 3.
+- Exact local Zotero PDF/Note tab rehydration across remote reloads:
+  - isolated completion: `d8e7bc87f fix(workbench): restore local Zotero tabs after remote reload`
+  - integrated completion: `10bf38188 fix(workbench): restore local Zotero tabs after remote reload`
+  - Core plus rehydration: 67/67 tests passed; integrated full workbench Node
+    regression: 137/137 tests passed.
+  - Independent final review reported no remaining Critical/Important
+    findings for Task 3B.
 
 ## Task 3 completed state
 
@@ -72,19 +81,51 @@ bound/dispose authenticated candidate sessions that never become active and to
 align the OpenSSH alias length check with the opaque authority length check.
 Neither bypasses the trust, authority, or data boundaries.
 
-Next action: finish and review the isolated Task 3B line, then cherry-pick its
-formal completion onto `feat/remote-zotero-codex`.
+Next action: implement and review Task 4's native remote Code-OSS Agent
+Host/Codex runtime and OpenAI-only policy.
 
-## Task 3B isolated state
+## Task 3B completed and integrated state
 
-Checkpoint: `0140cce14 wip(workbench): checkpoint Zotero tab rehydration`
+Isolated commits:
 
-Focused verification passed 26/26 tests. The branch adds exact
-`library.attachment` lookup, generated protocol updates, strict opaque evidence
-URI parsing, single-flight Core startup, and exact PDF/Note rehydration without
-persisting a local attachment path. It still needs the full Core/workbench
-suite and an independent review. After that, cherry-pick it onto
-`feat/remote-zotero-codex`.
+- `0140cce14 wip(workbench): checkpoint Zotero tab rehydration`
+- `d8e7bc87f fix(workbench): restore local Zotero tabs after remote reload`
+
+Integrated commits:
+
+- `910a660b9 wip(workbench): checkpoint Zotero tab rehydration`
+- `10bf38188 fix(workbench): restore local Zotero tabs after remote reload`
+
+Implemented and reviewed:
+
+- exact `library.attachment` and Note lookup by `(libraryId, key)`, with
+  missing/deleted/trashed/mismatched identities reported unavailable;
+- strict opaque evidence URIs with no local PDF path, authority, query, or
+  fragment, and no evidence persistence in global/workspace state or history;
+- single-flight Core startup plus fenced pending/ready/concurrent stop,
+  deactivate, crash, restart, and profile-lease cleanup;
+- evidence registry epoch reset on every Core-session loss and safe reopen with
+  a fresh trusted record of the same canonical identity;
+- machine-scoped, global-only Core launch configuration and local-file-only
+  profile/executable pickers, so an SSH workspace cannot choose local paths or
+  executables; and
+- local UI-extension PDF opening remains a local `file:` resource after an SSH
+  workspace reload.
+
+Verification:
+
+```bash
+npm run core:check
+node --test services/zotero-core/tests/*.test.mjs \
+  products/workbench/tests/zotero-evidence-editors.test.mjs
+npm run test:workbench-bootstrap
+```
+
+Integrated results: protocol check passed, Core plus rehydration 67/67 passed,
+and the full workbench Node suite 137/137 passed. `workbench:verify` and a real
+Code-OSS/Zotero GUI reload remain deferred until the ignored pinned Code-OSS
+checkout is bootstrapped with exact Node `24.18.0`; the current host has Node
+`22.23.1` and no `vendor/code-oss/.chatero-provenance.json`.
 
 ## Audits already incorporated into the plan
 
