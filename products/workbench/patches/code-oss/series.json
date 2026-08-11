@@ -8,6 +8,10 @@
     {
       "file": "0002-quarantine-upstream-copilot-sources.patch",
       "sha256": "e3b89ccf442a337c464ca96cb9806dbeffc14fe82ba1bf5bdf35e4cde182088d"
+    },
+    {
+      "file": "0003-chatero-native-codex.patch",
+      "sha256": "df9babd910ccbd12ddf6bd1957275b4d4dcc34eb78165955c44a7fcc2b7f91b3"
     }
   ]
 }

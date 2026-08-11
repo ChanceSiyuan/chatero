@@ -1,0 +1,391 @@
+diff --git a/src/vs/platform/agentHost/common/agentHostCustomizationConfig.ts b/src/vs/platform/agentHost/common/agentHostCustomizationConfig.ts
+index f68af531ae1..44c98ca146b 100644
+--- a/src/vs/platform/agentHost/common/agentHostCustomizationConfig.ts
++++ b/src/vs/platform/agentHost/common/agentHostCustomizationConfig.ts
+@@ -8,8 +8,10 @@ import { createSchema, schemaProperty } from './agentHostSchema.js';
+ import { CustomizationType, type Customization, type PluginCustomization } from './state/protocol/state.js';
+ import { customizationId } from './state/sessionState.js';
+ 
+-export const codexUsageSources = ['copilot', 'openai'] as const;
+-export type CodexUsageSource = typeof codexUsageSources[number];
++export const codexUsageSources = ['openai'] as const;
++// Keep the legacy value in the internal type so persisted upstream state can be
++// read and replaced without a migration crash. Chatero never exposes or selects it.
++export type CodexUsageSource = typeof codexUsageSources[number] | 'copilot';
+ 
+ /**
+  * Well-known root-config keys used by the platform to configure agent-host
+@@ -102,8 +104,8 @@ export const agentHostCustomizationConfigSchema = createSchema({
+ 	[AgentHostConfigKey.CodexUsageSource]: schemaProperty<CodexUsageSource>({
+ 		type: 'string',
+ 		title: localize('agentHost.config.codexUsageSource.title', "Codex Usage Source"),
+-		description: localize('agentHost.config.codexUsageSource.description', "Choose whether Codex usage is routed through GitHub Copilot or uses an existing Codex OpenAI login. VS Code does not provide the OpenAI sign-in flow; authenticate Codex separately before selecting OpenAI."),
+-		default: 'copilot',
++		description: localize('agentHost.config.codexUsageSource.description', "Codex uses the OpenAI login on this machine."),
++		default: 'openai',
+ 		enum: [...codexUsageSources],
+ 	}),
+ 	[AgentHostConfigKey.SessionCustomizationDiscoveryMode]: schemaProperty<SessionCustomizationDiscoveryMode>({
+diff --git a/src/vs/platform/agentHost/common/agentHostStarter.config.contribution.ts b/src/vs/platform/agentHost/common/agentHostStarter.config.contribution.ts
+index 6a65e537ee0..7d35bd9324c 100644
+--- a/src/vs/platform/agentHost/common/agentHostStarter.config.contribution.ts
++++ b/src/vs/platform/agentHost/common/agentHostStarter.config.contribution.ts
+@@ -167,7 +167,7 @@ configurationRegistry.registerConfiguration({
+ 				localization: {
+ 					description: {
+ 						key: 'chat.agentHost.codexAgent.enabled.policy',
+-						value: nls.localize('chat.agentHost.codexAgent.enabled.policy', "Enable Codex Agent sessions in VS Code. Start and resume agentic coding sessions powered by OpenAI Codex. Usage can be routed through GitHub Copilot or authenticated directly with an OpenAI account."),
++						value: nls.localize('chat.agentHost.codexAgent.enabled.policy', "Enable Codex Agent sessions in Chatero. Start and resume agentic coding sessions powered by the bundled OpenAI Codex SDK and your OpenAI account."),
+ 					}
+ 				}
+ 			},
+diff --git a/src/vs/platform/agentHost/node/codex/codexAccountState.ts b/src/vs/platform/agentHost/node/codex/codexAccountState.ts
+index af8bf4eea1e..44beee397b6 100644
+--- a/src/vs/platform/agentHost/node/codex/codexAccountState.ts
++++ b/src/vs/platform/agentHost/node/codex/codexAccountState.ts
+@@ -28,8 +28,8 @@ export function codexAccountStateFromResponse(response: GetAccountResponse): ICo
+ 	return { usageSource: 'openai', status: 'signedOut' };
+ }
+ 
+-export function resolveCodexUsageSourceAfterAccountRead(source: CodexUsageSource, account: ICodexAccountState): CodexUsageSource {
+-	return source === 'openai' && account.status === 'signedOut' ? 'copilot' : source;
++export function resolveCodexUsageSourceAfterAccountRead(source: CodexUsageSource, _account: ICodexAccountState): CodexUsageSource {
++	return source;
+ }
+ 
+ export function codexAccountStateForUsageSource(source: CodexUsageSource, openAIAccount: ICodexAccountState): ICodexAccountState {
+@@ -41,8 +41,5 @@ export function codexProtectedResourcesForUsageSource(
+ 	copilotResource: ProtectedResourceMetadata,
+ 	repoResource: ProtectedResourceMetadata,
+ ): ProtectedResourceMetadata[] {
+-	return [
+-		source === 'openai' ? { ...copilotResource, required: false } : copilotResource,
+-		repoResource,
+-	];
++	return source === 'openai' ? [repoResource] : [copilotResource, repoResource];
+ }
+diff --git a/src/vs/platform/agentHost/node/codex/codexAgent.ts b/src/vs/platform/agentHost/node/codex/codexAgent.ts
+index 417845d5bea..4768e6f8cb1 100644
+--- a/src/vs/platform/agentHost/node/codex/codexAgent.ts
++++ b/src/vs/platform/agentHost/node/codex/codexAgent.ts
+@@ -23,7 +23,7 @@ import { ILogService } from '../../../log/common/log.js';
+ import { IProductService } from '../../../product/common/productService.js';
+ import { createSchema, platformRootSchema, platformSessionSchema, schemaProperty, AgentHostCodexMultiRootEnabledConfigKey, AgentHostMcpServersConfigKey, type ISchemaProperty, type SessionMode } from '../../common/agentHostSchema.js';
+ import { createPricingMetaFromBilling, normalizeCAPIBilling } from '../../common/agentModelPricing.js';
+-import { AgentHostConfigKey, agentHostCustomizationConfigSchema, type CodexUsageSource } from '../../common/agentHostCustomizationConfig.js';
++import { type CodexUsageSource } from '../../common/agentHostCustomizationConfig.js';
+ import { getReasoningEffortDescription, getReasoningEffortLabel } from '../../common/reasoningEffort.js';
+ import { AgentHostCodexAgentBinaryArgsEnvVar, AgentHostCodexAgentCodexHomeEnvVar, AgentHostCodexAgentSdkRootEnvVar, AgentSession, AgentSignal, CODEX_AGENT_PROVIDER_ID, IActiveClient, IAgent, IAgentChats, IAgentCreateChatForkSource, IAgentCreateChatResult, IAgentCreateChatOptions, IAgentCreateSessionConfig, IAgentCreateSessionResult, IAgentDescriptor, IAgentMaterializeSessionEvent, IAgentModelInfo, IAgentResolveSessionConfigParams, IAgentSessionConfigCompletionsParams, IAgentSessionMetadata, IMcpNotification, type AgentProvider, type AuthenticateParams } from '../../common/agentService.js';
+ import { SessionConfigKey } from '../../common/sessionConfigKeys.js';
+@@ -62,7 +62,7 @@ import { buildUserInputRequest, emptyUserInputResponse, userInputResponseFromAns
+ import { replayThreadToTurns } from './codexReplayMapper.js';
+ import { CodexSessionMetadataStore } from './codexSessionMetadataStore.js';
+ import { buildCodexLaunchConfig, buildCodexResumeParams, isCodexThreadProviderCompatible } from './codexLaunchConfig.js';
+-import { codexAccountStateForUsageSource, codexAccountStateFromResponse, codexProtectedResourcesForUsageSource, resolveCodexUsageSourceAfterAccountRead, type ICodexAccountState } from './codexAccountState.js';
++import { codexAccountStateForUsageSource, codexAccountStateFromResponse, codexProtectedResourcesForUsageSource, type ICodexAccountState } from './codexAccountState.js';
+ import { CodexSessionConfigKey, CODEX_DEFAULT_PERMISSIONS_PRESET, CODEX_PERMISSIONS_PRESETS, collaborationModeKind, migrateCodexPermissionValues, narrowAdditionalDirectories, narrowBoolean, narrowPersonality, narrowReasoningEffort, narrowReasoningSummary, narrowWebSearchMode, resolveCodexPermissions, type CodexApprovalPolicy, type CodexPermissionsPreset, type ICodexResolvedPermissions } from './codexSessionConfigKeys.js';
+ import type { ReasoningEffort } from './protocol/generated/ReasoningEffort.js';
+ import type { ReasoningSummary } from './protocol/generated/ReasoningSummary.js';
+@@ -872,12 +872,6 @@ export class CodexAgent extends Disposable implements IAgent {
+ 		if (this._usageSource !== 'openai') {
+ 			return;
+ 		}
+-		const source = resolveCodexUsageSourceAfterAccountRead(this._usageSource, account);
+-		if (source === 'copilot') {
+-			this._logService.info('[Codex] OpenAI is signed out; falling back to GitHub Copilot');
+-			this._configurationService.updateRootConfig({ [AgentHostConfigKey.CodexUsageSource]: source });
+-			return;
+-		}
+ 		if (account.status === 'signedIn') {
+ 			this._queueModelRefresh();
+ 		}
+@@ -888,7 +882,7 @@ export class CodexAgent extends Disposable implements IAgent {
+ 	}
+ 
+ 	private _resolveUsageSource(): CodexUsageSource {
+-		return this._configurationService.getRootValue(agentHostCustomizationConfigSchema, AgentHostConfigKey.CodexUsageSource) ?? 'copilot';
++		return 'openai';
+ 	}
+ 
+ 	private _requestUsageSourceChange(source: CodexUsageSource): void {
+@@ -968,15 +962,14 @@ export class CodexAgent extends Disposable implements IAgent {
+ 		if (resource === this._gitHubEndpointService.getRepoResource().resource) {
+ 			return true;
+ 		}
++		if (this._usageSource === 'openai') {
++			return false;
++		}
+ 		if (resource !== this._gitHubEndpointService.getCopilotResource().resource) {
+ 			return false;
+ 		}
+ 		const changed = this._githubToken !== token;
+ 		this._githubToken = token;
+-		if (this._usageSource === 'openai') {
+-			void this._refreshProviderConfiguration();
+-			return true;
+-		}
+ 		if (changed && this._connection.kind === 'ready' && this._connection.proxyHandle) {
+ 			// Codex stays running — proxy reads the new token from its
+ 			// own cell on the next request (Decision 4).
+@@ -2678,9 +2671,7 @@ export class CodexAgent extends Disposable implements IAgent {
+ 		return {
+ 			provider: this.id,
+ 			displayName: localize('codexAgent.displayName', "Codex"),
+-			description: this._usageSource === 'openai'
+-				? localize('codexAgent.description.openai', "Codex agent using your OpenAI account")
+-				: localize('codexAgent.description.copilot', "Codex agent using GitHub Copilot"),
++			description: localize('codexAgent.description.openai', "Codex agent using your OpenAI account"),
+ 			...(this._isMultiRootEnabled() ? { capabilities: { multipleWorkingDirectories: { immutablePrimary: true } } } : {}),
+ 		};
+ 	}
+diff --git a/src/vs/platform/agentHost/node/nodeAgentHostStarter.ts b/src/vs/platform/agentHost/node/nodeAgentHostStarter.ts
+index 7457fa9187f..9cddf99043f 100644
+--- a/src/vs/platform/agentHost/node/nodeAgentHostStarter.ts
++++ b/src/vs/platform/agentHost/node/nodeAgentHostStarter.ts
+@@ -69,6 +69,7 @@ export class NodeAgentHostStarter extends Disposable implements IAgentHostStarte
+ 		const shellEnv = await this._resolveShellEnv();
+ 
+ 		const env: Record<string, string> = {
++			...process.env as Record<string, string>,
+ 			...shellEnv as Record<string, string>,
+ 			// Announce that everything spawned below this process is driven by
+ 			// VS Code's agent, so `gh` inherits it. Set after the inherited
+diff --git a/src/vs/platform/agentHost/test/node/codex/codexAccountState.test.ts b/src/vs/platform/agentHost/test/node/codex/codexAccountState.test.ts
+index 3f77f5a41ed..7ab3ff8e1ea 100644
+--- a/src/vs/platform/agentHost/test/node/codex/codexAccountState.test.ts
++++ b/src/vs/platform/agentHost/test/node/codex/codexAccountState.test.ts
+@@ -23,14 +23,14 @@ suite('CodexAccountState', () => {
+ 		]);
+ 	});
+ 
+-	test('falls back to Copilot only when OpenAI is confirmed signed out', () => {
++	test('never falls back to Copilot when OpenAI is signed out', () => {
+ 		assert.deepStrictEqual([
+ 			resolveCodexUsageSourceAfterAccountRead('openai', { usageSource: 'openai', status: 'signedOut' }),
+ 			resolveCodexUsageSourceAfterAccountRead('openai', { usageSource: 'openai', status: 'signedIn', authType: 'chatgpt' }),
+ 			resolveCodexUsageSourceAfterAccountRead('openai', { usageSource: 'openai', status: 'error', error: 'temporarily unavailable' }),
+ 			resolveCodexUsageSourceAfterAccountRead('copilot', { usageSource: 'copilot', status: 'signedOut' }),
+ 		], [
+-			'copilot',
++			'openai',
+ 			'openai',
+ 			'openai',
+ 			'copilot',
+@@ -49,13 +49,10 @@ suite('CodexAccountState', () => {
+ 		]);
+ 	});
+ 
+-	test('preloads an optional Copilot token while OpenAI is active', () => {
++	test('does not request a Copilot token while OpenAI is active', () => {
+ 		const copilot = { resource: 'https://api.github.com', required: true };
+ 		const repo = { resource: 'https://api.github.com/repos', required: false };
+-		assert.deepStrictEqual(codexProtectedResourcesForUsageSource('openai', copilot, repo), [
+-			{ resource: 'https://api.github.com', required: false },
+-			repo,
+-		]);
++		assert.deepStrictEqual(codexProtectedResourcesForUsageSource('openai', copilot, repo), [repo]);
+ 		assert.deepStrictEqual(codexProtectedResourcesForUsageSource('copilot', copilot, repo), [copilot, repo]);
+ 	});
+ });
+diff --git a/src/vs/workbench/contrib/chat/browser/actions/chatContextActions.ts b/src/vs/workbench/contrib/chat/browser/actions/chatContextActions.ts
+index 5c0d324b88f..9c41a3bd8ac 100644
+--- a/src/vs/workbench/contrib/chat/browser/actions/chatContextActions.ts
++++ b/src/vs/workbench/contrib/chat/browser/actions/chatContextActions.ts
+@@ -5,6 +5,7 @@
+ 
+ import { asArray } from '../../../../../base/common/arrays.js';
+ import { DeferredPromise, isThenable } from '../../../../../base/common/async.js';
++import { VSBuffer } from '../../../../../base/common/buffer.js';
+ import { CancellationTokenSource } from '../../../../../base/common/cancellation.js';
+ import { Codicon } from '../../../../../base/common/codicons.js';
+ import { KeyCode, KeyMod } from '../../../../../base/common/keyCodes.js';
+@@ -14,6 +15,7 @@ import { autorun, observableValue } from '../../../../../base/common/observable.
+ import { ThemeIcon } from '../../../../../base/common/themables.js';
+ import { isObject } from '../../../../../base/common/types.js';
+ import { URI } from '../../../../../base/common/uri.js';
++import { generateUuid } from '../../../../../base/common/uuid.js';
+ import { ServicesAccessor } from '../../../../../editor/browser/editorExtensions.js';
+ import { Range } from '../../../../../editor/common/core/range.js';
+ import { EditorContextKeys } from '../../../../../editor/common/editorContextKeys.js';
+@@ -56,6 +58,8 @@ import { registerCreatePluginAction } from './createPluginAction.js';
+ 
+ export function registerChatContextActions(): DisposableStore {
+ 	const store = new DisposableStore();
++	store.add(registerAction2(AttachChateroTextContextAction));
++	store.add(registerAction2(RemoveChateroTextContextAction));
+ 	store.add(registerAction2(AttachContextAction));
+ 	store.add(registerAction2(AttachFileToChatAction));
+ 	store.add(registerAction2(AttachFolderToChatAction));
+@@ -67,6 +71,92 @@ export function registerChatContextActions(): DisposableStore {
+ 	return store;
+ }
+ 
++const CHATERO_TEXT_CONTEXT_ID_PREFIX = 'chatero-text:';
++const CHATERO_TEXT_CONTEXT_ID_PATTERN = /^chatero-text:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
++const CHATERO_TEXT_CONTEXT_LABEL_MAX_BYTES = 256;
++const CHATERO_TEXT_CONTEXT_MAX_BYTES = 256 * 1024;
++
++interface IChateroTextContext {
++	readonly label: string;
++	readonly text: string;
++}
++
++function parseChateroTextContext(value: unknown): IChateroTextContext {
++	if (!isObject(value) || Array.isArray(value)) {
++		throw new TypeError('Text context must be an object');
++	}
++	const keys = Object.keys(value).sort();
++	if (keys.length !== 2 || keys[0] !== 'label' || keys[1] !== 'text') {
++		throw new TypeError('Text context accepts only label and text');
++	}
++	const { label, text } = value as { label?: unknown; text?: unknown };
++	if (typeof label !== 'string' || label.trim().length === 0 || VSBuffer.fromString(label).byteLength > CHATERO_TEXT_CONTEXT_LABEL_MAX_BYTES) {
++		throw new TypeError(`Text context label must be 1-${CHATERO_TEXT_CONTEXT_LABEL_MAX_BYTES} UTF-8 bytes`);
++	}
++	if (typeof text !== 'string' || text.length === 0 || VSBuffer.fromString(text).byteLength > CHATERO_TEXT_CONTEXT_MAX_BYTES) {
++		throw new TypeError(`Text context must be 1-${CHATERO_TEXT_CONTEXT_MAX_BYTES} UTF-8 bytes`);
++	}
++	return { label, text };
++}
++
++class AttachChateroTextContextAction extends Action2 {
++	static readonly ID = 'chatero.chat.attachTextContext';
++
++	constructor() {
++		super({
++			id: AttachChateroTextContextAction.ID,
++			title: localize2('chatero.chat.attachTextContext', "Attach Text Context"),
++			category: CHAT_CATEGORY,
++			f1: false,
++		});
++	}
++
++	override async run(accessor: ServicesAccessor, value: unknown): Promise<string> {
++		const context = parseChateroTextContext(value);
++		const widget = await accessor.get(IInstantiationService).invokeFunction(withChatView);
++		if (!widget) {
++			throw new Error('Chat input is unavailable');
++		}
++		const token = generateUuid();
++		const id = CHATERO_TEXT_CONTEXT_ID_PREFIX + token;
++		widget.attachmentModel.addContext({
++			kind: 'string',
++			id,
++			name: context.label,
++			value: context.text,
++			uri: URI.from({ scheme: 'chatero-text-context', path: `/${token}` }),
++			handle: -1,
++		});
++		widget.focusInput();
++		return id;
++	}
++}
++
++class RemoveChateroTextContextAction extends Action2 {
++	static readonly ID = 'chatero.chat.removeTextContext';
++
++	constructor() {
++		super({
++			id: RemoveChateroTextContextAction.ID,
++			title: localize2('chatero.chat.removeTextContext', "Remove Text Context"),
++			category: CHAT_CATEGORY,
++			f1: false,
++		});
++	}
++
++	override async run(accessor: ServicesAccessor, id: unknown): Promise<boolean> {
++		if (typeof id !== 'string' || !CHATERO_TEXT_CONTEXT_ID_PATTERN.test(id)) {
++			throw new TypeError('Text context id is invalid');
++		}
++		const widget = await accessor.get(IInstantiationService).invokeFunction(withChatView);
++		if (!widget || !widget.attachmentModel.getAttachmentIDs().has(id)) {
++			return false;
++		}
++		widget.attachmentModel.delete(id);
++		return true;
++	}
++}
++
+ async function withChatView(accessor: ServicesAccessor): Promise<IChatWidget | undefined> {
+ 	const chatWidgetService = accessor.get(IChatWidgetService);
+ 
+diff --git a/src/vs/workbench/contrib/chat/browser/agentSessions/agentHost/agentHostChatContribution.ts b/src/vs/workbench/contrib/chat/browser/agentSessions/agentHost/agentHostChatContribution.ts
+index 8b158500dfb..ed7e5022db2 100644
+--- a/src/vs/workbench/contrib/chat/browser/agentSessions/agentHost/agentHostChatContribution.ts
++++ b/src/vs/workbench/contrib/chat/browser/agentSessions/agentHost/agentHostChatContribution.ts
+@@ -10,7 +10,7 @@ import { autorun } from '../../../../../../base/common/observable.js';
+ import { mark } from '../../../../../../base/common/performance.js';
+ import { ThemeIcon } from '../../../../../../base/common/themables.js';
+ import { localize } from '../../../../../../nls.js';
+-import { affectsAgentHostProviderPreference, IAgentHostService, shouldSurfaceLocalAgentHostProvider, type AgentProvider } from '../../../../../../platform/agentHost/common/agentService.js';
++import { affectsAgentHostProviderPreference, CODEX_AGENT_PROVIDER_ID, IAgentHostService, shouldSurfaceLocalAgentHostProvider, type AgentProvider } from '../../../../../../platform/agentHost/common/agentService.js';
+ import { IAgentHostEnablementService } from '../../../../../../platform/agentHost/common/agentHostEnablementService.js';
+ import { LOCAL_AGENT_HOST_AUTHORITY } from '../../../../../../platform/agentHost/common/agentHostUri.js';
+ import { type ProtectedResourceMetadata } from '../../../../../../platform/agentHost/common/state/protocol/state.js';
+@@ -244,7 +244,7 @@ export class AgentHostContribution extends Disposable implements IWorkbenchContr
+ 			canDelegate: true,
+ 			requiresCustomModels: true,
+ 			supportsAutoModel: agentHostProviderSupportsAutoModel(agent.provider),
+-			requiresCopilotSignIn: true,
++			requiresCopilotSignIn: agent.provider !== CODEX_AGENT_PROVIDER_ID,
+ 			agentHostProviderId: agent.provider,
+ 			supportsDelegation: true,
+ 			capabilities: {
+diff --git a/src/vs/workbench/contrib/chat/browser/agentSessions/agentHost/agentHostSessionHandler.ts b/src/vs/workbench/contrib/chat/browser/agentSessions/agentHost/agentHostSessionHandler.ts
+index 540873f46f9..1aafe18ffff 100644
+--- a/src/vs/workbench/contrib/chat/browser/agentSessions/agentHost/agentHostSessionHandler.ts
++++ b/src/vs/workbench/contrib/chat/browser/agentSessions/agentHost/agentHostSessionHandler.ts
+@@ -4963,7 +4963,7 @@ export class AgentHostSessionHandler extends Disposable implements IChatSessionC
+ 		if (v.kind === 'workspace') {
+ 			return this._toSimpleAttachment(v.name, v.value, v._meta, 'workspace', referenceRange);
+ 		}
+-		if (v.kind === 'string' && typeof v.value === 'string') {
++		if ((v.kind === 'string' || v.kind === 'generic') && typeof v.value === 'string') {
+ 			return this._toSimpleAttachment(v.name, v.value, v._meta, undefined, referenceRange);
+ 		}
+ 		const agentHostCompletionKind = getAgentHostCompletionReferenceKind(v);
+diff --git a/src/vs/workbench/contrib/chat/browser/agentSessions/agentSessions.ts b/src/vs/workbench/contrib/chat/browser/agentSessions/agentSessions.ts
+index d9bf3b171aa..094757fb9e5 100644
+--- a/src/vs/workbench/contrib/chat/browser/agentSessions/agentSessions.ts
++++ b/src/vs/workbench/contrib/chat/browser/agentSessions/agentSessions.ts
+@@ -188,7 +188,7 @@ export function getAgentSessionProviderDescription(provider: AgentSessionTarget)
+ 		case AgentSessionProviders.Codex:
+ 			return localize('chat.session.providerDescription.codex', "Open a new Codex session using the Codex extension from OpenAI. Codex sessions can be managed from the chat sessions view.");
+ 		case AgentSessionProviders.AgentHostCodex:
+-			return localize('chat.session.providerDescription.agentHostCodex', "Delegate tasks to the Codex App Server using the Codex models included in your GitHub Copilot subscription. The agent iterates via chat and works interactively to implement changes on your main workspace.");
++			return localize('chat.session.providerDescription.agentHostCodex', "Delegate tasks to the bundled Codex App Server using your OpenAI account. The agent iterates via chat and works interactively to implement changes on your main workspace.");
+ 		case AgentSessionProviders.Growth:
+ 			return localize('chat.session.providerDescription.growth', "Learn about Copilot features.");
+ 		case AgentSessionProviders.AgentHostCopilot:
+diff --git a/src/vs/workbench/contrib/chat/test/browser/agentSessions/agentHostChatContribution.test.ts b/src/vs/workbench/contrib/chat/test/browser/agentSessions/agentHostChatContribution.test.ts
+index 2167ff1a79f..0b1fd2f0aaa 100644
+--- a/src/vs/workbench/contrib/chat/test/browser/agentSessions/agentHostChatContribution.test.ts
++++ b/src/vs/workbench/contrib/chat/test/browser/agentSessions/agentHostChatContribution.test.ts
+@@ -7120,6 +7120,27 @@ suite('AgentHostChatContribution', () => {
+ 	// ---- Attachment context conversion --------------------------------------
+ 
+ 	suite('attachment context', () => {
++		test('generic string variable becomes a simple attachment', () => runWithFakedTimers({ useFakeTimers: true }, async () => {
++			const { sessionHandler, agentHostService, chatAgentService } = createContribution(disposables);
++
++			const { turnPromise, session, turnId, fire } = await startTurn(sessionHandler, agentHostService, chatAgentService, disposables, {
++				message: 'use the selected evidence',
++				variables: {
++					variables: [
++						upcastPartial({ kind: 'generic', id: 'context-1', name: 'Selected evidence', value: 'bounded evidence' }),
++					],
++				},
++			});
++			fire({ type: 'chat/turnComplete', endedAt: '2025-01-01T00:00:00.000Z', session, turnId } as ChatAction);
++			await turnPromise;
++
++			const turnAction = agentHostService.turnActions[0].action as ITurnStartedAction;
++			assert.deepStrictEqual(turnAction.message.attachments, [{
++				type: MessageAttachmentKind.Simple,
++				label: 'Selected evidence',
++				modelRepresentation: 'bounded evidence',
++			}]);
++		}));
+ 
+ 		test('file variable with file:// URI becomes file attachment', () => runWithFakedTimers({ useFakeTimers: true }, async () => {
+ 			const { sessionHandler, agentHostService, chatAgentService } = createContribution(disposables);

@@ -10,7 +10,9 @@ import {
   lstat,
   mkdir,
   mkdtemp,
+  open,
   readFile,
+  readlink,
   readdir,
   realpath,
   rename,
@@ -24,10 +26,26 @@ import {
   REMOTE_AGENT_TUPLES,
   canonicalManifestBytes,
 } from "../release-contract.mjs";
+import { REMOTE_AGENT_NOTICE_FILES } from "./build-linux-agent.mjs";
 
 const RELEASE_VERSION = "1.132.0";
 const CODE_OSS_COMMIT = "df53daabb18cd157bdb08c7f01c34df936cf12f4";
 const BRIDGE_PATH = new URL("../runtime/chatero-process-bridge.mjs", import.meta.url);
+const CODEX_SDK_VERSION = "0.142.0";
+const ARCHIVE_ARCHITECTURES = Object.freeze({
+  "linux-x86_64": {
+    machine: 62,
+    nativePackage: "codex-linux-x64",
+    nativeVersion: `${CODEX_SDK_VERSION}-linux-x64`,
+    nativeTriple: "x86_64-unknown-linux-musl",
+  },
+  "linux-aarch64": {
+    machine: 183,
+    nativePackage: "codex-linux-arm64",
+    nativeVersion: `${CODEX_SDK_VERSION}-linux-arm64`,
+    nativeTriple: "aarch64-unknown-linux-musl",
+  },
+});
 
 function parseArguments(argv) {
   const options = {};
@@ -121,6 +139,195 @@ async function hashFile(path) {
   return { sha256: hash.digest("hex"), size };
 }
 
+async function assertPayloadDirectory(root, relativePath, label) {
+  const canonicalRoot = resolve(root);
+  if (await realpath(canonicalRoot) !== canonicalRoot) {
+    throw new Error("payload root must be a real directory");
+  }
+  const parts = relativePath.split("/");
+  if (!relativePath || parts.some(part => !part || part === "." || part === "..")) {
+    throw new Error(`${label} has an invalid payload path`);
+  }
+  let current = canonicalRoot;
+  for (const part of parts) {
+    current = join(current, part);
+    let metadata;
+    try {
+      metadata = await lstat(current);
+    }
+    catch (error) {
+      if (error?.code === "ENOENT") {
+        throw new Error(`${label} ancestors must be real directories`);
+      }
+      throw error;
+    }
+    if (!metadata.isDirectory() || metadata.isSymbolicLink()
+      || await realpath(current) !== current) {
+      throw new Error(`${label} ancestors must be real directories`);
+    }
+  }
+  return current;
+}
+
+async function assertRegularPayloadFile(root, relativePath, label, { executable = false } = {}) {
+  const separator = relativePath.lastIndexOf("/");
+  const parent = separator === -1 ? root : await assertPayloadDirectory(
+    root,
+    relativePath.slice(0, separator),
+    label,
+  );
+  const path = join(parent, relativePath.slice(separator + 1));
+  let metadata;
+  try {
+    metadata = await lstat(path);
+  }
+  catch (error) {
+    if (error?.code === "ENOENT") {
+      throw new Error(`${label} must be a regular file`);
+    }
+    throw error;
+  }
+  if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.nlink !== 1
+    || await realpath(path) !== path) {
+    throw new Error(`${label} must be a regular file`);
+  }
+  if (metadata.size === 0) {
+    throw new Error(`${label} must not be empty`);
+  }
+  if (executable && (metadata.mode & 0o111) === 0) {
+    throw new Error(`${label} must be executable`);
+  }
+  return path;
+}
+
+async function assertExactPayloadEntries(root, relativePath, expectedEntries, label) {
+  const directory = await assertPayloadDirectory(root, relativePath, label);
+  const actual = (await readdir(directory)).sort();
+  const expected = [...expectedEntries].sort();
+  if (actual.length !== expected.length
+    || actual.some((entry, index) => entry !== expected[index])) {
+    throw new Error(`${label} must contain exactly ${expected.join(", ")}`);
+  }
+  return directory;
+}
+
+async function readElfMachine(path, label) {
+  const handle = await open(path, "r");
+  try {
+    const header = Buffer.alloc(20);
+    const { bytesRead } = await handle.read(header, 0, header.length, 0);
+    if (bytesRead !== header.length
+      || !header.subarray(0, 4).equals(Buffer.from([0x7f, 0x45, 0x4c, 0x46]))
+      || header[5] !== 1) {
+      throw new Error(`${label} must be a little-endian ELF executable`);
+    }
+    return header.readUInt16LE(18);
+  }
+  finally {
+    await handle.close();
+  }
+}
+
+async function assertAgentPayload(root, tuple) {
+  const architecture = ARCHIVE_ARCHITECTURES[tuple];
+  if (!architecture) {
+    throw new Error(`unsupported Remote Agent tuple ${tuple}`);
+  }
+  await assertRegularPayloadFile(root, "bin/chatero-server", "chatero-server", {
+    executable: true,
+  });
+  for (const relativePath of REMOTE_AGENT_NOTICE_FILES) {
+    await assertRegularPayloadFile(root, relativePath, relativePath);
+  }
+
+  const productPath = await assertRegularPayloadFile(root, "product.json", "product.json");
+  const product = JSON.parse(await readFile(productPath, "utf8"));
+  if (!product || typeof product !== "object" || Array.isArray(product)
+    || !Object.hasOwn(product, "agentSdks")
+    || !product.agentSdks || typeof product.agentSdks !== "object"
+    || Array.isArray(product.agentSdks)
+    || Object.keys(product.agentSdks).length !== 0) {
+    throw new Error("product.json agentSdks must be empty in a signed Remote Agent");
+  }
+
+  await assertExactPayloadEntries(root, "agent-sdk", ["codex"], "agent-sdk");
+  await assertExactPayloadEntries(root, "agent-sdk/codex", ["node_modules"], "agent-sdk/codex");
+  await assertExactPayloadEntries(
+    root,
+    "agent-sdk/codex/node_modules",
+    [".bin", ".package-lock.json", "@openai"],
+    "Codex node_modules",
+  );
+  await assertRegularPayloadFile(
+    root,
+    "agent-sdk/codex/node_modules/.package-lock.json",
+    "Codex package lock",
+  );
+  const binDirectory = await assertExactPayloadEntries(
+    root,
+    "agent-sdk/codex/node_modules/.bin",
+    ["codex"],
+    "Codex .bin",
+  );
+  const codexLink = join(binDirectory, "codex");
+  const codexLinkMetadata = await lstat(codexLink);
+  const expectedCodexLink = "../@openai/codex/bin/codex.js";
+  const expectedCodexTarget = join(root, "agent-sdk", "codex", "node_modules", "@openai", "codex", "bin", "codex.js");
+  if (!codexLinkMetadata.isSymbolicLink()
+    || await readlink(codexLink) !== expectedCodexLink
+    || await realpath(codexLink) !== expectedCodexTarget) {
+    throw new Error("Codex .bin/codex must be the fixed in-package symlink");
+  }
+  await assertRegularPayloadFile(
+    root,
+    "agent-sdk/codex/node_modules/@openai/codex/bin/codex.js",
+    "Codex JavaScript launcher",
+    { executable: true },
+  );
+
+  const openAiRelative = "agent-sdk/codex/node_modules/@openai";
+  const openAiRoot = await assertPayloadDirectory(root, openAiRelative, "Codex SDK");
+  await assertExactPayloadEntries(
+    root,
+    openAiRelative,
+    ["codex", architecture.nativePackage],
+    "@openai",
+  );
+  const basePackagePath = await assertRegularPayloadFile(
+    root,
+    `${openAiRelative}/codex/package.json`,
+    "@openai/codex package.json",
+  );
+  const basePackage = JSON.parse(await readFile(basePackagePath, "utf8"));
+  if (basePackage.version !== CODEX_SDK_VERSION) {
+    throw new Error(`@openai/codex must equal ${CODEX_SDK_VERSION}`);
+  }
+  const nativePackages = (await readdir(openAiRoot))
+    .filter(name => name.startsWith("codex-") && name !== "codex");
+  if (nativePackages.length !== 1 || nativePackages[0] !== architecture.nativePackage) {
+    throw new Error(`${tuple} contains wrong Codex native packages: ${nativePackages.join(", ")}`);
+  }
+  const nativePackagePath = await assertRegularPayloadFile(
+    root,
+    `${openAiRelative}/${architecture.nativePackage}/package.json`,
+    `${architecture.nativePackage} package.json`,
+  );
+  const nativePackage = JSON.parse(await readFile(nativePackagePath, "utf8"));
+  if (nativePackage.version !== architecture.nativeVersion) {
+    throw new Error(`${architecture.nativePackage} must equal ${architecture.nativeVersion}`);
+  }
+
+  for (const [label, relativePath] of [
+    ["Codex", `${openAiRelative}/${architecture.nativePackage}/vendor/${architecture.nativeTriple}/bin/codex`],
+    ["ripgrep", `${openAiRelative}/${architecture.nativePackage}/vendor/${architecture.nativeTriple}/codex-path/rg`],
+  ]) {
+    const path = await assertRegularPayloadFile(root, relativePath, label, { executable: true });
+    if (await readElfMachine(path, label) !== architecture.machine) {
+      throw new Error(`${label} ELF architecture does not match ${tuple}`);
+    }
+  }
+}
+
 async function stageArchive({ archive, tuple, workDirectory }) {
   const expectedRoot = `chatero-agent-${tuple}`;
   const extractDirectory = join(workDirectory, `${tuple}-extract`);
@@ -167,6 +374,8 @@ async function stageArchive({ archive, tuple, workDirectory }) {
   finally {
     await rm(temporaryBridge, { force: true });
   }
+
+  await assertAgentPayload(root, tuple);
 
   const filename = `${expectedRoot}.tar.gz`;
   const destination = join(workDirectory, filename);

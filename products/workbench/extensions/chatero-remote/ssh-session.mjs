@@ -1,15 +1,67 @@
 import { spawn as spawnChild } from "node:child_process";
 import { chmod, lstat, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, posix } from "node:path";
 
+import { decodeAuthority } from "./authority.mjs";
 import { createManagedConnection, forwardingArguments, redactRemoteLog } from "./managed-connection.mjs";
 import { assertConcreteAlias, OPENSSH_EXECUTABLE } from "./openssh-targets.mjs";
-import { RemoteAgentInstaller, SshRemoteAgentRuntime } from "./remote-agent-installer.mjs";
+import { assertRemoteInstallPath, RemoteAgentInstaller, SshRemoteAgentRuntime } from "./remote-agent-installer.mjs";
 
 const FINGERPRINT = /\bServer host key:\s+\S+\s+(SHA256:[A-Za-z0-9+/]{43}=?)\s*$/u;
 const AUTHENTICATING = /\bAuthenticating to\s+(.+):(\d+)\s+as\s+['"]([^'"]+)['"]\s*$/u;
 const MAX_MASTER_LOG = 1024 * 1024;
 const DEFAULT_MASTER_TIMEOUT = 15_000;
+const CODE_OSS_COMMIT = "df53daabb18cd157bdb08c7f01c34df936cf12f4";
+const CODEX_NATIVE_LAYOUTS = Object.freeze({
+  "linux-x86_64": Object.freeze({
+    packageName: "codex-linux-x64",
+    triple: "x86_64-unknown-linux-musl",
+  }),
+  "linux-aarch64": Object.freeze({
+    packageName: "codex-linux-arm64",
+    triple: "aarch64-unknown-linux-musl",
+  }),
+});
+
+export function makeCodexLoginTerminalOptions({
+  codeOssCommit,
+  installPath,
+  tuple,
+  cwd,
+}) {
+  if (codeOssCommit !== CODE_OSS_COMMIT) {
+    throw new Error("Codex login requires the pinned Code-OSS commit");
+  }
+  const layout = CODEX_NATIVE_LAYOUTS[tuple];
+  if (!layout) throw new Error("Codex login requires a verified remote tuple");
+  const installRelativePath = `.chatero-server/bin/${codeOssCommit}/${tuple}`;
+  assertRemoteInstallPath(installPath, installRelativePath);
+  if (cwd?.scheme !== "vscode-remote"
+    || typeof cwd.authority !== "string"
+    || typeof cwd.path !== "string"
+    || !posix.isAbsolute(cwd.path)
+    || /[\0\r\n]/u.test(cwd.path)) {
+    throw new Error("Codex login requires an active Chatero SSH workspace");
+  }
+  decodeAuthority(cwd.authority);
+  return Object.freeze({
+    name: "Codex login",
+    shellPath: posix.join(
+      installPath,
+      "agent-sdk",
+      "codex",
+      "node_modules",
+      "@openai",
+      layout.packageName,
+      "vendor",
+      layout.triple,
+      "bin",
+      "codex",
+    ),
+    shellArgs: ["login", "--device-auth"],
+    cwd,
+  });
+}
 
 function delay(milliseconds, signal) {
   return new Promise((resolve, reject) => {
@@ -321,6 +373,16 @@ export class SshSession {
       hostFingerprint: this.ready.hostFingerprint,
       remotePort: this.ready.remotePort,
       tuple: this.ready.tuple,
+    });
+  }
+
+  getCodexLoginTerminalOptions(cwd) {
+    if (!this.ready) throw new Error("No connected Chatero SSH session is active");
+    return makeCodexLoginTerminalOptions({
+      codeOssCommit: this.ready.codeOssCommit,
+      installPath: this.ready.installPath,
+      tuple: this.ready.tuple,
+      cwd,
     });
   }
 

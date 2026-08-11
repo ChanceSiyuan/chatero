@@ -21,6 +21,7 @@
   "licenseName": "MIT",
   "licenseUrl": "https://github.com/microsoft/vscode/blob/main/LICENSE.txt",
   "serverLicenseUrl": "https://github.com/microsoft/vscode/blob/main/LICENSE.txt",
+  "agentSdks": {},
   "builtInExtensions": [],
   "builtInExtensionsEnabledWithAutoUpdates": [],
   "defaultChatAgent": null,

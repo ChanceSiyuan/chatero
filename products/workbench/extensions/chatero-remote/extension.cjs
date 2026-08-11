@@ -9,6 +9,19 @@ const MAX_COMMAND_OUTPUT = 1024 * 1024;
 const RECENT_TARGETS_KEY = "chatero.remote.recentTargets.v1";
 const SHOW_REMOTE_LOG = "Show Remote Log";
 
+function openCodexLoginTerminal(session, folder) {
+  if (folder?.uri?.scheme !== "vscode-remote"
+    || typeof folder.uri.authority !== "string"
+    || !folder.uri.authority.startsWith("chatero-remote+")) {
+    throw new Error("Codex login requires an active Chatero SSH workspace");
+  }
+  const terminal = vscode.window.createTerminal(
+    session.getCodexLoginTerminalOptions(folder.uri),
+  );
+  terminal.show();
+  return terminal;
+}
+
 async function activate(context) {
   const [authority, targets, sessionModule, managed, remoteWorkspace, remoteProcess] = await Promise.all([
     import("./authority.mjs"),
@@ -310,6 +323,11 @@ async function activate(context) {
     isWorkspaceTrusted: () => vscode.workspace.isTrusted,
     canonicalizeWorkspaceCwd: remoteWorkspace.canonicalizeWorkspaceCwd,
   });
+  const openCodexLogin = () => {
+    const folder = activeRemoteFolder();
+    if (!folder) throw new Error("Codex login requires an active Chatero SSH workspace");
+    return openCodexLoginTerminal(activeSession(folder.uri.authority), folder);
+  };
 
   const openFolder = (uri, options) =>
     vscode.commands.executeCommand("vscode.openFolder", uri, options);
@@ -437,6 +455,10 @@ async function activate(context) {
     "chatero.remote.openLoginTerminal",
     commandWithErrorUx("login", () => openLoginTerminal()),
   ));
+  context.subscriptions.push(vscode.commands.registerCommand(
+    "chatero.remote.codexLogin",
+    commandWithErrorUx("login", openCodexLogin),
+  ));
   context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(() => {
     showActiveWorkspaceStatus();
   }));
@@ -484,4 +506,4 @@ async function activate(context) {
 
 function deactivate() {}
 
-module.exports = { activate, deactivate };
+module.exports = { activate, deactivate, openCodexLoginTerminal };

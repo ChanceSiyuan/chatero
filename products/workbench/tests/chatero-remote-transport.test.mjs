@@ -387,7 +387,11 @@ test("installer verifies the signed release before upload and keeps installation
       },
       async createRuntime(input) {
         calls.push(["runtime", { ...input, connectionToken: "[redacted]" }]);
-        return { remotePort: 41321, agentHostPath: "/run/user/1000/c.sock" };
+        return {
+          remotePort: 41321,
+          agentHostPath: "/run/user/1000/c.sock",
+          installPath: `/home/alice/.chatero-server/bin/${"a".repeat(40)}/linux-x86_64`,
+        };
       },
     },
     randomToken: () => privateToken,
@@ -418,10 +422,14 @@ test("installer verifies the signed release before upload and keeps installation
     remotePort: 41321,
     connectionToken: privateToken,
     agentHostPath: "/run/user/1000/c.sock",
+    installPath: `/home/alice/.chatero-server/bin/${"a".repeat(40)}/linux-x86_64`,
     installRelativePath: `.chatero-server/bin/${"a".repeat(40)}/linux-x86_64`,
+    codeOssCommit: "a".repeat(40),
     tuple: "linux-x86_64",
     hostPlatform: { os: "linux", arch: "x86_64", kernel: "6.8", tuple: "linux-x86_64" },
   });
+  const runtimeCall = calls.find(value => value[0] === "runtime")[1];
+  assert.equal(runtimeCall.tuple, "linux-x86_64");
 });
 
 function releaseFixture() {
@@ -456,7 +464,13 @@ test("installer probes a valid digest before upload and skips the archive transa
       async upload() { throw new Error("valid install must not upload"); },
       async finalize() { throw new Error("valid install must not finalize"); },
       async discardPart() { throw new Error("valid install must not discard"); },
-      async createRuntime() { return { remotePort: 41001, agentHostPath: "/run/user/1000/a.sock" }; },
+      async createRuntime() {
+        return {
+          remotePort: 41001,
+          agentHostPath: "/run/user/1000/a.sock",
+          installPath: `/home/alice/.chatero-server/bin/${"a".repeat(40)}/linux-x86_64`,
+        };
+      },
     },
   });
 
@@ -486,7 +500,13 @@ test("installer uses a unique transaction and discards a corrupt completed parti
         if (finalize++ === 0) throw corrupt;
       },
       async discardPart(input) { calls.push(["discard", input.partRelativePath]); },
-      async createRuntime() { return { remotePort: 41002, agentHostPath: "/run/user/1000/b.sock" }; },
+      async createRuntime() {
+        return {
+          remotePort: 41002,
+          agentHostPath: "/run/user/1000/b.sock",
+          installPath: `/home/alice/.chatero-server/bin/${"a".repeat(40)}/linux-x86_64`,
+        };
+      },
     },
   });
 
@@ -518,7 +538,13 @@ test("installer reuses its transaction after an interrupted upload and resumes f
     },
     async finalize(input) { paths.push(input.partRelativePath); },
     async discardPart() {},
-    async createRuntime() { return { remotePort: 41003, agentHostPath: "/run/user/1000/c.sock" }; },
+    async createRuntime() {
+      return {
+        remotePort: 41003,
+        agentHostPath: "/run/user/1000/c.sock",
+        installPath: `/home/alice/.chatero-server/bin/${"a".repeat(40)}/linux-x86_64`,
+      };
+    },
   };
   const createInstaller = () => new RemoteAgentInstaller({
     verifyRelease: async release => release.manifest,
@@ -560,7 +586,13 @@ test("concurrent installer calls use separate upload transaction paths", async (
       },
       async finalize() {},
       async discardPart() {},
-      async createRuntime() { return { remotePort: 41004, agentHostPath: "/run/user/1000/d.sock" }; },
+      async createRuntime() {
+        return {
+          remotePort: 41004,
+          agentHostPath: "/run/user/1000/d.sock",
+          installPath: `/home/alice/.chatero-server/bin/${"a".repeat(40)}/linux-x86_64`,
+        };
+      },
     },
   });
 

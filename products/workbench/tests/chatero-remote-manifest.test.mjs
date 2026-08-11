@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 
 import { encodeAuthority } from "../extensions/chatero-remote/authority.mjs";
+import { makeCodexLoginTerminalOptions } from "../extensions/chatero-remote/ssh-session.mjs";
 
 const extensionRoot = new URL("../extensions/chatero-remote/", import.meta.url);
 
@@ -24,7 +25,85 @@ test("remote resolver manifest is a local proposed-API UI extension", async () =
     "chatero.remote.reconnect": "Reconnect",
     "chatero.remote.showLog": "Show Remote Log",
     "chatero.remote.openLoginTerminal": "Open SSH Login Terminal",
+    "chatero.remote.codexLogin": "Sign In to Codex with Device Authentication",
   });
+  assert.equal(
+    manifest.contributes.commands.find(value => value.command === "chatero.remote.codexLogin")?.enablement,
+    "remoteName == chatero-remote",
+  );
+});
+
+test("Codex device authentication opens only the fixed bundled remote binary", async () => {
+  const commit = "df53daabb18cd157bdb08c7f01c34df936cf12f4";
+  const cwd = Object.freeze({
+    scheme: "vscode-remote",
+    authority: encodeAuthority("profile:lab-a"),
+    path: "/srv/project",
+  });
+  const installPath = `/home/alice/.chatero-server/bin/${commit}/linux-x86_64`;
+  const options = makeCodexLoginTerminalOptions({
+    codeOssCommit: commit,
+    installPath,
+    tuple: "linux-x86_64",
+    cwd,
+  });
+  assert.deepEqual(options, {
+    name: "Codex login",
+    shellPath: `${installPath}/agent-sdk/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex`,
+    shellArgs: ["login", "--device-auth"],
+    cwd,
+  });
+  assert.throws(() => makeCodexLoginTerminalOptions({
+    codeOssCommit: "a".repeat(40),
+    installPath,
+    tuple: "linux-x86_64",
+    cwd,
+  }), /pinned Code-OSS commit/);
+  assert.throws(() => makeCodexLoginTerminalOptions({
+    codeOssCommit: commit,
+    installPath,
+    tuple: "linux-riscv64",
+    cwd,
+  }), /remote tuple/);
+
+  const created = [];
+  const vscode = {
+    window: {
+      createTerminal(value) {
+        const terminal = { shown: 0, show() { this.shown++; } };
+        created.push({ value, terminal });
+        return terminal;
+      },
+    },
+  };
+  const require = createRequire(import.meta.url);
+  const extensionPath = fileURLToPath(new URL("../extensions/chatero-remote/extension.cjs", import.meta.url));
+  delete require.cache[require.resolve(extensionPath)];
+  const originalLoad = Module._load;
+  let extension;
+  Module._load = function load(request, parent, isMain) {
+    if (request === "vscode") return vscode;
+    return originalLoad.call(this, request, parent, isMain);
+  };
+  try {
+    extension = require(extensionPath);
+  }
+  finally {
+    Module._load = originalLoad;
+  }
+  const session = {
+    getCodexLoginTerminalOptions(requestedCwd) {
+      assert.equal(requestedCwd, cwd);
+      return options;
+    },
+  };
+  const terminal = extension.openCodexLoginTerminal(session, { uri: cwd });
+  assert.equal(terminal.shown, 1);
+  assert.deepEqual(created.map(value => value.value), [options]);
+  assert.throws(
+    () => extension.openCodexLoginTerminal(session, { uri: { ...cwd, scheme: "file" } }),
+    /active Chatero SSH workspace/,
+  );
 });
 
 test("the extension registers the native managed authority and publishes the bounded API", async () => {
@@ -179,5 +258,7 @@ test("agent launch policy enables only the embedded Codex SDK and a private agen
   assert.match(source, /VSCODE_AGENT_HOST_CODEX_SDK_ROOT/);
   assert.match(source, /VSCODE_AGENT_HOST_CLAUDE_AGENT_ENABLED/);
   assert.match(source, /VSCODE_AGENT_HOST_BYOK_MODELS_ENABLED/);
+  assert.match(source, /codex-linux-(?:x64|arm64)/);
+  assert.match(source, /printf '%s\\\\n%s\\\\n%s\\\\n'.*\$install/);
   assert.doesNotMatch(source, /--agent-host-port=0/);
 });

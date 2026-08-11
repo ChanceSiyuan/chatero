@@ -29,6 +29,14 @@
     "virtualWorkspaces": true
   },
   "contributes": {
+    "configurationDefaults": {
+      "chat.agentHost.enabled": true,
+      "chat.agentHost.claudeAgent.enabled": false,
+      "chat.agentHost.codexAgent.enabled": true,
+      "chat.agentHost.codexAgent.multiRootEnabled": true,
+      "chat.agentHost.byokModels.enabled": false,
+      "chat.editor.codex.preferAgentHost": true
+    },
     "commands": [
       {
         "command": "chatero.remote.connect",
@@ -54,6 +62,12 @@
         "command": "chatero.remote.openLoginTerminal",
         "title": "Open SSH Login Terminal",
         "category": "Chatero"
+      },
+      {
+        "command": "chatero.remote.codexLogin",
+        "title": "Sign In to Codex with Device Authentication",
+        "category": "Chatero",
+        "enablement": "remoteName == chatero-remote"
       }
     ],
     "menus": {

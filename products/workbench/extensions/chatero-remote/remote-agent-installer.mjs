@@ -1,6 +1,6 @@
 import { spawn as spawnChild } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { isAbsolute } from "node:path";
+import { isAbsolute, posix } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 
@@ -98,6 +98,13 @@ const CREATE_RUNTIME_SCRIPT = [
   "set -eu",
   "umask 077",
   "install=\"$HOME/$1\"",
+  "case \"$2\" in",
+  "  linux-x86_64) native=codex-linux-x64; triple=x86_64-unknown-linux-musl;;",
+  "  linux-aarch64) native=codex-linux-arm64; triple=aarch64-unknown-linux-musl;;",
+  "  *) exit 86;;",
+  "esac",
+  "codex=\"$install/agent-sdk/codex/node_modules/@openai/$native/vendor/$triple/bin/codex\"",
+  "[ -x \"$codex\" ] && [ ! -L \"$codex\" ]",
   "runtime=${XDG_RUNTIME_DIR:-/tmp/chatero-$(id -u)}",
   "case \"$runtime\" in /*) ;; *) exit 81;; esac",
   "clean_runtime=$(printf '%s' \"$runtime\" | tr -d '\\r\\n')",
@@ -129,7 +136,7 @@ const CREATE_RUNTIME_SCRIPT = [
   "done",
   "case \"$port\" in ''|*[!0-9]*) kill \"$server_pid\" 2>/dev/null || true; exit 84;; esac",
   "rm -f \"$token_file\"",
-  "printf '%s\\n%s\\n' \"$port\" \"$agent_socket\"",
+  "printf '%s\\n%s\\n%s\\n' \"$port\" \"$agent_socket\" \"$install\"",
 ].join("\n");
 
 export const REMOTE_AGENT_SCRIPTS = Object.freeze({
@@ -159,6 +166,18 @@ export function parseRemotePlatform(output) {
     kernel,
     tuple: `linux-${arch}`,
   });
+}
+
+export function assertRemoteInstallPath(installPath, installRelativePath) {
+  if (typeof installPath !== "string"
+    || !posix.isAbsolute(installPath)
+    || /[\0\r\n]/u.test(installPath)
+    || Buffer.byteLength(installPath, "utf8") > 4096
+    || posix.normalize(installPath) !== installPath
+    || !installPath.endsWith(`/${installRelativePath}`)) {
+    throw new Error("remote agent returned an invalid absolute install path");
+  }
+  return installPath;
 }
 
 function assertReleaseToken(value, label) {
@@ -351,18 +370,19 @@ export class SshRemoteAgentRuntime {
     ], { signal });
   }
 
-  async createRuntime({ installRelativePath, connectionToken, signal }) {
-    const output = await this.#exec(CREATE_RUNTIME_SCRIPT, [installRelativePath], {
+  async createRuntime({ installRelativePath, tuple, connectionToken, signal }) {
+    const output = await this.#exec(CREATE_RUNTIME_SCRIPT, [installRelativePath, tuple], {
       input: Buffer.from(`${connectionToken}\n`, "utf8"),
       signal,
     });
-    const [portText, agentHostPath, ...extra] = output.trim().split(/\r?\n/u);
+    const [portText, agentHostPath, installPath, ...extra] = output.trim().split(/\r?\n/u);
     const remotePort = Number(portText);
     if (extra.length || !Number.isSafeInteger(remotePort) || remotePort < 1 || remotePort > 65535
       || !isAbsolute(agentHostPath) || /[\0\r\n]/u.test(agentHostPath) || Buffer.byteLength(agentHostPath) > 100) {
       throw new Error("remote agent returned invalid readiness data");
     }
-    return Object.freeze({ remotePort, agentHostPath });
+    assertRemoteInstallPath(installPath, installRelativePath);
+    return Object.freeze({ remotePort, agentHostPath, installPath });
   }
 }
 
@@ -500,13 +520,16 @@ export class RemoteAgentInstaller {
       alias,
       controlPath,
       installRelativePath,
+      tuple: hostPlatform.tuple,
       connectionToken,
       signal,
     });
+    assertRemoteInstallPath(runtime.installPath, installRelativePath);
     return Object.freeze({
       ...runtime,
       connectionToken,
       installRelativePath,
+      codeOssCommit: manifest.codeOssCommit,
       tuple: hostPlatform.tuple,
       hostPlatform,
     });

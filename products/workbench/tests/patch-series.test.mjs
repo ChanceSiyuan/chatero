@@ -7,6 +7,12 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, test } from "node:test";
 
+const canonicalPatchDirectory = join(
+  new URL("..", import.meta.url).pathname,
+  "patches",
+  "code-oss",
+);
+
 const execFile = promisify(execFileCallback);
 const temporaryDirectories = [];
 
@@ -151,4 +157,14 @@ test("rejects traversal, absolute paths, duplicate files, and unknown fields", a
       value.message
     );
   }
+});
+
+test("the canonical series pins the native Codex policy patch last", async () => {
+  const series = JSON.parse(await readFile(join(canonicalPatchDirectory, "series.json"), "utf8"));
+  const entry = series.patches.at(-1);
+
+  assert.equal(entry.file, "0003-chatero-native-codex.patch");
+  const bytes = await readFile(join(canonicalPatchDirectory, entry.file));
+  assert.equal(entry.sha256, sha256(bytes));
+  assert.match(bytes.toString("utf8"), /chatero\.chat\.attachTextContext/);
 });

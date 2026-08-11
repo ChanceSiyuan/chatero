@@ -132,6 +132,64 @@ async function run(command, args, options = {}) {
   };
 }
 
+function elfFixture(machine) {
+  const header = Buffer.alloc(20);
+  Buffer.from([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1]).copy(header);
+  header.writeUInt16LE(machine, 18);
+  return header;
+}
+
+async function createRemoteAgentFixture(source, root, tuple, {
+  agentSdks = {},
+  omitNotice,
+} = {}) {
+  const architecture = tuple === "linux-x86_64"
+    ? {
+      machine: 62,
+      packageName: "codex-linux-x64",
+      packageVersion: "0.142.0-linux-x64",
+      triple: "x86_64-unknown-linux-musl",
+    }
+    : {
+      machine: 183,
+      packageName: "codex-linux-arm64",
+      packageVersion: "0.142.0-linux-arm64",
+      triple: "aarch64-unknown-linux-musl",
+    };
+  const bin = join(source, root, "bin");
+  const openAi = join(source, root, "agent-sdk", "codex", "node_modules", "@openai");
+  const nativeRoot = join(openAi, architecture.packageName);
+  const vendorRoot = join(nativeRoot, "vendor", architecture.triple);
+  const nodeModules = join(source, root, "agent-sdk", "codex", "node_modules");
+  await mkdir(join(vendorRoot, "bin"), { recursive: true });
+  await mkdir(join(vendorRoot, "codex-path"), { recursive: true });
+  await mkdir(join(openAi, "codex", "bin"), { recursive: true });
+  await mkdir(join(nodeModules, ".bin"), { recursive: true });
+  await mkdir(join(source, root, "licenses"), { recursive: true });
+  await mkdir(bin, { recursive: true });
+  await writeFile(join(bin, "chatero-server"), `${tuple}\n`, { mode: 0o755 });
+  await writeFile(join(source, root, "product.json"), JSON.stringify({ agentSdks }), "utf8");
+  await writeFile(join(openAi, "codex", "package.json"), JSON.stringify({ version: "0.142.0" }));
+  await writeFile(join(openAi, "codex", "bin", "codex.js"), "#!/usr/bin/env node\n", { mode: 0o755 });
+  await writeFile(join(nodeModules, ".package-lock.json"), "{}\n", "utf8");
+  await symlink("../@openai/codex/bin/codex.js", join(nodeModules, ".bin", "codex"));
+  await writeFile(join(nativeRoot, "package.json"), JSON.stringify({ version: architecture.packageVersion }));
+  await writeFile(join(vendorRoot, "bin", "codex"), elfFixture(architecture.machine), { mode: 0o755 });
+  await writeFile(join(vendorRoot, "codex-path", "rg"), elfFixture(architecture.machine), { mode: 0o755 });
+  for (const notice of [
+    "LICENSE.txt",
+    "ThirdPartyNotices.txt",
+    "licenses/OpenAI-Codex-Apache-2.0.txt",
+    "licenses/OpenAI-Codex-NOTICE.txt",
+    "licenses/ripgrep-MIT.txt",
+    "licenses/ripgrep-UNLICENSE.txt",
+  ]) {
+    if (notice !== omitNotice) {
+      await writeFile(join(source, root, notice), `${notice}\n`, "utf8");
+    }
+  }
+}
+
 test("canonical manifest bytes recursively sort object keys and preserve array order", () => {
   const bytes = canonicalManifestBytes({ z: { b: 2, a: 1 }, a: [{ y: 2, x: 1 }] });
 
@@ -336,8 +394,7 @@ test("release staging injects the bridge and signs the final archive bytes", asy
   for (const [arch, tuple] of [["x64", "linux-x86_64"], ["arm64", "linux-aarch64"]]) {
     const root = `chatero-agent-${tuple}`;
     const source = join(directory, `${arch}-source`);
-    await mkdir(join(source, root, "bin"), { recursive: true });
-    await writeFile(join(source, root, "bin", "chatero-server"), `${tuple}\n`, "utf8");
+    await createRemoteAgentFixture(source, root, tuple);
     archives[arch] = join(inputs, `${arch}.tar.gz`);
     const packed = await run("tar", ["-czf", archives[arch], "-C", source, root]);
     assert.equal(packed.code, 0, packed.stderr);
@@ -377,6 +434,166 @@ test("release staging injects the bridge and signs the final archive bytes", asy
   }
 });
 
+test("release staging refuses to sign an archive without the complete SDK notices", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "chatero-stage-incomplete-sdk-"));
+  temporaryDirectories.push(directory);
+  const inputs = join(directory, "inputs");
+  const output = join(directory, "output");
+  await mkdir(inputs);
+  const archives = {};
+  for (const [arch, tuple] of [["x64", "linux-x86_64"], ["arm64", "linux-aarch64"]]) {
+    const root = `chatero-agent-${tuple}`;
+    const source = join(directory, `${arch}-source`);
+    await createRemoteAgentFixture(source, root, tuple, {
+      omitNotice: arch === "x64" ? "licenses/ripgrep-UNLICENSE.txt" : undefined,
+    });
+    archives[arch] = join(inputs, `${arch}.tar.gz`);
+    const packed = await run("tar", ["-czf", archives[arch], "-C", source, root]);
+    assert.equal(packed.code, 0, packed.stderr);
+  }
+  const { privateKey } = generateKeyPairSync("ed25519");
+  const privateKeyPath = join(directory, "release.private.pem");
+  await writeFile(privateKeyPath, privateKey.export({ type: "pkcs8", format: "pem" }), {
+    mode: 0o600,
+  });
+
+  const staged = await run(process.execPath, [
+    STAGE_PATH,
+    "--x64", archives.x64,
+    "--arm64", archives.arm64,
+    "--private-key", privateKeyPath,
+    "--out", output,
+  ]);
+
+  assert.equal(staged.code, 1);
+  assert.match(staged.stderr, /ripgrep-UNLICENSE\.txt.*regular file/);
+});
+
+test("release staging rejects an Agent SDK download fallback in product.json", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "chatero-stage-sdk-fallback-"));
+  temporaryDirectories.push(directory);
+  const inputs = join(directory, "inputs");
+  const output = join(directory, "output");
+  await mkdir(inputs);
+  const archives = {};
+  for (const [arch, tuple] of [["x64", "linux-x86_64"], ["arm64", "linux-aarch64"]]) {
+    const root = `chatero-agent-${tuple}`;
+    const source = join(directory, `${arch}-source`);
+    await createRemoteAgentFixture(source, root, tuple, {
+      agentSdks: arch === "x64" ? {
+        codex: { version: "0.142.0", urlTemplate: "https://main.vscode-cdn.net/sdk.tgz" },
+      } : {},
+    });
+    archives[arch] = join(inputs, `${arch}.tar.gz`);
+    const packed = await run("tar", ["-czf", archives[arch], "-C", source, root]);
+    assert.equal(packed.code, 0, packed.stderr);
+  }
+  const { privateKey } = generateKeyPairSync("ed25519");
+  const privateKeyPath = join(directory, "release.private.pem");
+  await writeFile(privateKeyPath, privateKey.export({ type: "pkcs8", format: "pem" }), { mode: 0o600 });
+
+  const staged = await run(process.execPath, [
+    STAGE_PATH,
+    "--x64", archives.x64,
+    "--arm64", archives.arm64,
+    "--private-key", privateKeyPath,
+    "--out", output,
+  ]);
+
+  assert.equal(staged.code, 1);
+  assert.match(staged.stderr, /product\.json.*agentSdks.*empty/i);
+});
+
+test("release staging rejects a required payload behind an intermediate symlink", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "chatero-stage-parent-symlink-"));
+  temporaryDirectories.push(directory);
+  const inputs = join(directory, "inputs");
+  const output = join(directory, "output");
+  await mkdir(inputs);
+  const archives = {};
+  for (const [arch, tuple] of [["x64", "linux-x86_64"], ["arm64", "linux-aarch64"]]) {
+    const root = `chatero-agent-${tuple}`;
+    const source = join(directory, `${arch}-source`);
+    await createRemoteAgentFixture(source, root, tuple);
+    if (arch === "x64") {
+      const external = join(directory, "external-licenses");
+      await mkdir(external);
+      for (const name of [
+        "OpenAI-Codex-Apache-2.0.txt",
+        "OpenAI-Codex-NOTICE.txt",
+        "ripgrep-MIT.txt",
+        "ripgrep-UNLICENSE.txt",
+      ]) {
+        await writeFile(join(external, name), `${name}\n`, "utf8");
+      }
+      await rm(join(source, root, "licenses"), { recursive: true });
+      await symlink(external, join(source, root, "licenses"));
+    }
+    archives[arch] = join(inputs, `${arch}.tar.gz`);
+    const packed = await run("tar", ["-czf", archives[arch], "-C", source, root]);
+    assert.equal(packed.code, 0, packed.stderr);
+  }
+  const { privateKey } = generateKeyPairSync("ed25519");
+  const privateKeyPath = join(directory, "release.private.pem");
+  await writeFile(privateKeyPath, privateKey.export({ type: "pkcs8", format: "pem" }), { mode: 0o600 });
+
+  const staged = await run(process.execPath, [
+    STAGE_PATH,
+    "--x64", archives.x64,
+    "--arm64", archives.arm64,
+    "--private-key", privateKeyPath,
+    "--out", output,
+  ]);
+
+  assert.equal(staged.code, 1);
+  assert.match(staged.stderr, /licenses.*ancestors must be real directories/i);
+});
+
+test("release staging rejects non-OpenAI providers and extra OpenAI packages", async t => {
+  for (const [name, addForbiddenPayload, expected] of [
+    ["extra agent provider", async root => {
+      await mkdir(join(root, "agent-sdk", "claude"), { recursive: true });
+      await writeFile(join(root, "agent-sdk", "claude", "payload"), "forbidden\n", "utf8");
+    }, /agent-sdk.*exactly codex/i],
+    ["extra OpenAI package", async root => {
+      await mkdir(join(root, "agent-sdk", "codex", "node_modules", "@openai", "foo"), { recursive: true });
+      await writeFile(join(root, "agent-sdk", "codex", "node_modules", "@openai", "foo", "payload"), "forbidden\n", "utf8");
+    }, /@openai.*exactly.*codex/i],
+  ]) {
+    await t.test(name, async () => {
+      const directory = await mkdtemp(join(tmpdir(), "chatero-stage-provider-"));
+      temporaryDirectories.push(directory);
+      const inputs = join(directory, "inputs");
+      const output = join(directory, "output");
+      await mkdir(inputs);
+      const archives = {};
+      for (const [arch, tuple] of [["x64", "linux-x86_64"], ["arm64", "linux-aarch64"]]) {
+        const rootName = `chatero-agent-${tuple}`;
+        const source = join(directory, `${arch}-source`);
+        await createRemoteAgentFixture(source, rootName, tuple);
+        if (arch === "x64") await addForbiddenPayload(join(source, rootName));
+        archives[arch] = join(inputs, `${arch}.tar.gz`);
+        const packed = await run("tar", ["-czf", archives[arch], "-C", source, rootName]);
+        assert.equal(packed.code, 0, packed.stderr);
+      }
+      const { privateKey } = generateKeyPairSync("ed25519");
+      const privateKeyPath = join(directory, "release.private.pem");
+      await writeFile(privateKeyPath, privateKey.export({ type: "pkcs8", format: "pem" }), { mode: 0o600 });
+
+      const staged = await run(process.execPath, [
+        STAGE_PATH,
+        "--x64", archives.x64,
+        "--arm64", archives.arm64,
+        "--private-key", privateKeyPath,
+        "--out", output,
+      ]);
+
+      assert.equal(staged.code, 1);
+      assert.match(staged.stderr, expected);
+    });
+  }
+});
+
 test("release staging rejects a bridge destination symlink without changing its target", async () => {
   const directory = await mkdtemp(join(tmpdir(), "chatero-stage-symlink-"));
   temporaryDirectories.push(directory);
@@ -390,8 +607,7 @@ test("release staging rejects a bridge destination symlink without changing its 
     const root = `chatero-agent-${tuple}`;
     const source = join(directory, `${arch}-symlink-source`);
     const bin = join(source, root, "bin");
-    await mkdir(bin, { recursive: true });
-    await writeFile(join(bin, "chatero-server"), `${tuple}\n`, "utf8");
+    await createRemoteAgentFixture(source, root, tuple);
     if (arch === "x64") {
       await symlink(sentinel, join(bin, "chatero-process-bridge.mjs"));
     }
@@ -428,55 +644,73 @@ test("Linux agent builder rejects unsupported hosts before doing build work", as
   );
 });
 
-test("Linux agent builder rejects tracked and untracked checkout changes but allows ignored output", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "chatero-builder-checkout-"));
-  temporaryDirectories.push(directory);
-  const checkout = join(directory, "code-oss");
-  await mkdir(checkout);
-  for (const args of [
-    ["init", "--quiet", checkout],
-    ["-C", checkout, "config", "user.name", "Chatero Test"],
-    ["-C", checkout, "config", "user.email", "chatero@example.invalid"],
-  ]) {
-    const result = await run("git", args);
-    assert.equal(result.code, 0, result.stderr);
-  }
-  await writeFile(join(checkout, ".gitignore"), "generated/\n", "utf8");
-  await writeFile(join(checkout, "tracked.txt"), "clean\n", "utf8");
-  let result = await run("git", ["-C", checkout, "add", "."]);
-  assert.equal(result.code, 0, result.stderr);
-  result = await run("git", [
-    "-C", checkout,
-    "-c", "commit.gpgSign=false",
-    "commit", "--quiet", "-m", "fixture",
-  ]);
-  assert.equal(result.code, 0, result.stderr);
-  await mkdir(join(checkout, "generated"));
-  await writeFile(join(checkout, "generated", "bundle"), "ignored\n", "utf8");
+test("Linux agent builder requires the pinned Node runtime", async () => {
+  const { assertBuildNodeVersion } = await import(BUILD_PATH);
 
-  const validationProgram = [
-    `import { assertCleanCheckout } from ${JSON.stringify(pathToFileURL(BUILD_PATH).href)};`,
-    "await assertCleanCheckout(process.argv[1]);",
-  ].join(" ");
-  const clean = await run(process.execPath, [
-    "--input-type=module", "-e", validationProgram, checkout,
-  ]);
-  assert.equal(clean.code, 0, clean.stderr);
+  assert.doesNotThrow(() => assertBuildNodeVersion("24.18.0"));
+  assert.throws(() => assertBuildNodeVersion("24.17.0"), /Node 24\.18\.0/);
+});
 
-  await writeFile(join(checkout, "tracked.txt"), "dirty\n", "utf8");
-  const tracked = await run(process.execPath, [
-    "--input-type=module", "-e", validationProgram, checkout,
-  ]);
-  assert.equal(tracked.code, 1);
-  assert.match(tracked.stderr, /dirty.*tracked\.txt/s);
+test("Linux agent builder runs gulp with the already verified Node executable", async () => {
+  const { makeCodeOssBuildInvocation } = await import(BUILD_PATH);
 
-  await writeFile(join(checkout, "tracked.txt"), "clean\n", "utf8");
-  await writeFile(join(checkout, "untracked.txt"), "dirty\n", "utf8");
-  const untracked = await run(process.execPath, [
-    "--input-type=module", "-e", validationProgram, checkout,
-  ]);
-  assert.equal(untracked.code, 1);
-  assert.match(untracked.stderr, /dirty.*untracked\.txt/s);
+  assert.deepEqual(makeCodeOssBuildInvocation({
+    checkout: "/srv/code-oss",
+    target: "vscode-reh-linux-x64-min-ci",
+    nodePath: "/opt/chatero/node-v24.18.0/bin/node",
+    environment: {
+      AGENT_SDK_RESULTS_FILE: "/tmp/untrusted-sdk-results.json",
+      PATH: "/usr/bin",
+      VSCODE_PUBLISH: "true",
+    },
+  }), {
+    command: "/opt/chatero/node-v24.18.0/bin/node",
+    args: [
+      "--experimental-strip-types",
+      "--max-old-space-size=8192",
+      "/srv/code-oss/node_modules/gulp/bin/gulp.js",
+      "vscode-reh-linux-x64-min-ci",
+    ],
+    cwd: "/srv/code-oss",
+    env: {
+      PATH: "/usr/bin",
+      VSCODE_PUBLISH: "false",
+    },
+  });
+
+  const source = await readFile(BUILD_PATH, "utf8");
+  assert.doesNotMatch(source, /run\(["']npm["'],\s*\[["']run["'],\s*["']gulp["']/);
+  const sdkDestinationPreflight = source.indexOf("assertSafeFileDestination(plan.tarball");
+  assert.notEqual(sdkDestinationPreflight, -1);
+  assert.ok(
+    sdkDestinationPreflight < source.indexOf("await run(process.execPath"),
+    "the SDK tarball destination must be checked before package.ts runs",
+  );
+});
+
+test("Linux agent builder accepts only a verified Chatero materialization", async () => {
+  const { assertVerifiedCheckout } = await import(BUILD_PATH);
+  const calls = [];
+
+  const report = await assertVerifiedCheckout("/srv/code-oss", {
+    verify: async input => {
+      calls.push(input);
+      return { ok: true, destination: "/srv/code-oss", commit: CODE_OSS_COMMIT };
+    },
+  });
+
+  assert.equal(report.ok, true);
+  assert.deepEqual(calls, [{ destination: "/srv/code-oss" }]);
+  await assert.rejects(
+    assertVerifiedCheckout("/srv/code-oss", {
+      verify: async () => ({ ok: true, destination: "/srv/other", commit: CODE_OSS_COMMIT }),
+    }),
+    /verified checkout destination/
+  );
+
+  const source = await readFile(BUILD_PATH, "utf8");
+  assert.match(source, /verifyCodeOss/);
+  assert.doesNotMatch(source, /status["'],\s*["']--porcelain/);
 });
 
 test("Linux agent builder selects only the pinned REH targets and Chatero output roots", async () => {
@@ -504,4 +738,57 @@ test("Linux agent builder selects only the pinned REH targets and Chatero output
       output: "/out/arm64.tar.gz",
     },
   ]);
+});
+
+test("Linux agent builder embeds the exact architecture-matched Codex SDK", async () => {
+  const { makeCodexSdkPlan } = await import(BUILD_PATH);
+
+  assert.deepEqual(makeCodexSdkPlan({
+    arch: "x64",
+    checkout: "/srv/code-oss",
+    root: "/tmp/chatero-agent-linux-x86_64",
+  }), {
+    version: "0.142.0",
+    target: "linux-x64",
+    nativePackage: "@openai/codex-linux-x64",
+    nativeTriple: "x86_64-unknown-linux-musl",
+    packageScript: "/srv/code-oss/build/agent-sdk/package.ts",
+    tarball: "/srv/code-oss/.build/agent-sdk/chatero/codex-0.142.0-linux-x64.tgz",
+    destination: "/tmp/chatero-agent-linux-x86_64/agent-sdk/codex",
+  });
+  assert.deepEqual(makeCodexSdkPlan({
+    arch: "arm64",
+    checkout: "/srv/code-oss",
+    root: "/tmp/chatero-agent-linux-aarch64",
+  }), {
+    version: "0.142.0",
+    target: "linux-arm64",
+    nativePackage: "@openai/codex-linux-arm64",
+    nativeTriple: "aarch64-unknown-linux-musl",
+    packageScript: "/srv/code-oss/build/agent-sdk/package.ts",
+    tarball: "/srv/code-oss/.build/agent-sdk/chatero/codex-0.142.0-linux-arm64.tgz",
+    destination: "/tmp/chatero-agent-linux-aarch64/agent-sdk/codex",
+  });
+});
+
+test("Linux agent builder requires Code-OSS, Codex, and bundled ripgrep notices", async () => {
+  const { REMOTE_AGENT_NOTICE_FILES } = await import(BUILD_PATH);
+
+  assert.deepEqual(REMOTE_AGENT_NOTICE_FILES, [
+    "LICENSE.txt",
+    "ThirdPartyNotices.txt",
+    "licenses/OpenAI-Codex-Apache-2.0.txt",
+    "licenses/OpenAI-Codex-NOTICE.txt",
+    "licenses/ripgrep-MIT.txt",
+    "licenses/ripgrep-UNLICENSE.txt",
+  ]);
+  for (const [name, digest] of Object.entries({
+    "OpenAI-Codex-Apache-2.0.txt": "d17f227e4df5da1600391338865ce0f3055211760a36688f816941d58232d8dc",
+    "OpenAI-Codex-NOTICE.txt": "9d71575ecfd9a843fc1677b0efb08053c6ba9fd686a0de1a6f5382fd3c220915",
+    "ripgrep-MIT.txt": "0f96a83840e146e43c0ec96a22ec1f392e0680e6c1226e6f3ba87e0740af850f",
+    "ripgrep-UNLICENSE.txt": "7e12e5df4bae12cb21581ba157ced20e1986a0508dd10d0e8a4ab9a4cf94e85c",
+  })) {
+    const bytes = await readFile(new URL(`../remote-agent/licenses/${name}`, import.meta.url));
+    assert.equal(createHash("sha256").update(bytes).digest("hex"), digest);
+  }
 });
