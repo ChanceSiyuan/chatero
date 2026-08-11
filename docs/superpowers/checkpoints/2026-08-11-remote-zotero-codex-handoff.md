@@ -7,6 +7,7 @@ claim.
 ## Branches to fetch
 
 - `feat/remote-zotero-codex`
+  - Task 5 completion commit: `cabd9f072`
   - Task 4 completion commit: `fb13f31f9`
   - Task 3 completion commit: `6ab1ff06f`
   - The earlier interrupted checkpoint remains `0eadc81e8` for audit history.
@@ -53,6 +54,13 @@ Finish the gates and reviews below first.
     verification, exact Node 24 TypeScript compilation, and the OpenAI account
     policy test. Independent final review reported no remaining
     Critical/Important findings for Task 4.
+- Bounded Zotero PDF page/selection evidence in native Chat:
+  - `cabd9f072 feat(workbench): attach bounded Zotero PDF evidence`
+  - Task 5 focused regression: 45/45 tests passed; full workbench Node
+    regression: 169/169 tests passed.
+  - A fresh pinned Code-OSS materialization and standalone provenance/policy
+    verification passed. Independent final review reported no remaining
+    Critical, Important, or Minor findings for Task 5.
 
 ## Task 3 completed state
 
@@ -90,8 +98,8 @@ bound/dispose authenticated candidate sessions that never become active and to
 align the OpenSSH alias length check with the opaque authority length check.
 Neither bypasses the trust, authority, or data boundaries.
 
-Next action: implement and review Task 5's selectable PDF.js evidence and
-explicit native Chat context.
+Next action: implement and review Task 6's one-use full-PDF grant, verified
+24-hour remote cache, resumable upload, expiry, and revoke flow.
 
 ## Task 3B completed and integrated state
 
@@ -190,6 +198,55 @@ nested built-in-extension packages needed by the upstream gulp compile. Task 7
 will install the complete pinned dependency graph on clean Linux runners and
 exercise both release jobs. No generated Remote Agent archive or signing
 private key was added to the repository.
+
+## Task 5 completed state
+
+Completion: `cabd9f072 feat(workbench): attach bounded Zotero PDF evidence`
+
+Implemented and reviewed:
+
+- the packaged PDF.js 5.7.313 viewer renders a selectable `TextLayer` with
+  correct scale, `UserUnit`, rotation, cancellation, resize, and stacking
+  behavior beneath local Zotero highlights;
+- passive page and selection updates remain in an in-memory, document-bound
+  broker with exact payload keys, random panel nonces, strictly increasing
+  sequences, independent concurrent tabs/panels, and frozen snapshots;
+- selected text, page text, page labels, titles, and current-page annotations
+  have explicit UTF-8 and aggregate envelope limits; snapshots and native Chat
+  values contain no local path, PDF bytes, resource URI, or persisted state;
+- selection gestures authorize only the selection, while explicit page
+  attachment authorizes the page and its current-page annotations. Both use a
+  fixed untrusted-evidence wrapper with a final 256 KiB native attachment gate;
+- provider labels identify the local-to-remote boundary and use a 64-bit
+  revision of only the canonical bytes authorized for that mode, avoiding both
+  native attachment de-duplication and fingerprints of unselected evidence;
+  and
+- the extension registers only
+  `vscode.chat.registerChatAttachContextProvider`, uses the real
+  `chatero.chatero-zotero` proposal allowlist, and attaches through the native
+  Code-OSS Chat action without auto-send, custom history, or a second runtime.
+
+Verification:
+
+```bash
+node --test \
+  products/workbench/tests/zotero-pdf-context.test.mjs \
+  products/workbench/tests/zotero-evidence-editors.test.mjs \
+  products/workbench/tests/first-party-extensions.test.mjs \
+  products/workbench/tests/chatero-remote-manifest.test.mjs
+npm run test:workbench-bootstrap
+CHATERO_CODE_OSS_DIR=<fresh-materialization> npm run workbench:bootstrap
+CHATERO_CODE_OSS_DIR=<fresh-materialization> npm run workbench:verify
+```
+
+Results: focused 45/45 and full workbench 169/169 passed. Six changed
+JavaScript modules passed `node --check`, JSON manifests parsed, staged and
+unstaged diff checks passed, and the privacy/forbidden-API scan found only
+synthetic negative-test fixtures. The fresh exact
+`df53daabb18cd157bdb08c7f01c34df936cf12f4` materialization applied all three
+pinned patches, reproduced both first-party extension trees, and passed
+standalone provenance and policy verification. Independent final review found
+no remaining Critical, Important, or Minor issues.
 
 ## Audits already incorporated into the plan
 
