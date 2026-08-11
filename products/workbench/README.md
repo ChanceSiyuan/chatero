@@ -101,3 +101,17 @@ Open VSX is the only public gallery. Product configuration and patches may not
 contain Microsoft Marketplace endpoints, `ms-python.vscode-pylance`, or
 `ms-vscode-remote.remote-ssh`. Chatero supplies its own Python and Remote SSH
 experiences in later plans.
+
+## Zotero Core boundary
+
+The first headless-Core boundary lives in `services/zotero-core/`. Its
+checked-in protocol is generated with `npm run core:generate` and verified with
+`npm run core:check`. `npm run test:zotero-core` exercises bounded framing,
+single-use capability authentication, the non-destructive profile lease, a
+fixture Core process, cancellation, monotonic events, and structured errors.
+
+The fixture intentionally never opens `zotero.sqlite`. It makes the
+Electron/Core contract executable before the pinned Gecko adapter replaces its
+method handlers. Bootstrap secrets travel over inherited fd 3, RPC uses only an
+owner-protected Unix-domain socket, and renderer code must call a workbench
+service rather than this transport directly.

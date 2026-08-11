@@ -1,0 +1,112 @@
+{
+  "schemaVersion": 1,
+  "protocolVersion": "1.0",
+  "maxFrameBytes": 1048576,
+  "defaultDeadlineMs": 5000,
+  "capabilities": [
+    "events:read",
+    "library:search",
+    "profile:read"
+  ],
+  "methods": [
+    {
+      "name": "core.cancel",
+      "capability": null,
+      "paramsType": "CoreCancelParams",
+      "resultType": "CoreCancelResult"
+    },
+    {
+      "name": "core.handshake",
+      "capability": null,
+      "paramsType": "CoreHandshakeParams",
+      "resultType": "CoreHandshakeResult"
+    },
+    {
+      "name": "profile.status",
+      "capability": "profile:read",
+      "paramsType": "ProfileStatusParams",
+      "resultType": "ProfileStatusResult"
+    },
+    {
+      "name": "library.search",
+      "capability": "library:search",
+      "paramsType": "LibrarySearchParams",
+      "resultType": "LibrarySearchResult"
+    }
+  ],
+  "types": {
+    "CoreCancelParams": {
+      "kind": "object",
+      "fields": {
+        "cancellationId": "string"
+      }
+    },
+    "CoreCancelResult": {
+      "kind": "object",
+      "fields": {
+        "cancelled": "boolean"
+      }
+    },
+    "CoreHandshakeParams": {
+      "kind": "object",
+      "fields": {
+        "bootstrapToken": "string",
+        "protocolVersion": "string",
+        "requestedCapabilities": "string[]"
+      }
+    },
+    "CoreHandshakeResult": {
+      "kind": "object",
+      "fields": {
+        "capabilities": "string[]",
+        "expiresAt": "number",
+        "profileEpoch": "string",
+        "protocolVersion": "string",
+        "sessionToken": "string",
+        "upstreamVersion": "string"
+      }
+    },
+    "ProfileStatusParams": {
+      "kind": "object",
+      "fields": {}
+    },
+    "ProfileStatusResult": {
+      "kind": "object",
+      "fields": {
+        "profileEpoch": "string",
+        "profileName": "string",
+        "readOnly": "boolean",
+        "schemaVersion": "number",
+        "upstreamVersion": "string"
+      }
+    },
+    "LibrarySearchParams": {
+      "kind": "object",
+      "fields": {
+        "cursor?": "string",
+        "limit": "number",
+        "query": "string"
+      }
+    },
+    "LibraryItemSummary": {
+      "kind": "object",
+      "fields": {
+        "attachmentCount": "number",
+        "creators": "string[]",
+        "itemKey": "string",
+        "itemType": "string",
+        "libraryId": "number",
+        "title": "string",
+        "year?": "number"
+      }
+    },
+    "LibrarySearchResult": {
+      "kind": "object",
+      "fields": {
+        "items": "LibraryItemSummary[]",
+        "nextCursor?": "string",
+        "total": "number"
+      }
+    }
+  }
+}
