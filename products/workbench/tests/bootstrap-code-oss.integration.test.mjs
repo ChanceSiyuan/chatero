@@ -39,6 +39,7 @@ async function createFixture() {
   const workbenchRoot = join(root, "products", "workbench");
   const destination = join(root, "vendor", "code-oss");
   await mkdir(upstream, { recursive: true });
+  await mkdir(join(upstream, "build", "npm"), { recursive: true });
   await mkdir(join(workbenchRoot, "patches", "code-oss"), { recursive: true });
   await git(upstream, "init", "--initial-branch=main");
   await git(upstream, "config", "user.name", "Chatero Tests");
@@ -58,7 +59,16 @@ async function createFixture() {
       watch: "npm-run-all2 -lp watch-client-transpile watch-client watch-extensions",
     },
   }, null, 2)}\n`);
-  await git(upstream, "add", "package.json", "product.json");
+  await writeFile(join(upstream, "package-lock.json"), `${JSON.stringify({
+    lockfileVersion: 3,
+    packages: {
+      "": { dependencies: {} },
+    },
+  }, null, 2)}\n`);
+  await writeFile(join(upstream, "build", "npm", "dirs.ts"), "export const dirs = [''];\n");
+  await writeFile(join(upstream, "build", "gulpfile.vscode.ts"), "export const packageTasks = ['package-core'];\n");
+  await writeFile(join(upstream, "build", "gulpfile.extensions.ts"), "export const extensionTasks = ['package-builtins'];\n");
+  await git(upstream, "add", "build", "package.json", "package-lock.json", "product.json");
   await git(upstream, "commit", "-m", "fixture Code-OSS");
   const commit = await git(upstream, "rev-parse", "HEAD");
   await git(upstream, "tag", "1.132.0");

@@ -19,6 +19,9 @@ async function createPolicyFixture({
   outsideText = "",
   productFields = {},
   buildScripts = { compile: "npm run compile-client" },
+  dependencies = {},
+  npmDirs = "export const dirs = [''];\n",
+  packaging = "export const packageTasks = ['package-core'];\n",
 } = {}) {
   const root = await mkdtemp(join(tmpdir(), "chatero-policy-"));
   temporaryDirectories.push(root);
@@ -34,7 +37,19 @@ async function createPolicyFixture({
   }));
   await writeFile(join(patches, "0001-policy.patch"), patchText);
   await writeFile(join(root, "tests-are-outside-policy-scope.js"), outsideText);
-  await writeFile(join(checkout, "package.json"), JSON.stringify({ scripts: buildScripts }));
+  await mkdir(join(checkout, "build", "npm"), { recursive: true });
+  await writeFile(join(checkout, "package.json"), JSON.stringify({
+    scripts: buildScripts,
+    dependencies,
+  }));
+  await writeFile(join(checkout, "package-lock.json"), JSON.stringify({
+    packages: {
+      "": { dependencies },
+    },
+  }));
+  await writeFile(join(checkout, "build", "npm", "dirs.ts"), npmDirs);
+  await writeFile(join(checkout, "build", "gulpfile.vscode.ts"), packaging);
+  await writeFile(join(checkout, "build", "gulpfile.extensions.ts"), packaging);
   const productPath = join(generated, "product.json");
   await writeFile(productPath, JSON.stringify({
     nameShort: "Chatero",
@@ -174,5 +189,46 @@ test("rejects Code-OSS build scripts that still compile or watch Copilot", async
   assert.deepEqual(report.violations.map(value => value.rule), [
     "forbidden-agent-build",
     "forbidden-agent-build",
+  ]);
+});
+
+test("rejects upstream Copilot dependencies and install directories", async () => {
+  const { verifyWorkbenchPolicy } = await import("../scripts/lib/workbench-policy.mjs");
+  const input = await createPolicyFixture({
+    dependencies: {
+      "@github/copilot": "^1.0.77",
+      "@github/copilot-sdk": "^1.0.9-preview.1",
+      "@vscode/copilot-api": "^0.4.2",
+    },
+    npmDirs: "export const dirs = ['', 'extensions/copilot'];\n",
+  });
+
+  const report = await verifyWorkbenchPolicy(input);
+
+  assert.equal(report.ok, false);
+  assert.deepEqual(report.violations.map(value => value.rule).sort(), [
+    "forbidden-agent-dependency",
+    "forbidden-agent-dependency",
+    "forbidden-agent-dependency",
+    "forbidden-agent-install",
+  ]);
+});
+
+test("rejects upstream Copilot product packaging tasks", async () => {
+  const { verifyWorkbenchPolicy } = await import("../scripts/lib/workbench-policy.mjs");
+  const input = await createPolicyFixture({
+    packaging: [
+      "import { compileCopilotExtensionBuildTask } from './gulpfile.extensions.ts';",
+      "const packageTasks = [compileCopilotExtensionBuildTask, prepareCopilotRipgrepShimTask];",
+      "",
+    ].join("\n"),
+  });
+
+  const report = await verifyWorkbenchPolicy(input);
+
+  assert.equal(report.ok, false);
+  assert.deepEqual(report.violations.map(value => value.rule), [
+    "forbidden-agent-packaging",
+    "forbidden-agent-packaging",
   ]);
 });

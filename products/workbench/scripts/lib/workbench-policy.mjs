@@ -5,6 +5,12 @@ const SCANNED_EXTENSIONS = new Set([".cjs", ".js", ".json", ".mjs", ".patch", ".
 const MAX_SCANNED_FILE_BYTES = 4 * 1024 * 1024;
 const FORBIDDEN_HOST = /https?:\/\/(?:[a-z0-9-]+\.)*gallerycdn\.vsassets\.io\b|https?:\/\/marketplace\.visualstudio\.com\b/gi;
 const FORBIDDEN_EXTENSION = /\b(?:github\.copilot(?:-chat)?|ms-python\.vscode-pylance|ms-vscode-remote\.remote-ssh)\b/gi;
+const FORBIDDEN_AGENT_DEPENDENCIES = new Set([
+  "@github/copilot",
+  "@github/copilot-sdk",
+  "@vscode/copilot-api",
+]);
+const FORBIDDEN_PACKAGING = /\b(?:compileCopilotExtensionBuildTask|prepareCopilotRipgrepShimTask|ensureCopilotPlatformPackage|getCopilotRuntimePrebuildFiles|packageCopilotExtensionStream)\b/;
 
 function displayPath(root, path) {
   const value = relative(root, path);
@@ -119,6 +125,119 @@ async function verifyBuildScripts(root, checkout, violations) {
   }
 }
 
+async function readCheckoutFile(root, checkout, relativePath, rule, violations) {
+  const path = join(resolve(checkout), relativePath);
+  try {
+    return { path, text: await readFile(path, "utf8") };
+  }
+  catch (error) {
+    violations.push({
+      rule,
+      path: displayPath(root, path),
+      line: 1,
+      excerpt: error.message.slice(0, 160),
+    });
+    return null;
+  }
+}
+
+async function verifyAgentSupplyChain(root, checkout, violations) {
+  if (!checkout) return;
+
+  const packageFile = await readCheckoutFile(
+    root,
+    checkout,
+    "package.json",
+    "invalid-build-package",
+    violations
+  );
+  const lockFile = await readCheckoutFile(
+    root,
+    checkout,
+    "package-lock.json",
+    "invalid-build-lockfile",
+    violations
+  );
+  const declared = new Map();
+  for (const file of [packageFile, lockFile]) {
+    if (!file) continue;
+    let value;
+    try {
+      value = JSON.parse(file.text);
+    }
+    catch (error) {
+      violations.push({
+        rule: file === packageFile ? "invalid-build-package" : "invalid-build-lockfile",
+        path: displayPath(root, file.path),
+        line: 1,
+        excerpt: error.message.slice(0, 160),
+      });
+      continue;
+    }
+    const dependencies = file === packageFile
+      ? value?.dependencies
+      : value?.packages?.[""]?.dependencies;
+    for (const name of Object.keys(dependencies || {})) {
+      if (FORBIDDEN_AGENT_DEPENDENCIES.has(name) && !declared.has(name)) {
+        declared.set(name, file);
+      }
+    }
+  }
+  for (const [name, file] of declared) {
+    const lines = file.text.split(/\r?\n/);
+    const lineIndex = Math.max(0, lines.findIndex(line => line.includes(`"${name}"`)));
+    violations.push({
+      rule: "forbidden-agent-dependency",
+      path: displayPath(root, file.path),
+      line: lineIndex + 1,
+      excerpt: excerpt(lines[lineIndex] ?? name),
+    });
+  }
+
+  const dirsFile = await readCheckoutFile(
+    root,
+    checkout,
+    join("build", "npm", "dirs.ts"),
+    "missing-install-manifest",
+    violations
+  );
+  if (dirsFile) {
+    const lines = dirsFile.text.split(/\r?\n/);
+    for (const [index, line] of lines.entries()) {
+      if (!/["']extensions\/copilot["']/.test(line)) continue;
+      violations.push({
+        rule: "forbidden-agent-install",
+        path: displayPath(root, dirsFile.path),
+        line: index + 1,
+        excerpt: excerpt(line),
+      });
+    }
+  }
+
+  for (const relativePath of [
+    join("build", "gulpfile.vscode.ts"),
+    join("build", "gulpfile.extensions.ts"),
+  ]) {
+    const file = await readCheckoutFile(
+      root,
+      checkout,
+      relativePath,
+      "missing-packaging-manifest",
+      violations
+    );
+    if (!file) continue;
+    const lines = file.text.split(/\r?\n/);
+    const lineIndex = lines.findIndex(line => FORBIDDEN_PACKAGING.test(line));
+    if (lineIndex < 0) continue;
+    violations.push({
+      rule: "forbidden-agent-packaging",
+      path: displayPath(root, file.path),
+      line: lineIndex + 1,
+      excerpt: excerpt(lines[lineIndex]),
+    });
+  }
+}
+
 function parseTemplateURL(value) {
   return new URL(
     value
@@ -208,6 +327,7 @@ export async function verifyWorkbenchPolicy({ root, productPath, checkout = null
     verifyGallery(canonicalRoot, canonicalProductPath, productText, violations);
   }
   await verifyBuildScripts(canonicalRoot, checkout, violations);
+  await verifyAgentSupplyChain(canonicalRoot, checkout, violations);
 
   violations.sort((left, right) => (
     left.path.localeCompare(right.path)

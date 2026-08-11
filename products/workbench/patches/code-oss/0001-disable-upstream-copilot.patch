@@ -1,5 +1,655 @@
+diff --git a/build/gulpfile.extensions.ts b/build/gulpfile.extensions.ts
+index dafca7f2add..1fd399a6c1d 100644
+--- a/build/gulpfile.extensions.ts
++++ b/build/gulpfile.extensions.ts
+@@ -283,13 +283,6 @@ task.task(compileNonNativeExtensionsBuildTask);
+ export const compileNativeExtensionsBuildTask = task.define('compile-native-extensions-build', () => ext.packageNativeLocalExtensionsStream(false, false).pipe(gulp.dest('.build')));
+ task.task(compileNativeExtensionsBuildTask);
+ 
+-/**
+- * Compiles the built-in copilot extension for the build.
+- * Used by non-CI local builds where copilot is not downloaded as a VSIX.
+- */
+-export const compileCopilotExtensionBuildTask = task.define('compile-copilot-extension-build', () => ext.packageCopilotExtensionStream(false).pipe(gulp.dest('.build')));
+-task.task(compileCopilotExtensionBuildTask);
+-
+ /**
+  * Compiles the extensions for the build.
+  * This is essentially a helper task that combines {@link cleanExtensionsBuildTask}, {@link compileNonNativeExtensionsBuildTask} and {@link compileNativeExtensionsBuildTask}
+diff --git a/build/gulpfile.vscode.ts b/build/gulpfile.vscode.ts
+index 66514015e65..5803621572c 100644
+--- a/build/gulpfile.vscode.ts
++++ b/build/gulpfile.vscode.ts
+@@ -26,9 +26,9 @@ import { config } from './lib/electron.ts';
+ import { createAsar } from './lib/asar.ts';
+ import minimist from 'minimist';
+ import { compileBuildWithoutManglingTask, compileBuildWithManglingTask } from './gulpfile.compile.ts';
+-import { compileNonNativeExtensionsBuildTask, compileNativeExtensionsBuildTask, compileAllExtensionsBuildTask, compileExtensionMediaBuildTask, cleanExtensionsBuildTask, compileCopilotExtensionBuildTask } from './gulpfile.extensions.ts';
++import { compileNonNativeExtensionsBuildTask, compileNativeExtensionsBuildTask, compileAllExtensionsBuildTask, compileExtensionMediaBuildTask, cleanExtensionsBuildTask } from './gulpfile.extensions.ts';
+ import { copyCodiconsTask } from './lib/compilation.ts';
+-import { ensureCopilotPlatformPackage, getCopilotExcludeFilter, getCopilotRuntimePrebuildFiles, getCopilotTgrepExcludeFilter, getMxcExcludeFilter, getRipgrepExcludeFilter, prepareBuiltInCopilotRipgrepShim } from './lib/copilot.ts';
++import { getMxcExcludeFilter, getRipgrepExcludeFilter } from './lib/copilot.ts';
+ import { ensureOSProxyResolverPlatformPackage, getOSProxyResolverExcludeFilter, getOSProxyResolverPlatformFiles } from './lib/osProxyResolver.ts';
+ import { readAgentSdkResults } from './agent-sdk/common.ts';
+ import { readDictationRuntimeResults } from './dictation-runtime/common.ts';
+@@ -369,13 +369,9 @@ function packageTask(platform: string, arch: string, sourceFolderName: string, d
+ 			.pipe(filter(depFilterPattern))
+ 			.pipe(util.cleanNodeModules(path.join(import.meta.dirname, '.moduleignore')))
+ 			.pipe(util.cleanNodeModules(path.join(import.meta.dirname, `.moduleignore.${process.platform}`)));
+-		ensureCopilotPlatformPackage(platform, arch);
+-		const copilotRuntimePrebuilds = gulp.src(getCopilotRuntimePrebuildFiles(platform, arch), { base: '.', dot: true, allowEmpty: true });
+ 		ensureOSProxyResolverPlatformPackage(platform, arch);
+ 		const osProxyResolverPlatformPackage = gulp.src(getOSProxyResolverPlatformFiles(platform, arch), { base: '.', dot: true, allowEmpty: true });
+-		const deps = es.merge(cleanedDeps, copilotRuntimePrebuilds, osProxyResolverPlatformPackage)
+-			.pipe(filter(getCopilotExcludeFilter(platform, arch)))
+-			.pipe(filter(getCopilotTgrepExcludeFilter(platform, arch)))
++		const deps = es.merge(cleanedDeps, osProxyResolverPlatformPackage)
+ 			.pipe(filter(getRipgrepExcludeFilter(platform, arch)))
+ 			.pipe(filter(getMxcExcludeFilter(arch)))
+ 			.pipe(filter(getFoundryLocalExcludeFilter()))
+@@ -386,14 +382,6 @@ function packageTask(platform: string, arch: string, sourceFolderName: string, d
+ 			.pipe(createAsar(path.join(process.cwd(), 'node_modules'), [
+ 				'**/*.node',
+ 				'**/@vscode/ripgrep-universal/bin/**',
+-				// Only the platform-specific Copilot CLI packages (`@github/copilot-<os>-<arch>`)
+-				// need to be unpacked: the CLI is spawned as a subprocess and is a
+-				// self-locating bundle that memory-maps files and resolves its native
+-				// addons / sub-binaries relative to its own on-disk location, so it cannot
+-				// run from inside the archive. `@github/copilot-sdk` is intentionally NOT
+-				// matched here — it is pure JavaScript that the agent host loads via
+-				// `import` (ASAR-aware), so it stays in the archive.
+-				'**/@github/copilot-{darwin,linux,linuxmusl,win32}-*/**',
+ 				'**/@microsoft/mxc-sdk/bin/**',
+ 				'**/node-pty/build/Release/*',
+ 				'**/node-pty/build/Release/conpty/*',
+@@ -658,23 +646,6 @@ function patchWin32DependenciesTask(destinationFolderName: string) {
+ 	};
+ }
+ 
+-function prepareCopilotRipgrepShimTask(platform: string, arch: string, destinationFolderName: string) {
+-	const outputDir = path.join(path.dirname(root), destinationFolderName);
+-
+-	return async () => {
+-		// On Windows with win32VersionedUpdate, app resources live under a
+-		// commit-hash prefix: {output}/{commitHash}/resources/app/
+-		const versionedResourcesFolder = util.getVersionedResourcesFolder(platform, commit!);
+-		const appBase = platform === 'darwin'
+-			? path.join(outputDir, `${product.nameLong}.app`, 'Contents', 'Resources', 'app')
+-			: path.join(outputDir, versionedResourcesFolder, 'resources', 'app');
+-		const appNodeModulesDir = path.join(appBase, 'node_modules.asar.unpacked');
+-
+-		const builtInCopilotExtensionDir = path.join(appBase, 'extensions', 'copilot');
+-		prepareBuiltInCopilotRipgrepShim(platform, arch, builtInCopilotExtensionDir, appNodeModulesDir);
+-	};
+-}
+-
+ const buildRoot = path.dirname(root);
+ 
+ const BUILD_TARGETS = [
+@@ -699,8 +670,7 @@ BUILD_TARGETS.forEach(buildTarget => {
+ 		const packageTasks: task.Task[] = [
+ 			compileNativeExtensionsBuildTask,
+ 			util.rimraf(path.join(buildRoot, destinationFolderName)),
+-			packageTask(platform, arch, sourceFolderName, destinationFolderName, opts),
+-			prepareCopilotRipgrepShimTask(platform, arch, destinationFolderName)
++			packageTask(platform, arch, sourceFolderName, destinationFolderName, opts)
+ 		];
+ 
+ 		if (platform === 'win32') {
+@@ -726,7 +696,6 @@ BUILD_TARGETS.forEach(buildTarget => {
+ 				copyCodiconsTask,
+ 				cleanExtensionsBuildTask,
+ 				compileNonNativeExtensionsBuildTask,
+-				compileCopilotExtensionBuildTask,
+ 				compileExtensionMediaBuildTask,
+ 				writeISODate('out-build'),
+ 				esbuildBundleTask,
+@@ -737,7 +706,6 @@ BUILD_TARGETS.forEach(buildTarget => {
+ 				minified ? compileBuildWithManglingTask : compileBuildWithoutManglingTask,
+ 				cleanExtensionsBuildTask,
+ 				compileNonNativeExtensionsBuildTask,
+-				compileCopilotExtensionBuildTask,
+ 				compileExtensionMediaBuildTask,
+ 				minified ? minifyVSCodeTask : bundleVSCodeTask,
+ 				vscodeTaskCI
+diff --git a/build/npm/dirs.ts b/build/npm/dirs.ts
+index 289a469754a..8c6df6f7ede 100644
+--- a/build/npm/dirs.ts
++++ b/build/npm/dirs.ts
+@@ -15,7 +15,6 @@ export const dirs = [
+ 	'build/vite',
+ 	'extensions',
+ 	'extensions/configuration-editing',
+-	'extensions/copilot',
+ 	'extensions/css-language-features',
+ 	'extensions/css-language-features/server',
+ 	'extensions/debug-auto-launch',
+diff --git a/package-lock.json b/package-lock.json
+index 7c4b3c2f112..0237011a023 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -11,8 +11,6 @@
+       "license": "MIT",
+       "dependencies": {
+         "@anthropic-ai/sdk": "^0.82.0",
+-        "@github/copilot": "^1.0.77",
+-        "@github/copilot-sdk": "^1.0.9-preview.1",
+         "@microsoft/1ds-core-js": "^3.2.13",
+         "@microsoft/1ds-post-js": "^3.2.13",
+         "@microsoft/dev-tunnels-connections": "^1.3.41",
+@@ -24,7 +22,6 @@
+         "@parcel/watcher": "^2.5.6",
+         "@types/semver": "^7.5.8",
+         "@vscode/codicons": "^0.0.46-28",
+-        "@vscode/copilot-api": "^0.4.2",
+         "@vscode/deviceid": "^0.1.1",
+         "@vscode/diff": "0.0.2-7",
+         "@vscode/fs-copyfile": "2.0.0",
+@@ -1112,192 +1109,6 @@
+         "node": "^18.18.0 || ^20.9.0 || >=21.1.0"
+       }
+     },
+-    "node_modules/@github/copilot": {
+-      "version": "1.0.77",
+-      "resolved": "https://registry.npmjs.org/@github/copilot/-/copilot-1.0.77.tgz",
+-      "integrity": "sha512-nkTtDPKvsClAByPPqnD/57vK7YIBK1dgiv7aVc9uO3rxKCyqiqYaBqwi8pMzesvGP3yl+//+iMzaBXNWEcZVWQ==",
+-      "license": "SEE LICENSE IN LICENSE.md",
+-      "dependencies": {
+-        "detect-libc": "^2.1.2"
+-      },
+-      "bin": {
+-        "copilot": "npm-loader.js"
+-      },
+-      "optionalDependencies": {
+-        "@github/copilot-darwin-arm64": "1.0.77",
+-        "@github/copilot-darwin-x64": "1.0.77",
+-        "@github/copilot-linux-arm64": "1.0.77",
+-        "@github/copilot-linux-x64": "1.0.77",
+-        "@github/copilot-linuxmusl-arm64": "1.0.77",
+-        "@github/copilot-linuxmusl-x64": "1.0.77",
+-        "@github/copilot-win32-arm64": "1.0.77",
+-        "@github/copilot-win32-x64": "1.0.77"
+-      }
+-    },
+-    "node_modules/@github/copilot-darwin-arm64": {
+-      "version": "1.0.77",
+-      "resolved": "https://registry.npmjs.org/@github/copilot-darwin-arm64/-/copilot-darwin-arm64-1.0.77.tgz",
+-      "integrity": "sha512-sCWSH5+Flm/OxFe7dzsBfyj7ADBkzkR54Sz5NGw7dtcVVEOnVUkZLjEtNmZ1t5QRD4Sf1+g/DiwgJEbsR9xR1w==",
+-      "cpu": [
+-        "arm64"
+-      ],
+-      "license": "SEE LICENSE IN LICENSE.md",
+-      "optional": true,
+-      "os": [
+-        "darwin"
+-      ],
+-      "bin": {
+-        "copilot-darwin-arm64": "copilot"
+-      }
+-    },
+-    "node_modules/@github/copilot-darwin-x64": {
+-      "version": "1.0.77",
+-      "resolved": "https://registry.npmjs.org/@github/copilot-darwin-x64/-/copilot-darwin-x64-1.0.77.tgz",
+-      "integrity": "sha512-ReNlB+g+OBiqHwmY5leJBIyvHZQcjyWL/OY8aVimHyESn2ToPKP3eUNTzSUJvvbPM6+0LXwEpijLedkRd2Cn1g==",
+-      "cpu": [
+-        "x64"
+-      ],
+-      "license": "SEE LICENSE IN LICENSE.md",
+-      "optional": true,
+-      "os": [
+-        "darwin"
+-      ],
+-      "bin": {
+-        "copilot-darwin-x64": "copilot"
+-      }
+-    },
+-    "node_modules/@github/copilot-linux-arm64": {
+-      "version": "1.0.77",
+-      "resolved": "https://registry.npmjs.org/@github/copilot-linux-arm64/-/copilot-linux-arm64-1.0.77.tgz",
+-      "integrity": "sha512-A8j/WBPFvV5WfLbgnIIQLUVuFRAR7kLyc5WgId6XLCu1ARbkRM7353zz9mEXXwjc6LqotHVg80ooANJjNtmSPg==",
+-      "cpu": [
+-        "arm64"
+-      ],
+-      "libc": [
+-        "glibc"
+-      ],
+-      "license": "SEE LICENSE IN LICENSE.md",
+-      "optional": true,
+-      "os": [
+-        "linux"
+-      ],
+-      "bin": {
+-        "copilot-linux-arm64": "copilot"
+-      }
+-    },
+-    "node_modules/@github/copilot-linux-x64": {
+-      "version": "1.0.77",
+-      "resolved": "https://registry.npmjs.org/@github/copilot-linux-x64/-/copilot-linux-x64-1.0.77.tgz",
+-      "integrity": "sha512-2eefKkdUnQ1Y8oxyRyexHBXVpuSmrfEM8XJauquVjPc0JqF5nab9axwpFPzrRSF1GB+25F9tUK2sDQRyp08wag==",
+-      "cpu": [
+-        "x64"
+-      ],
+-      "libc": [
+-        "glibc"
+-      ],
+-      "license": "SEE LICENSE IN LICENSE.md",
+-      "optional": true,
+-      "os": [
+-        "linux"
+-      ],
+-      "bin": {
+-        "copilot-linux-x64": "copilot"
+-      }
+-    },
+-    "node_modules/@github/copilot-linuxmusl-arm64": {
+-      "version": "1.0.77",
+-      "resolved": "https://registry.npmjs.org/@github/copilot-linuxmusl-arm64/-/copilot-linuxmusl-arm64-1.0.77.tgz",
+-      "integrity": "sha512-YtltOZQp8plytSKSGTWWKbOx3QD8iZH04sLtKTrYs6nu5UalIgFPoMkwamy1gh7h5EBkeVxD2s3epVrlvP4X4w==",
+-      "cpu": [
+-        "arm64"
+-      ],
+-      "libc": [
+-        "musl"
+-      ],
+-      "license": "SEE LICENSE IN LICENSE.md",
+-      "optional": true,
+-      "os": [
+-        "linux"
+-      ],
+-      "bin": {
+-        "copilot-linuxmusl-arm64": "copilot"
+-      }
+-    },
+-    "node_modules/@github/copilot-linuxmusl-x64": {
+-      "version": "1.0.77",
+-      "resolved": "https://registry.npmjs.org/@github/copilot-linuxmusl-x64/-/copilot-linuxmusl-x64-1.0.77.tgz",
+-      "integrity": "sha512-owINwPgHU/ZZBwFhVPgkgGjLkF6e4QbdofADvKMdKJWV2+7oWjXUIlPA4/PwraD2Gkuu583l7m0XLL27TN8oUA==",
+-      "cpu": [
+-        "x64"
+-      ],
+-      "libc": [
+-        "musl"
+-      ],
+-      "license": "SEE LICENSE IN LICENSE.md",
+-      "optional": true,
+-      "os": [
+-        "linux"
+-      ],
+-      "bin": {
+-        "copilot-linuxmusl-x64": "copilot"
+-      }
+-    },
+-    "node_modules/@github/copilot-sdk": {
+-      "version": "1.0.9-preview.1",
+-      "resolved": "https://registry.npmjs.org/@github/copilot-sdk/-/copilot-sdk-1.0.9-preview.1.tgz",
+-      "integrity": "sha512-/hUYdxpa4HL57uKmRCLmcg31wWjZPKGBbBfIhVqJdWXkp4/E6lbtHoiIbT5SLCPpf4c8Ka5zw356z+k4Nn/diA==",
+-      "license": "MIT",
+-      "dependencies": {
+-        "@github/copilot": "^1.0.76-5",
+-        "koffi": "^3.1.0",
+-        "vscode-jsonrpc": "^8.2.1",
+-        "zod": "^4.3.6"
+-      },
+-      "engines": {
+-        "node": "^20.19.0 || >=22.12.0"
+-      }
+-    },
+-    "node_modules/@github/copilot-sdk/node_modules/zod": {
+-      "version": "4.4.3",
+-      "resolved": "https://registry.npmjs.org/zod/-/zod-4.4.3.tgz",
+-      "integrity": "sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==",
+-      "license": "MIT",
+-      "funding": {
+-        "url": "https://github.com/sponsors/colinhacks"
+-      }
+-    },
+-    "node_modules/@github/copilot-win32-arm64": {
+-      "version": "1.0.77",
+-      "resolved": "https://registry.npmjs.org/@github/copilot-win32-arm64/-/copilot-win32-arm64-1.0.77.tgz",
+-      "integrity": "sha512-l5oQaMLCRup0nmmpbqOAYEAJ5YWgNlaoO0psNaKDzvTbdzEJRZqib2t7+p3bgoDpK7SB/m8m1uxFC4XT3hlprg==",
+-      "cpu": [
+-        "arm64"
+-      ],
+-      "license": "SEE LICENSE IN LICENSE.md",
+-      "optional": true,
+-      "os": [
+-        "win32"
+-      ],
+-      "bin": {
+-        "copilot-win32-arm64": "copilot.exe"
+-      }
+-    },
+-    "node_modules/@github/copilot-win32-x64": {
+-      "version": "1.0.77",
+-      "resolved": "https://registry.npmjs.org/@github/copilot-win32-x64/-/copilot-win32-x64-1.0.77.tgz",
+-      "integrity": "sha512-8Mo9y3/8CVU2w35WqwSiRMTGH1kKHR3URPSJYF4J4OG8L7NOEy2fafXR9Tuq3H21Srg3OzFkl/A+Taunqz9KcA==",
+-      "cpu": [
+-        "x64"
+-      ],
+-      "license": "SEE LICENSE IN LICENSE.md",
+-      "optional": true,
+-      "os": [
+-        "win32"
+-      ],
+-      "bin": {
+-        "copilot-win32-x64": "copilot.exe"
+-      }
+-    },
+     "node_modules/@gulp-sourcemaps/identity-map": {
+       "version": "2.0.1",
+       "resolved": "https://registry.npmjs.org/@gulp-sourcemaps/identity-map/-/identity-map-2.0.1.tgz",
+@@ -1780,246 +1591,6 @@
+         }
+       }
+     },
+-    "node_modules/@koromix/koffi-darwin-arm64": {
+-      "version": "3.1.2",
+-      "resolved": "https://registry.npmjs.org/@koromix/koffi-darwin-arm64/-/koffi-darwin-arm64-3.1.2.tgz",
+-      "integrity": "sha512-32pU4pNZABIz+l9DNJl51Y+jur4vv+SF4Ip2CSF4OUg1xUyefoLpX0NttDmzGITIrneUEVSEN+dT22524ESKBw==",
+-      "cpu": [
+-        "arm64"
+-      ],
+-      "license": "MIT",
+-      "optional": true,
+-      "os": [
+-        "darwin"
+-      ],
+-      "funding": {
+-        "url": "https://liberapay.com/Koromix"
+-      }
+-    },
+-    "node_modules/@koromix/koffi-darwin-x64": {
+-      "version": "3.1.2",
+-      "resolved": "https://registry.npmjs.org/@koromix/koffi-darwin-x64/-/koffi-darwin-x64-3.1.2.tgz",
+-      "integrity": "sha512-S+H6LQgUoMj77BqDegwlRaxwLXDfwvSJGuceOqtH0I5V8rzKLmu/hC7NBlxOoAlvKlcV63FtdNiE2E9YSltffg==",
+-      "cpu": [
+-        "x64"
+-      ],
+-      "license": "MIT",
+-      "optional": true,
+-      "os": [
+-        "darwin"
+-      ],
+-      "funding": {
+-        "url": "https://liberapay.com/Koromix"
+-      }
+-    },
+-    "node_modules/@koromix/koffi-freebsd-arm64": {
+-      "version": "3.1.2",
+-      "resolved": "https://registry.npmjs.org/@koromix/koffi-freebsd-arm64/-/koffi-freebsd-arm64-3.1.2.tgz",
+-      "integrity": "sha512-fD0ow2PBE60nw7K6xcbala6qwXxfcYeU62tduNeIPvx0KoWhU2rMKZiDNe+iI5TQb3rxYYjjP+aF2Sdm9y6EXQ==",
+-      "cpu": [
+-        "arm64"
+-      ],
+-      "license": "MIT",
+-      "optional": true,
+-      "os": [
+-        "freebsd"
+-      ],
+-      "funding": {
+-        "url": "https://liberapay.com/Koromix"
+-      }
+-    },
+-    "node_modules/@koromix/koffi-freebsd-ia32": {
+-      "version": "3.1.2",
+-      "resolved": "https://registry.npmjs.org/@koromix/koffi-freebsd-ia32/-/koffi-freebsd-ia32-3.1.2.tgz",
+-      "integrity": "sha512-t8OmL+hoJGDLZDnuLjgLemSYrXX99M7Md+zJX8bMHOtiNbFtkGXn/mV21Pb1ik9JhBXjwK1r4hvBPNlqTMGrHg==",
+-      "cpu": [
+-        "ia32"
+-      ],
+-      "license": "MIT",
+-      "optional": true,
+-      "os": [
+-        "freebsd"
+-      ],
+-      "funding": {
+-        "url": "https://liberapay.com/Koromix"
+-      }
+-    },
+-    "node_modules/@koromix/koffi-freebsd-x64": {
+-      "version": "3.1.2",
+-      "resolved": "https://registry.npmjs.org/@koromix/koffi-freebsd-x64/-/koffi-freebsd-x64-3.1.2.tgz",
+-      "integrity": "sha512-axbLgiM4Y2vyDOTqlXCI8vkg9wqjwSRsmoWXSKreA5YFJwnYA6Sc4aHMz+qZgUSfFei52Qrv1RGhDyo4kHvqhA==",
+-      "cpu": [
+-        "x64"
+-      ],
+-      "license": "MIT",
+-      "optional": true,
+-      "os": [
+-        "freebsd"
+-      ],
+-      "funding": {
+-        "url": "https://liberapay.com/Koromix"
+-      }
+-    },
+-    "node_modules/@koromix/koffi-linux-arm64": {
+-      "version": "3.1.2",
+-      "resolved": "https://registry.npmjs.org/@koromix/koffi-linux-arm64/-/koffi-linux-arm64-3.1.2.tgz",
+-      "integrity": "sha512-f0hqAIlFcL9wlRGJ/uCfyfspqnGaASk2gLx1UAP3RBgMQl68D1e+fiHNdXa7g9d76ttmpA8/PGNAqc1X4Byy1Q==",
+-      "cpu": [
+-        "arm64"
+-      ],
+-      "license": "MIT",
+-      "optional": true,
+-      "os": [
+-        "linux"
+-      ],
+-      "funding": {
+-        "url": "https://liberapay.com/Koromix"
+-      }
+-    },
+-    "node_modules/@koromix/koffi-linux-ia32": {
+-      "version": "3.1.2",
+-      "resolved": "https://registry.npmjs.org/@koromix/koffi-linux-ia32/-/koffi-linux-ia32-3.1.2.tgz",
+-      "integrity": "sha512-UGLPuqeOV/UArsK6oeB5yI/XjSWkFqFlBTC9rUbezBuHJhSibk1EMv7QC0cvtDMu18bo+ucqXWPzh42oT5yYlw==",
+-      "cpu": [
+-        "ia32"
+-      ],
+-      "license": "MIT",
+-      "optional": true,
+-      "os": [
+-        "linux"
+-      ],
+-      "funding": {
+-        "url": "https://liberapay.com/Koromix"
+-      }
+-    },
+-    "node_modules/@koromix/koffi-linux-loong64": {
+-      "version": "3.1.2",
+-      "resolved": "https://registry.npmjs.org/@koromix/koffi-linux-loong64/-/koffi-linux-loong64-3.1.2.tgz",
+-      "integrity": "sha512-jI0+gM2oDsJ7reOt3XPyO7lyQtZ1CT6NR2uqGQcQVM43cyXBAVYYCUxEH3LHCbgumFaZ+LueIUgbMSwb9pHBxQ==",
+-      "cpu": [
+-        "loong64"
+-      ],
+-      "license": "MIT",
+-      "optional": true,
+-      "os": [
+-        "linux"
+-      ],
+-      "funding": {
+-        "url": "https://liberapay.com/Koromix"
+-      }
+-    },
+-    "node_modules/@koromix/koffi-linux-riscv64": {
+-      "version": "3.1.2",
+-      "resolved": "https://registry.npmjs.org/@koromix/koffi-linux-riscv64/-/koffi-linux-riscv64-3.1.2.tgz",
+-      "integrity": "sha512-yB99adXBRd5T+xXG+f6nnUkC3jCI0iXvPU6RqD9Kx7aZP4Y4NNUWJ5Q4FaP9jb1XmZLY4pGBUiHt8u03Yl7NyA==",
+-      "cpu": [
+-        "riscv64"
+-      ],
+-      "license": "MIT",
+-      "optional": true,
+-      "os": [
+-        "linux"
+-      ],
+-      "funding": {
+-        "url": "https://liberapay.com/Koromix"
+-      }
+-    },
+-    "node_modules/@koromix/koffi-linux-x64": {
+-      "version": "3.1.2",
+-      "resolved": "https://registry.npmjs.org/@koromix/koffi-linux-x64/-/koffi-linux-x64-3.1.2.tgz",
+-      "integrity": "sha512-Oxvo6F3Edzy/Jm2EtbHWkJ2xRB0mXDAe63k5+USL5uiGE5xZjwEUDOBKIhv2BpCZSOAJrfoojFFogj6+ICKQhw==",
+-      "cpu": [
+-        "x64"
+-      ],
+-      "license": "MIT",
+-      "optional": true,
+-      "os": [
+-        "linux"
+-      ],
+-      "funding": {
+-        "url": "https://liberapay.com/Koromix"
+-      }
+-    },
+-    "node_modules/@koromix/koffi-openbsd-ia32": {
+-      "version": "3.1.2",
+-      "resolved": "https://registry.npmjs.org/@koromix/koffi-openbsd-ia32/-/koffi-openbsd-ia32-3.1.2.tgz",
+-      "integrity": "sha512-SSWzUhL8Ex84JTsO67+MdWZrdwgOzoOrQ0+ZbB+UsivHoAxmWLHKWZaSafNqyBZtxGY1EgtR8AIPouWE9U+Zfw==",
+-      "cpu": [
+-        "ia32"
+-      ],
+-      "license": "MIT",
+-      "optional": true,
+-      "os": [
+-        "openbsd"
+-      ],
+-      "funding": {
+-        "url": "https://liberapay.com/Koromix"
+-      }
+-    },
+-    "node_modules/@koromix/koffi-openbsd-x64": {
+-      "version": "3.1.2",
+-      "resolved": "https://registry.npmjs.org/@koromix/koffi-openbsd-x64/-/koffi-openbsd-x64-3.1.2.tgz",
+-      "integrity": "sha512-0ZuI4St7chq3M0d3VivvKIqacZ7RhgohdR476V3HpJkaNdfIywsJIw+GBvqkQahu+4A2Rpu6yQJpWSrfk/Z+Jw==",
+-      "cpu": [
+-        "x64"
+-      ],
+-      "license": "MIT",
+-      "optional": true,
+-      "os": [
+-        "openbsd"
+-      ],
+-      "funding": {
+-        "url": "https://liberapay.com/Koromix"
+-      }
+-    },
+-    "node_modules/@koromix/koffi-win32-arm64": {
+-      "version": "3.1.2",
+-      "resolved": "https://registry.npmjs.org/@koromix/koffi-win32-arm64/-/koffi-win32-arm64-3.1.2.tgz",
+-      "integrity": "sha512-8Wn6phw7y53uI52+aBPAqEfZ5pj/HCjg/YtdthqSWYHy+d0MhyASKlcmuP0B5raxQnnA1Bm9LC8UO3M3RojeBw==",
+-      "cpu": [
+-        "arm64"
+-      ],
+-      "license": "MIT",
+-      "optional": true,
+-      "os": [
+-        "win32"
+-      ],
+-      "funding": {
+-        "url": "https://liberapay.com/Koromix"
+-      }
+-    },
+-    "node_modules/@koromix/koffi-win32-ia32": {
+-      "version": "3.1.2",
+-      "resolved": "https://registry.npmjs.org/@koromix/koffi-win32-ia32/-/koffi-win32-ia32-3.1.2.tgz",
+-      "integrity": "sha512-FkKaPBMawgHMNnp1FwLldXMNvEa139GXkxPi9JD9xU71Kh/ZmuEYHGSD6JwZDmDr4jekVrBrr+eGZ+j6C2mkXg==",
+-      "cpu": [
+-        "ia32"
+-      ],
+-      "license": "MIT",
+-      "optional": true,
+-      "os": [
+-        "win32"
+-      ],
+-      "funding": {
+-        "url": "https://liberapay.com/Koromix"
+-      }
+-    },
+-    "node_modules/@koromix/koffi-win32-x64": {
+-      "version": "3.1.2",
+-      "resolved": "https://registry.npmjs.org/@koromix/koffi-win32-x64/-/koffi-win32-x64-3.1.2.tgz",
+-      "integrity": "sha512-FeFC59UU1XX4J3ZaqKrsrEzczzB5qksMJo7/R45vIg8mGNVSLMVE85JRiZpjcp9i5Lbav5Vw47QvwFzBgIfvlw==",
+-      "cpu": [
+-        "x64"
+-      ],
+-      "license": "MIT",
+-      "optional": true,
+-      "os": [
+-        "win32"
+-      ],
+-      "funding": {
+-        "url": "https://liberapay.com/Koromix"
+-      }
+-    },
+     "node_modules/@malept/cross-spawn-promise": {
+       "version": "1.1.1",
+       "resolved": "https://registry.npmjs.org/@malept/cross-spawn-promise/-/cross-spawn-promise-1.1.1.tgz",
+@@ -4220,12 +3791,6 @@
+         "url": "https://github.com/sponsors/colinhacks"
+       }
+     },
+-    "node_modules/@vscode/copilot-api": {
+-      "version": "0.4.2",
+-      "resolved": "https://registry.npmjs.org/@vscode/copilot-api/-/copilot-api-0.4.2.tgz",
+-      "integrity": "sha512-pnX2wi9Wc3umrNSodMGOMKTVDLHzXIqtSJptISdzNZ1dJkdhPZUtKSjKf4jjHS/c+LYNRf8Tzl0kXszrl8wmfw==",
+-      "license": "SEE LICENSE"
+-    },
+     "node_modules/@vscode/deviceid": {
+       "version": "0.1.5",
+       "resolved": "https://registry.npmjs.org/@vscode/deviceid/-/deviceid-0.1.5.tgz",
+@@ -13718,33 +13283,6 @@
+         "url": "https://opencollective.com/express"
+       }
+     },
+-    "node_modules/koffi": {
+-      "version": "3.1.2",
+-      "resolved": "https://registry.npmjs.org/koffi/-/koffi-3.1.2.tgz",
+-      "integrity": "sha512-wVwuE21TBl8/si6E0hPorKR2PJ2q33mEWVETANrtSp3kFM8fi2FcD/J5wmxu0T4TBcqmMQ4xKuF1X1ayFmphzw==",
+-      "hasInstallScript": true,
+-      "license": "MIT",
+-      "funding": {
+-        "url": "https://liberapay.com/Koromix"
+-      },
+-      "optionalDependencies": {
+-        "@koromix/koffi-darwin-arm64": "3.1.2",
+-        "@koromix/koffi-darwin-x64": "3.1.2",
+-        "@koromix/koffi-freebsd-arm64": "3.1.2",
+-        "@koromix/koffi-freebsd-ia32": "3.1.2",
+-        "@koromix/koffi-freebsd-x64": "3.1.2",
+-        "@koromix/koffi-linux-arm64": "3.1.2",
+-        "@koromix/koffi-linux-ia32": "3.1.2",
+-        "@koromix/koffi-linux-loong64": "3.1.2",
+-        "@koromix/koffi-linux-riscv64": "3.1.2",
+-        "@koromix/koffi-linux-x64": "3.1.2",
+-        "@koromix/koffi-openbsd-ia32": "3.1.2",
+-        "@koromix/koffi-openbsd-x64": "3.1.2",
+-        "@koromix/koffi-win32-arm64": "3.1.2",
+-        "@koromix/koffi-win32-ia32": "3.1.2",
+-        "@koromix/koffi-win32-x64": "3.1.2"
+-      }
+-    },
+     "node_modules/last-run": {
+       "version": "1.1.1",
+       "resolved": "https://registry.npmjs.org/last-run/-/last-run-1.1.1.tgz",
+@@ -20309,15 +19847,6 @@
+         "node": ">=18"
+       }
+     },
+-    "node_modules/vscode-jsonrpc": {
+-      "version": "8.2.1",
+-      "resolved": "https://registry.npmjs.org/vscode-jsonrpc/-/vscode-jsonrpc-8.2.1.tgz",
+-      "integrity": "sha512-kdjOSJ2lLIn7r1rtrMbbNCHjyMPfRnowdKjBQ+mGq6NAW5QY2bEZC/khaC5OR8svbbjvLEaIXkOq45e2X9BIbQ==",
+-      "license": "MIT",
+-      "engines": {
+-        "node": ">=14.0.0"
+-      }
+-    },
+     "node_modules/vscode-oniguruma": {
+       "version": "1.7.0",
+       "resolved": "https://registry.npmjs.org/vscode-oniguruma/-/vscode-oniguruma-1.7.0.tgz",
 diff --git a/package.json b/package.json
-index c80e65a6ed6..91d60784ce9 100644
+index c80e65a6ed6..d70086cc413 100644
 --- a/package.json
 +++ b/package.json
 @@ -20,16 +20,15 @@
@@ -33,10 +683,29 @@ index c80e65a6ed6..91d60784ce9 100644
      "precommit": "node --experimental-strip-types build/hygiene.ts",
      "gulp": "node --experimental-strip-types --max-old-space-size=8192 ./node_modules/gulp/bin/gulp.js",
      "electron": "node build/lib/electron.ts",
-@@ -88,6 +84,4 @@
+@@ -88,8 +84,6 @@
      "perf": "node scripts/code-perf.js",
      "perf:chat": "node scripts/chat-simulation/test-chat-perf-regression.js",
      "perf:chat-leak": "node scripts/chat-simulation/test-chat-mem-leaks.js",
 -    "copilot:setup": "npm --prefix extensions/copilot run setup",
 -    "copilot:get_token": "npm --prefix extensions/copilot run get_token",
      "update-build-ts-version": "npm install -D typescript@npm:@typescript/typescript6@^6.0.2 && npm install -D @typescript/native@npm:typescript@next && (cd build && npm run typecheck)",
+     "install-local-component-explorer": "npm install ../vscode-packages/js-component-explorer/dist/vscode-component-explorer-0.1.0.tgz ../vscode-packages/js-component-explorer/dist/vscode-component-explorer-cli-0.1.0.tgz --no-save && cd build/rspack && npm install ../../../vscode-packages/js-component-explorer/dist/vscode-component-explorer-webpack-plugin-0.1.0.tgz --no-save && cd ../vite && npm install ../../../vscode-packages/js-component-explorer/dist/vscode-component-explorer-vite-plugin-0.1.0.tgz --no-save",
+     "symlink-local-component-explorer": "npm install ../vscode-packages/js-component-explorer/packages/explorer ../vscode-packages/js-component-explorer/packages/cli --no-save && cd build/rspack && npm install ../../../vscode-packages/js-component-explorer/packages/webpack-plugin ../../../vscode-packages/js-component-explorer/packages/explorer --no-save && cd ../vite && npm install ../../../vscode-packages/js-component-explorer/packages/vite-plugin ../../../vscode-packages/js-component-explorer/packages/explorer --no-save",
+@@ -97,8 +91,6 @@
+   },
+   "dependencies": {
+     "@anthropic-ai/sdk": "^0.82.0",
+-    "@github/copilot": "^1.0.77",
+-    "@github/copilot-sdk": "^1.0.9-preview.1",
+     "@microsoft/1ds-core-js": "^3.2.13",
+     "@microsoft/1ds-post-js": "^3.2.13",
+     "@microsoft/dev-tunnels-connections": "^1.3.41",
+@@ -110,7 +102,6 @@
+     "@parcel/watcher": "^2.5.6",
+     "@types/semver": "^7.5.8",
+     "@vscode/codicons": "^0.0.46-28",
+-    "@vscode/copilot-api": "^0.4.2",
+     "@vscode/deviceid": "^0.1.1",
+     "@vscode/diff": "0.0.2-7",
+     "@vscode/fs-copyfile": "2.0.0",
