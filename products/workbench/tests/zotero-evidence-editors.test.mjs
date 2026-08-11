@@ -1,10 +1,104 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
 
 const root = resolve(import.meta.dirname, "..", "..", "..");
 const extensionRoot = join(root, "products", "workbench", "extensions", "chatero-zotero");
+const require = createRequire(import.meta.url);
+
+function deferred() {
+  let resolvePromise;
+  let rejectPromise;
+  const promise = new Promise((resolveValue, rejectValue) => {
+    resolvePromise = resolveValue;
+    rejectPromise = rejectValue;
+  });
+  return { promise, reject: rejectPromise, resolve: resolvePromise };
+}
+
+async function within(promise, label) {
+  let timer;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`timed out waiting for ${label}`)), 2000);
+      }),
+    ]);
+  }
+  finally {
+    clearTimeout(timer);
+  }
+}
+
+function fakeVscode(withProgress) {
+  const commands = new Map();
+  class EventEmitter {
+    constructor() {
+      this.event = () => ({ dispose() {} });
+    }
+    dispose() {}
+    fire() {}
+  }
+  return {
+    commands: {
+      executeCommand: async () => {},
+      registerCommand(command, handler) {
+        commands.set(command, handler);
+        return { dispose() {} };
+      },
+    },
+    commandsForTest: commands,
+    ConfigurationTarget: { Global: 1 },
+    EventEmitter,
+    ProgressLocation: { Window: 1 },
+    ThemeIcon: class ThemeIcon { constructor(id) { this.id = id; } },
+    TreeItem: class TreeItem { constructor(label) { this.label = label; } },
+    TreeItemCollapsibleState: { Collapsed: 1, None: 0 },
+    Uri: {
+      file: fsPath => ({ authority: "", fsPath, path: fsPath, scheme: "file", toString: () => `file://${fsPath}` }),
+      joinPath: (base, ...parts) => ({ ...base, path: `${base.path}/${parts.join("/")}` }),
+      parse: value => ({ toString: () => value }),
+    },
+    window: {
+      registerCustomEditorProvider: () => ({ dispose() {} }),
+      registerTreeDataProvider: () => ({ dispose() {} }),
+      showErrorMessage: async () => {},
+      showInputBox: async () => undefined,
+      showOpenDialog: async () => undefined,
+      withProgress,
+    },
+    workspace: {
+      getConfiguration: () => ({
+        inspect: key => ({
+          globalValue: key === "profilePath" ? "/tmp/chatero-profile"
+            : key === "coreExecutable" ? "/tmp/chatero-core"
+              : false,
+        }),
+        update: async () => {},
+      }),
+    },
+  };
+}
+
+function loadExtension(vscode) {
+  const Module = require("node:module");
+  const originalLoad = Module._load;
+  Module._load = function (request, parent, isMain) {
+    if (request === "vscode") return vscode;
+    return originalLoad.call(this, request, parent, isMain);
+  };
+  const extensionPath = join(extensionRoot, "extension.cjs");
+  delete require.cache[require.resolve(extensionPath)];
+  try {
+    return require(extensionPath);
+  }
+  finally {
+    Module._load = originalLoad;
+  }
+}
 
 const attachment = Object.freeze({
   annotationCount: 1,
@@ -89,14 +183,47 @@ test("rehydration rejects missing or mismatched Core records without rebinding t
   registry.reset();
 
   await assert.rejects(registry.resolveOrHydrate(uri, "pdf", async () => {
-    throw new Error("Zotero attachment 7/PDF00001 was not found");
-  }), /not found/);
+    throw Object.assign(new Error("Zotero attachment 7/PDF00001 was not found"), { code: "UNAVAILABLE" });
+  }), error => error?.code === "UNAVAILABLE" && /not found/.test(error.message));
   assert.throws(() => registry.resolve(uri, "pdf"), /active Zotero Core session/);
   await assert.rejects(registry.resolveOrHydrate(uri, "pdf", async () => Object.freeze({
     ...attachment,
     attachmentKey: "PDF00002",
-  })), /identity/);
+  })), error => error?.code === "UNAVAILABLE" && /identity/.test(error.message));
   assert.throws(() => registry.resolve(uri, "pdf"), /active Zotero Core session/);
+});
+
+test("rehydration keeps deleted or trashed exact records unavailable", async () => {
+  const { EvidenceDocumentRegistry, createEvidenceDocumentResolver } = await import("../extensions/chatero-zotero/evidence-editor-registry.mjs");
+  const registry = new EvidenceDocumentRegistry();
+  const pdfUri = registry.stage("pdf", attachment);
+  const noteUri = registry.stage("note", note);
+  registry.reset();
+  const lookups = [];
+  const unavailable = kind => Object.assign(new Error(`Zotero ${kind} is unavailable`), { code: "UNAVAILABLE" });
+  const resolveDocument = createEvidenceDocumentResolver({
+    ensureCore: async () => ({ ready: true }),
+    getModel: () => ({
+      async attachment(params) {
+        lookups.push(["attachment", params]);
+        throw unavailable("attachment");
+      },
+      async note(params) {
+        lookups.push(["note", params]);
+        throw unavailable("note");
+      },
+    }),
+    registry,
+  });
+
+  await assert.rejects(resolveDocument(pdfUri, "pdf"), error => error?.code === "UNAVAILABLE");
+  await assert.rejects(resolveDocument(noteUri, "note"), error => error?.code === "UNAVAILABLE");
+  assert.deepEqual(lookups, [
+    ["attachment", { attachmentKey: "PDF00001", libraryId: 7 }],
+    ["note", { libraryId: 7, noteKey: "NOTE0001" }],
+  ]);
+  assert.throws(() => registry.resolve(pdfUri, "pdf"), /active Zotero Core session/);
+  assert.throws(() => registry.resolve(noteUri, "note"), /active Zotero Core session/);
 });
 
 test("simultaneous restored PDF and Note tabs start Core once", async () => {
@@ -152,6 +279,324 @@ test("simultaneous restored PDF and Note tabs start Core once", async () => {
   assert.equal(starts, 1);
 });
 
+test("stop waits for an in-flight Core launch, suppresses publication, and releases its lease", async () => {
+  const { createCoreLifecycle } = await import("../extensions/chatero-zotero/evidence-editor-registry.mjs");
+  let releaseLaunch;
+  const launchBarrier = new Promise(resolve => { releaseLaunch = resolve; });
+  let starts = 0;
+  let stops = 0;
+  let publications = 0;
+  let unpublishes = 0;
+  const core = {
+    async stop() { stops += 1; },
+    whenStopped: new Promise(() => {}),
+  };
+  const lifecycle = createCoreLifecycle({
+    start: async () => {
+      starts += 1;
+      await launchBarrier;
+      return core;
+    },
+    publish: () => { publications += 1; },
+    unpublish: () => { unpublishes += 1; },
+  });
+
+  const launching = lifecycle.ensureCore();
+  await new Promise(resolve => setImmediate(resolve));
+  const stopping = lifecycle.stopCore();
+  releaseLaunch();
+
+  assert.equal(await launching, null);
+  await stopping;
+  assert.equal(starts, 1);
+  assert.equal(stops, 1);
+  assert.equal(publications, 0);
+  assert.equal(unpublishes, 1);
+  assert.equal(lifecycle.getCurrent(), null);
+});
+
+test("dispose fences a pending Core launch and prevents future activation", async () => {
+  const { createCoreLifecycle } = await import("../extensions/chatero-zotero/evidence-editor-registry.mjs");
+  let releaseLaunch;
+  const launchBarrier = new Promise(resolve => { releaseLaunch = resolve; });
+  let stops = 0;
+  const core = {
+    async stop() { stops += 1; },
+    whenStopped: new Promise(() => {}),
+  };
+  const lifecycle = createCoreLifecycle({
+    start: async () => {
+      await launchBarrier;
+      return core;
+    },
+  });
+
+  const launching = lifecycle.ensureCore();
+  await new Promise(resolve => setImmediate(resolve));
+  const disposing = lifecycle.dispose();
+  releaseLaunch();
+
+  assert.equal(await launching, null);
+  await disposing;
+  assert.equal(stops, 1);
+  await assert.rejects(lifecycle.ensureCore(), /disposed/);
+});
+
+test("ready Core disposal is idempotent and does not resolve before lease cleanup", async () => {
+  const { createCoreLifecycle } = await import("../extensions/chatero-zotero/evidence-editor-registry.mjs");
+  let releaseStop;
+  const stopBarrier = new Promise(resolve => { releaseStop = resolve; });
+  let stops = 0;
+  const core = {
+    async stop() {
+      stops += 1;
+      await stopBarrier;
+    },
+    whenStopped: new Promise(() => {}),
+  };
+  const lifecycle = createCoreLifecycle({ start: async () => core });
+  await lifecycle.ensureCore();
+
+  const first = lifecycle.dispose();
+  const second = lifecycle.dispose();
+  assert.equal(first, second);
+  let settled = false;
+  void first.then(() => { settled = true; });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(settled, false);
+  releaseStop();
+  await first;
+  assert.equal(stops, 1);
+  assert.equal(lifecycle.getCurrent(), null);
+});
+
+test("restart waits for stop and a late old-Core exit cannot clear the new Core", async () => {
+  const { createCoreLifecycle } = await import("../extensions/chatero-zotero/evidence-editor-registry.mjs");
+  let releaseFirstStop;
+  const firstStopBarrier = new Promise(resolve => { releaseFirstStop = resolve; });
+  let resolveFirstStopped;
+  const firstWhenStopped = new Promise(resolve => { resolveFirstStopped = resolve; });
+  let resolveSecondStopped;
+  const secondWhenStopped = new Promise(resolve => { resolveSecondStopped = resolve; });
+  const first = {
+    id: "first",
+    async stop() { await firstStopBarrier; },
+    whenStopped: firstWhenStopped,
+  };
+  const second = {
+    id: "second",
+    async stop() { resolveSecondStopped({ expected: true }); },
+    whenStopped: secondWhenStopped,
+  };
+  const available = [first, second];
+  const published = [];
+  let starts = 0;
+  let unexpectedStops = 0;
+  const lifecycle = createCoreLifecycle({
+    start: async () => {
+      starts += 1;
+      return available.shift();
+    },
+    publish: core => { published.push(core.id); },
+    onUnexpectedStop: () => { unexpectedStops += 1; },
+  });
+  assert.equal(await lifecycle.ensureCore(), first);
+
+  const stopping = lifecycle.stopCore();
+  const restarting = lifecycle.ensureCore();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(starts, 1);
+  releaseFirstStop();
+  await stopping;
+  assert.equal(await restarting, second);
+  resolveFirstStopped({ expected: false });
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(lifecycle.getCurrent(), second);
+  assert.deepEqual(published, ["first", "second"]);
+  assert.equal(unexpectedStops, 0);
+  await lifecycle.dispose();
+});
+
+test("publication callback failures cannot bypass Core stop", async () => {
+  const { createCoreLifecycle } = await import("../extensions/chatero-zotero/evidence-editor-registry.mjs");
+  let publishStops = 0;
+  const publishCore = {
+    async stop() { publishStops += 1; },
+    whenStopped: new Promise(() => {}),
+  };
+  const publishFailure = createCoreLifecycle({
+    start: async () => publishCore,
+    publish: () => { throw new Error("publish failed"); },
+  });
+  await assert.rejects(publishFailure.ensureCore(), /publish failed/);
+  assert.equal(publishStops, 1);
+
+  let unpublishStops = 0;
+  const unpublishCore = {
+    async stop() { unpublishStops += 1; },
+    whenStopped: new Promise(() => {}),
+  };
+  const unpublishFailure = createCoreLifecycle({
+    start: async () => unpublishCore,
+    unpublish: () => { throw new Error("unpublish failed"); },
+  });
+  await unpublishFailure.ensureCore();
+  await assert.rejects(unpublishFailure.stopCore(), /unpublish failed/);
+  assert.equal(unpublishStops, 1);
+});
+
+test("extension deactivate awaits the same cleanup for pending and ready Core reloads", async () => {
+  for (const state of ["pending", "ready"]) {
+    const launch = deferred();
+    const stop = deferred();
+    const enteredProgress = deferred();
+    let eventSubscriptions = 0;
+    let eventDisposals = 0;
+    let stops = 0;
+    const core = {
+      client: {
+        onEvent() {
+          eventSubscriptions += 1;
+          return () => { eventDisposals += 1; };
+        },
+        request: async () => {},
+      },
+      async stop() {
+        stops += 1;
+        if (state === "ready") await stop.promise;
+      },
+      whenStopped: new Promise(() => {}),
+    };
+    const vscode = fakeVscode(async () => {
+      enteredProgress.resolve();
+      return state === "pending" ? launch.promise : core;
+    });
+    const extension = loadExtension(vscode);
+    const context = {
+      extensionUri: { authority: "", path: "/extension", scheme: "file" },
+      subscriptions: [],
+    };
+    await extension.activate(context);
+    const starting = vscode.commandsForTest.get("chatero.zotero.startCore")();
+    await within(enteredProgress.promise, `${state} progress`);
+    if (state === "ready") await within(starting, "ready startup");
+
+    assert.equal(context.subscriptions.at(-1).dispose(), undefined);
+    const firstCleanup = extension.deactivate();
+    const secondCleanup = extension.deactivate();
+    assert.equal(firstCleanup, secondCleanup);
+    let settled = false;
+    void firstCleanup.then(() => { settled = true; });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(settled, false);
+
+    if (state === "pending") launch.resolve(core);
+    else stop.resolve();
+    await within(firstCleanup, `${state} cleanup`);
+    await within(starting, `${state} startup completion`);
+    assert.equal(stops, 1);
+    assert.equal(eventSubscriptions, state === "ready" ? 1 : 0);
+    assert.equal(eventDisposals, state === "ready" ? 1 : 0);
+  }
+});
+
+test("an unexpected Core stop invalidates evidence before restart and forces exact lookup", async () => {
+  const {
+    EvidenceDocumentRegistry,
+    createCoreLifecycle,
+    createEvidenceDocumentResolver,
+  } = await import("../extensions/chatero-zotero/evidence-editor-registry.mjs");
+  const registry = new EvidenceDocumentRegistry();
+  let crashFirst;
+  const firstStopped = new Promise(resolve => { crashFirst = resolve; });
+  let secondStopped;
+  const secondWhenStopped = new Promise(resolve => { secondStopped = resolve; });
+  let lookups = 0;
+  const cores = [{
+    client: { model: { attachment: async () => attachment } },
+    async stop() {},
+    whenStopped: firstStopped,
+  }, {
+    client: { model: { attachment: async () => {
+      lookups += 1;
+      throw Object.assign(new Error("Zotero attachment is unavailable"), { code: "UNAVAILABLE" });
+    } } },
+    async stop() { secondStopped({ expected: true }); },
+    whenStopped: secondWhenStopped,
+  }];
+  let model = null;
+  let unexpectedStops = 0;
+  const lifecycle = createCoreLifecycle({
+    start: async () => cores.shift(),
+    publish: core => { model = core.client.model; },
+    unpublish: () => {
+      model = null;
+      registry.reset();
+    },
+    onUnexpectedStop: () => { unexpectedStops += 1; },
+  });
+  const resolveDocument = createEvidenceDocumentResolver({
+    ensureCore: lifecycle.ensureCore,
+    getModel: () => model,
+    registry,
+  });
+
+  await lifecycle.ensureCore();
+  const uri = registry.stage("pdf", attachment);
+  crashFirst({ expected: false });
+  await new Promise(resolve => setImmediate(resolve));
+
+  await assert.rejects(resolveDocument(uri, "pdf"), error => error?.code === "UNAVAILABLE");
+  assert.equal(unexpectedStops, 1);
+  assert.equal(lookups, 1);
+  assert.throws(() => registry.resolve(uri, "pdf"), /active Zotero Core session/);
+  await lifecycle.dispose();
+});
+
+test("a fresh tree record can replace a rehydrated identity and reopen after close", async () => {
+  const [{ EvidenceDocumentRegistry }, providers] = await Promise.all([
+    import("../extensions/chatero-zotero/evidence-editor-registry.mjs"),
+    import("../extensions/chatero-zotero/evidence-editors.cjs"),
+  ]);
+  const registry = new EvidenceDocumentRegistry();
+  const uriValue = registry.stage("pdf", attachment);
+  registry.reset();
+  let hydrationRecord = attachment;
+  let hydrations = 0;
+  const resolveDocument = (uri, kind) => registry.resolveOrHydrate(uri, kind, async () => {
+    hydrations += 1;
+    return hydrationRecord;
+  });
+  const provider = new providers.PdfEditorProvider({
+    extensionUri: { value: "/extension" },
+    getModel: () => null,
+    registry,
+    resolveDocument,
+    renderPdfEditorHTML: () => "",
+    vscode: { Uri: { joinPath: (base, ...parts) => ({ value: `${base.value}/${parts.join("/")}` }) } },
+  });
+  const uri = { toString: () => uriValue };
+  const restored = await provider.openCustomDocument(uri);
+  assert.equal(restored.record, attachment);
+  const fresh = Object.freeze({
+    ...attachment,
+    path: "/tmp/private/refreshed-paper.pdf",
+    title: "Refreshed Paper",
+  });
+  hydrationRecord = fresh;
+
+  assert.equal(registry.stage("pdf", fresh), uriValue);
+  restored.dispose();
+  const first = await provider.openCustomDocument(uri);
+  assert.equal(first.record, fresh);
+  first.dispose();
+  assert.throws(() => registry.resolve(uri, "pdf"), /active Zotero Core session/);
+  const reopened = await provider.openCustomDocument(uri);
+  assert.equal(reopened.record, fresh);
+  assert.equal(hydrations, 2);
+});
+
 test("restored document resolver fetches only the exact Core identity and discards Note HTML", async () => {
   const { EvidenceDocumentRegistry, createEvidenceDocumentResolver } = await import("../extensions/chatero-zotero/evidence-editor-registry.mjs");
   const registry = new EvidenceDocumentRegistry();
@@ -201,6 +646,73 @@ test("Library model resolves one validated attachment by exact identity", async 
     method: "library.attachment",
     params: { attachmentKey: "PDF00001", libraryId: 7 },
   }]);
+});
+
+test("remote workspace overrides cannot select a local Core executable or profile", async () => {
+  const { readCoreLaunchConfiguration } = await import("../extensions/chatero-zotero/evidence-editor-registry.mjs");
+  const values = {
+    coreExecutable: {
+      globalValue: "/Applications/Chatero.app/Contents/MacOS/chatero",
+      workspaceFolderValue: "/tmp/hostile-folder-core",
+      workspaceValue: "/tmp/hostile-workspace-core",
+    },
+    developerFixtureCore: {
+      globalValue: false,
+      workspaceFolderValue: true,
+      workspaceValue: true,
+    },
+    profilePath: {
+      globalValue: "/Users/safe/Library/Application Support/Chatero/Profiles/research",
+      workspaceFolderValue: "/tmp/hostile-folder-profile",
+      workspaceValue: "/tmp/hostile-workspace-profile",
+    },
+  };
+  const configuration = { inspect: key => values[key] };
+
+  assert.deepEqual(readCoreLaunchConfiguration(configuration), {
+    coreExecutable: "/Applications/Chatero.app/Contents/MacOS/chatero",
+    developerFixtureCore: false,
+    profilePath: "/Users/safe/Library/Application Support/Chatero/Profiles/research",
+  });
+  assert.deepEqual(readCoreLaunchConfiguration({
+    inspect: key => ({ workspaceFolderValue: values[key].workspaceFolderValue, workspaceValue: values[key].workspaceValue }),
+  }), {
+    coreExecutable: "",
+    developerFixtureCore: false,
+    profilePath: "",
+  });
+});
+
+test("Core setup pickers reject remote URIs before persisting local paths", async () => {
+  const { selectLocalCoreConfigurationPath } = await import("../extensions/chatero-zotero/evidence-editor-registry.mjs");
+  const localDefault = { authority: "", fsPath: "/Users/safe", scheme: "file" };
+  const hostile = {
+    authority: "chatero-remote+dGFyZ2V0",
+    fsPath: "/srv/hostile",
+    path: "/srv/hostile",
+    scheme: "vscode-remote",
+  };
+
+  for (const dialogOptions of [
+    { canSelectFiles: false, canSelectFolders: true, title: "Select profile" },
+    { canSelectFiles: true, canSelectFolders: false, title: "Select executable" },
+  ]) {
+    const writes = [];
+    let receivedOptions;
+    await assert.rejects(selectLocalCoreConfigurationPath({
+      defaultUri: localDefault,
+      dialogOptions,
+      label: dialogOptions.title,
+      showOpenDialog: async options => {
+        receivedOptions = options;
+        return [hostile];
+      },
+      update: async value => { writes.push(value); },
+    }), /local file/);
+    assert.equal(receivedOptions.defaultUri, localDefault);
+    assert.equal(receivedOptions.defaultUri.scheme, "file");
+    assert.deepEqual(writes, []);
+  }
 });
 
 test("PDF editor HTML boots the packaged PDF.js viewer with bounded annotation data", async () => {
@@ -270,6 +782,11 @@ test("extension declares native PDF and Note custom editor tabs", async () => {
   assert.match(source, /registerCustomEditorProvider\("chatero\.zotero\.note"/);
   assert.match(source, /executeCommand\("vscode\.openWith"/);
   assert.doesNotMatch(source, /openExternal|executeCommand\(["']vscode\.open["']/);
+  for (const key of ["profilePath", "coreExecutable", "developerFixtureCore"]) {
+    assert.ok(["application", "machine"].includes(manifest.contributes.configuration.properties[`chatero.zotero.${key}`].scope));
+  }
+  assert.match(source, /readCoreLaunchConfiguration/);
+  assert.match(source, /function deactivate\(\)\s*{[^}]*\.dispose\(\)/s);
   const destinations = packaging.extensions.find(value => value.id === "chatero.zotero").files.map(value => value.destination);
   assert.ok(destinations.includes("extensions/chatero-zotero/media/pdf-viewer/pdf.mjs"));
   assert.ok(destinations.includes("extensions/chatero-zotero/media/pdf-viewer/pdf.worker.mjs"));

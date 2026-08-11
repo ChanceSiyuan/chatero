@@ -2,12 +2,17 @@ const { dirname } = require("node:path");
 const { randomBytes } = require("node:crypto");
 
 class EvidenceDocument {
-  constructor(uri, record) {
+  constructor(uri, record, release) {
     this.uri = uri;
     this.record = record;
+    this.release = release;
   }
 
-  dispose() {}
+  dispose() {
+    const release = this.release;
+    this.release = null;
+    release?.();
+  }
 }
 
 function nonce() {
@@ -25,7 +30,8 @@ class PdfEditorProvider {
   }
 
   async openCustomDocument(uri) {
-    return new EvidenceDocument(uri, await this.resolveDocument(uri, "pdf"));
+    const record = await this.resolveDocument(uri, "pdf");
+    return new EvidenceDocument(uri, record, () => this.registry.release(uri, "pdf", record));
   }
 
   async resolveCustomEditor(document, panel) {
@@ -60,7 +66,8 @@ class NoteEditorProvider {
   }
 
   async openCustomDocument(uri) {
-    return new EvidenceDocument(uri, await this.resolveDocument(uri, "note"));
+    const record = await this.resolveDocument(uri, "note");
+    return new EvidenceDocument(uri, record, () => this.registry.release(uri, "note", record));
   }
 
   async resolveCustomEditor(document, panel) {

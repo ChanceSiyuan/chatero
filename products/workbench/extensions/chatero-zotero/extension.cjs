@@ -1,5 +1,9 @@
 const vscode = require("vscode");
+const { homedir } = require("node:os");
 const { NoteEditorProvider, PdfEditorProvider } = require("./evidence-editors.cjs");
+
+let activeLifecycle = null;
+let deactivationPromise = null;
 
 class LibraryProvider {
   constructor(evidenceAuthority) {
@@ -103,87 +107,107 @@ async function activate(context) {
     import("./evidence-editor-registry.mjs"),
     import("./evidence-editor-html.mjs"),
   ]);
-  const { EvidenceDocumentRegistry, createEnsureCore, createEvidenceDocumentResolver } = registryModule;
+  const {
+    EvidenceDocumentRegistry,
+    createCoreLifecycle,
+    createEvidenceDocumentResolver,
+    readCoreLaunchConfiguration,
+    selectLocalCoreConfigurationPath,
+  } = registryModule;
   const evidenceAuthority = new EvidenceRecordAuthority();
   const evidenceDocuments = new EvidenceDocumentRegistry();
   const provider = new LibraryProvider(evidenceAuthority);
-  let core = null;
-  let disposeEvents = null;
   context.subscriptions.push(provider);
   context.subscriptions.push(vscode.window.registerTreeDataProvider("chatero.zotero.library", provider));
 
-  const stop = async () => {
-    disposeEvents?.();
-    disposeEvents = null;
-    if (core) await core.stop();
-    core = null;
-    evidenceDocuments.reset();
-    provider.setConnection(null);
-  };
-
   const selectProfile = async () => {
-    const selection = await vscode.window.showOpenDialog({
-      canSelectFiles: false,
-      canSelectFolders: true,
-      canSelectMany: false,
-      openLabel: "Use Zotero Profile",
-      title: "Select the Zotero profile for Chatero Core",
-    });
-    if (!selection?.[0]) return null;
-    await vscode.workspace.getConfiguration("chatero.zotero").update("profilePath", selection[0].fsPath, vscode.ConfigurationTarget.Global);
-    return selection[0].fsPath;
+    try {
+      return await selectLocalCoreConfigurationPath({
+        defaultUri: vscode.Uri.file(homedir()),
+        dialogOptions: {
+          canSelectFiles: false,
+          canSelectFolders: true,
+          canSelectMany: false,
+          openLabel: "Use Zotero Profile",
+          title: "Select the Zotero profile for Chatero Core",
+        },
+        label: "Zotero profile",
+        showOpenDialog: options => vscode.window.showOpenDialog(options),
+        update: value => vscode.workspace.getConfiguration("chatero.zotero")
+          .update("profilePath", value, vscode.ConfigurationTarget.Global),
+      });
+    }
+    catch (error) {
+      void vscode.window.showErrorMessage(`Could not select a local Zotero profile: ${error.message}`);
+      return null;
+    }
   };
 
   const selectCoreExecutable = async () => {
-    const selection = await vscode.window.showOpenDialog({
-      canSelectFiles: true,
-      canSelectFolders: false,
-      canSelectMany: false,
-      openLabel: "Use as Zotero Core",
-      title: "Select the Chatero/Zotero Gecko executable",
-    });
-    if (!selection?.[0]) return null;
-    await vscode.workspace.getConfiguration("chatero.zotero").update("coreExecutable", selection[0].fsPath, vscode.ConfigurationTarget.Global);
-    return selection[0].fsPath;
+    try {
+      return await selectLocalCoreConfigurationPath({
+        defaultUri: vscode.Uri.file(homedir()),
+        dialogOptions: {
+          canSelectFiles: true,
+          canSelectFolders: false,
+          canSelectMany: false,
+          openLabel: "Use as Zotero Core",
+          title: "Select the Chatero/Zotero Gecko executable",
+        },
+        label: "Zotero Core executable",
+        showOpenDialog: options => vscode.window.showOpenDialog(options),
+        update: value => vscode.workspace.getConfiguration("chatero.zotero")
+          .update("coreExecutable", value, vscode.ConfigurationTarget.Global),
+      });
+    }
+    catch (error) {
+      void vscode.window.showErrorMessage(`Could not select a local Zotero Core executable: ${error.message}`);
+      return null;
+    }
   };
 
-  const startCoreOnce = async () => {
-    if (core) return core;
-    const configuration = vscode.workspace.getConfiguration("chatero.zotero");
-    let profileDirectory = configuration.get("profilePath", "");
+  const launchCore = async () => {
+    const configuration = readCoreLaunchConfiguration(vscode.workspace.getConfiguration("chatero.zotero"));
+    let profileDirectory = configuration.profilePath;
     if (!profileDirectory) profileDirectory = await selectProfile();
     if (!profileDirectory) return null;
-    const fixture = configuration.get("developerFixtureCore", false);
+    const fixture = configuration.developerFixtureCore;
     let geckoExecutable;
     if (!fixture) {
-      geckoExecutable = configuration.get("coreExecutable", "");
+      geckoExecutable = configuration.coreExecutable;
       if (!geckoExecutable) geckoExecutable = await selectCoreExecutable();
       if (!geckoExecutable) return null;
     }
-    const { startCore } = await import("./runtime/zotero-core/supervisor/core-supervisor.mjs");
-    core = await vscode.window.withProgress({
+    return vscode.window.withProgress({
       location: vscode.ProgressLocation.Window,
       title: "Starting Zotero Core…",
-    }, () => startCore({
-      profileDirectory,
-      ...(geckoExecutable && { geckoExecutable }),
-      requestedCapabilities: ["events:read", "library:read", "library:search", "profile:read"],
-    }));
-    const model = new LibraryTreeModel({ request: core.client.request });
-    disposeEvents = core.client.onEvent(() => provider.refresh());
-    provider.setConnection(model);
-    void core.whenStopped.then(result => {
-      if (!result.expected) {
-        disposeEvents?.();
-        disposeEvents = null;
-        core = null;
-        provider.setConnection(null);
-        void vscode.window.showErrorMessage("Zotero Core stopped unexpectedly. Your profile lease was released safely.");
-      }
+    }, async () => {
+      const { startCore } = await import("./runtime/zotero-core/supervisor/core-supervisor.mjs");
+      return startCore({
+        profileDirectory,
+        ...(geckoExecutable && { geckoExecutable }),
+        requestedCapabilities: ["events:read", "library:read", "library:search", "profile:read"],
+      });
     });
-    return core;
   };
-  const ensureCore = createEnsureCore({ getCurrent: () => core, start: startCoreOnce });
+  const lifecycle = createCoreLifecycle({
+    start: launchCore,
+    publish: startedCore => {
+      const model = new LibraryTreeModel({ request: startedCore.client.request });
+      provider.setConnection(model);
+      return startedCore.client.onEvent(() => provider.refresh());
+    },
+    unpublish: () => {
+      evidenceDocuments.reset();
+      provider.setConnection(null);
+    },
+    onUnexpectedStop: () => {
+      void vscode.window.showErrorMessage("Zotero Core stopped unexpectedly. Your profile lease was released safely.");
+    },
+  });
+  activeLifecycle = lifecycle;
+  deactivationPromise = null;
+  const ensureCore = lifecycle.ensureCore;
   const resolveDocument = createEvidenceDocumentResolver({
     ensureCore,
     getModel: () => provider.model,
@@ -208,7 +232,7 @@ async function activate(context) {
   context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.selectProfile", selectProfile));
   context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.selectCoreExecutable", selectCoreExecutable));
   context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.startCore", () => ensureCore().catch(error => vscode.window.showErrorMessage(`Could not start Zotero Core: ${error.message}`))));
-  context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.stopCore", () => stop().catch(error => vscode.window.showErrorMessage(`Could not stop Zotero Core: ${error.message}`))));
+  context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.stopCore", () => lifecycle.stopCore().catch(error => vscode.window.showErrorMessage(`Could not stop Zotero Core: ${error.message}`))));
   context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.refreshLibrary", () => provider.refresh()));
   context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.openAttachment", record => {
     const trusted = evidenceAuthority.authorize(record, "attachment");
@@ -226,9 +250,25 @@ async function activate(context) {
     provider.query = query;
     provider.refresh();
   }));
-  context.subscriptions.push({ dispose: () => { void stop(); } });
+  context.subscriptions.push({
+    dispose: () => {
+      const cleanup = lifecycle.dispose();
+      if (activeLifecycle === lifecycle) {
+        activeLifecycle = null;
+        deactivationPromise ||= cleanup;
+      }
+      void cleanup.catch(() => {});
+    },
+  });
 }
 
-function deactivate() {}
+function deactivate() {
+  if (activeLifecycle) {
+    const lifecycle = activeLifecycle;
+    activeLifecycle = null;
+    deactivationPromise ||= lifecycle.dispose();
+  }
+  return deactivationPromise;
+}
 
 module.exports = { activate, deactivate };

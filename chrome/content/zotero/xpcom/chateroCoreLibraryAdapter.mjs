@@ -158,16 +158,30 @@ function itemSummary(Zotero, item) {
 	return summary;
 }
 
+function itemIsUnavailable(item) {
+	if (!item) return true;
+	if (item.deleted) return true;
+	return typeof item.isInTrash === "function" ? Boolean(item.isInTrash()) : Boolean(item.isInTrash);
+}
+
+function unavailable(message) {
+	let error = new Error(message);
+	error.code = "UNAVAILABLE";
+	throw error;
+}
+
 function lookupItem(Zotero, libraryId, key, label) {
 	let item = Zotero.Items.getByLibraryAndKey(libraryId, key);
 	if (!item || item.libraryID !== libraryId || item.key !== key) {
-		throw new Error(`${label} ${libraryId}/${key} was not found`);
+		unavailable(`${label} ${libraryId}/${key} was not found`);
 	}
+	if (itemIsUnavailable(item)) unavailable(`${label} ${libraryId}/${key} is unavailable`);
 	return item;
 }
 
 function parentKey(Zotero, item, label) {
 	let parent = Zotero.Items.get(item.parentItemID);
+	if (itemIsUnavailable(parent)) unavailable(`${label} parent item is unavailable`);
 	if (!parent || parent.libraryID !== item.libraryID || !parent.isRegularItem?.()) {
 		throw new Error(`${label} has no valid parent item`);
 	}
@@ -176,6 +190,7 @@ function parentKey(Zotero, item, label) {
 
 async function attachmentSummary(Zotero, attachment, expectedParent) {
 	if (!attachment?.isAttachment?.() || !attachment.isFileAttachment?.()
+			|| itemIsUnavailable(attachment) || itemIsUnavailable(expectedParent)
 			|| attachment.libraryID !== expectedParent.libraryID || attachment.parentItemID !== expectedParent.id) {
 		return null;
 	}
@@ -196,7 +211,8 @@ async function attachmentSummary(Zotero, attachment, expectedParent) {
 }
 
 function noteSummary(Zotero, note, expectedParent) {
-	if (!note?.isNote?.() || note.libraryID !== expectedParent.libraryID || note.parentItemID !== expectedParent.id) {
+	if (!note?.isNote?.() || itemIsUnavailable(note) || itemIsUnavailable(expectedParent)
+			|| note.libraryID !== expectedParent.libraryID || note.parentItemID !== expectedParent.id) {
 		return null;
 	}
 	return {
@@ -265,6 +281,7 @@ export function createZoteroLibraryAdapter({ Zotero } = {}) {
 				throw new Error("library.attachment target must be a file attachment");
 			}
 			let parent = Zotero.Items.get(attachment.parentItemID);
+			if (itemIsUnavailable(parent)) unavailable("Zotero attachment parent item is unavailable");
 			if (!parent || parent.libraryID !== attachment.libraryID || !parent.isRegularItem?.()) {
 				throw new Error("Zotero attachment has no valid parent item");
 			}
