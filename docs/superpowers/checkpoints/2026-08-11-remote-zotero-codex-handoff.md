@@ -7,6 +7,7 @@ claim.
 ## Branches to fetch
 
 - `feat/remote-zotero-codex`
+  - Task 4 completion commit: `fb13f31f9`
   - Task 3 completion commit: `6ab1ff06f`
   - The earlier interrupted checkpoint remains `0eadc81e8` for audit history.
   - Contains the approved design/plan, signed dual-architecture Remote Agent
@@ -44,6 +45,14 @@ Finish the gates and reviews below first.
     regression: 137/137 tests passed.
   - Independent final review reported no remaining Critical/Important
     findings for Task 3B.
+- Native remote Code-OSS Agent Host and OpenAI Codex runtime:
+  - `fb13f31f9 feat(workbench): run native Codex on remote workspaces`
+  - Task 4 plus remote focused regression: 66/66 tests passed; full
+    workbench Node regression: 157/157 tests passed.
+  - A fresh pinned Code-OSS materialization passed provenance/policy
+    verification, exact Node 24 TypeScript compilation, and the OpenAI account
+    policy test. Independent final review reported no remaining
+    Critical/Important findings for Task 4.
 
 ## Task 3 completed state
 
@@ -81,8 +90,8 @@ bound/dispose authenticated candidate sessions that never become active and to
 align the OpenSSH alias length check with the opaque authority length check.
 Neither bypasses the trust, authority, or data boundaries.
 
-Next action: implement and review Task 4's native remote Code-OSS Agent
-Host/Codex runtime and OpenAI-only policy.
+Next action: implement and review Task 5's selectable PDF.js evidence and
+explicit native Chat context.
 
 ## Task 3B completed and integrated state
 
@@ -122,10 +131,65 @@ npm run test:workbench-bootstrap
 ```
 
 Integrated results: protocol check passed, Core plus rehydration 67/67 passed,
-and the full workbench Node suite 137/137 passed. `workbench:verify` and a real
-Code-OSS/Zotero GUI reload remain deferred until the ignored pinned Code-OSS
-checkout is bootstrapped with exact Node `24.18.0`; the current host has Node
-`22.23.1` and no `vendor/code-oss/.chatero-provenance.json`.
+and the full workbench Node suite 137/137 passed. Task 4 subsequently produced
+and verified a fresh pinned Code-OSS materialization with exact Node `24.18.0`.
+A real Code-OSS/Zotero GUI reload remains an explicit later integration gate.
+
+## Task 4 completed state
+
+Completion: `fb13f31f9 feat(workbench): run native Codex on remote workspaces`
+
+Implemented and reviewed:
+
+- the built-in Code-OSS Agent Host remains the only remote chat runtime and
+  uses the existing remote `agentHostProxy` wiring;
+- Codex defaults and falls back only to OpenAI, never requires Copilot sign-in,
+  does not advertise or accept a Copilot token in OpenAI mode, and exposes a
+  fixed remote `codex login --device-auth` terminal flow using only the signed
+  bundled binary;
+- parent, login-shell, fixed Agent Host, and embedded SDK environments merge in
+  the required order, while `AGENT_SDK_RESULTS_FILE` is removed before the
+  Code-OSS build so no CDN fallback can enter the product;
+- `chatero.chat.attachTextContext` and its bounded remove action use native
+  Chat attachments without auto-send or a second history/runtime, including
+  the Code-OSS 1.132 generic-string-to-`Simple` Agent Host fix;
+- both Linux tuples embed exactly `@openai/codex` 0.142.0 plus their matching
+  native package and bundled ripgrep, with no other provider/package allowed;
+  and
+- provenance, exact payload/ELF/executable checks, intermediate-symlink and
+  hardlink rejection, product `agentSdks` policy, and complete Code-OSS,
+  OpenAI Codex, and ripgrep licenses/notices all run before manifest signing.
+
+Verification:
+
+```bash
+node --test \
+  products/workbench/tests/remote-agent-release.test.mjs \
+  products/workbench/tests/remote-agent-runtime.test.mjs \
+  products/workbench/tests/chatero-remote-manifest.test.mjs \
+  products/workbench/tests/chatero-remote-transport.test.mjs \
+  products/workbench/tests/patch-series.test.mjs \
+  products/workbench/tests/upstream-copilot-quarantine.test.mjs
+npm run test:workbench-bootstrap
+CHATERO_CODE_OSS_DIR=<fresh-materialization> npm run workbench:verify
+```
+
+Results: focused 66/66 and full workbench 157/157 passed. Patch 0003 applied
+without fuzz to the exact `df53daabb18cd157bdb08c7f01c34df936cf12f4`
+checkout; exact Node `24.18.0` full-source TypeScript compilation passed, and
+the upstream OpenAI account policy test passed 5/5. Both SDK tarballs were
+created from the pinned lock; x64 reported `codex-cli 0.142.0` and ripgrep
+15.1.0 on the native host, while both x64 and arm64 binaries passed their ELF
+architecture checks. Arm64 `codex --version` remains assigned to Task 7's
+native arm64 CI runner.
+
+A local full x64 REH build reached and completed exact SDK packaging, then
+stopped before archive creation because the isolated checkout intentionally
+had only root/build `npm ci --ignore-scripts` dependencies and therefore lacked
+nested built-in-extension packages needed by the upstream gulp compile. Task 7
+will install the complete pinned dependency graph on clean Linux runners and
+exercise both release jobs. No generated Remote Agent archive or signing
+private key was added to the repository.
 
 ## Audits already incorporated into the plan
 
