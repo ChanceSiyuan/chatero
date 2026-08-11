@@ -12,7 +12,10 @@ export const CAPABILITIES = Object.freeze([
 export const METHOD_CAPABILITIES = Object.freeze({
   "core.cancel": null,
   "core.handshake": null,
+  "library.annotations": "library:read",
   "library.collections": "library:read",
+  "library.item-children": "library:read",
+  "library.note": "library:read",
   "library.search": "library:search",
   "profile.status": "profile:read"
 });
@@ -25,9 +28,21 @@ export const METHOD_TYPES = Object.freeze({
     "params": "CoreHandshakeParams",
     "result": "CoreHandshakeResult"
   },
+  "library.annotations": {
+    "params": "LibraryAnnotationsParams",
+    "result": "LibraryAnnotationsResult"
+  },
   "library.collections": {
     "params": "LibraryCollectionsParams",
     "result": "LibraryCollectionsResult"
+  },
+  "library.item-children": {
+    "params": "LibraryItemChildrenParams",
+    "result": "LibraryItemChildrenResult"
+  },
+  "library.note": {
+    "params": "LibraryNoteParams",
+    "result": "LibraryNoteResult"
   },
   "library.search": {
     "params": "LibrarySearchParams",

@@ -35,6 +35,24 @@
       "resultType": "LibraryCollectionsResult"
     },
     {
+      "name": "library.item-children",
+      "capability": "library:read",
+      "paramsType": "LibraryItemChildrenParams",
+      "resultType": "LibraryItemChildrenResult"
+    },
+    {
+      "name": "library.annotations",
+      "capability": "library:read",
+      "paramsType": "LibraryAnnotationsParams",
+      "resultType": "LibraryAnnotationsResult"
+    },
+    {
+      "name": "library.note",
+      "capability": "library:read",
+      "paramsType": "LibraryNoteParams",
+      "resultType": "LibraryNoteResult"
+    },
+    {
       "name": "library.search",
       "capability": "library:search",
       "paramsType": "LibrarySearchParams",
@@ -140,6 +158,86 @@
         "items": "LibraryItemSummary[]",
         "nextCursor?": "string",
         "total": "number"
+      }
+    },
+    "LibraryItemChildrenParams": {
+      "kind": "object",
+      "fields": {
+        "itemKey": "string",
+        "libraryId": "number"
+      }
+    },
+    "LibraryAttachmentSummary": {
+      "kind": "object",
+      "fields": {
+        "annotationCount": "number",
+        "attachmentKey": "string",
+        "contentType": "string",
+        "filename": "string",
+        "libraryId": "number",
+        "parentItemKey": "string",
+        "path": "string",
+        "title": "string"
+      }
+    },
+    "LibraryNoteSummary": {
+      "kind": "object",
+      "fields": {
+        "libraryId": "number",
+        "noteKey": "string",
+        "parentItemKey": "string",
+        "title": "string"
+      }
+    },
+    "LibraryItemChildrenResult": {
+      "kind": "object",
+      "fields": {
+        "attachments": "LibraryAttachmentSummary[]",
+        "notes": "LibraryNoteSummary[]"
+      }
+    },
+    "LibraryAnnotationsParams": {
+      "kind": "object",
+      "fields": {
+        "attachmentKey": "string",
+        "libraryId": "number"
+      }
+    },
+    "LibraryAnnotationSummary": {
+      "kind": "object",
+      "fields": {
+        "annotationKey": "string",
+        "color": "string",
+        "comment": "string",
+        "libraryId": "number",
+        "pageLabel": "string",
+        "positionJson": "string",
+        "sortIndex": "string",
+        "text": "string",
+        "type": "string"
+      }
+    },
+    "LibraryAnnotationsResult": {
+      "kind": "object",
+      "fields": {
+        "annotations": "LibraryAnnotationSummary[]"
+      }
+    },
+    "LibraryNoteParams": {
+      "kind": "object",
+      "fields": {
+        "libraryId": "number",
+        "noteKey": "string"
+      }
+    },
+    "LibraryNoteResult": {
+      "kind": "object",
+      "fields": {
+        "html": "string",
+        "libraryId": "number",
+        "noteKey": "string",
+        "parentItemKey": "string",
+        "title": "string"
       }
     }
   }
