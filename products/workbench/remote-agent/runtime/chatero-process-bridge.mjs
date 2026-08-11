@@ -10,6 +10,8 @@ const MAX_ENTRY_BYTES = 64 * 1024;
 let child;
 let settled = false;
 let requestBytes = Buffer.alloc(0);
+let terminationSignal = null;
+let forceKillTimer = null;
 
 function emit(frame) {
   process.stdout.write(`${JSON.stringify(frame)}\n`);
@@ -113,6 +115,10 @@ function launch(request, remainder) {
   forward(child.stderr, "stderr");
   child.once("error", fail);
   child.once("close", (code, signal) => {
+    if (forceKillTimer) {
+      clearTimeout(forceKillTimer);
+      forceKillTimer = null;
+    }
     if (settled) {
       return;
     }
@@ -164,20 +170,39 @@ process.stdin.once("end", () => {
 });
 process.stdin.once("error", fail);
 
-process.once("SIGTERM", () => {
+const SIGNAL_EXIT_CODES = Object.freeze({ SIGHUP: 129, SIGINT: 130, SIGTERM: 143 });
+
+function terminateChildGroup(signal) {
+  if (terminationSignal) return;
+  terminationSignal = signal;
+  process.exitCode = SIGNAL_EXIT_CODES[signal];
   if (!child || child.exitCode !== null || child.signalCode !== null) {
-    process.exitCode = 143;
+    process.stdin.destroy();
     return;
   }
   try {
     if (process.platform === "win32") {
-      child.kill("SIGTERM");
+      child.kill(signal === "SIGHUP" ? "SIGTERM" : signal);
     }
     else {
-      process.kill(-child.pid, "SIGTERM");
+      process.kill(-child.pid, signal);
     }
+    forceKillTimer = setTimeout(() => {
+      try {
+        if (process.platform === "win32") child.kill("SIGKILL");
+        else process.kill(-child.pid, "SIGKILL");
+      }
+      catch (error) {
+        if (error?.code !== "ESRCH") fail(error);
+      }
+    }, 2_000);
+    forceKillTimer.unref();
   }
   catch (error) {
-    fail(error);
+    if (error?.code !== "ESRCH") fail(error);
   }
-});
+}
+
+for (const signal of Object.keys(SIGNAL_EXIT_CODES)) {
+  process.once(signal, () => terminateChildGroup(signal));
+}

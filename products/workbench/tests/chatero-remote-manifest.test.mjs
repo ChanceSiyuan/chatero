@@ -13,6 +13,14 @@ test("remote resolver manifest is a local proposed-API UI extension", async () =
   assert.deepEqual(manifest.activationEvents, ["onResolveRemoteAuthority:chatero-remote"]);
   assert.equal(JSON.stringify(manifest).includes("remote-ssh"), false);
   assert.equal(JSON.stringify(manifest).includes("marketplace.visualstudio.com"), false);
+  const commands = Object.fromEntries(manifest.contributes.commands.map(value => [value.command, value.title]));
+  assert.deepEqual(commands, {
+    "chatero.remote.connect": "Connect to SSH…",
+    "chatero.remote.openFolder": "Open Remote Folder…",
+    "chatero.remote.reconnect": "Reconnect",
+    "chatero.remote.showLog": "Show Remote Log",
+    "chatero.remote.openLoginTerminal": "Open SSH Login Terminal",
+  });
 });
 
 test("the extension registers the native managed authority and publishes the bounded API", async () => {
@@ -25,6 +33,12 @@ test("the extension registers the native managed authority and publishes the bou
   assert.doesNotMatch(source, /StrictHostKeyChecking=no|password|Microsoft Remote/i);
   assert.match(source, /showErrorMessage/);
   assert.match(source, /Show Remote Log/);
+  assert.match(source, /createStatusBarItem/);
+  assert.match(source, /chooseRemoteWorkspace/);
+  assert.match(source, /new remoteProcess\.RemoteProcessService/);
+  assert.match(source, /isWorkspaceTrusted:\s*\(\)\s*=>\s*vscode\.workspace\.isTrusted/);
+  assert.match(source, /vscode\.Uri\.from/);
+  assert.match(source, /vscode\.openFolder/);
 });
 
 test("first-party materialization and product proposal allowlist include chatero.remote exactly", async () => {
@@ -40,6 +54,8 @@ test("first-party materialization and product proposal allowlist include chatero
     "openssh-targets.mjs",
     "package.json",
     "remote-agent-installer.mjs",
+    "remote-process.mjs",
+    "remote-workspace.mjs",
     "runtime/release-contract.mjs",
     "runtime/release-public-key.pem",
     "ssh-session.mjs",
