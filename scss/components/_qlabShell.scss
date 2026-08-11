@@ -940,6 +940,22 @@
 	font-size: 9px;
 }
 
+.qlab-qmd-workspace[data-qlab-document-readonly="true"] .qlab-qmd-tree-badge {
+	border: 1px solid currentColor;
+	font-weight: 700;
+	letter-spacing: .01em;
+}
+
+.qlab-qmd-workspace[data-qlab-document-authority="knowledge"] .qlab-qmd-tree-badge {
+	color: var(--zc-success);
+	background: color-mix(in srgb, var(--zc-success) 13%, transparent);
+}
+
+.qlab-qmd-workspace[data-qlab-document-authority="literature"] .qlab-qmd-tree-badge {
+	color: color-mix(in srgb, #9b72cf 82%, var(--zc-text));
+	background: color-mix(in srgb, #9b72cf 13%, transparent);
+}
+
 .qlab-qmd-path {
 	min-width: 0;
 	overflow: hidden;

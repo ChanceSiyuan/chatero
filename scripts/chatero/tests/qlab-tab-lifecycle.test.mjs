@@ -82,6 +82,16 @@ test("every docked QLab tab receives container-scoped workspace disposal", () =>
 	assert.match(tabsSource, /_qlabMainSiteView\?\.dispose\(\)/);
 });
 
+test("QMD remount preserves only the canonical document state authority", () => {
+	const start = moduleSource.indexOf("let preserved = preserve");
+	const end = moduleSource.indexOf("if (kind === 'qlabqmd'", start);
+	const lifecycle = moduleSource.slice(start, end);
+	assert.match(lifecycle, /documentState:\s*host\._qlabDocumentState/);
+	assert.match(lifecycle, /host\._qlabDocumentState\s*=\s*preserved\.documentState\s*\|\|\s*null/);
+	assert.match(lifecycle, /host\._qlabDocumentState\s*=\s*null/);
+	assert.doesNotMatch(lifecycle, /host\._qlabDocument\b/);
+});
+
 test("new docked QLab tab close handlers capture their container instead of global document", () => {
 	const ensureShellTab = moduleSource.slice(
 		moduleSource.indexOf("ensureShellTab(kind, payload)"),

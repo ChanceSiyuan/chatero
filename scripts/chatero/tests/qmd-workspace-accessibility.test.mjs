@@ -40,6 +40,19 @@ test("workspace styles hide icon labels and use a QMD-local compact Explorer dra
 	assert.match(source, /:focus-visible/);
 });
 
+test("readonly workspace styles make Knowledge and Literature authority visible", async () => {
+	const source = await readFile(
+		new URL("../../../scss/components/_qlabShell.scss", import.meta.url),
+		"utf8",
+	);
+	assert.match(
+		source,
+		/\.qlab-qmd-workspace\[data-qlab-document-readonly="true"\][\s\S]+?\.qlab-qmd-tree-badge/,
+	);
+	assert.match(source, /\[data-qlab-document-authority="knowledge"\][\s\S]+?\.qlab-qmd-tree-badge/);
+	assert.match(source, /\[data-qlab-document-authority="literature"\][\s\S]+?\.qlab-qmd-tree-badge/);
+});
+
 test("English Fluent catalog contains the QMD workspace vocabulary", async () => {
 	let source = await readFile(
 		new URL("../../../chrome/locale/en-US/zotero/zotero.ftl", import.meta.url),

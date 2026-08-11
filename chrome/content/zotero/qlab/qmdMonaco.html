@@ -59,7 +59,10 @@
 		let qmdDecorations = [];
 		let qmdCompletions = [];
 		let qmdSuppressChanges = false;
+		let qmdReadOnly = true;
 		let qmdMode = 'normal';
+		let qmdModelURI = '';
+		let qmdModelGeneration = 0;
 		let qmdListeners = new Set();
 		let qmdDisposables = [];
 		let qmdDisposed = false;
@@ -82,6 +85,23 @@
 		function subscribeQmdMonaco(listener) {
 			qmdListeners.add(listener);
 			return () => qmdListeners.delete(listener);
+		}
+
+		function currentQmdModelIdentity() {
+			if (qmdMode !== 'normal' || !qmdEditor || !qmdNormalModel
+					|| !qmdModelURI || !Number.isSafeInteger(qmdModelGeneration)
+					|| qmdModelGeneration < 1) return null;
+			let model = qmdEditor.getModel();
+			let uri = model && model.uri && model.uri.toString();
+			if (model !== qmdNormalModel || uri !== qmdModelURI) return null;
+			return { modelURI: uri, modelGeneration: qmdModelGeneration };
+		}
+
+		function emitQmdModelEvent(event) {
+			let identity = currentQmdModelIdentity();
+			if (!identity) return false;
+			emitQmdMonaco({ ...event, ...identity });
+			return true;
 		}
 
 		qmdPointerActivity = event => {
@@ -130,15 +150,17 @@
 						minimap: { enabled: false },
 						scrollBeyondLastLine: false,
 						padding: { top: 12, bottom: 28 },
+						readOnly: true,
+						domReadOnly: true,
 					});
 					qmdDisposables.push(qmdEditor.onDidChangeModelContent(() => {
-						if (!qmdSuppressChanges && qmdMode === 'normal') {
-							emitQmdMonaco({ type: 'change', text: qmdEditor.getValue() });
+						if (!qmdReadOnly && !qmdSuppressChanges && qmdMode === 'normal') {
+							emitQmdModelEvent({ type: 'change', text: qmdEditor.getValue() });
 						}
 					}));
 					qmdDisposables.push(qmdEditor.onDidChangeCursorPosition(event => {
 						let model = qmdEditor.getModel();
-						emitQmdMonaco({
+						emitQmdModelEvent({
 							type: 'cursor',
 							lineNumber: event.position.lineNumber,
 							column: event.position.column,
@@ -146,7 +168,9 @@
 						});
 					}));
 					qmdEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
-						emitQmdMonaco({ type: 'command', command: 'save' });
+						if (!qmdReadOnly) {
+							emitQmdModelEvent({ type: 'command', command: 'save' });
+						}
 					});
 					qmdEditor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyK, () => {
 						let model = qmdEditor.getModel();
@@ -154,13 +178,24 @@
 						let selectionText = model ? model.getValueInRange(selection) : '';
 						let start = model ? model.getOffsetAt(selection.getStartPosition()) : 0;
 						let end = model ? model.getOffsetAt(selection.getEndPosition()) : 0;
-						emitQmdMonaco({
-							type: 'command',
-							command: selectionText && end > start ? 'chat-selection' : 'ai',
-							selection: selectionText,
-							start,
-							end,
-						});
+						if (selectionText && end > start) {
+							emitQmdModelEvent({
+								type: 'command',
+								command: 'chat-selection',
+								selection: selectionText,
+								start,
+								end,
+							});
+						}
+						else if (!qmdReadOnly) {
+							emitQmdModelEvent({
+								type: 'command',
+								command: 'ai',
+								selection: selectionText,
+								start,
+								end,
+							});
+						}
 					});
 					qmdCompletionProvider = monaco.languages.registerCompletionItemProvider('markdown', {
 						triggerCharacters: ['@', ':'],
@@ -205,14 +240,20 @@
 			return qmdLoadPromise;
 		}
 
-		function modelFor(uri, text) {
+		function modelFor(uri, text, language = 'markdown') {
 			let modelURI = qmdMonaco.Uri.parse(uri);
 			let model = qmdMonaco.editor.getModel(modelURI);
 			if (!model) {
-				model = qmdMonaco.editor.createModel(text, 'markdown', modelURI);
+				model = qmdMonaco.editor.createModel(text, language, modelURI);
 			}
-			else if (model.getValue() !== text) {
-				model.setValue(text);
+			else {
+				let currentLanguage = typeof model.getLanguageId === 'function'
+					? model.getLanguageId()
+					: model.language;
+				if (currentLanguage !== language) {
+					qmdMonaco.editor.setModelLanguage(model, language);
+				}
+				if (model.getValue() !== text) model.setValue(text);
 			}
 			let eol = text.includes('\r\n')
 				? qmdMonaco.editor.EndOfLineSequence.CRLF
@@ -225,6 +266,9 @@
 			await loadQmdMonaco();
 			if (qmdDisposed) return false;
 			qmdMode = 'normal';
+			qmdReadOnly = payload.options?.readOnly !== false;
+			qmdModelURI = String(payload.uri || '');
+			qmdModelGeneration = Number(payload.generation);
 			qmdSuppressChanges = true;
 			try {
 				qmdDiffEditor?.setModel(null);
@@ -232,8 +276,16 @@
 				qmdDiffEditor = null;
 				document.getElementById('qmd-diff').style.display = 'none';
 				document.getElementById('qmd-normal').style.display = '';
-				qmdNormalModel = modelFor(payload.uri, String(payload.text || ''));
-				qmdEditor.updateOptions(payload.options || {});
+				qmdNormalModel = modelFor(
+					payload.uri,
+					String(payload.text || ''),
+					String(payload.language || 'markdown'),
+				);
+				qmdEditor.updateOptions({
+					...(payload.options || {}),
+					readOnly: qmdReadOnly,
+					domReadOnly: qmdReadOnly,
+				});
 				qmdEditor.setModel(qmdNormalModel);
 				qmdCompletions = Array.isArray(payload.completions) ? payload.completions : [];
 				setQmdDecorations(payload.decorations || []);
@@ -262,9 +314,32 @@
 				});
 			}
 			qmdDiffEditor.setModel({
-				original: modelFor(payload.original.uri, String(payload.original.text || '')),
-				modified: modelFor(payload.modified.uri, String(payload.modified.text || '')),
+				original: modelFor(payload.original.uri, String(payload.original.text || ''), 'markdown'),
+				modified: modelFor(payload.modified.uri, String(payload.modified.text || ''), 'markdown'),
 			});
+			return true;
+		}
+
+		async function clearQmdSelection() {
+			await loadQmdMonaco();
+			if (qmdDisposed || !qmdEditor) return false;
+			let position = qmdEditor.getPosition() || { lineNumber: 1, column: 1 };
+			qmdEditor.setSelection({
+				startLineNumber: position.lineNumber,
+				startColumn: position.column,
+				endLineNumber: position.lineNumber,
+				endColumn: position.column,
+			});
+			return true;
+		}
+
+		async function showQmdSearch() {
+			await loadQmdMonaco();
+			if (qmdDisposed || !qmdEditor) return false;
+			let action = qmdEditor.getAction && qmdEditor.getAction('actions.find');
+			if (!action || typeof action.run !== 'function') return false;
+			qmdEditor.focus();
+			await action.run();
 			return true;
 		}
 
@@ -325,6 +400,8 @@
 		function disposeQmdMonaco() {
 			if (qmdDisposed) return;
 			qmdDisposed = true;
+			qmdModelURI = '';
+			qmdModelGeneration = 0;
 			if (qmdPointerActivity) {
 				document.removeEventListener
 					&& document.removeEventListener('pointerdown', qmdPointerActivity, true);

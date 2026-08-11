@@ -204,6 +204,7 @@ const xpcomFilesLocal = [
 	'qlab/qmdLanguage',
 	'qlab/qmdExplorer',
 	'qlab/workspaceDocumentRouter',
+	'qlab/qmdReadonlyIO',
 	'qlab/qmdMonacoBridge',
 	'qlab/qmdMathRender',
 	'qlab/qmdMarkdownLite',

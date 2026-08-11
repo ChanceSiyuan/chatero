@@ -233,6 +233,185 @@ test("QMD Source Command-K keeps an oversized exact UTF-16 selection and does no
 	assert.equal(tabs.selectedID, "reader-41");
 });
 
+function readonlyQmdWindow(QLab, { relativePath, source, selection = null }) {
+	const descriptor = QLab.createWorkspaceDocumentDescriptor({ relativePath });
+	const qmdHost = {
+		_qlabMountTabID: "qlabqmd",
+		_qlabSurfaceMode: "source",
+		_qlabBuffer: "caller-forged stale buffer",
+		_qlabMonacoSelection: selection,
+		_qlabDraftState: null,
+		_qlabDocumentState: Object.freeze({
+			document: descriptor,
+			path: descriptor.relativePath,
+			revision: "verified-1",
+		}),
+		_qlabQmdWorkspace: {
+			documentSnapshot: () => Object.freeze({
+				document: descriptor,
+				path: descriptor.relativePath,
+				text: source,
+				revision: "verified-1",
+				disposed: false,
+			}),
+		},
+		ownerDocument: { activeElement: null, getSelection: () => "" },
+		querySelector: () => null,
+	};
+	const chatHost = {
+		ownerDocument: { createElement: () => ({ firstElementChild: null }) },
+		querySelector: () => null,
+	};
+	const qmdContainer = { querySelector: selector => selector === ".qlab-shell-host" ? qmdHost : null };
+	const chatContainer = { querySelector: selector => selector === ".qlab-shell-host" ? chatHost : null };
+	const tabs = {
+		_tabs: [
+			{ id: "qlabqmd", type: "qlabqmd", data: {} },
+			{ id: "qlabchat", type: "qlabchat", data: {} },
+		],
+		selectedID: "qlabqmd",
+		isTabVisible: id => id === "qlabchat",
+		_qlab: { ensureShellTab() {} },
+	};
+	const windowRef = {
+		Zotero_Tabs: tabs,
+		document: {
+			getElementById(id) {
+				if (id === "qlabqmd") return qmdContainer;
+				if (id === "qlab-chat-utility-content") return chatContainer;
+				return null;
+			},
+		},
+	};
+	return { descriptor, qmdHost, windowRef };
+}
+
+test("readonly QMD Chat attaches only an exact active-session selection with canonical provenance", async t => {
+	const QLab = await loadQLab();
+	QLab.ChatComposerContext.clear();
+	const source = "# Evidence\n\nselected theorem\n";
+	const selected = "selected theorem";
+	const start = source.indexOf(selected);
+	const { descriptor, qmdHost, windowRef } = readonlyQmdWindow(QLab, {
+		relativePath: "literature/paper.md",
+		source,
+		selection: { start, end: start + selected.length, text: selected },
+	});
+	let genericReads = 0;
+	const oldRead = QLab.readWorkspaceRel;
+	const oldSearch = QLab.workspaceSearch;
+	QLab.readWorkspaceRel = async () => { genericReads++; throw new Error("must not read"); };
+	QLab.workspaceSearch = async () => { genericReads++; throw new Error("must not search"); };
+	t.after(() => {
+		QLab.readWorkspaceRel = oldRead;
+		QLab.workspaceSearch = oldSearch;
+	});
+
+	const tag = await QLab.addCurrentContextToChat(windowRef, {
+		qmdHost,
+		preference: "selection",
+		focus: false,
+	});
+	assert.equal(tag.kind, "qmd-selection");
+	assert.equal(tag.text, selected);
+	assert.equal(tag.origin.relativePath, descriptor.relativePath);
+	assert.equal(tag.origin.start, start);
+	assert.equal(tag.origin.end, start + selected.length);
+	assert.equal(tag.origin.revision, "verified-1");
+	assert.equal(tag.stableKey, `qmd-selection:${descriptor.relativePath}`);
+	assert.equal(genericReads, 0);
+});
+
+test("readonly QMD Chat refuses whole-document context and current-Draft picker forgery", async t => {
+	const QLab = await loadQLab();
+	QLab.ChatComposerContext.clear();
+	const { qmdHost, windowRef } = readonlyQmdWindow(QLab, {
+		relativePath: "knowledge/topic.qmd",
+		source: "# Private knowledge\n",
+		selection: null,
+	});
+	let genericReads = 0;
+	const oldRead = QLab.readWorkspaceRel;
+	const oldSearch = QLab.workspaceSearch;
+	QLab.readWorkspaceRel = async () => { genericReads++; return "forbidden"; };
+	QLab.workspaceSearch = async () => { genericReads++; return []; };
+	t.after(() => {
+		QLab.readWorkspaceRel = oldRead;
+		QLab.workspaceSearch = oldSearch;
+	});
+
+	await assert.rejects(
+		() => QLab.addCurrentContextToChat(windowRef, { qmdHost, focus: false }),
+		/select.*text|selection/i,
+	);
+	assert.equal(QLab.ChatComposerContext.list().length, 0);
+	assert.equal(
+		QLab.listComposerAtPickerItems(windowRef).some(item => item.id.startsWith("current-draft")),
+		false,
+	);
+	await assert.rejects(
+		() => QLab.applyComposerAtPickerItem(windowRef, {
+			id: "current-draft",
+			kind: "qmd",
+			relativePath: "knowledge/topic.qmd",
+		}),
+		/selected text|read-only/i,
+	);
+	assert.equal(genericReads, 0);
+});
+
+test("readonly QMD tag reveal targets only the same verified active session without Draft loading", async t => {
+	const QLab = await loadQLab();
+	const source = "# Evidence\n\nexact result\n";
+	const selection = "exact result";
+	const start = source.indexOf(selection);
+	const { qmdHost, windowRef } = readonlyQmdWindow(QLab, {
+		relativePath: "literature/paper.md",
+		source,
+		selection: { start, end: start + selection.length, text: selection },
+	});
+	const reveals = [];
+	qmdHost._qlabQmdWorkspace.revealReadonlySelection = async request => {
+		reveals.push(request);
+		return true;
+	};
+	let draftLoads = 0;
+	let selectedTabs = 0;
+	windowRef.Zotero_Tabs.select = () => { selectedTabs++; };
+	const oldLoad = QLab.loadDraftIntoShell;
+	QLab.loadDraftIntoShell = async () => { draftLoads++; throw new Error("must not load Draft"); };
+	t.after(() => { QLab.loadDraftIntoShell = oldLoad; });
+	const tag = QLab.ChatComposerContext.add(QLab.createQmdComposerTag({
+		relativePath: "literature/paper.md",
+		source,
+		selection,
+		selectionStart: start,
+		selectionEnd: start + selection.length,
+		documentRevision: "verified-1",
+		surfaceMode: "source",
+	}));
+
+	assert.equal(await QLab.revealComposerTag(tag, windowRef), true);
+	assert.deepEqual(JSON.parse(JSON.stringify(reveals)), [{
+		relativePath: "literature/paper.md",
+		revision: "verified-1",
+		start,
+		end: start + selection.length,
+		text: selection,
+	}]);
+	assert.equal(selectedTabs, 1);
+	assert.equal(draftLoads, 0);
+
+	const mismatched = {
+		...tag,
+		origin: { ...tag.origin, revision: "different-session" },
+	};
+	assert.equal(await QLab.revealComposerTag(mismatched, windowRef), false);
+	assert.equal(reveals.length, 1);
+	assert.equal(selectedTabs, 1);
+	assert.equal(draftLoads, 0);
+});
+
 test("PDF Command-K keeps an oversized exact UTF-16 selection and does not send", async () => {
 	const exact = oversizedExactSelection("PDF selection");
 	assert.ok(exact.length > 8000);

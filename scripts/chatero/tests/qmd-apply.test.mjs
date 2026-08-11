@@ -19,6 +19,34 @@ const DOC = [
 	"",
 ].join("\n");
 
+function readonlyTarget(QLab, { buffer = DOC, pending = [] } = {}) {
+	const descriptor = QLab.createWorkspaceDocumentDescriptor({ relativePath: "literature/paper.qmd" });
+	const editor = {
+		value: buffer,
+		selectionStart: 4,
+		selectionEnd: 4,
+		focuses: 0,
+		focus() { this.focuses++; },
+		setSelectionRange(start, end) { this.selectionStart = start; this.selectionEnd = end; },
+	};
+	const host = {
+		_qlabDocumentState: Object.freeze({ document: descriptor, path: descriptor.relativePath, revision: "r1" }),
+		_qlabDraftState: null,
+		_qlabBuffer: buffer,
+		_qlabDirty: false,
+		_qlabPendingInserts: pending.map(region => ({ ...region })),
+		_qlabSurfaceMode: "source",
+		querySelector: selector => selector === "[data-qlab-editor]" ? editor : null,
+	};
+	const container = { querySelector: selector => selector === ".qlab-shell-host" ? host : null };
+	const win = {
+		Zotero_Tabs: { _tabs: [{ id: "qmd-readonly", type: "qlabqmd" }] },
+		document: { getElementById: id => id === "qmd-readonly" ? container : null },
+	};
+	host.ownerDocument = { defaultView: win };
+	return { descriptor, editor, host, win };
+}
+
 test("snapQmdOffset never lands inside the frontmatter", async () => {
 	const QLab = await loadQLab();
 	const frontmatterEnd = DOC.indexOf("---\n\n") + "---\n".length;
@@ -341,4 +369,51 @@ test("qmdAnchorOffset resolves each anchor mode", async () => {
 		QLab.qmdAnchorOffset(DOC, { mode: "before-block", blockIndex: heading }),
 		blocks[heading].start,
 	);
+});
+
+test("readonly Apply rejects PDF or Chat insertion before buffer and pending state can change", async () => {
+	const QLab = await loadQLab();
+	const target = readonlyTarget(QLab);
+	let bufferWrites = 0;
+	let pendingRenders = 0;
+	QLab.setQmdShellBuffer = () => { bufferWrites++; };
+	QLab.renderQmdPendingBar = () => { pendingRenders++; };
+
+	assert.throws(
+		() => QLab.insertIntoQmd(target.win, "ATTACK", { label: "PDF quote" }),
+		/read-only/i,
+	);
+	assert.equal(target.host._qlabBuffer, DOC);
+	assert.equal(target.host._qlabDirty, false);
+	assert.deepEqual(target.host._qlabPendingInserts, []);
+	assert.equal(target.editor.value, DOC);
+	assert.equal(target.editor.focuses, 0);
+	assert.equal(bufferWrites, 0);
+	assert.equal(pendingRenders, 0);
+});
+
+test("readonly pending Accept Reject and bulk APIs preserve source and review state", async () => {
+	const QLab = await loadQLab();
+	const inserted = QLab.composeQmdInsertion(DOC, { mode: "end" }, "Pending text.");
+	const region = { ...inserted, id: "pending-1", label: "Pending" };
+	let bufferWrites = 0;
+	let pendingRenders = 0;
+	QLab.setQmdShellBuffer = () => { bufferWrites++; };
+	QLab.renderQmdPendingBar = () => { pendingRenders++; };
+
+	for (const invoke of [
+		host => QLab.acceptPendingQmdInsert(host, region.id),
+		host => QLab.acceptPendingQmdInsert(host),
+		host => QLab.rejectPendingQmdInsert(host, region.id),
+		host => QLab.rejectAllPendingQmdInserts(host),
+	]) {
+		const target = readonlyTarget(QLab, { buffer: inserted.source, pending: [region] });
+		const beforePending = JSON.parse(JSON.stringify(target.host._qlabPendingInserts));
+		assert.equal(invoke(target.host), false);
+		assert.equal(target.host._qlabBuffer, inserted.source);
+		assert.equal(target.host._qlabDirty, false);
+		assert.deepEqual(JSON.parse(JSON.stringify(target.host._qlabPendingInserts)), beforePending);
+	}
+	assert.equal(bufferWrites, 0);
+	assert.equal(pendingRenders, 0);
 });

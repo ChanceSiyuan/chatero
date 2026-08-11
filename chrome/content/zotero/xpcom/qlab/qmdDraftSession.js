@@ -14,9 +14,64 @@
 Zotero.QLab = Zotero.QLab || {};
 
 (function () {
+	const DRAFT_CAPABILITIES = Object.freeze({
+		read: true,
+		reload: true,
+		surfaceNavigation: true,
+		websiteNavigation: true,
+		selection: true,
+		chatSelection: true,
+		edit: true,
+		save: true,
+		autosave: true,
+		proposal: true,
+		keepReject: true,
+		completeTodos: true,
+		promote: true,
+		insertFormalBlock: true,
+		externalEditor: true,
+		pdfQuote: true,
+		pendingReview: true,
+		aiWrite: true,
+		sharedBufferWrite: true,
+	});
+
+	function readonlyError() {
+		throw new Error('This workspace document is read-only');
+	}
+
+	function draftDescriptor(path) {
+		let document = Zotero.QLab.classifyWorkspaceDocument
+			? Zotero.QLab.classifyWorkspaceDocument(path)
+			: null;
+		if (!document || document.authority !== 'draft'
+				|| document.kind !== 'qmd' || document.writable !== true) {
+			throw new Error('QMD Draft session requires a safe QMD path under drafts/');
+		}
+		return Object.freeze({
+			relativePath: document.path,
+			authority: 'draft',
+			kind: 'qmd',
+			format: 'qmd',
+			readOnly: false,
+			writable: true,
+			badge: 'Draft',
+			tooltip: 'Drafts are editable and autosave in Chatero.',
+			modelLanguage: 'markdown',
+			surfaces: Object.freeze(['visual', 'website', 'source']),
+			capabilities: DRAFT_CAPABILITIES,
+		});
+	}
+
+	Zotero.QLab.createQmdDraftDocumentDescriptor = function (input = {}) {
+		return draftDescriptor(input.relativePath || input.path);
+	};
+
 	function copyState(state) {
 		return {
 			path: state.path,
+			document: state.document || null,
+			capabilities: state.capabilities || null,
 			text: state.text,
 			savedText: state.savedText,
 			revision: state.revision,
@@ -43,8 +98,11 @@ Zotero.QLab = Zotero.QLab || {};
 		if (!path || typeof onSave !== 'function') {
 			throw new Error('QMD Draft session requires a path and onSave callback');
 		}
+		let document = draftDescriptor(path);
 		let state = {
-			path: String(path),
+			path: document.relativePath,
+			document,
+			capabilities: document.capabilities,
 			text: String(text ?? ''),
 			savedText: String(text ?? ''),
 			revision: String(revision ?? ''),
@@ -120,6 +178,8 @@ Zotero.QLab = Zotero.QLab || {};
 		}
 		
 		return {
+			document,
+			capabilities: document.capabilities,
 			applyHumanEdit(nextText) {
 				if (state.disposed) {
 					return;
@@ -168,6 +228,7 @@ Zotero.QLab = Zotero.QLab || {};
 				return copyState(state);
 			},
 			dispose() {
+				if (state.disposed) return;
 				if (timer !== null) {
 					cancel(timer);
 					timer = null;
@@ -176,5 +237,76 @@ Zotero.QLab = Zotero.QLab || {};
 				emit();
 			},
 		};
+	};
+
+	Zotero.QLab.createQmdDocumentSession = function ({
+		verifiedRead,
+		onState = () => {},
+	} = {}) {
+		if (!verifiedRead || typeof verifiedRead !== 'object'
+				|| !verifiedRead.document
+				|| typeof Zotero.QLab.createWorkspaceDocumentDescriptor !== 'function'
+				|| typeof Zotero.QLab.consumeVerifiedReadonlyDocumentRead !== 'function') {
+			throw new Error('QMD read-only session requires freshly verified document bytes');
+		}
+		let normalized = Zotero.QLab.createWorkspaceDocumentDescriptor({
+			relativePath: verifiedRead.document.relativePath,
+		});
+		let state = {
+			path: normalized.relativePath,
+			document: normalized,
+			capabilities: normalized.capabilities,
+			text: String(verifiedRead.text ?? ''),
+			savedText: String(verifiedRead.text ?? ''),
+			revision: String(verifiedRead.revision ?? ''),
+			dirty: false,
+			saving: false,
+			saveError: '',
+			proposal: null,
+			disposed: false,
+		};
+		let session = {
+			document: normalized,
+			capabilities: normalized.capabilities,
+			applyHumanEdit: readonlyError,
+			saveNow: readonlyError,
+			attachProposal: readonlyError,
+			clearProposal: readonlyError,
+			applyAIEdit: readonlyError,
+			completeTodos: readonlyError,
+			promoteToKnowledge: readonlyError,
+			insertFormalBlock: readonlyError,
+			openExternalEditor: readonlyError,
+			insertPDFQuote: readonlyError,
+			addPendingInsert: readonlyError,
+			acceptPendingInsert: readonlyError,
+			rejectPendingInsert: readonlyError,
+			observeDisk(file) {
+				if (state.disposed) return false;
+				if (!Zotero.QLab.consumeVerifiedReadonlyDocumentRead
+						|| !Zotero.QLab.consumeVerifiedReadonlyDocumentRead(file, normalized, session)) {
+					throw new Error('Read-only reload requires freshly verified document bytes');
+				}
+				let diskRevision = String(file.revision || '');
+				if (diskRevision === state.revision) return false;
+				state.text = String(file.text ?? '');
+				state.savedText = state.text;
+				state.revision = diskRevision;
+				onState(copyState(state));
+				return true;
+			},
+			snapshot() {
+				return copyState(state);
+			},
+			dispose() {
+				if (state.disposed) return;
+				state.disposed = true;
+				onState(copyState(state));
+			},
+		};
+		if (!Zotero.QLab.consumeVerifiedReadonlyDocumentRead(verifiedRead, normalized, session)) {
+			throw new Error('QMD read-only session requires freshly verified document bytes');
+		}
+		return Object.freeze(session);
 	};
 })();

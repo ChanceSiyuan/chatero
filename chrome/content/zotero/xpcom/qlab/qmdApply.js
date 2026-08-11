@@ -436,10 +436,15 @@ Zotero.QLab = Zotero.QLab || {};
 			return null;
 		}
 		let state = host._qlabDraftState;
+		let document = Zotero.QLab.getQmdHostDocumentDescriptor
+			? Zotero.QLab.getQmdHostDocumentDescriptor(host)
+			: null;
 		return {
 			win: windowRef,
 			tabID: tab.id,
 			host,
+			document,
+			capabilities: document ? document.capabilities : null,
 			state: state || null,
 			draftPath: state
 				? (state.viewingWorking && state.workingPath
@@ -537,6 +542,10 @@ Zotero.QLab = Zotero.QLab || {};
 		if (!target) {
 			throw new Error('Open the QMD Editor first (⌘⇧E or ⌘⇧D)');
 		}
+		if (!target.capabilities || !target.capabilities.sharedBufferWrite
+				|| !target.capabilities.pendingReview) {
+			throw new Error('This QMD document is read-only');
+		}
 		let anchor = options.anchor || Zotero.QLab.resolveQmdAnchor(target.host);
 		let result = Zotero.QLab.composeQmdInsertion(target.buffer, anchor, snippet);
 		if (!result.changed) {
@@ -588,6 +597,7 @@ Zotero.QLab = Zotero.QLab || {};
 	 * review marker goes away.
 	 */
 	Zotero.QLab.acceptPendingQmdInsert = function (host, id) {
+		if (!Zotero.QLab.qmdHostAllows(host, 'pendingReview')) return false;
 		let pending = Zotero.QLab.pendingQmdInserts(host);
 		if (!pending.length) {
 			return false;
@@ -603,6 +613,8 @@ Zotero.QLab = Zotero.QLab || {};
 	 * Remove one region's text from the buffer and re-anchor the rest.
 	 */
 	Zotero.QLab.rejectPendingQmdInsert = function (host, id) {
+		if (!Zotero.QLab.qmdHostAllows(host, 'pendingReview')
+				|| !Zotero.QLab.qmdHostAllows(host, 'sharedBufferWrite')) return false;
 		let pending = Zotero.QLab.pendingQmdInserts(host);
 		let region = id
 			? pending.find(r => r.id === id)
@@ -633,6 +645,8 @@ Zotero.QLab = Zotero.QLab || {};
 	 * Reject newest first, so each removal keeps the older offsets valid.
 	 */
 	Zotero.QLab.rejectAllPendingQmdInserts = function (host) {
+		if (!Zotero.QLab.qmdHostAllows(host, 'pendingReview')
+				|| !Zotero.QLab.qmdHostAllows(host, 'sharedBufferWrite')) return false;
 		let pending = Zotero.QLab.pendingQmdInserts(host).slice().reverse();
 		for (let region of pending) {
 			Zotero.QLab.rejectPendingQmdInsert(host, region.id);

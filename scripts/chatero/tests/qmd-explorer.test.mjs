@@ -79,6 +79,54 @@ test("Explorer marks only Draft QMD files writable and rejects symlink escapes",
 	}
 });
 
+test("Explorer stat failures never fall back to reading Knowledge or Literature contents", async () => {
+	const QLab = await loadQLab();
+	const root = "/repo";
+	const children = new Map([
+		["/repo/drafts", []],
+		["/repo/knowledge", ["/repo/knowledge/topic.qmd"]],
+		["/repo/literature", [
+			"/repo/literature/paper.qmd",
+			"/repo/literature/notes.md",
+			"/repo/literature/ref.bib",
+			"/repo/literature/paper.pdf",
+		]],
+	]);
+	const reads = [];
+	const host = {
+		join: (...parts) => parts.join("/").replace(/\/{2,}/g, "/"),
+		filename: value => value.split("/").at(-1),
+		exists: async value => children.has(value),
+		realPath: async value => value,
+		entries: async value => {
+			if (!children.has(value)) throw new Error("not a directory");
+			return children.get(value);
+		},
+		stat: async value => {
+			if (children.has(value)) return { type: "directory", size: 0, lastModified: 1 };
+			throw new Error("metadata unavailable");
+		},
+		read: async value => {
+			reads.push(value);
+			throw new Error("Explorer must not read content");
+		},
+	};
+
+	const snapshot = await QLab.buildQmdExplorerSnapshot(root, host);
+	const readonlyFiles = flatten(Array.from(snapshot)).filter(node => (
+		node.authority === "knowledge" || node.authority === "literature"
+	) && node.kind !== "root" && node.kind !== "directory");
+	assert.deepEqual(readonlyFiles.map(node => node.path), [
+		"knowledge/topic.qmd",
+		"literature/notes.md",
+		"literature/paper.pdf",
+		"literature/paper.qmd",
+		"literature/ref.bib",
+	]);
+	assert.equal(readonlyFiles.every(node => node.revision === ""), true);
+	assert.deepEqual(reads, []);
+});
+
 test("watcher emits only when the Explorer revision changes", async () => {
 	const QLab = await loadQLab();
 	let emitted = [];

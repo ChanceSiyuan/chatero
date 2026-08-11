@@ -17,12 +17,138 @@ function chatHost() {
 	};
 }
 
+function documentStateForDraft(QLab, relativePath, revision = "r1") {
+	const document = QLab.createQmdDraftDocumentDescriptor({ relativePath });
+	return Object.freeze({ document, path: document.relativePath, revision });
+}
+
 function todoManifest(replacement = "A definition.") {
 	return JSON.stringify({
 		version: 1,
 		completions: [{ index: 0, replacement }],
 	});
 }
+
+test("readonly outer QMD APIs reject direct Save Edit Keep Chat and inline writes before side effects", async () => {
+	const QLab = await loadQLab();
+	const document = QLab.createWorkspaceDocumentDescriptor({ relativePath: "knowledge/trusted.qmd" });
+	const source = "# Trusted\n";
+	const pending = [{ id: "existing", outerText: "trusted" }];
+	const status = { textContent: "Read-only" };
+	const prompt = { value: "attack", focus() {}, select() {} };
+	const bar = {
+		hidden: true,
+		querySelector(selector) {
+			if (selector === "[data-qlab-inline-prompt]") return prompt;
+			if (selector === "[data-qlab-inline-run]") return { disabled: false };
+			if (selector === "[data-qlab-inline-stop]") return { hidden: true };
+			return null;
+		},
+	};
+	const calls = { save: 0, keep: 0, attach: 0, insert: 0, io: 0, agent: 0 };
+	const host = {
+		_qlabDocumentState: Object.freeze({
+			document,
+			path: document.relativePath,
+			revision: "r1",
+		}),
+		// Even re-injecting stale Draft state must not supersede document authority.
+		_qlabDraftState: { originalPath: "drafts/stale.qmd", workingPath: "work/stale.qmd" },
+		_qlabBuffer: source,
+		_qlabPendingInserts: pending,
+		_qlabQmdWorkspace: {
+			saveNow: async () => { calls.save++; return null; },
+			keepProposal: async () => { calls.keep++; return { kept: true }; },
+			attachProposal: async () => { calls.attach++; return true; },
+		},
+		ownerDocument: { defaultView: {} },
+		querySelector(selector) {
+			if (selector === ".qlab-shell-status") return status;
+			if (selector === "[data-qlab-inline]") return bar;
+			return null;
+		},
+	};
+	QLab.getChatMessage = () => ({ text: "malicious reply" });
+	QLab.getActiveQmdTarget = () => ({ host, document, capabilities: document.capabilities });
+	QLab.insertIntoQmd = () => { calls.insert++; return { changed: true }; };
+	QLab.QmdDraftIO.createGeckoHost = () => { calls.io++; throw new Error("IO reached"); };
+	QLab.getAgentRuntime = () => { calls.agent++; return null; };
+
+	assert.equal(QLab.applyChatMessageToQmd(host, "message-1"), null);
+	await QLab.saveDraftFromShell(host, "/workspace");
+	await QLab.editDraftWithAI(host, "/workspace", "ready");
+	assert.deepEqual(JSON.parse(JSON.stringify(
+		await QLab.keepDraftFromShell(host, "/workspace")
+	)), { kept: false, readOnly: true });
+	QLab.toggleQmdInlineBar(host, true);
+	assert.equal(bar.hidden, true);
+	await QLab.requestQmdInlineWrite({
+		host,
+		instruction: "attack",
+		root: "/workspace",
+		workspaceState: "ready",
+	});
+
+	assert.deepEqual(calls, { save: 0, keep: 0, attach: 0, insert: 0, io: 0, agent: 0 });
+	assert.equal(host._qlabBuffer, source);
+	assert.equal(host._qlabPendingInserts, pending);
+	assert.deepEqual(host._qlabPendingInserts, [{ id: "existing", outerText: "trusted" }]);
+	assert.doesNotMatch(status.textContent, /applied|proposal ready|written|saved/i);
+	assert.match(status.textContent, /read-only/i);
+});
+
+test("Chat Apply resolves and authorizes the active Draft target instead of the Chat shell", async () => {
+	const QLab = await loadQLab();
+	const document = QLab.createQmdDraftDocumentDescriptor({ relativePath: "drafts/active.qmd" });
+	const qmdHost = {
+		_qlabDocumentState: Object.freeze({
+			document,
+			path: document.relativePath,
+			revision: "r1",
+		}),
+	};
+	const win = {};
+	const chatStatus = { textContent: "" };
+	const chatHost = {
+		ownerDocument: { defaultView: win },
+		querySelector: selector => selector === ".qlab-shell-status" ? chatStatus : null,
+	};
+	let inserts = 0;
+	QLab.getActiveQmdTarget = candidate => {
+		assert.equal(candidate, win);
+		return { host: qmdHost, document, capabilities: document.capabilities };
+	};
+	QLab.getChatMessage = (candidate, messageID) => {
+		assert.equal(candidate, chatHost);
+		assert.equal(messageID, "message-1");
+		return { text: "Draft insertion" };
+	};
+	QLab.insertIntoQmd = (candidate, text) => {
+		assert.equal(candidate, win);
+		assert.equal(text, "Draft insertion");
+		inserts += 1;
+		return { changed: true };
+	};
+
+	assert.deepEqual(JSON.parse(JSON.stringify(
+		QLab.applyChatMessageToQmd(chatHost, "message-1")
+	)), { changed: true });
+	assert.equal(inserts, 1);
+	assert.match(chatStatus.textContent, /applied/i);
+});
+
+test("missing document authority reports Open a Draft instead of claiming readonly", async () => {
+	const QLab = await loadQLab();
+	const status = { textContent: "" };
+	const host = {
+		_qlabDocumentState: null,
+		querySelector: selector => selector === ".qlab-shell-status" ? status : null,
+	};
+
+	assert.equal(await QLab.saveDraftFromShell(host, "/workspace"), null);
+	assert.match(status.textContent, /open a draft/i);
+	assert.doesNotMatch(status.textContent, /read-only/i);
+});
 
 test("Draft review makes Chat visible and records a read-only review turn", async () => {
 	const QLab = await loadQLab();
@@ -445,6 +571,7 @@ test("ordinary Draft AI rejects a symlinked action parent before touching or cle
 		QLab.Settings.getAgentProviderId = () => "test";
 		const status = { textContent: "" };
 		const host = {
+			_qlabDocumentState: documentStateForDraft(QLab, prepared.originalPath),
 			_qlabDraftState: { originalPath: prepared.originalPath },
 			_qlabQmdWorkspace: {
 				attachProposal: async () => {
@@ -497,6 +624,7 @@ test("ordinary Draft AI promotes an isolated action result into the cumulative p
 		let attached;
 		const status = { textContent: "" };
 		const host = {
+			_qlabDocumentState: documentStateForDraft(QLab, prepared.originalPath),
 			_qlabDraftState: { originalPath: prepared.originalPath },
 			_qlabQmdWorkspace: { attachProposal: async (...args) => { attached = args; } },
 			querySelector: selector => selector === ".qlab-shell-status" ? status : null,
@@ -544,6 +672,7 @@ test("ordinary Draft AI failure discards its action copy and leaves the cumulati
 		let attached = false;
 		const status = { textContent: "" };
 		const host = {
+			_qlabDocumentState: documentStateForDraft(QLab, prepared.originalPath),
 			_qlabDraftState: { originalPath: prepared.originalPath },
 			_qlabQmdWorkspace: { attachProposal: async () => { attached = true; } },
 			querySelector: selector => selector === ".qlab-shell-status" ? status : null,
@@ -599,6 +728,7 @@ test("ordinary Draft AI late failure preserves a concurrently updated proposal",
 		let attached = false;
 		const status = { textContent: "" };
 		const host = {
+			_qlabDocumentState: documentStateForDraft(QLab, prepared.originalPath),
 			_qlabDraftState: { originalPath: prepared.originalPath },
 			_qlabQmdWorkspace: { attachProposal: async () => { attached = true; } },
 			querySelector: selector => selector === ".qlab-shell-status" ? status : null,
@@ -644,6 +774,7 @@ test("ordinary Draft AI slow success cannot overwrite a newer proposal", async (
 		let attached = false;
 		const status = { textContent: "" };
 		const host = {
+			_qlabDocumentState: documentStateForDraft(QLab, prepared.originalPath),
 			_qlabDraftState: { originalPath: prepared.originalPath },
 			_qlabQmdWorkspace: { attachProposal: async () => { attached = true; } },
 			querySelector: selector => selector === ".qlab-shell-status" ? status : null,
@@ -698,6 +829,7 @@ test("successive inline AI writes append to the latest cumulative proposal", asy
 		let attached;
 		const status = { textContent: "" };
 		const host = {
+			_qlabDocumentState: documentStateForDraft(QLab, "drafts/note.qmd"),
 			_qlabBuffer: original,
 			_qlabDraftState: { originalPath: "drafts/note.qmd" },
 			_qlabQmdWorkspace: {
@@ -757,6 +889,7 @@ test("successive inline rewrite reanchors the human selection in the cumulative 
 		let attached;
 		const status = { textContent: "" };
 		const host = {
+			_qlabDocumentState: documentStateForDraft(QLab, prepared.originalPath),
 			_qlabBuffer: original,
 			_qlabMonacoSelection: { start, end: start + "Target paragraph.".length },
 			_qlabDraftState: { originalPath: prepared.originalPath },
@@ -813,6 +946,7 @@ test("successive Visual Edit inline rewrite reanchors the active block in the cu
 		let attached;
 		const status = { textContent: "" };
 		const host = {
+			_qlabDocumentState: documentStateForDraft(QLab, prepared.originalPath),
 			_qlabBuffer: original,
 			_qlabSurfaceMode: "visual",
 			_qlabActiveBlockIndex: 1,
@@ -869,6 +1003,7 @@ test("slow inline AI result cannot overwrite a newer proposal", async () => {
 		let attached = false;
 		const status = { textContent: "" };
 		const host = {
+			_qlabDocumentState: documentStateForDraft(QLab, prepared.originalPath),
 			_qlabBuffer: original,
 			_qlabDraftState: { originalPath: prepared.originalPath },
 			_qlabQmdWorkspace: {
@@ -917,6 +1052,7 @@ test("slow inline AI result cannot overwrite after the human Draft changes", asy
 		let attached = false;
 		const status = { textContent: "" };
 		const host = {
+			_qlabDocumentState: documentStateForDraft(QLab, "drafts/note.qmd"),
 			_qlabBuffer: original,
 			_qlabDraftState: { originalPath: "drafts/note.qmd" },
 			_qlabQmdWorkspace: {

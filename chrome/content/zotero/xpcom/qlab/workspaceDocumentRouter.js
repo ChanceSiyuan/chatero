@@ -26,6 +26,67 @@ Zotero.QLab = Zotero.QLab || {};
 	// construct a new router and must not make a revoked host access reusable.
 	const CONSUMED_CAPABILITIES = new WeakSet();
 	const CONSUMED_ACCESS = new WeakSet();
+	const ROUTE_STAGES = new WeakMap();
+
+	function synchronousCallback(callback, name) {
+		if (typeof callback !== 'function') {
+			throw new Error(`Workspace document route stage requires a ${name} callback`);
+		}
+		let tag = Object.prototype.toString.call(callback);
+		if (tag === '[object AsyncFunction]' || callback.constructor?.name === 'AsyncFunction') {
+			throw new Error(`Workspace document route stage ${name} callback must be synchronous`);
+		}
+		return callback;
+	}
+
+	Zotero.QLab.createWorkspaceDocumentRouteStage = function ({ commit, rollback } = {}) {
+		let token = Object.freeze(Object.create(null));
+		ROUTE_STAGES.set(token, {
+			commit: synchronousCallback(commit, 'commit'),
+			rollback: synchronousCallback(rollback, 'rollback'),
+			status: 'pending',
+		});
+		return token;
+	};
+
+	function pendingRouteStage(value) {
+		let state = value && ROUTE_STAGES.get(value);
+		return state && state.status === 'pending' ? state : null;
+	}
+
+	function invokeRouteStage(token, action) {
+		let state = token && ROUTE_STAGES.get(token);
+		if (!state) return false;
+		if (action === 'commit' && state.status !== 'pending') return false;
+		if (action === 'rollback'
+				&& state.status !== 'pending' && state.status !== 'commit-failed') return false;
+		state.status = action === 'commit' ? 'committing' : 'rolling-back';
+		try {
+			let result = state[action]();
+			if (result && typeof result.then === 'function') {
+				Promise.resolve(result).catch(error => {
+					Zotero.logError && Zotero.logError(error);
+				});
+				state.status = action === 'commit' ? 'commit-failed' : 'rolled-back';
+				return false;
+			}
+			let accepted = result === true;
+			state.status = action === 'commit'
+				? (accepted ? 'committed' : 'commit-failed')
+				: 'rolled-back';
+			return accepted;
+		}
+		catch (error) {
+			state.status = action === 'commit' ? 'commit-failed' : 'rolled-back';
+			Zotero.logError && Zotero.logError(error);
+			return false;
+		}
+	}
+
+	function requiresStagedCommit(decision) {
+		return decision && (decision.action === 'open-readonly-qmd'
+			|| decision.action === 'open-readonly-bib');
+	}
 
 	function refuse(reason) {
 		return Object.freeze({ action: 'refuse', reason: String(reason || 'unsafe-document') });
@@ -286,6 +347,8 @@ Zotero.QLab = Zotero.QLab || {};
 					return refuse('verified-document-capability-mismatch');
 				}
 				let operationResult;
+				let routeStage = null;
+				let stagedDecision = null;
 				if (!verifiedCapabilityMatches(capability, verificationRequest)) {
 					operationResult = refuse('verified-document-capability-mismatch');
 				}
@@ -332,15 +395,39 @@ Zotero.QLab = Zotero.QLab || {};
 								// snapshot above and this bridge invocation.
 								let bridgePromise = bridge(decision, capability);
 								let bridgeResult = await bridgePromise;
-								operationResult = bridgeResult === true
-									? decision : refuse('routing-bridge-refused');
+								if (requiresStagedCommit(decision)) {
+									if (pendingRouteStage(bridgeResult)) {
+										routeStage = bridgeResult;
+										stagedDecision = decision;
+									}
+									else operationResult = refuse('routing-stage-required');
+								}
+								else {
+									operationResult = bridgeResult === true
+										? decision : refuse('routing-bridge-refused');
+								}
 							}
 						}
 					}
 				}
 				catch (error) { operationResult = refuse('document-lease-operation-failed'); }
 				let released = await releaseCapability(capability);
-				if (!released) return refuse('document-lease-release-failed');
+				if (!released) {
+					if (routeStage) invokeRouteStage(routeStage, 'rollback');
+					return refuse('document-lease-release-failed');
+				}
+				if (routeStage) {
+					let finalSelection = await selectedState();
+					if (!sameSelection(initialSelection, finalSelection)) {
+						invokeRouteStage(routeStage, 'rollback');
+						return refuse('selected-repository-changed');
+					}
+					if (!invokeRouteStage(routeStage, 'commit')) {
+						invokeRouteStage(routeStage, 'rollback');
+						return refuse('routing-stage-commit-failed');
+					}
+					return stagedDecision;
+				}
 				return operationResult;
 			},
 		});

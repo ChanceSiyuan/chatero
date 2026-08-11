@@ -254,8 +254,11 @@ async function createVisualEditor(options = {}) {
 		onStatus: (...args) => statuses.push(args),
 	});
 	document.body.appendChild(editor.root);
-	editor.setDocument({ source, revision }, true, 1);
-	return { QLab, document, editor, saves, statuses, source: () => source };
+	const documentDescriptor = QLab.createQmdDraftDocumentDescriptor({
+		relativePath: "drafts/visual.qmd",
+	});
+	editor.setDocument({ source, revision, document: documentDescriptor }, documentDescriptor, 1);
+	return { QLab, document, documentDescriptor, editor, saves, statuses, source: () => source };
 }
 
 async function settle() {
@@ -923,10 +926,64 @@ test("Visual Edit inserts canonical formal cards through the guarded save path",
 	]);
 });
 
+test("editable to readonly Visual reuse cancels stale saves and leaves theorem and formula interactions inert", async () => {
+	const mounted = await createVisualEditor();
+	const paragraph = mounted.editor.root.querySelector('[data-block-kind="paragraph"]');
+	paragraph.click();
+	const staleTextarea = paragraph.querySelector("textarea");
+	staleTextarea.value = "stale Draft mutation";
+	staleTextarea.event("input", { bubbles: false });
+
+	const readonly = mounted.QLab.createWorkspaceDocumentDescriptor({
+		relativePath: "knowledge/topic.qmd",
+	});
+	mounted.editor.setDocument({
+		source: VISUAL_SOURCE,
+		revision: "ro1",
+		document: readonly,
+	}, readonly, 2);
+	assert.equal(mounted.editor.root.getAttribute("aria-label"), "Visual QMD view");
+	assert.equal(mounted.editor.root.getAttribute("aria-readonly"), "true");
+	mounted.statuses.length = 0;
+	staleTextarea.blur();
+	await new Promise(resolve => setTimeout(resolve, 450));
+	await settle();
+
+	for (const selector of [
+		"header",
+		".zc-qmd-visual-card-body",
+		".qlab-qmd-math-inline",
+		".qlab-qmd-math-display",
+	]) {
+		const card = mounted.editor.root.querySelector(".zc-qmd-visual-card.is-thm");
+		card.querySelector(selector).click();
+		assert.equal(mounted.editor.root.querySelector(".zc-qmd-visual-source-editor"), null, selector);
+		assert.equal(mounted.editor.root.querySelector(".zc-qmd-visual-math-editor"), null, selector);
+	}
+	const card = mounted.editor.root.querySelector(".zc-qmd-visual-card.is-thm");
+	card.focus();
+	card.event("keydown", { key: "Enter", target: card, bubbles: false });
+	assert.equal(mounted.editor.isEditing(), false);
+	await assert.rejects(() => mounted.editor.insertFormalBlock("thm"), /read-only/i);
+	assert.equal(mounted.saves.length, 0);
+	assert.equal(mounted.statuses.some(([, state]) => ["editing", "saving"].includes(state)), false);
+	assert.deepEqual(JSON.parse(JSON.stringify(mounted.editor.snapshot())), {
+		source: VISUAL_SOURCE,
+		revision: "ro1",
+	});
+	mounted.editor.setDocument({
+		source: VISUAL_SOURCE,
+		revision: "draft-again",
+		document: mounted.documentDescriptor,
+	}, mounted.documentDescriptor, 3);
+	assert.equal(mounted.editor.root.getAttribute("aria-label"), "Visual QMD editor");
+	assert.equal(mounted.editor.root.getAttribute("aria-readonly"), "false");
+});
+
 test("Visual Edit suppresses a failed save from an obsolete document generation", async () => {
 	const oldSave = deferred();
 	const calls = [];
-	const { editor, statuses } = await createVisualEditor({
+	const { editor, statuses, documentDescriptor } = await createVisualEditor({
 		save: (next, expected, generation) => {
 			calls.push({ next, expected, generation });
 			return oldSave.promise;
@@ -942,7 +999,11 @@ test("Visual Edit suppresses a failed save from an obsolete document generation"
 	assert.deepEqual(calls.map(call => [call.expected, call.generation]), [["r1", 1]]);
 
 	const newerSource = `${VISUAL_SOURCE}\nGeneration two.\n`;
-	editor.setDocument({ source: newerSource, revision: "r2" }, true, 2);
+	editor.setDocument({
+		source: newerSource,
+		revision: "r2",
+		document: documentDescriptor,
+	}, documentDescriptor, 2);
 	oldSave.reject(new Error("old conflict"));
 	await settle();
 
@@ -955,7 +1016,7 @@ test("Visual Edit suppresses a failed save from an obsolete document generation"
 
 test("Visual Edit ignores a successful save result from an obsolete generation", async () => {
 	const oldSave = deferred();
-	const { editor } = await createVisualEditor({ save: () => oldSave.promise });
+	const { editor, documentDescriptor } = await createVisualEditor({ save: () => oldSave.promise });
 	const paragraph = editor.root.querySelector('[data-block-kind="paragraph"]');
 	paragraph.click();
 	const textarea = paragraph.querySelector("textarea");
@@ -965,7 +1026,11 @@ test("Visual Edit ignores a successful save result from an obsolete generation",
 	await Promise.resolve();
 
 	const newerSource = `${VISUAL_SOURCE}\nGeneration two.\n`;
-	editor.setDocument({ source: newerSource, revision: "r2" }, true, 2);
+	editor.setDocument({
+		source: newerSource,
+		revision: "r2",
+		document: documentDescriptor,
+	}, documentDescriptor, 2);
 	oldSave.resolve({ source: "stale generation one", revision: "r1-saved" });
 	await settle();
 

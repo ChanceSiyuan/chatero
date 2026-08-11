@@ -16,6 +16,8 @@ test("dedicated QMD Monaco host exposes the parent bridge contract", async () =>
 		"setQmdDiff",
 		"setQmdDiagnostics",
 		"revealQmdRange",
+		"clearQmdSelection",
+		"showQmdSearch",
 		"snapshotQmdView",
 		"disposeQmdMonaco",
 	]) {
@@ -59,33 +61,81 @@ async function executeMonacoHost({ selectionText = "", selectionStart = 0 } = {}
 	const html = await readFile(hostPath, "utf8");
 	const scripts = [...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g)];
 	const source = scripts.at(-1)[1]
-		+ "\n;globalThis.__qmdHost = { loadQmdMonaco, subscribeQmdMonaco, setQmdModel, disposeQmdMonaco };";
+		+ "\n;globalThis.__qmdHost = { loadQmdMonaco, subscribeQmdMonaco, setQmdModel, "
+		+ "clearQmdSelection: typeof clearQmdSelection === 'function' ? clearQmdSelection : undefined, "
+		+ "showQmdSearch: typeof showQmdSearch === 'function' ? showQmdSearch : undefined, disposeQmdMonaco };";
 	let amdReady;
 	let editors = 0;
 	let revoked = [];
 	let listeners = new Map();
 	let commands = new Map();
+	let changeListener;
+	let cursorListener;
 	let nextWorker = 0;
 	const models = [];
+	const optionUpdates = [];
+	const languageUpdates = [];
+	const selections = [];
+	let searches = 0;
+	let currentModel = null;
+	let currentPosition = { lineNumber: 1, column: 1 };
+	let currentSelectionText = selectionText;
+	let currentSelectionStart = selectionStart;
 	const selection = {
-		getStartPosition: () => ({ offset: selectionStart }),
-		getEndPosition: () => ({ offset: selectionStart + selectionText.length }),
+		getStartPosition: () => ({ offset: currentSelectionStart }),
+		getEndPosition: () => ({ offset: currentSelectionStart + currentSelectionText.length }),
 	};
 	const activeModel = {
-		getValueInRange: () => selectionText,
+		getValueInRange: () => currentSelectionText,
 		getOffsetAt: position => position.offset,
 	};
 	const editor = {
 		dispose() {},
-		onDidChangeModelContent: () => ({ dispose() {} }),
-		onDidChangeCursorPosition: () => ({ dispose() {} }),
+		onDidChangeModelContent(listener) { changeListener = listener; return { dispose() {} }; },
+		onDidChangeCursorPosition(listener) { cursorListener = listener; return { dispose() {} }; },
 		addCommand(keybinding, listener) { commands.set(keybinding, listener); },
-		getModel: () => activeModel,
+		getModel: () => currentModel || activeModel,
 		getSelection: () => selection,
+		getValue: () => currentModel ? currentModel.getValue() : "",
+		getPosition: () => currentPosition,
+		setModel(model) { currentModel = model; },
+		updateOptions(options) { optionUpdates.push({ ...options }); },
+		deltaDecorations: () => [],
+		setSelection(value) { selections.push(value); },
+		setPosition(value) { currentPosition = value; },
+		focus() {},
+		layout() {},
+		getAction(id) {
+			return { run: async () => { if (id === "actions.find") searches++; } };
+		},
 	};
+	function uri(value) {
+		return { toString: () => value };
+	}
+	function createModel(text, language, modelURI) {
+		let value = String(text);
+		const model = {
+			uri: modelURI,
+			language,
+			getValue: () => value,
+			setValue(next) { value = String(next); },
+			setEOL() {},
+			getOffsetAt(position) { return Number(position.offset) || 0; },
+			getPositionAt(offset) { return { lineNumber: 1, column: Number(offset) + 1 }; },
+			getValueInRange: () => currentSelectionText,
+			dispose() {},
+		};
+		models.push(model);
+		return model;
+	}
 	const monaco = {
 		KeyMod: { CtrlCmd: 1 },
 		KeyCode: { KeyS: 1, KeyK: 2 },
+		Range: class {
+			constructor(startLineNumber, startColumn, endLineNumber, endColumn) {
+				Object.assign(this, { startLineNumber, startColumn, endLineNumber, endColumn });
+			}
+		},
 		languages: {
 			CompletionItemInsertTextRule: { InsertAsSnippet: 1 },
 			CompletionItemKind: { Reference: 1, Snippet: 2 },
@@ -96,8 +146,20 @@ async function executeMonacoHost({ selectionText = "", selectionStart = 0 } = {}
 				editors++;
 				return editor;
 			},
+			createModel,
+			getModel(modelURI) {
+				return models.find(model => model.uri.toString() === modelURI.toString()) || null;
+			},
+			setModelLanguage(model, language) {
+				model.language = language;
+				languageUpdates.push([model.uri.toString(), language]);
+			},
+			setModelMarkers() {},
+			EndOfLineSequence: { CRLF: 1, LF: 2 },
 			getModels: () => models,
 		},
+		Uri: { parse: uri },
+		MarkerSeverity: { Warning: 1, Error: 2 },
 	};
 	const require = (_dependencies, ready) => { amdReady = ready; };
 	require.config = () => {};
@@ -128,11 +190,161 @@ async function executeMonacoHost({ selectionText = "", selectionStart = 0 } = {}
 		api: context.__qmdHost,
 		completeAMD: () => amdReady(),
 		triggerCommand: keybinding => commands.get(keybinding)?.(),
+		triggerChange: () => changeListener?.(),
+		triggerCursor: position => cursorListener?.({ position }),
+		setSelection(text, start = 0) {
+			currentSelectionText = text;
+			currentSelectionStart = start;
+		},
 		editors: () => editors,
+		optionUpdates,
+		languageUpdates,
+		models,
+		selections,
+		searches: () => searches,
 		revoked,
 		listeners,
 	};
 }
+
+test("one Monaco iframe explicitly resets readonly options in both directions", async () => {
+	const host = await executeMonacoHost();
+	const loading = host.api.loadQmdMonaco();
+	host.completeAMD();
+	await loading;
+
+	await host.api.setQmdModel({
+		uri: "inmemory://qlab/drafts/a.qmd",
+		text: "draft",
+		language: "markdown",
+		options: { readOnly: false, domReadOnly: false },
+	});
+	await host.api.setQmdModel({
+		uri: "inmemory://qlab/literature/paper.md",
+		text: "evidence",
+		language: "markdown",
+		options: { readOnly: true, domReadOnly: true },
+	});
+	await host.api.setQmdModel({
+		uri: "inmemory://qlab/drafts/a.qmd",
+		text: "draft again",
+		language: "markdown",
+		options: { readOnly: false, domReadOnly: false },
+	});
+
+	assert.deepEqual(host.optionUpdates.map(options => [options.readOnly, options.domReadOnly]), [
+		[false, false], [true, true], [false, false],
+	]);
+});
+
+test("Monaco emits no write events before the first trusted document payload", async () => {
+	const host = await executeMonacoHost();
+	const events = [];
+	host.api.subscribeQmdMonaco(event => events.push(JSON.parse(JSON.stringify(event))));
+	const loading = host.api.loadQmdMonaco();
+	host.completeAMD();
+	await loading;
+	events.length = 0;
+
+	host.triggerChange();
+	host.triggerCommand(1);
+	host.setSelection("", 4);
+	host.triggerCommand(3);
+	assert.deepEqual(events, []);
+});
+
+test("readonly iframe suppresses change Save and empty Command-K but keeps cursor and selected Chat context", async () => {
+	const host = await executeMonacoHost();
+	const events = [];
+	host.api.subscribeQmdMonaco(event => events.push(JSON.parse(JSON.stringify(event))));
+	const loading = host.api.loadQmdMonaco();
+	host.completeAMD();
+	await loading;
+	await host.api.setQmdModel({
+		uri: "inmemory://qlab/literature/paper.md",
+		generation: 17,
+		text: "external evidence",
+		language: "markdown",
+		options: { readOnly: true, domReadOnly: true },
+	});
+	events.length = 0;
+
+	host.triggerChange();
+	host.triggerCommand(1);
+	host.setSelection("", 4);
+	host.triggerCommand(3);
+	host.triggerCursor({ lineNumber: 1, column: 6, offset: 5 });
+	assert.deepEqual(events.map(event => event.type), ["cursor"]);
+
+	host.setSelection("exact evidence", 9);
+	host.triggerCommand(3);
+	assert.deepEqual(events.at(-1), {
+		type: "command",
+		command: "chat-selection",
+		selection: "exact evidence",
+		start: 9,
+		end: 23,
+		modelURI: "inmemory://qlab/literature/paper.md",
+		modelGeneration: 17,
+	});
+});
+
+test("Monaco stamps cursor and command events with the installed model URI and generation", async () => {
+	const host = await executeMonacoHost();
+	const events = [];
+	host.api.subscribeQmdMonaco(event => events.push(JSON.parse(JSON.stringify(event))));
+	const loading = host.api.loadQmdMonaco();
+	host.completeAMD();
+	await loading;
+	await host.api.setQmdModel({
+		uri: "inmemory://qlab/knowledge/topic.qmd",
+		generation: 23,
+		text: "exact knowledge",
+		language: "markdown",
+		options: { readOnly: true, domReadOnly: true },
+	});
+	events.length = 0;
+	host.triggerCursor({ lineNumber: 1, column: 6, offset: 5 });
+	host.setSelection("exact", 0);
+	host.triggerCommand(3);
+	assert.deepEqual(events.map(event => ({
+		type: event.type,
+		modelURI: event.modelURI,
+		modelGeneration: event.modelGeneration,
+	})), [
+		{ type: "cursor", modelURI: "inmemory://qlab/knowledge/topic.qmd", modelGeneration: 23 },
+		{ type: "command", modelURI: "inmemory://qlab/knowledge/topic.qmd", modelGeneration: 23 },
+	]);
+});
+
+test("Monaco creates a real bibtex model, changes reused languages, clears selection, and opens citekey search", async () => {
+	const host = await executeMonacoHost();
+	const loading = host.api.loadQmdMonaco();
+	host.completeAMD();
+	await loading;
+	const uri = "inmemory://qlab/literature/references.bib";
+	await host.api.setQmdModel({
+		uri,
+		text: "@book{safe}",
+		language: "bibtex",
+		options: { readOnly: true, domReadOnly: true },
+	});
+	assert.equal(host.models.find(model => model.uri.toString() === uri).language, "bibtex");
+
+	await host.api.setQmdModel({
+		uri,
+		text: "@book{safe2}",
+		language: "markdown",
+		options: { readOnly: true, domReadOnly: true },
+	});
+	assert.equal(host.models.find(model => model.uri.toString() === uri).language, "markdown");
+	assert.deepEqual(host.languageUpdates.at(-1), [uri, "markdown"]);
+
+	await host.api.clearQmdSelection();
+	assert.ok(host.selections.length > 0);
+	await host.api.showQmdSearch();
+	assert.equal(host.searches(), 1);
+});
 
 test("Command-K routes an exact non-empty Monaco selection to Chat context", async () => {
 	const exact = "  f(u,G,x) = F(V_r)\nwith preserved whitespace  ";
@@ -142,6 +354,14 @@ test("Command-K routes an exact non-empty Monaco selection to Chat context", asy
 	const loading = host.api.loadQmdMonaco();
 	host.completeAMD();
 	await loading;
+	await host.api.setQmdModel({
+		uri: "inmemory://qlab/knowledge/exact.qmd",
+		generation: 31,
+		text: exact,
+		language: "markdown",
+		options: { readOnly: true, domReadOnly: true },
+	});
+	events.length = 0;
 
 	host.triggerCommand(3);
 
@@ -151,6 +371,8 @@ test("Command-K routes an exact non-empty Monaco selection to Chat context", asy
 		selection: exact,
 		start: 17,
 		end: 17 + exact.length,
+		modelURI: "inmemory://qlab/knowledge/exact.qmd",
+		modelGeneration: 31,
 	});
 });
 
@@ -161,6 +383,14 @@ test("Command-K retains inline AI writing when Monaco has no selection", async (
 	const loading = host.api.loadQmdMonaco();
 	host.completeAMD();
 	await loading;
+	await host.api.setQmdModel({
+		uri: "inmemory://qlab/drafts/a.qmd",
+		generation: 32,
+		text: "editable Draft",
+		language: "markdown",
+		options: { readOnly: false, domReadOnly: false },
+	});
+	events.length = 0;
 
 	host.triggerCommand(3);
 
@@ -170,6 +400,8 @@ test("Command-K retains inline AI writing when Monaco has no selection", async (
 		selection: "",
 		start: 29,
 		end: 29,
+		modelURI: "inmemory://qlab/drafts/a.qmd",
+		modelGeneration: 32,
 	});
 });
 

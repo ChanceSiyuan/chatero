@@ -100,6 +100,7 @@ test("failed save preserves the dirty buffer and exposes the error", async () =>
 test("proposal state and disposal are explicit and cancel scheduled work", async () => {
 	const QLab = await loadQLab();
 	let cancelled = [];
+	let states = 0;
 	let session = QLab.createQmdDraftSession({
 		path: "drafts/a.qmd",
 		text: "old",
@@ -107,6 +108,7 @@ test("proposal state and disposal are explicit and cancel scheduled work", async
 		schedule: () => 17,
 		cancel: id => cancelled.push(id),
 		onSave: async () => ({ revision: "r2" }),
+		onState: () => { states++; },
 	});
 	session.attachProposal({ workingPath: "work/qlab-zotero/draft-changes/x/draft.qmd" });
 	assert.equal(session.snapshot().proposal.workingPath,
@@ -114,8 +116,11 @@ test("proposal state and disposal are explicit and cancel scheduled work", async
 	session.clearProposal();
 	assert.equal(session.snapshot().proposal, null);
 	session.applyHumanEdit("new");
+	const statesBeforeDispose = states;
+	session.dispose();
 	session.dispose();
 	assert.deepEqual(cancelled, [17]);
+	assert.equal(states, statesBeforeDispose + 1, "disposal must be observable exactly once");
 	assert.equal(session.snapshot().disposed, true);
 });
 

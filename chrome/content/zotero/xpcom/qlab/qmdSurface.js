@@ -40,6 +40,51 @@ Zotero.QLab = Zotero.QLab || {};
 	};
 
 	const MODES = ['visual', 'website', 'source'];
+
+	function normalizedHostDescriptor(relativePath) {
+		let classification = Zotero.QLab.classifyWorkspaceDocument
+			? Zotero.QLab.classifyWorkspaceDocument(relativePath)
+			: null;
+		if (!classification) return null;
+		try {
+			return classification.authority === 'draft'
+				? Zotero.QLab.createQmdDraftDocumentDescriptor({ relativePath: classification.path })
+				: Zotero.QLab.createWorkspaceDocumentDescriptor({ relativePath: classification.path });
+		}
+		catch (error) {
+			return null;
+		}
+	}
+
+	function matchingHostDescriptor(candidate, path) {
+		let normalized = normalizedHostDescriptor(path);
+		if (!normalized || !candidate || !Object.isFrozen(candidate)
+				|| !Object.isFrozen(candidate.capabilities)
+				|| !Object.isFrozen(candidate.surfaces)) return null;
+		for (let name of ['relativePath', 'authority', 'kind', 'format', 'readOnly', 'writable']) {
+			if (candidate[name] !== normalized[name]) return null;
+		}
+		for (let name of ['edit', 'save', 'pendingReview', 'sharedBufferWrite', 'surfaceNavigation']) {
+			if (candidate.capabilities[name] !== normalized.capabilities[name]) return null;
+		}
+		// A caller-held descriptor is evidence to validate, never the authority we
+		// execute with. Returning the path-derived descriptor closes capability
+		// injection through fields that older callers did not know to compare.
+		return normalized;
+	}
+
+	Zotero.QLab.getQmdHostDocumentDescriptor = function (host) {
+		if (!host) return null;
+		let state = host._qlabDocumentState;
+		if (!state || !Object.isFrozen(state)
+				|| state.path !== state.document?.relativePath) return null;
+		return matchingHostDescriptor(state.document, state.path);
+	};
+
+	Zotero.QLab.qmdHostAllows = function (host, capability) {
+		let descriptor = Zotero.QLab.getQmdHostDocumentDescriptor(host);
+		return !!descriptor && descriptor.capabilities[String(capability || '')] === true;
+	};
 	
 	Zotero.QLab.QMD_SURFACE_MODES = MODES;
 	
@@ -104,9 +149,7 @@ Zotero.QLab = Zotero.QLab || {};
 	 *   programmatic insert shows up without a mode switch.
 	 */
 	Zotero.QLab.setQmdShellBuffer = function (host, text, { dirty = true, render = false } = {}) {
-		if (!host) {
-			return;
-		}
+		if (!host || !Zotero.QLab.qmdHostAllows(host, 'sharedBufferWrite')) return false;
 		host._qlabBuffer = String(text ?? '');
 		host._qlabDirty = !!dirty;
 		if (dirty && host._qlabQmdWorkspace && host._qlabQmdWorkspace.setBuffer) {
@@ -117,7 +160,7 @@ Zotero.QLab = Zotero.QLab || {};
 			editor.value = host._qlabBuffer;
 		}
 		if (!render) {
-			return;
+			return true;
 		}
 		let mode = Zotero.QLab.normalizeQmdSurfaceMode(host._qlabSurfaceMode);
 		if (mode === 'visual') {
@@ -126,6 +169,7 @@ Zotero.QLab = Zotero.QLab || {};
 		else if (mode === 'website') {
 			void Zotero.QLab.refreshQmdWebsitePane(host);
 		}
+		return true;
 	};
 	
 	/**
@@ -194,6 +238,12 @@ Zotero.QLab = Zotero.QLab || {};
 		if (!bar) {
 			return;
 		}
+		if (!Zotero.QLab.qmdHostAllows(host, 'pendingReview')) {
+			host._qlabPendingInserts = [];
+			bar.hidden = true;
+			bar.replaceChildren();
+			return false;
+		}
 		let pending = Zotero.QLab.pendingQmdInserts
 			? Zotero.QLab.pendingQmdInserts(host)
 			: [];
@@ -229,6 +279,7 @@ Zotero.QLab = Zotero.QLab || {};
 	 * Scroll to a pending region and select it in Source view.
 	 */
 	Zotero.QLab.revealQmdPendingRegion = function (host, id) {
+		if (!Zotero.QLab.qmdHostAllows(host, 'pendingReview')) return false;
 		let region = (Zotero.QLab.pendingQmdInserts(host) || []).find(r => r.id === id);
 		if (!region) {
 			return;
@@ -266,6 +317,7 @@ Zotero.QLab = Zotero.QLab || {};
 			return;
 		}
 		let next = Zotero.QLab.normalizeQmdSurfaceMode(mode);
+		let descriptor = Zotero.QLab.getQmdHostDocumentDescriptor(host);
 		// Once the native workspace is mounted, it owns all three resident
 		// surfaces. Legacy XPI callers may still request a mode during chrome
 		// refresh; delegate instead of replacing the native Visual Editor DOM.
@@ -274,9 +326,11 @@ Zotero.QLab = Zotero.QLab || {};
 			void host._qlabQmdWorkspace.showSurface(next);
 			return;
 		}
+		if (!descriptor || !descriptor.capabilities.surfaceNavigation
+				|| !descriptor.surfaces.includes(next)) return false;
 		// Flush source textarea into buffer before leaving Source.
 		let editor = host.querySelector('[data-qlab-editor]');
-		if (editor) {
+		if (editor && descriptor.capabilities.sharedBufferWrite) {
 			Zotero.QLab.setQmdShellBuffer(host, editor.value, {
 				dirty: host._qlabDirty || editor.value !== (host._qlabLastSaved || editor.value),
 			});
@@ -310,13 +364,14 @@ Zotero.QLab = Zotero.QLab || {};
 		else if (status && !options.silent) {
 			status.textContent = 'Source · edit QMD markdown directly';
 		}
+		return true;
 	};
 	
 	/**
 	 * Pending regions that overlap a visual block's source range.
 	 */
 	Zotero.QLab.pendingRegionsForQmdBlock = function (host, block) {
-		if (!block) {
+		if (!block || !Zotero.QLab.qmdHostAllows(host, 'pendingReview')) {
 			return [];
 		}
 		let pending = Zotero.QLab.pendingQmdInserts
@@ -353,9 +408,15 @@ Zotero.QLab = Zotero.QLab || {};
 			let card = pane.ownerDocument.createElement('div');
 			card.className = `qlab-qmd-visual-block is-${block.kind}`;
 			card.dataset.qlabBlockIndex = String(i);
-			card.setAttribute('tabindex', '0');
-			card.setAttribute('role', 'button');
-			card.title = 'Click to edit this QMD block';
+			let canEdit = Zotero.QLab.qmdHostAllows(host, 'edit');
+			if (canEdit) {
+				card.setAttribute('tabindex', '0');
+				card.setAttribute('role', 'button');
+				card.title = 'Click to edit this QMD block';
+			}
+			else {
+				card.title = 'Read-only QMD block';
+			}
 			
 			let overlapping = Zotero.QLab.pendingRegionsForQmdBlock(host, block);
 			if (overlapping.length) {
@@ -420,6 +481,7 @@ Zotero.QLab = Zotero.QLab || {};
 	 * Open one visual block as an inline source editor (Cursor-like live edit).
 	 */
 	Zotero.QLab.beginQmdVisualBlockEdit = function (host, blockIndex) {
+		if (!Zotero.QLab.qmdHostAllows(host, 'edit')) return false;
 		let pane = host.querySelector('[data-qlab-surface="visual"]');
 		if (!pane || !pane._qlabBlocks) {
 			return;
@@ -484,12 +546,27 @@ Zotero.QLab = Zotero.QLab || {};
 				Zotero.QLab.renderQmdVisualPane(host);
 			}
 		});
+		return true;
 	};
 	
 	/**
 	 * Refresh Website pane: Quarto URL if live, else soft HTML srcdoc.
 	 */
+	Zotero.QLab.releaseQmdWebsitePreviewLease = function (host) {
+		let lease = host && host._qlabWebsitePreviewLease;
+		if (!lease) return false;
+		host._qlabWebsitePreviewLease = null;
+		lease.owner.released = true;
+		if (typeof Zotero.QLab.stopQmdQuartoPreview === 'function') {
+			Zotero.QLab.stopQmdQuartoPreview(lease.root, lease.path, { owner: lease.owner });
+		}
+		return true;
+	};
+
 	Zotero.QLab.refreshQmdWebsitePane = async function (host, options = {}) {
+		if (!Zotero.QLab.qmdHostAllows(host, 'websiteNavigation')) return false;
+		let documentState = host && host._qlabDocumentState;
+		let documentIsCurrent = () => host && host._qlabDocumentState === documentState;
 		let pane = host && host.querySelector('[data-qlab-surface="website"]');
 		if (!pane) {
 			return;
@@ -503,15 +580,30 @@ Zotero.QLab = Zotero.QLab || {};
 		let liveUrl = host._qlabWebsiteUrl || '';
 		let quartoError = '';
 		if (Zotero.QLab.startQmdQuartoPreview && state) {
+			let previewOwner = { released: false };
+			let root = options.root || (Zotero.QLab.Settings && Zotero.QLab.Settings.getRoot()) || '';
+			let path = state.viewingWorking && state.workingPath
+				? state.workingPath
+				: state.originalPath;
+			let releasePreview = () => {
+				previewOwner.released = true;
+				if (typeof Zotero.QLab.stopQmdQuartoPreview === 'function') {
+					Zotero.QLab.stopQmdQuartoPreview(root, path, { owner: previewOwner });
+				}
+			};
 			try {
-				let root = options.root || (Zotero.QLab.Settings && Zotero.QLab.Settings.getRoot()) || '';
-				let path = state.viewingWorking && state.workingPath
-					? state.workingPath
-					: state.originalPath;
-				liveUrl = await Zotero.QLab.startQmdQuartoPreview(root, path);
+				liveUrl = await Zotero.QLab.startQmdQuartoPreview(root, path, { owner: previewOwner });
+				if (!documentIsCurrent()) {
+					releasePreview();
+					return false;
+				}
+				Zotero.QLab.releaseQmdWebsitePreviewLease(host);
+				host._qlabWebsitePreviewLease = { root, path, owner: previewOwner };
 				host._qlabWebsiteUrl = liveUrl;
 			}
 			catch (e) {
+				releasePreview();
+				if (!documentIsCurrent()) return false;
 				Zotero.logError && Zotero.logError(e);
 				host._qlabWebsiteUrl = '';
 				quartoError = e.message || String(e);
@@ -520,19 +612,25 @@ Zotero.QLab = Zotero.QLab || {};
 		}
 		
 		if (liveUrl && frame) {
+			if (!documentIsCurrent()) return false;
 			frame.removeAttribute('srcdoc');
+			if (!documentIsCurrent()) return false;
 			frame.setAttribute('src', liveUrl);
 			if (meta) {
+				if (!documentIsCurrent()) return false;
 				meta.textContent = `Quarto website · ${liveUrl}`;
 			}
 			return;
 		}
 		
 		if (frame) {
+			if (!documentIsCurrent()) return false;
 			frame.removeAttribute('src');
+			if (!documentIsCurrent()) return false;
 			frame.removeAttribute('srcdoc');
 		}
 		if (meta) {
+			if (!documentIsCurrent()) return false;
 			meta.textContent = quartoError
 				|| 'Quarto preview unavailable — install Quarto and ensure drafts/_quarto.yml exists.';
 		}

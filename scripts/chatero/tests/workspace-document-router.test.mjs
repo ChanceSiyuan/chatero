@@ -516,6 +516,99 @@ test("false or throwing release overrides every operation result", async () => {
 	}
 });
 
+test("readonly QMD and Bib bridges must return an opaque staged route", async () => {
+	const QLab = await loadQLab();
+	for (const relativePath of ["literature/paper.md", "literature/ref.bib"]) {
+		const bridgeName = relativePath.endsWith(".bib") ? "openReadonlyBib" : "openReadonlyQmd";
+		const forged = Object.freeze({
+			commit: () => true,
+			rollback: () => true,
+		});
+		for (const bridgeResult of [true, forged]) {
+			const result = await QLab.createWorkspaceDocumentRouter(securityBridges({
+				[bridgeName]: () => bridgeResult,
+			})).open({ root: ROOT, relativePath });
+			assert.equal(result.action, "refuse", `${relativePath}: ${String(bridgeResult)}`);
+			assert.equal(result.reason, "routing-stage-required");
+		}
+	}
+});
+
+test("readonly staged routes release the lease and recheck repository epoch before commit", async () => {
+	const QLab = await loadQLab();
+	const order = [];
+	let selectionReads = 0;
+	const stage = QLab.createWorkspaceDocumentRouteStage({
+		commit() { order.push("commit"); return true; },
+		rollback() { order.push("rollback"); return true; },
+	});
+	const router = QLab.createWorkspaceDocumentRouter(securityBridges({
+		getSelectedRepositoryState: async () => {
+			order.push(`selection:${++selectionReads}`);
+			return Object.freeze({ root: ROOT, epoch: 7 });
+		},
+		acquireVerifiedDocument: async request => {
+			order.push("acquire");
+			return verifiedCapability(request);
+		},
+		openReadonlyQmd: () => { order.push("prepare"); return stage; },
+		releaseVerifiedDocument: async () => { order.push("release"); return true; },
+	}));
+
+	const result = await router.open({ root: ROOT, relativePath: "literature/paper.md" });
+	assert.equal(result.action, "open-readonly-qmd");
+	assert.deepEqual(order, [
+		"selection:1", "acquire", "selection:2", "prepare", "release", "selection:3", "commit",
+	]);
+});
+
+test("readonly staged routes rollback without commit when release or final epoch validation fails", async () => {
+	const QLab = await loadQLab();
+	for (const failure of ["release-false", "release-throw", "epoch-change"]) {
+		let commits = 0;
+		let rollbacks = 0;
+		let selectionReads = 0;
+		const stage = QLab.createWorkspaceDocumentRouteStage({
+			commit() { commits++; return true; },
+			rollback() { rollbacks++; return true; },
+		});
+		const router = QLab.createWorkspaceDocumentRouter(securityBridges({
+			getSelectedRepositoryState: async () => Object.freeze({
+				root: ROOT,
+				epoch: failure === "epoch-change" && ++selectionReads === 3 ? 8 : 7,
+			}),
+			openReadonlyQmd: () => stage,
+			releaseVerifiedDocument: async () => {
+				if (failure === "release-throw") throw new Error("release failed");
+				return failure !== "release-false";
+			},
+		}));
+		const result = await router.open({ root: ROOT, relativePath: "literature/paper.md" });
+		assert.equal(result.action, "refuse", failure);
+		assert.equal(result.reason, failure === "epoch-change"
+			? "selected-repository-changed" : "document-lease-release-failed");
+		assert.equal(commits, 0, failure);
+		assert.equal(rollbacks, 1, failure);
+	}
+});
+
+test("readonly staged routes rollback once when commit refuses or throws", async () => {
+	const QLab = await loadQLab();
+	for (const commit of [() => false, () => { throw new Error("commit failed"); }]) {
+		let rollbacks = 0;
+		const stage = QLab.createWorkspaceDocumentRouteStage({
+			commit,
+			rollback() { rollbacks++; return true; },
+		});
+		const result = await QLab.createWorkspaceDocumentRouter(securityBridges({
+			openReadonlyQmd: () => stage,
+		})).open({ root: ROOT, relativePath: "literature/paper.md" });
+		assert.equal(result.action, "refuse");
+		assert.equal(result.reason, "routing-stage-commit-failed");
+		assert.equal(rollbacks, 1);
+	}
+});
+
 test("every acquired capability is released after mismatch, reuse, or action refusal", async () => {
 	const QLab = await loadQLab();
 	let mismatchReleases = 0;
@@ -558,6 +651,10 @@ test("the complete fixed action table dispatches only inside the guard with its 
 	const QLab = await loadQLab();
 	const order = [];
 	const calls = [];
+	const stagedSuccess = () => QLab.createWorkspaceDocumentRouteStage({
+		commit: () => true,
+		rollback: () => true,
+	});
 	const bridges = securityBridges({
 		findAttachment: async (capability) => capability.relativePath.endsWith("matched.pdf") ? 77 : null,
 		acquireVerifiedDocument: async request => {
@@ -569,8 +666,8 @@ test("the complete fixed action table dispatches only inside the guard with its 
 			return true;
 		},
 		openDraft: (...args) => { order.push("bridge:draft"); calls.push(["draft", ...args]); return true; },
-		openReadonlyQmd: (...args) => { order.push("bridge:readonly-qmd"); calls.push(["readonly-qmd", ...args]); return true; },
-		openReadonlyBib: (...args) => { order.push("bridge:readonly-bib"); calls.push(["readonly-bib", ...args]); return true; },
+		openReadonlyQmd: (...args) => { order.push("bridge:readonly-qmd"); calls.push(["readonly-qmd", ...args]); return stagedSuccess(); },
+		openReadonlyBib: (...args) => { order.push("bridge:readonly-bib"); calls.push(["readonly-bib", ...args]); return stagedSuccess(); },
 		openKnowledgeSite: (...args) => { order.push("bridge:site"); calls.push(["site", ...args]); return true; },
 		openNativeReader: (...args) => { order.push("bridge:reader"); calls.push(["reader", ...args]); return true; },
 		reviewPDFLink: (...args) => { order.push("bridge:review"); calls.push(["review", ...args]); return true; },

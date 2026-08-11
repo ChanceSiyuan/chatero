@@ -75,6 +75,103 @@ test("Reader quote action uses an unambiguous blockquote glyph", async () => {
 	assert.match(hooks, /button\.setAttribute\('aria-label', title\)/);
 });
 
+test("Reader PDF quote rejects a readonly QMD target before the insertion boundary", async () => {
+	const hooks = await readFile(join(qlabRoot, "readerHooks.js"), "utf8");
+	const QLab = await loadQLab();
+	const documentDescriptor = QLab.createWorkspaceDocumentDescriptor({
+		relativePath: "literature/paper.qmd",
+	});
+	const source = "# Evidence\n";
+	const pending = [{ id: "existing", outerText: "evidence" }];
+	const host = {
+		_qlabDocumentState: Object.freeze({
+			document: documentDescriptor,
+			path: documentDescriptor.relativePath,
+			revision: "r1",
+		}),
+		_qlabDraftState: { originalPath: "drafts/stale.qmd" },
+		_qlabBuffer: source,
+		_qlabPendingInserts: pending,
+		_qlabSurfaceMode: "source",
+		querySelector: () => null,
+	};
+	const container = { querySelector: selector => selector === ".qlab-shell-host" ? host : null };
+	const mainWindow = {
+		Zotero_Tabs: { _tabs: [{ id: "qlabqmd", type: "qlabqmd" }] },
+		document: { getElementById: id => id === "qlabqmd" ? container : null },
+	};
+	const registered = new Map();
+	const alerts = [];
+	let insertCalls = 0;
+	const realInsertIntoQmd = QLab.insertIntoQmd;
+	QLab.insertIntoQmd = (...args) => {
+		insertCalls++;
+		return realInsertIntoQmd(...args);
+	};
+	QLab.ensureQmdPaneVisible = async () => "qlabqmd";
+	QLab.ReaderContextStore = {
+		captureFromEvent: async () => {},
+		get: () => ({
+			selection: { text: "exact PDF evidence", pageNumber: 4 },
+			attachment: { id: 71, key: "ATTACH", libraryID: 1, filename: "paper.pdf" },
+			parent: { title: "Paper" },
+		}),
+	};
+	function element(tagName) {
+		const listeners = new Map();
+		return {
+			tagName,
+			children: [],
+			style: {},
+			className: "",
+			setAttribute() {},
+			append(child) { this.children.push(child); },
+			appendChild(child) { this.children.push(child); },
+			addEventListener(type, listener) { listeners.set(type, listener); },
+			click() {
+				listeners.get("click")?.({ preventDefault() {}, stopPropagation() {} });
+			},
+		};
+	}
+	const readerWindow = { addEventListener() {}, removeEventListener() {} };
+	const doc = {
+		defaultView: readerWindow,
+		head: { append() {} },
+		querySelector: () => null,
+		createElement: element,
+	};
+	const Zotero = {
+		QLab,
+		Reader: {
+			registerEventListener(type, listener) { registered.set(type, listener); },
+			unregisterEventListener() {},
+		},
+		Libraries: { get: () => ({ groupID: null }) },
+		getMainWindow: () => mainWindow,
+		logError() {},
+		alert(_win, _title, message) { alerts.push(message); },
+	};
+	runInNewContext(hooks, { Zotero }, { filename: "readerHooks.js" });
+	QLab.registerReaderHooks();
+	let group;
+	registered.get("renderTextSelectionPopup")({
+		doc,
+		reader: { itemID: 71, _window: mainWindow },
+		params: { annotation: { text: "exact PDF evidence" } },
+		append(value) { group = value; },
+	});
+	group.children[1].click();
+	await new Promise(resolve => setTimeout(resolve, 0));
+
+	assert.equal(insertCalls, 0);
+	assert.equal(host._qlabBuffer, source);
+	assert.equal(host._qlabPendingInserts, pending);
+	assert.deepEqual(host._qlabPendingInserts, [{ id: "existing", outerText: "evidence" }]);
+	assert.equal(alerts.length, 1);
+	assert.match(alerts[0], /read-only/i);
+	QLab.unregisterReaderHooks();
+});
+
 test("Reader hooks register every rendered Reader document and guard the Chat-opening action once", async () => {
 	const hooks = await readFile(join(qlabRoot, "readerHooks.js"), "utf8");
 	assert.match(hooks, /attachReaderDocument\(doc\)/);
@@ -537,6 +634,13 @@ test("Reader Command-K attaches the exact PDF selection once and focuses floatin
 	QLab.ensureQmdPaneVisible = async (windowRef, options) => {
 		calls.push(["quote-visible", windowRef, options]);
 	};
+	QLab.getActiveQmdTarget = () => ({
+		capabilities: {
+			pdfQuote: true,
+			pendingReview: true,
+			sharedBufferWrite: true,
+		},
+	});
 	QLab.insertIntoQmd = (windowRef, snippet, options) => {
 		calls.push(["quote", windowRef, snippet, options]);
 	};

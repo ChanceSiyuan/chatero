@@ -187,6 +187,17 @@ Zotero.QLab = Zotero.QLab || {};
 			await Zotero.QLab.ensureQmdPaneVisible(win, {
 				itemID: ctx.attachment && ctx.attachment.id,
 			});
+			let target = Zotero.QLab.getActiveQmdTarget
+				? Zotero.QLab.getActiveQmdTarget(win)
+				: null;
+			if (!target) {
+				throw new Error('Open the QMD Editor first (⌘⇧E or ⌘⇧D)');
+			}
+			if (!target.capabilities || target.capabilities.pdfQuote !== true
+					|| target.capabilities.pendingReview !== true
+					|| target.capabilities.sharedBufferWrite !== true) {
+				throw new Error('This QMD document is read-only');
+			}
 			let groupID;
 			try {
 				let library = Zotero.Libraries.get(ctx.attachment.libraryID);

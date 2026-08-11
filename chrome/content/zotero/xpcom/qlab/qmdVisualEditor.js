@@ -200,6 +200,33 @@ Zotero.QLab = Zotero.QLab || {};
 		return fragment;
 	}
 
+	function validatedVisualDocument(snapshot, candidate) {
+		if (candidate == null && (!snapshot || snapshot.document == null)) return null;
+		if (!candidate || snapshot.document !== candidate
+				|| !Object.isFrozen(candidate) || !Object.isFrozen(candidate.capabilities)
+				|| !Object.isFrozen(candidate.surfaces)) {
+			throw new Error('Visual Edit requires a frozen workspace document descriptor');
+		}
+		let classification = Zotero.QLab.classifyWorkspaceDocument
+			? Zotero.QLab.classifyWorkspaceDocument(candidate.relativePath)
+			: null;
+		if (!classification) throw new Error('Visual Edit document path is unsafe');
+		let normalized = classification.authority === 'draft'
+			? Zotero.QLab.createQmdDraftDocumentDescriptor({ relativePath: classification.path })
+			: Zotero.QLab.createWorkspaceDocumentDescriptor({ relativePath: classification.path });
+		for (let name of ['relativePath', 'authority', 'kind', 'format', 'readOnly', 'writable']) {
+			if (candidate[name] !== normalized[name]) {
+				throw new Error('Visual Edit document descriptor does not match its safe path');
+			}
+		}
+		for (let name of ['edit', 'save', 'autosave', 'insertFormalBlock', 'sharedBufferWrite']) {
+			if (candidate.capabilities[name] !== normalized.capabilities[name]) {
+				throw new Error('Visual Edit document capabilities do not match its safe path');
+			}
+		}
+		return candidate;
+	}
+
 	/**
 	 * Create a resident source-driven Visual Editor. The shared Draft session
 	 * supplies the only persistence callback; compiled Website HTML is never
@@ -212,6 +239,7 @@ Zotero.QLab = Zotero.QLab || {};
 		let source = '';
 		let revision = '';
 		let generation = 0;
+		let documentDescriptor = null;
 		let editable = false;
 		let disposed = false;
 		let active = null;
@@ -241,6 +269,11 @@ Zotero.QLab = Zotero.QLab || {};
 		async function flushActive() {
 			let edit = active;
 			if (!edit) {
+				return;
+			}
+			if (!editable || edit.generation !== generation
+					|| !documentDescriptor || !documentDescriptor.capabilities.save) {
+				cancelActive();
 				return;
 			}
 			if (edit.timer) {
@@ -275,7 +308,7 @@ Zotero.QLab = Zotero.QLab || {};
 					throw new Error('Visual Edit requires a Draft save callback');
 				}
 				let snapshot = await options.save(result.source, revision, edit.generation);
-				if (disposed || active !== edit || edit.generation !== generation) {
+				if (disposed || !editable || active !== edit || edit.generation !== generation) {
 					return;
 				}
 				source = String(snapshot && snapshot.source || result.source);
@@ -319,14 +352,14 @@ Zotero.QLab = Zotero.QLab || {};
 
 		function scheduleSave() {
 			let edit = active;
-			if (!edit) {
+			if (!edit || !editable || !documentDescriptor?.capabilities.autosave) {
 				return;
 			}
 			if (edit.timer) {
 				clearTimeout(edit.timer);
 			}
 			edit.timer = setTimeout(() => {
-				if (active !== edit) {
+				if (!editable || active !== edit || edit.generation !== generation) {
 					return;
 				}
 				edit.timer = null;
@@ -335,6 +368,7 @@ Zotero.QLab = Zotero.QLab || {};
 		}
 
 		function beginEdit(block, element, replacement) {
+			if (!editable || !documentDescriptor?.capabilities.edit) return;
 			let initial = replacement(element.value);
 			active = {
 				block,
@@ -348,7 +382,8 @@ Zotero.QLab = Zotero.QLab || {};
 				generation,
 			};
 			element.addEventListener('input', () => {
-				if (!active || active.element !== element) {
+				if (!editable || !active || active.element !== element
+						|| active.generation !== generation) {
 					return;
 				}
 				active.text = active.replacement(element.value);
@@ -356,6 +391,8 @@ Zotero.QLab = Zotero.QLab || {};
 				scheduleSave();
 			});
 			element.addEventListener('keydown', event => {
+				if (!editable || !active || active.element !== element
+						|| active.generation !== generation) return;
 				if (event.key === 'Escape') {
 					event.preventDefault();
 					cancelActive();
@@ -367,7 +404,8 @@ Zotero.QLab = Zotero.QLab || {};
 				}
 			});
 			element.addEventListener('blur', () => {
-				if (!active || active.element !== element) {
+				if (!editable || !active || active.element !== element
+						|| active.generation !== generation) {
 					return;
 				}
 				active.text = active.replacement(element.value);
@@ -566,12 +604,17 @@ Zotero.QLab = Zotero.QLab || {};
 
 		return {
 			root,
-			setDocument(snapshot, canEdit, nextGeneration = 0) {
+			setDocument(snapshot, descriptor, nextGeneration = 0) {
 				cancelActive();
+				documentDescriptor = validatedVisualDocument(snapshot, descriptor);
 				source = String(snapshot && snapshot.source || '');
 				revision = String(snapshot && snapshot.revision || '');
 				generation = nextGeneration;
-				editable = !!canEdit;
+				editable = !!documentDescriptor
+					&& documentDescriptor.capabilities.edit === true
+					&& documentDescriptor.capabilities.save === true;
+				root.setAttribute('aria-label', `Visual QMD ${editable ? 'editor' : 'view'}`);
+				root.setAttribute('aria-readonly', editable ? 'false' : 'true');
 				selectedBlockId = null;
 				render();
 			},
@@ -586,12 +629,19 @@ Zotero.QLab = Zotero.QLab || {};
 				if (!edit) {
 					return;
 				}
+				if (!editable || edit.generation !== generation) {
+					cancelActive();
+					return;
+				}
 				edit.text = edit.replacement(edit.element.value);
 				edit.closeAfterSave = true;
 				await flushActive();
 			},
 			async insertFormalBlock(kind) {
-				if (!editable || disposed) {
+				if (!editable || !documentDescriptor?.capabilities.insertFormalBlock) {
+					throw new Error('The Visual document is read-only');
+				}
+				if (disposed) {
 					throw new Error('Visual Edit is not ready for insertion');
 				}
 				if (inserting) {

@@ -56,6 +56,27 @@ Zotero.QLab = Zotero.QLab || {};
 		let value = params && params.annotation && params.annotation.text;
 		return value === null || value === undefined ? '' : String(value);
 	}
+
+	function qmdHostDescriptor(host) {
+		return host && Zotero.QLab.getQmdHostDocumentDescriptor
+			? Zotero.QLab.getQmdHostDocumentDescriptor(host)
+			: null;
+	}
+
+	function readonlySessionSnapshot(host, descriptor) {
+		let workspace = host && host._qlabQmdWorkspace;
+		let snapshot = workspace && typeof workspace.documentSnapshot === 'function'
+			? workspace.documentSnapshot()
+			: null;
+		if (!snapshot || !Object.isFrozen(snapshot) || snapshot.disposed
+				|| snapshot.path !== descriptor.relativePath
+				|| snapshot.document?.relativePath !== descriptor.relativePath
+				|| snapshot.document?.readOnly !== true
+				|| typeof snapshot.text !== 'string') {
+			throw new Error('Read-only Chat selection requires the active verified document session');
+		}
+		return snapshot;
+	}
 	
 	Zotero.QLab.ChatComposerContext = {
 		_tags: [],
@@ -223,6 +244,7 @@ Zotero.QLab = Zotero.QLab || {};
 		selection = '',
 		selectionStart = null,
 		selectionEnd = null,
+		documentRevision = '',
 		blockIndex = null,
 		surfaceMode = 'source',
 	} = {}) {
@@ -244,6 +266,9 @@ Zotero.QLab = Zotero.QLab || {};
 					&& selectionEnd >= selectionStart) {
 				origin.start = selectionStart;
 				origin.end = selectionEnd;
+			}
+			if (String(documentRevision || '')) {
+				origin.revision = String(documentRevision);
 			}
 			return {
 				stableKey: `qmd-selection:${path}`,
@@ -435,8 +460,12 @@ Zotero.QLab = Zotero.QLab || {};
 			if (qmd) {
 				let container = windowRef.document.getElementById(qmd.id);
 				let host = container && container.querySelector('.qlab-shell-host');
+				let descriptor = qmdHostDescriptor(host);
+				if (descriptor && descriptor.readOnly) throw new Error('selection-only');
 				let state = host && host._qlabDraftState;
-				let path = state
+				let path = descriptor && descriptor.authority === 'draft'
+					? descriptor.relativePath
+					: state
 					? (state.viewingWorking && state.workingPath
 						? state.workingPath
 						: state.originalPath)
@@ -533,8 +562,14 @@ Zotero.QLab = Zotero.QLab || {};
 			let qmd = tabs && tabs._tabs.find(t => t.type === 'qlabqmd' || t.id === 'qlabqmd');
 			let container = qmd && windowRef.document.getElementById(qmd.id);
 			let host = container && container.querySelector('.qlab-shell-host');
+			let descriptor = qmdHostDescriptor(host);
+			if (descriptor && descriptor.readOnly) {
+				throw new Error('Read-only documents can attach selected text only');
+			}
 			let state = host && host._qlabDraftState;
-			let path = item.relativePath || (state
+			let path = descriptor && descriptor.authority === 'draft'
+				? descriptor.relativePath
+				: item.relativePath || (state
 				? (state.viewingWorking && state.workingPath
 					? state.workingPath
 					: state.originalPath)
@@ -612,8 +647,48 @@ Zotero.QLab = Zotero.QLab || {};
 		}
 		
 		if (tag.origin.type === 'qmd' && tag.origin.relativePath) {
-			let root = Zotero.QLab.Settings && Zotero.QLab.Settings.getRoot();
+			let classified = Zotero.QLab.classifyWorkspaceDocument
+				? Zotero.QLab.classifyWorkspaceDocument(tag.origin.relativePath)
+				: null;
+			if (!classified) return false;
 			let qmd = windowRef.Zotero_Tabs._tabs.find(t => t.type === 'qlabqmd' || t.id === 'qlabqmd');
+			if (classified.authority !== 'draft') {
+				if (!qmd || tag.kind !== 'qmd-selection') return false;
+				let container = windowRef.document.getElementById(qmd.id);
+				let host = container && container.querySelector('.qlab-shell-host');
+				let descriptor = qmdHostDescriptor(host);
+				let snapshot;
+				try {
+					snapshot = descriptor && descriptor.readOnly
+						? readonlySessionSnapshot(host, descriptor)
+						: null;
+				}
+				catch (error) { return false; }
+				let start = tag.origin.start;
+				let end = tag.origin.end;
+				if (!snapshot || descriptor.relativePath !== classified.path
+						|| snapshot.path !== classified.path
+						|| !String(tag.origin.revision || '')
+						|| String(snapshot.revision || '') !== String(tag.origin.revision)
+						|| !Number.isInteger(start) || !Number.isInteger(end)
+						|| start < 0 || end <= start || end > snapshot.text.length
+						|| snapshot.text.slice(start, end) !== String(tag.text || '')
+						|| !host._qlabQmdWorkspace
+						|| typeof host._qlabQmdWorkspace.revealReadonlySelection !== 'function') {
+					return false;
+				}
+				let revealed = await host._qlabQmdWorkspace.revealReadonlySelection({
+					relativePath: classified.path,
+					revision: String(tag.origin.revision),
+					start,
+					end,
+					text: String(tag.text || ''),
+				});
+				if (revealed !== true) return false;
+				windowRef.Zotero_Tabs.select(qmd.id);
+				return true;
+			}
+			let root = Zotero.QLab.Settings && Zotero.QLab.Settings.getRoot();
 			if (!qmd && windowRef.Zotero_Tabs._qlab) {
 				windowRef.Zotero_Tabs._qlab.ensureShellTab('qlabqmd', {});
 				qmd = windowRef.Zotero_Tabs._tabs.find(t => t.type === 'qlabqmd');
@@ -680,15 +755,20 @@ Zotero.QLab = Zotero.QLab || {};
 		// still names the other visible pane in a split workspace.
 		if (qmdHost && !options.reader) {
 			let host = qmdHost;
+			let descriptor = qmdHostDescriptor(host);
 			let state = host && host._qlabDraftState;
-			let path = state
+			let path = descriptor
+				? descriptor.relativePath
+				: state
 				? (state.viewingWorking && state.workingPath
 					? state.workingPath
 					: state.originalPath)
 				: '';
-			let source = Zotero.QLab.getQmdShellBuffer
-				? Zotero.QLab.getQmdShellBuffer(host)
-				: '';
+			let source = descriptor && descriptor.readOnly
+				? readonlySessionSnapshot(host, descriptor).text
+				: Zotero.QLab.getQmdShellBuffer
+					? Zotero.QLab.getQmdShellBuffer(host)
+					: '';
 			let selection = '';
 			let selectionStart = null;
 			let selectionEnd = null;
@@ -723,12 +803,30 @@ Zotero.QLab = Zotero.QLab || {};
 					catch (e) {}
 				}
 			}
+			if (descriptor && descriptor.readOnly) {
+				if (descriptor.capabilities.chatSelection !== true
+						|| !Number.isInteger(selectionStart) || !Number.isInteger(selectionEnd)
+						|| selectionStart < 0 || selectionEnd <= selectionStart
+						|| selectionEnd > source.length
+						|| source.slice(selectionStart, selectionEnd) !== selection) {
+					throw new Error('Select exact text in the read-only document before adding Chat context');
+				}
+			}
+			let readonlySnapshot = descriptor && descriptor.readOnly
+				? readonlySessionSnapshot(host, descriptor)
+				: null;
+			// Reuse the same verified snapshot for provenance; a reload between
+			// selection capture and tag creation must fail closed.
+			if (readonlySnapshot && readonlySnapshot.text !== source) {
+				throw new Error('The read-only document changed before Chat context was attached');
+			}
 			tag = Zotero.QLab.createQmdComposerTag({
 				relativePath: path,
 				source,
 				selection,
 				selectionStart,
 				selectionEnd,
+				documentRevision: readonlySnapshot ? readonlySnapshot.revision : '',
 				surfaceMode: (host && host._qlabSurfaceMode) || 'source',
 			});
 			let primary = qmdTab && qmdTab.data && qmdTab.data.primaryItemID;

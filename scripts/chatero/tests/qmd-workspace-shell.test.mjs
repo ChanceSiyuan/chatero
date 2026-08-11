@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { loadQLab } from "../lib/load-qlab.mjs";
+import { createVerifiedReadonlySession } from "../lib/verified-readonly-session.mjs";
 
 test("workspace renders Explorer and three resident QMD surfaces", async () => {
 	const QLab = await loadQLab();
@@ -33,6 +35,173 @@ test("workspace renders Explorer and three resident QMD surfaces", async () => {
 	assert.match(html, /data-qlab-draft-row="drafts\/a\.qmd"/);
 	assert.match(html, /data-qlab-preview-version="original"/);
 	assert.match(html, /data-qlab-preview-version="proposed"/);
+});
+
+test("readonly Knowledge QMD presentation keeps three views but exposes no mutation controls", async () => {
+	const QLab = await loadQLab();
+	const document = QLab.createWorkspaceDocumentDescriptor({
+		relativePath: "knowledge/topic.qmd",
+		authority: "draft",
+		format: "bibtex",
+		readOnly: false,
+	});
+	const html = QLab.renderQmdWorkspaceHTML({
+		path: document.relativePath,
+		document,
+	});
+
+	assert.match(html, /Trusted Knowledge/);
+	assert.match(html, /Trusted Knowledge is read-only in Chatero\./);
+	assert.match(html, /data-qlab-document-readonly="true"/);
+	assert.deepEqual(
+		Array.from(html.matchAll(/data-qlab-surface="(visual|website|source)"/g), match => match[1]),
+		["visual", "source", "website"],
+	);
+	for (const mutation of [
+		"data-qlab-draft-save", "data-qlab-draft-ai", "data-qlab-add-to-knowledge",
+		"data-qlab-complete-todos", "data-qlab-proposal-compare", "data-qlab-draft-keep",
+		"data-qlab-draft-reject", "data-qlab-formal-toggle", "data-qlab-external-editor",
+		"data-qlab-compliance", "data-qlab-compliance-details",
+	]) {
+		assert.equal(html.includes(mutation), false, mutation);
+	}
+	assert.match(html, /data-qlab-refresh-surface/);
+	assert.match(html, /title="QMD source viewer"/);
+	assert.doesNotMatch(html, /title="QMD source editor"/);
+});
+
+test("readonly BibTeX presentation is Source-only and offers citekey search", async () => {
+	const QLab = await loadQLab();
+	const document = QLab.createWorkspaceDocumentDescriptor({
+		relativePath: "literature/references.bib",
+		authority: "draft",
+		format: "qmd",
+		readOnly: false,
+	});
+	const html = QLab.renderQmdWorkspaceHTML({
+		path: document.relativePath,
+		document,
+	});
+
+	assert.match(html, /External Evidence/);
+	assert.match(html, /External Evidence is read-only in Chatero\./);
+	assert.deepEqual(
+		Array.from(html.matchAll(/data-qlab-surface="(visual|website|source)"/g), match => match[1]),
+		["source"],
+	);
+	assert.doesNotMatch(html, /data-qlab-preview-toggle/);
+	assert.match(html, /data-qlab-bib-search/);
+	assert.match(html, /Citekey search/);
+	assert.match(html, /data-qlab-bib-search[^>]*>[\s\S]*?data-qlab-icon="search"/);
+	assert.match(html, /class="qlab-qmd-tab-q">@<\/span>/);
+	assert.match(html, /title="BibTeX source viewer"/);
+	assert.doesNotMatch(html, /title="QMD source editor"/);
+});
+
+test("workspace mount never reads Literature bibliography through generic Draft IO", async () => {
+	const source = await readFile(new URL(
+		"../../../chrome/content/zotero/xpcom/qlab/qmdWorkspaceShell.js",
+		import.meta.url,
+	), "utf8");
+	assert.doesNotMatch(source, /literature\/ref\.bib/);
+	assert.doesNotMatch(source, /ioHost\.(?:exists|read)\([^)]*bib/i);
+	assert.match(source, /requiresProposal[\s\S]+control\.disabled\s*=\s*!allowed\s*\|\|\s*\(requiresProposal\s*&&\s*!proposal\)/);
+	assert.equal(
+		Array.from(source.matchAll(/let request = openGate\.begin\(\);\s*documentManager\.invalidatePrepared\(\);/g)).length,
+		2,
+		"both direct and staged readonly opens invalidate an older prepared stage before Draft flush",
+	);
+});
+
+test("document chrome transitions Draft to Bib or readonly QMD and back without stale semantics", async () => {
+	const QLab = await loadQLab();
+	function element(extra = {}) {
+		const attributes = new Map();
+		return {
+			hidden: false,
+			disabled: false,
+			textContent: "",
+			dataset: {},
+			setAttribute(name, value) { attributes.set(name, String(value)); },
+			removeAttribute(name) { attributes.delete(name); },
+			getAttribute(name) { return attributes.get(name) || ""; },
+			...extra,
+		};
+	}
+	const shell = element({ classList: { toggle() {} } });
+	const badge = element();
+	const pathWrap = element();
+	const authority = element();
+	const sourceMarker = element({ textContent: "Q" });
+	const sourceFrame = element({ title: "QMD source editor" });
+	const sourcePane = element();
+	const visualPaneTitle = element({ textContent: "VISUAL EDIT" });
+	const visualPane = element({
+		querySelector: selector => selector === ".qlab-qmd-pane-title span" ? visualPaneTitle : null,
+	});
+	const visualRoot = element();
+	const visualTools = element();
+	const inline = element({ hidden: true });
+	const formalToggle = element();
+	const compare = element();
+	const keep = element();
+	const reject = element();
+	const search = element();
+	const previewToggle = element();
+	const preview = element();
+	const selectors = new Map([
+		[".qlab-qmd-workspace", shell],
+		["[data-qlab-authority-badge]", badge],
+		[".qlab-qmd-path-wrap", pathWrap],
+		[".qlab-qmd-authority", authority],
+		[".qlab-qmd-tab-q", sourceMarker],
+		["[data-qlab-qmd-monaco]", sourceFrame],
+		["[data-qlab-source-surface]", sourcePane],
+		["[data-qlab-visual-surface]", visualPane],
+		["[data-qlab-visual-editor-root]", visualRoot],
+		["[data-qlab-visual-tools]", visualTools],
+		["[data-qlab-inline]", inline],
+		["[data-qlab-formal-toggle]", formalToggle],
+		["[data-qlab-proposal-compare]", compare],
+		["[data-qlab-draft-keep]", keep],
+		["[data-qlab-draft-reject]", reject],
+		["[data-qlab-bib-search]", search],
+		["[data-qlab-preview-toggle]", previewToggle],
+		["[data-qlab-preview-surface]", preview],
+	]);
+	const host = {
+		_qlabSurfaceMode: "visual",
+		querySelector: selector => selectors.get(selector) || null,
+		querySelectorAll: selector => selectors.has(selector) ? [selectors.get(selector)] : [],
+	};
+	const draft = QLab.createQmdDraftDocumentDescriptor({ relativePath: "drafts/a.qmd" });
+	const bib = QLab.createWorkspaceDocumentDescriptor({ relativePath: "literature/ref.bib" });
+	const knowledge = QLab.createWorkspaceDocumentDescriptor({ relativePath: "knowledge/topic.qmd" });
+
+	assert.equal(QLab.applyQmdDocumentChrome(host, draft, { proposal: false }), true);
+	assert.equal(inline.hidden, true, "opening a Draft must not expand the stateful AI bar");
+	assert.equal(compare.disabled && keep.disabled && reject.disabled, true);
+	QLab.applyQmdDocumentChrome(host, bib);
+	assert.equal(sourceMarker.textContent, "@");
+	assert.equal(sourceFrame.title, "BibTeX source viewer");
+	assert.equal(sourcePane.getAttribute("aria-label"), "Monaco BibTeX source viewer");
+	assert.equal(visualTools.hidden, true);
+	QLab.applyQmdDocumentChrome(host, knowledge);
+	assert.equal(sourceFrame.title, "QMD source viewer");
+	assert.equal(visualPaneTitle.textContent, "VISUAL VIEW");
+	assert.equal(visualPane.getAttribute("aria-label"), "Visual QMD view");
+	assert.equal(visualRoot.getAttribute("aria-label"), "Visual QMD view");
+	assert.equal(visualRoot.getAttribute("aria-readonly"), "true");
+	QLab.applyQmdDocumentChrome(host, draft, { proposal: false });
+	assert.equal(sourceMarker.textContent, "Q");
+	assert.equal(sourceFrame.title, "QMD source editor");
+	assert.equal(sourcePane.getAttribute("aria-label"), "Monaco QMD source editor");
+	assert.equal(visualPaneTitle.textContent, "VISUAL EDIT");
+	assert.equal(visualPane.getAttribute("aria-label"), "Visual QMD editor");
+	assert.equal(visualRoot.getAttribute("aria-label"), "Visual QMD editor");
+	assert.equal(visualRoot.getAttribute("aria-readonly"), "false");
+	assert.equal(visualTools.hidden, false, "Draft Visual tools must be restored");
+	assert.equal(inline.hidden, true, "returning to Draft still must not auto-open AI");
 });
 
 function fakeElement(name = "div") {
@@ -118,6 +287,15 @@ test("preview surface uses a native Zotero browser for exact loopback content", 
 	assert.deepEqual(errors, [exact]);
 	assert.equal(quick.hidden, false);
 	assert.equal(browser.hidden, true);
+
+	assert.equal(surface.clear(), true);
+	assert.equal(quick.srcdoc, "");
+	assert.equal(quick.hidden, true);
+	assert.equal(browser.getAttribute("src"), "");
+	assert.equal(browser.hidden, true);
+	assert.equal(browserHost.hidden, true);
+	assert.equal(empty.hidden, false);
+	assert.match(empty.textContent, /preview unavailable/i);
 	surface.dispose();
 	assert.equal(browser.removed, true);
 });
@@ -170,6 +348,11 @@ test("preview surface registers and disposes Quick and remote Website interactio
 
 test("preview presentation distinguishes quick, exact, and last-good content", async () => {
 	const QLab = await loadQLab();
+	assert.deepEqual(JSON.parse(JSON.stringify(QLab.qmdPreviewPresentation({}))), {
+		mode: "empty",
+		status: "Preview unavailable",
+		tone: "idle",
+	});
 	assert.deepEqual(JSON.parse(JSON.stringify(QLab.qmdPreviewPresentation({
 		status: "rendering",
 		fallback: "<main>quick</main>",
@@ -208,6 +391,26 @@ test("preview presentation distinguishes quick, exact, and last-good content", a
 		status: "Quarto Preview · showing last good result: bad yaml",
 		tone: "error",
 	});
+});
+
+test("workspace refresh failures become an error status and resolve false", async () => {
+	const QLab = await loadQLab();
+	const errors = [];
+	const result = await QLab.runQmdWorkspaceRefresh(
+		async () => { throw new Error("verified reload failed"); },
+		error => errors.push(error.message),
+	);
+	assert.equal(result, false);
+	assert.deepEqual(errors, ["verified reload failed"]);
+});
+
+test("an unchanged verified readonly reload still continues the active-surface refresh", async () => {
+	const source = await readFile(new URL(
+		"../../../chrome/content/zotero/xpcom/qlab/qmdWorkspaceShell.js",
+		import.meta.url,
+	), "utf8");
+	assert.match(source, /await documentManager\.reloadActive\(\);[\s\S]+let surface = controller\.snapshot\(\)\.surface/);
+	assert.doesNotMatch(source, /!await documentManager\.reloadActive\(\)/);
 });
 
 test("workspace status gives persistence failures priority without hiding Preview progress", async () => {
@@ -282,10 +485,11 @@ test("background Quarto progress never replaces Visual Edit or Monaco persistenc
 	}
 });
 
-test("workspace disposal closes watcher, Monaco bridge, Preview, and session", async () => {
+test("workspace disposal closes surface resources but leaves manager-owned sessions alone", async () => {
 	const QLab = await loadQLab();
 	let calls = [];
 	let workspace = QLab.createQmdWorkspaceController({
+		ownsSession: false,
 		watcher: { dispose: () => calls.push("watcher") },
 		monaco: { dispose: () => calls.push("monaco") },
 		preview: { dispose: () => calls.push("preview") },
@@ -293,13 +497,14 @@ test("workspace disposal closes watcher, Monaco bridge, Preview, and session", a
 	});
 	workspace.dispose();
 	workspace.dispose();
-	assert.deepEqual(calls, ["watcher", "monaco", "preview", "session"]);
+	assert.deepEqual(calls, ["watcher", "monaco", "preview"]);
 });
 
 test("workspace quiesce synchronously stops callbacks before a best-effort Draft flush", async () => {
 	const QLab = await loadQLab();
 	let calls = [];
 	let workspace = QLab.createQmdWorkspaceController({
+		ownsSession: false,
 		watcher: { dispose: () => calls.push("watcher") },
 		monaco: { dispose: () => calls.push("monaco") },
 		visual: { dispose: () => calls.push("visual") },
@@ -310,7 +515,7 @@ test("workspace quiesce synchronously stops callbacks before a best-effort Draft
 	workspace.quiesce();
 	assert.deepEqual(calls, ["watcher", "monaco", "preview"]);
 	workspace.dispose();
-	assert.deepEqual(calls, ["watcher", "monaco", "preview", "visual", "session"]);
+	assert.deepEqual(calls, ["watcher", "monaco", "preview", "visual"]);
 });
 
 test("workspace cycles Visual Edit, Website Preview, and Monaco Source", async () => {
@@ -401,7 +606,7 @@ test("Visual Edit saves through the active Draft session without bypassing revis
 		isEditing: () => false,
 		finishActiveEdit: async () => {},
 	};
-	let state = { text: "old", revision: "r1" };
+	let state = { path: "drafts/a.qmd", text: "old", revision: "r1" };
 	let edits = [];
 	let session = {
 		snapshot: () => ({ ...state }),
@@ -424,7 +629,7 @@ test("Visual Edit saves through the active Draft session without bypassing revis
 	assert.deepEqual(edits, ["new"]);
 	assert.deepEqual(JSON.parse(JSON.stringify(result)), { source: "new", revision: "r2" });
 	assert.deepEqual(JSON.parse(JSON.stringify(savedSnapshots)), [{ source: "new", revision: "r2" }]);
-	assert.equal(documentState.editable, true);
+	assert.equal(documentState.editable.capabilities.edit, true);
 });
 
 test("Visual Edit rejects stale documents and a newer unsaved Monaco buffer", async () => {
@@ -436,7 +641,7 @@ test("Visual Edit rejects stale documents and a newer unsaved Monaco buffer", as
 		isEditing: () => false,
 		finishActiveEdit: async () => {},
 	};
-	let state = { text: "old", revision: "r1" };
+	let state = { path: "drafts/a.qmd", text: "old", revision: "r1" };
 	let session = {
 		snapshot: () => ({ ...state }),
 		applyHumanEdit(text) { state.text = text; },
@@ -457,6 +662,36 @@ test("Visual Edit rejects stale documents and a newer unsaved Monaco buffer", as
 		() => bridge.save("stale Draft result", "r1", firstGeneration),
 		/document changed/i,
 	);
+});
+
+test("Visual bridge gives readonly documents frozen authority and rejects its direct save seam", async () => {
+	const QLab = await loadQLab();
+	const descriptor = QLab.createWorkspaceDocumentDescriptor({ relativePath: "literature/paper.qmd" });
+	const session = await createVerifiedReadonlySession(QLab, {
+		descriptor,
+		text: "# Evidence\n",
+	});
+	let received;
+	const visual = {
+		setDocument(snapshot, document, generation) {
+			received = { snapshot, document, generation };
+		},
+		snapshot: () => ({ source: "# Evidence\n", revision: "r1" }),
+		isEditing: () => false,
+	};
+	const bridge = QLab.createQmdVisualSessionBridge(visual);
+	const generation = bridge.setSession(session);
+	const sessionDescriptor = session.snapshot().document;
+
+	assert.notEqual(sessionDescriptor, descriptor, "the session must discard caller-owned descriptor identity");
+	assert.equal(received.document, sessionDescriptor);
+	assert.equal(Object.isFrozen(received.document.capabilities), true);
+	assert.equal(received.document.capabilities.edit, false);
+	await assert.rejects(
+		() => bridge.save("attack\n", "r1", generation),
+		/read-only/i,
+	);
+	assert.equal(session.snapshot().text, "# Evidence\n");
 });
 
 test("leaving Visual Edit flushes the active field before the surface changes", async () => {
@@ -498,7 +733,7 @@ test("switching Drafts flushes Visual Edit and the shared session before reading
 			order.push("session");
 			return { dirty: false, saveError: "" };
 		},
-		snapshot: () => ({ dirty: false, saveError: "" }),
+		snapshot: () => ({ path: "drafts/a.qmd", dirty: false, saveError: "" }),
 	};
 	assert.equal(await QLab.flushQmdDraftBeforeTransition(session, visual), true);
 	assert.deepEqual(order, ["visual", "session"]);
@@ -507,6 +742,17 @@ test("switching Drafts flushes Visual Edit and the shared session before reading
 	editing = true;
 	assert.equal(await QLab.flushQmdDraftBeforeTransition(session, visual), false);
 	assert.deepEqual(order, ["visual", "session", "blocked"]);
+});
+
+test("readonly surface navigation never calls a save method", async () => {
+	const QLab = await loadQLab();
+	const descriptor = QLab.createWorkspaceDocumentDescriptor({ relativePath: "knowledge/topic.qmd" });
+	const session = await createVerifiedReadonlySession(QLab, {
+		descriptor,
+		text: "# Trusted\n",
+	});
+	assert.equal(await QLab.flushQmdDraftBeforeTransition(session, null), true);
+	assert.equal(session.snapshot().text, "# Trusted\n");
 });
 
 test("the latest Draft-open request invalidates every older asynchronous continuation", async () => {
@@ -612,6 +858,8 @@ test("workspace event bindings are removed exactly once on disposal", async () =
 
 test("Monaco selection command opens focused Chat context without starting an inline rewrite", async () => {
 	const QLab = await loadQLab();
+	const document = QLab.createQmdDraftDocumentDescriptor({ relativePath: "drafts/a.qmd" });
+	const session = { snapshot: () => ({ path: document.relativePath, document }) };
 	const exact = "  selected QMD source\nwithout normalization  ";
 	const calls = [];
 	const host = {};
@@ -624,6 +872,7 @@ test("Monaco selection command opens focused Chat context without starting an in
 	const result = await QLab.handleQmdMonacoWorkspaceCommand({
 		host,
 		view,
+		session,
 		command: "chat-selection",
 		event: { selection: exact, start: 11, end: 11 + exact.length },
 		onSave: () => calls.push(["save"]),
@@ -646,6 +895,8 @@ test("Monaco selection command opens focused Chat context without starting an in
 
 test("empty Monaco Command-K still opens the existing inline-write bar", async () => {
 	const QLab = await loadQLab();
+	const document = QLab.createQmdDraftDocumentDescriptor({ relativePath: "drafts/a.qmd" });
+	const session = { snapshot: () => ({ path: document.relativePath, document }) };
 	const calls = [];
 	const host = {};
 	QLab.addCurrentContextToChat = async () => calls.push("chat");
@@ -653,6 +904,7 @@ test("empty Monaco Command-K still opens the existing inline-write bar", async (
 	const result = await QLab.handleQmdMonacoWorkspaceCommand({
 		host,
 		view: {},
+		session,
 		command: "ai",
 		event: { selection: "", start: 23, end: 23 },
 		onSave: () => calls.push("save"),
@@ -666,4 +918,87 @@ test("empty Monaco Command-K still opens the existing inline-write bar", async (
 		text: "",
 	});
 	assert.deepEqual(calls, ["inline"]);
+});
+
+test("readonly Monaco commands reject Save and AI while preserving Chat selection", async () => {
+	const QLab = await loadQLab();
+	const document = QLab.createWorkspaceDocumentDescriptor({ relativePath: "knowledge/topic.qmd" });
+	const session = await createVerifiedReadonlySession(QLab, {
+		descriptor: document,
+		text: "# Trusted\n",
+	});
+	const calls = [];
+	const host = {};
+	QLab.addCurrentContextToChat = async () => {
+		calls.push("chat");
+		return "chat";
+	};
+
+	assert.equal(await QLab.handleQmdMonacoWorkspaceCommand({
+		host,
+		session,
+		command: "save",
+		onSave: () => calls.push("save"),
+	}), null);
+	assert.equal(await QLab.handleQmdMonacoWorkspaceCommand({
+		host,
+		session,
+		command: "ai",
+		event: { selection: "Trusted", start: 2, end: 9 },
+		onInlineWrite: () => calls.push("inline"),
+	}), null);
+	assert.equal(await QLab.handleQmdMonacoWorkspaceCommand({
+		host,
+		session,
+		command: "chat-selection",
+		event: { selection: "Trusted", start: 2, end: 9 },
+	}), "chat");
+	assert.deepEqual(calls, ["chat"]);
+	assert.equal(session.snapshot().text, "# Trusted\n");
+});
+
+test("workspace session capability checks always use a path-derived descriptor", async () => {
+	const QLab = await loadQLab();
+	const normalized = QLab.createWorkspaceDocumentDescriptor({ relativePath: "literature/paper.qmd" });
+	const denied = Object.entries(normalized.capabilities)
+		.filter(([, allowed]) => allowed === false)
+		.map(([name]) => name);
+	for (const capability of denied) {
+		const capabilities = Object.freeze({ ...normalized.capabilities, [capability]: true });
+		const forged = Object.freeze({ ...normalized, capabilities });
+		const session = {
+			snapshot: () => ({ path: normalized.relativePath, document: forged }),
+		};
+		assert.equal(QLab.qmdSessionAllows(session, capability), false, capability);
+	}
+});
+
+test("workspace mutation boundary rejects every readonly write capability before invocation", async () => {
+	const QLab = await loadQLab();
+	const document = QLab.createWorkspaceDocumentDescriptor({ relativePath: "knowledge/topic.qmd" });
+	const session = await createVerifiedReadonlySession(QLab, { descriptor: document, text: "trusted\n" });
+	const denied = Object.entries(document.capabilities)
+		.filter(([, allowed]) => allowed === false)
+		.map(([name]) => name);
+	let calls = 0;
+	for (const capability of denied) {
+		const result = QLab.runQmdWorkspaceCapability(
+			session,
+			capability,
+			() => { calls++; return "mutated"; },
+			"blocked",
+		);
+		assert.equal(result, "blocked", capability);
+	}
+	assert.equal(calls, 0);
+	assert.equal(session.snapshot().text, "trusted\n");
+
+	const draft = QLab.createQmdDraftDocumentDescriptor({ relativePath: "drafts/a.qmd" });
+	const draftSession = { snapshot: () => ({ path: draft.relativePath, document: draft }) };
+	assert.equal(QLab.runQmdWorkspaceCapability(
+		draftSession,
+		"save",
+		() => { calls++; return "saved"; },
+	), "saved");
+	assert.equal(calls, 1);
 });

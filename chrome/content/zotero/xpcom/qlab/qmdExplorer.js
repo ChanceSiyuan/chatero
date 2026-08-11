@@ -66,15 +66,9 @@ Zotero.QLab = Zotero.QLab || {};
 			return `${stat.size || 0}:${stat.lastModified || 0}`;
 		}
 		catch (e) {
-			try {
-				let text = await host.read(path);
-				return Zotero.QLab.QmdDraftIO && Zotero.QLab.QmdDraftIO._hash
-					? Zotero.QLab.QmdDraftIO._hash(text)
-					: String(text).length.toString(16);
-			}
-			catch (readError) {
-				return '';
-			}
+			// Explorer snapshots are metadata-only. Content reads belong to the
+			// authority-specific document IO boundary, never directory polling.
+			return '';
 		}
 	}
 	
@@ -258,7 +252,6 @@ Zotero.QLab = Zotero.QLab || {};
 			filename: path => pathModule.basename(path),
 			join: (...parts) => pathModule.join(...parts),
 			realPath: path => fs.realpath(path),
-			read: path => fs.readFile(path, 'utf8'),
 			stat: async path => {
 				let value = await fs.stat(path);
 				return {
@@ -274,7 +267,6 @@ Zotero.QLab = Zotero.QLab || {};
 		let pathHost = Zotero.QLab.createGeckoQLabPathHost();
 		return {
 			...pathHost,
-			read: path => IOUtils.readUTF8(path),
 			stat: path => IOUtils.stat(path),
 		};
 	};
