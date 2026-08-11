@@ -16,6 +16,9 @@
     "clean-start": "node ./js-build/clean.js && node ./js-build/build.js && node ./js-build/watch.js",
     "build:qlab-starter": "node ./scripts/chatero/build-qlab-starter.mjs",
     "test:chatero": "node --test scripts/chatero/tests/*.test.mjs",
+    "test:workbench-bootstrap": "node --test products/workbench/tests/*.test.mjs",
+    "workbench:bootstrap": "node products/workbench/scripts/bootstrap-code-oss.mjs",
+    "workbench:verify": "node products/workbench/scripts/verify-code-oss.mjs",
     "package:chatero": "app/scripts/package_chatero_dmg",
     "verify:chatero-bundle": "app/scripts/verify_chatero_bundle app/staging/Chatero.app",
     "test:chatero:staged": "app/scripts/verify_chatero_bundle app/staging/Chatero.app"
