@@ -1,7 +1,9 @@
 const vscode = require("vscode");
+const { NoteEditorProvider, PdfEditorProvider } = require("./evidence-editors.cjs");
 
 class LibraryProvider {
-  constructor() {
+  constructor(evidenceAuthority) {
+    this.evidenceAuthority = evidenceAuthority;
     this._emitter = new vscode.EventEmitter();
     this.onDidChangeTreeData = this._emitter.event;
     this.model = null;
@@ -10,6 +12,7 @@ class LibraryProvider {
   }
 
   refresh() {
+    this.evidenceAuthority.reset();
     this._emitter.fire(undefined);
   }
 
@@ -34,7 +37,24 @@ class LibraryProvider {
       item.contextValue = "chateroZoteroCollection";
       return item;
     }
-    const item = new vscode.TreeItem(element.value.title || "Untitled", vscode.TreeItemCollapsibleState.None);
+    if (element.kind === "attachment") {
+      const item = new vscode.TreeItem(element.value.title, vscode.TreeItemCollapsibleState.None);
+      item.description = element.value.annotationCount
+        ? `${element.value.annotationCount} annotation${element.value.annotationCount === 1 ? "" : "s"}`
+        : element.value.filename;
+      item.iconPath = new vscode.ThemeIcon(element.value.contentType === "application/pdf" ? "file-pdf" : "file-media");
+      item.contextValue = "chateroZoteroAttachment";
+      item.command = { command: "chatero.zotero.openAttachment", title: "Open attachment", arguments: [element.value] };
+      return item;
+    }
+    if (element.kind === "note") {
+      const item = new vscode.TreeItem(element.value.title, vscode.TreeItemCollapsibleState.None);
+      item.iconPath = new vscode.ThemeIcon("note");
+      item.contextValue = "chateroZoteroNote";
+      item.command = { command: "chatero.zotero.openNote", title: "Open Note", arguments: [element.value] };
+      return item;
+    }
+    const item = new vscode.TreeItem(element.value.title || "Untitled", vscode.TreeItemCollapsibleState.Collapsed);
     item.description = [element.value.creators?.[0], element.value.year].filter(Boolean).join(" · ");
     item.iconPath = new vscode.ThemeIcon(element.value.attachmentCount ? "file-pdf" : "book");
     item.contextValue = "chateroZoteroItem";
@@ -53,6 +73,13 @@ class LibraryProvider {
       }
       return [{ kind: "status", label: this.status, connected: true }, ...roots];
     }
+    if (element.kind === "item") {
+      const result = await this.model.children({ itemKey: element.value.itemKey, libraryId: element.value.libraryId });
+      return [
+        ...result.attachments.map(value => ({ kind: "attachment", value: this.evidenceAuthority.register(value, "attachment") })),
+        ...result.notes.map(value => ({ kind: "note", value: this.evidenceAuthority.register(value, "note") })),
+      ];
+    }
     if (element.kind !== "collection") return [];
     const [collections, result] = await Promise.all([
       this.model.collections({ libraryId: element.value.libraryId, parentKey: element.value.collectionKey }),
@@ -70,18 +97,38 @@ class LibraryProvider {
 }
 
 async function activate(context) {
-  const { LibraryTreeModel } = await import("./library-tree-model.mjs");
-  const provider = new LibraryProvider();
+  const [{ LibraryTreeModel }, { EvidenceRecordAuthority }, { EvidenceDocumentRegistry }, html] = await Promise.all([
+    import("./library-tree-model.mjs"),
+    import("./evidence-authority.mjs"),
+    import("./evidence-editor-registry.mjs"),
+    import("./evidence-editor-html.mjs"),
+  ]);
+  const evidenceAuthority = new EvidenceRecordAuthority();
+  const evidenceDocuments = new EvidenceDocumentRegistry();
+  const provider = new LibraryProvider(evidenceAuthority);
   let core = null;
   let disposeEvents = null;
   context.subscriptions.push(provider);
   context.subscriptions.push(vscode.window.registerTreeDataProvider("chatero.zotero.library", provider));
+  context.subscriptions.push(vscode.window.registerCustomEditorProvider("chatero.zotero.pdf", new PdfEditorProvider({
+    vscode,
+    registry: evidenceDocuments,
+    getModel: () => provider.model,
+    renderPdfEditorHTML: html.renderPdfEditorHTML,
+    extensionUri: context.extensionUri,
+  }), { supportsMultipleEditorsPerDocument: false }));
+  context.subscriptions.push(vscode.window.registerCustomEditorProvider("chatero.zotero.note", new NoteEditorProvider({
+    registry: evidenceDocuments,
+    getModel: () => provider.model,
+    renderNoteEditorHTML: html.renderNoteEditorHTML,
+  }), { supportsMultipleEditorsPerDocument: false }));
 
   const stop = async () => {
     disposeEvents?.();
     disposeEvents = null;
     if (core) await core.stop();
     core = null;
+    evidenceDocuments.reset();
     provider.setConnection(null);
   };
 
@@ -153,6 +200,16 @@ async function activate(context) {
   context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.startCore", () => start().catch(error => vscode.window.showErrorMessage(`Could not start Zotero Core: ${error.message}`))));
   context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.stopCore", () => stop().catch(error => vscode.window.showErrorMessage(`Could not stop Zotero Core: ${error.message}`))));
   context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.refreshLibrary", () => provider.refresh()));
+  context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.openAttachment", record => {
+    const trusted = evidenceAuthority.authorize(record, "attachment");
+    const uri = vscode.Uri.parse(evidenceDocuments.stage("pdf", trusted));
+    return vscode.commands.executeCommand("vscode.openWith", uri, "chatero.zotero.pdf", { preview: false });
+  }));
+  context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.openNote", record => {
+    const trusted = evidenceAuthority.authorize(record, "note");
+    const uri = vscode.Uri.parse(evidenceDocuments.stage("note", trusted));
+    return vscode.commands.executeCommand("vscode.openWith", uri, "chatero.zotero.note", { preview: false });
+  }));
   context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.searchLibrary", async () => {
     const query = await vscode.window.showInputBox({ placeHolder: "Search titles and creators", prompt: "Search Zotero Library" });
     if (query === undefined) return;

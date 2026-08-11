@@ -9,12 +9,44 @@
           "destination": "extensions/chatero-zotero/extension.cjs"
         },
         {
+          "source": "products/workbench/extensions/chatero-zotero/evidence-authority.mjs",
+          "destination": "extensions/chatero-zotero/evidence-authority.mjs"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/evidence-editor-html.mjs",
+          "destination": "extensions/chatero-zotero/evidence-editor-html.mjs"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/evidence-editor-registry.mjs",
+          "destination": "extensions/chatero-zotero/evidence-editor-registry.mjs"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/evidence-editors.cjs",
+          "destination": "extensions/chatero-zotero/evidence-editors.cjs"
+        },
+        {
           "source": "products/workbench/extensions/chatero-zotero/library-tree-model.mjs",
           "destination": "extensions/chatero-zotero/library-tree-model.mjs"
         },
         {
           "source": "products/workbench/extensions/chatero-zotero/media/library.svg",
           "destination": "extensions/chatero-zotero/media/library.svg"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/pdf-viewer/LICENSE",
+          "destination": "extensions/chatero-zotero/media/pdf-viewer/LICENSE"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/pdf-viewer/pdf.mjs",
+          "destination": "extensions/chatero-zotero/media/pdf-viewer/pdf.mjs"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/pdf-viewer/pdf.worker.mjs",
+          "destination": "extensions/chatero-zotero/media/pdf-viewer/pdf.worker.mjs"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/pdf-viewer/pdf-viewer.mjs",
+          "destination": "extensions/chatero-zotero/media/pdf-viewer/pdf-viewer.mjs"
         },
         {
           "source": "products/workbench/extensions/chatero-zotero/package.json",

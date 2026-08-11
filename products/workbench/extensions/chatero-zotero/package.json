@@ -16,9 +16,25 @@
   ],
   "main": "./extension.cjs",
   "activationEvents": [
-    "onView:chatero.zotero.library"
+    "onView:chatero.zotero.library",
+    "onCustomEditor:chatero.zotero.pdf",
+    "onCustomEditor:chatero.zotero.note"
   ],
   "contributes": {
+    "customEditors": [
+      {
+        "viewType": "chatero.zotero.pdf",
+        "displayName": "Zotero PDF",
+        "selector": [{ "filenamePattern": "*.chatero-zotero-pdf" }],
+        "priority": "option"
+      },
+      {
+        "viewType": "chatero.zotero.note",
+        "displayName": "Zotero Note",
+        "selector": [{ "filenamePattern": "*.chatero-zotero-note" }],
+        "priority": "option"
+      }
+    ],
     "commands": [
       {
         "command": "chatero.zotero.startCore",
@@ -28,6 +44,16 @@
       {
         "command": "chatero.zotero.stopCore",
         "title": "Stop Zotero Core",
+        "category": "Chatero"
+      },
+      {
+        "command": "chatero.zotero.openAttachment",
+        "title": "Open Zotero Attachment",
+        "category": "Chatero"
+      },
+      {
+        "command": "chatero.zotero.openNote",
+        "title": "Open Zotero Note",
         "category": "Chatero"
       },
       {
