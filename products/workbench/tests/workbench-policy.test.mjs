@@ -31,12 +31,14 @@ async function createPolicyFixture({
   await mkdir(patches, { recursive: true });
   await mkdir(generated, { recursive: true });
   await mkdir(checkout, { recursive: true });
+  await mkdir(join(root, "extensions", "chatero-zotero"), { recursive: true });
   await writeFile(join(root, "product.chatero.json"), JSON.stringify({
     nameShort: "Chatero",
     builtInExtensions: [],
   }));
   await writeFile(join(patches, "0001-policy.patch"), patchText);
   await writeFile(join(root, "tests-are-outside-policy-scope.js"), outsideText);
+  await writeFile(join(root, "extensions", "chatero-zotero", "extension.mjs"), "export const activate = () => {};\n");
   await mkdir(join(checkout, "build", "npm"), { recursive: true });
   await writeFile(join(checkout, "package.json"), JSON.stringify({
     scripts: buildScripts,
@@ -50,6 +52,7 @@ async function createPolicyFixture({
   await writeFile(join(checkout, "build", "npm", "dirs.ts"), npmDirs);
   await writeFile(join(checkout, "build", "gulpfile.vscode.ts"), packaging);
   await writeFile(join(checkout, "build", "gulpfile.extensions.ts"), packaging);
+  await writeFile(join(checkout, "build", "gulpfile.reh.ts"), packaging);
   const productPath = join(generated, "product.json");
   await writeFile(productPath, JSON.stringify({
     nameShort: "Chatero",
@@ -230,5 +233,21 @@ test("rejects upstream Copilot product packaging tasks", async () => {
   assert.deepEqual(report.violations.map(value => value.rule), [
     "forbidden-agent-packaging",
     "forbidden-agent-packaging",
+    "forbidden-agent-packaging",
   ]);
+});
+
+test("scans committed first-party extension source for restricted dependencies", async () => {
+  const { verifyWorkbenchPolicy } = await import("../scripts/lib/workbench-policy.mjs");
+  const input = await createPolicyFixture();
+  await writeFile(
+    join(input.root, "extensions", "chatero-zotero", "extension.mjs"),
+    'const extension = "ms-vscode-remote.remote-ssh";\n'
+  );
+
+  const report = await verifyWorkbenchPolicy(input);
+
+  assert.equal(report.ok, false);
+  assert.deepEqual(report.violations.map(value => value.rule), ["forbidden-extension"]);
+  assert.equal(report.violations[0].path, "extensions/chatero-zotero/extension.mjs");
 });

@@ -60,6 +60,7 @@ async function terminate(child) {
 
 export async function startCore({
   profileDirectory,
+  fixtureCollections = [],
   fixtureItems = [],
   fixtureCorePath = DEFAULT_FIXTURE_CORE,
   fixtureSearchDelayMs = 0,
@@ -77,11 +78,12 @@ export async function startCore({
   const fixturePath = join(sessionDirectory, "fixture-items.json");
   const socketPath = join(sessionDirectory, "core.sock");
   await writeFile(markerPath, `${JSON.stringify({ nonce: sessionNonce, schemaVersion: 1 })}\n`, { mode: 0o600 });
-  await writeFile(fixturePath, `${JSON.stringify(fixtureItems)}\n`, { mode: 0o600 });
+  await writeFile(fixturePath, `${JSON.stringify({ collections: fixtureCollections, items: fixtureItems })}\n`, { mode: 0o600 });
 
   const child = spawn(process.execPath, [fixtureCorePath], {
     env: {
       ...process.env,
+      ...(process.versions.electron && { ELECTRON_RUN_AS_NODE: "1" }),
       CHATERO_CORE_FIXTURE_PATH: fixturePath,
       CHATERO_CORE_PROFILE_DIRECTORY: resolve(profileDirectory),
       CHATERO_CORE_PROFILE_EPOCH: profileEpoch,

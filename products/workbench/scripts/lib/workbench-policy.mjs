@@ -215,6 +215,7 @@ async function verifyAgentSupplyChain(root, checkout, violations) {
   }
 
   for (const relativePath of [
+    join("build", "gulpfile.reh.ts"),
     join("build", "gulpfile.vscode.ts"),
     join("build", "gulpfile.extensions.ts"),
   ]) {
@@ -300,6 +301,18 @@ export async function verifyWorkbenchPolicy({ root, productPath, checkout = null
   await collectPolicyFiles(
     canonicalRoot,
     join(canonicalRoot, "patches"),
+    files,
+    violations
+  );
+  await collectPolicyFiles(
+    canonicalRoot,
+    join(canonicalRoot, "extensions"),
+    files,
+    violations
+  );
+  await collectPolicyFiles(
+    canonicalRoot,
+    join(canonicalRoot, "first-party-extensions.json"),
     files,
     violations
   );

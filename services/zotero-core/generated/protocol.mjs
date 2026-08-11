@@ -5,12 +5,14 @@ export const MAX_FRAME_BYTES = 1048576;
 export const DEFAULT_DEADLINE_MS = 5000;
 export const CAPABILITIES = Object.freeze([
   "events:read",
+  "library:read",
   "library:search",
   "profile:read"
 ]);
 export const METHOD_CAPABILITIES = Object.freeze({
   "core.cancel": null,
   "core.handshake": null,
+  "library.collections": "library:read",
   "library.search": "library:search",
   "profile.status": "profile:read"
 });
@@ -22,6 +24,10 @@ export const METHOD_TYPES = Object.freeze({
   "core.handshake": {
     "params": "CoreHandshakeParams",
     "result": "CoreHandshakeResult"
+  },
+  "library.collections": {
+    "params": "LibraryCollectionsParams",
+    "result": "LibraryCollectionsResult"
   },
   "library.search": {
     "params": "LibrarySearchParams",

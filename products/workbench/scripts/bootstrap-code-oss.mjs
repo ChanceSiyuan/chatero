@@ -6,6 +6,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 import { ensureCheckout } from "./lib/git-checkout.mjs";
+import { materializeFirstPartyExtensions } from "./lib/first-party-extensions.mjs";
 import { applyPatchSeries } from "./lib/patch-series.mjs";
 import { materializeProduct } from "./lib/product-materializer.mjs";
 import { loadUpstreamContract } from "./lib/upstream-contract.mjs";
@@ -75,6 +76,7 @@ export async function bootstrapCodeOss({
   workbenchRoot = join(root, "products", "workbench"),
   destination = process.env.CHATERO_CODE_OSS_DIR || join(root, "vendor", "code-oss"),
   contractPath = join(workbenchRoot, "upstreams.json"),
+  firstPartyManifestPath = join(workbenchRoot, "first-party-extensions.json"),
   contract,
   runGit = defaultRunGit,
 } = {}) {
@@ -131,6 +133,11 @@ export async function bootstrapCodeOss({
   if (!policy.ok) {
     throw new Error(`workbench policy rejected generated product: ${policy.violations.map(value => value.rule).join(", ")}`);
   }
+  const firstParty = await materializeFirstPartyExtensions({
+    root,
+    checkout: canonicalDestination,
+    manifestPath: firstPartyManifestPath,
+  });
 
   const status = await runGit({
     args: ["status", "--porcelain=v1", "--untracked-files=all"],
@@ -147,6 +154,7 @@ export async function bootstrapCodeOss({
     codeOssVersion: pinned.codeOss.version,
     node: pinned.codeOss.node,
     electron: pinned.codeOss.electron,
+    firstPartyExtensions: firstParty.extensions,
     patches: await readPatchPins(seriesPath),
     managedPaths,
     productSha256: productResult.sha256,
@@ -158,6 +166,7 @@ export async function bootstrapCodeOss({
   return {
     ...report,
     appliedPatches: patchResult.applied,
+    firstPartyExtensions: firstParty.extensions,
     reused: false,
   };
 }

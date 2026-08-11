@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "extensions": [
+    {
+      "id": "chatero.zotero",
+      "files": [
+        {
+          "source": "products/workbench/extensions/chatero-zotero/extension.cjs",
+          "destination": "extensions/chatero-zotero/extension.cjs"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/library-tree-model.mjs",
+          "destination": "extensions/chatero-zotero/library-tree-model.mjs"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/library.svg",
+          "destination": "extensions/chatero-zotero/media/library.svg"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/package.json",
+          "destination": "extensions/chatero-zotero/package.json"
+        },
+        {
+          "source": "services/zotero-core/client/core-client.mjs",
+          "destination": "extensions/chatero-zotero/runtime/zotero-core/client/core-client.mjs"
+        },
+        {
+          "source": "services/zotero-core/fixture/fixture-core.mjs",
+          "destination": "extensions/chatero-zotero/runtime/zotero-core/fixture/fixture-core.mjs"
+        },
+        {
+          "source": "services/zotero-core/generated/protocol.mjs",
+          "destination": "extensions/chatero-zotero/runtime/zotero-core/generated/protocol.mjs"
+        },
+        {
+          "source": "services/zotero-core/profile/profile-lease.mjs",
+          "destination": "extensions/chatero-zotero/runtime/zotero-core/profile/profile-lease.mjs"
+        },
+        {
+          "source": "services/zotero-core/security/session-authority.mjs",
+          "destination": "extensions/chatero-zotero/runtime/zotero-core/security/session-authority.mjs"
+        },
+        {
+          "source": "services/zotero-core/supervisor/core-supervisor.mjs",
+          "destination": "extensions/chatero-zotero/runtime/zotero-core/supervisor/core-supervisor.mjs"
+        },
+        {
+          "source": "services/zotero-core/transport/frame-codec.mjs",
+          "destination": "extensions/chatero-zotero/runtime/zotero-core/transport/frame-codec.mjs"
+        }
+      ]
+    }
+  ]
+}

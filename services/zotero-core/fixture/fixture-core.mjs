@@ -50,6 +50,9 @@ function validateSearchParams(params) {
   if (params.cursor !== undefined && (typeof params.cursor !== "string" || !/^\d+$/.test(params.cursor))) {
     throw new Error("library.search cursor must be a decimal offset");
   }
+  if (params.collectionKey !== undefined && typeof params.collectionKey !== "string") {
+    throw new Error("library.search collectionKey must be a string");
+  }
 }
 
 async function main() {
@@ -66,7 +69,9 @@ async function main() {
   }
   const profileMetadata = await lstat(profileDirectory);
   if (!profileMetadata.isDirectory() || profileMetadata.isSymbolicLink()) throw new Error("fixture profile must be a real directory");
-  const fixtureItems = JSON.parse(await readFile(fixturePath, "utf8"));
+  const fixture = JSON.parse(await readFile(fixturePath, "utf8"));
+  const fixtureItems = Array.isArray(fixture) ? fixture : fixture.items;
+  const fixtureCollections = Array.isArray(fixture?.collections) ? fixture.collections : [];
   if (!Array.isArray(fixtureItems)) throw new Error("fixture items must be an array");
   const bootstrapToken = await readBootstrapToken();
   const searchDelayMs = Number(rawSearchDelayMs);
@@ -122,6 +127,19 @@ async function main() {
         upstreamVersion,
       } };
     }
+    if (message.method === "library.collections") {
+      if (!message.params || typeof message.params !== "object" || Array.isArray(message.params)
+        || Object.keys(message.params).some(key => key !== "parentKey")
+        || (message.params.parentKey !== undefined && typeof message.params.parentKey !== "string")) {
+        throw new Error("library.collections params may contain only parentKey");
+      }
+      const collections = fixtureCollections
+        .filter(collection => message.params.parentKey === undefined
+          ? collection.parentKey === undefined
+          : collection.parentKey === message.params.parentKey)
+        .sort((left, right) => String(left.name).localeCompare(String(right.name)) || String(left.collectionKey).localeCompare(String(right.collectionKey)));
+      return { result: { collections } };
+    }
     if (message.method === "library.search") {
       validateSearchParams(message.params);
       if (typeof message.cancellationId !== "string" || message.cancellationId.length === 0) {
@@ -137,6 +155,7 @@ async function main() {
       }
       const query = message.params.query.trim().toLocaleLowerCase("en-US");
       const matches = fixtureItems
+        .filter(item => message.params.collectionKey === undefined || item.collectionKeys?.includes(message.params.collectionKey))
         .filter(item => !query || [item.title, ...(item.creators || [])].some(value => String(value).toLocaleLowerCase("en-US").includes(query)))
         .sort((left, right) => String(left.title).localeCompare(String(right.title)) || String(left.itemKey).localeCompare(String(right.itemKey)));
       const offset = Number(message.params.cursor || 0);

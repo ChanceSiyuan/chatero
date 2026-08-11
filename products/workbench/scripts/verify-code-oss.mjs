@@ -6,6 +6,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 import { loadUpstreamContract } from "./lib/upstream-contract.mjs";
+import { verifyFirstPartyExtensions } from "./lib/first-party-extensions.mjs";
 import { verifyWorkbenchPolicy } from "./lib/workbench-policy.mjs";
 
 const execFile = promisify(execFileCallback);
@@ -59,6 +60,7 @@ async function readProvenance(path) {
     "codeOssVersion",
     "node",
     "electron",
+    "firstPartyExtensions",
     "patches",
     "managedPaths",
     "productSha256",
@@ -137,6 +139,10 @@ export async function verifyCodeOss({
   if (sha256(productBytes) !== provenance.productSha256) {
     throw new Error("product.json SHA-256 does not match provenance");
   }
+  const firstPartyExtensions = await verifyFirstPartyExtensions({
+    checkout: canonicalDestination,
+    expected: provenance.firstPartyExtensions,
+  });
 
   const status = await runGit({
     args: ["status", "--porcelain=v1", "--untracked-files=all"],
@@ -173,6 +179,7 @@ export async function verifyCodeOss({
     ok: true,
     commit: head,
     destination: canonicalDestination,
+    firstPartyExtensions,
     productSha256: provenance.productSha256,
     worktreeDiffSha256: provenance.worktreeDiffSha256,
     policy,

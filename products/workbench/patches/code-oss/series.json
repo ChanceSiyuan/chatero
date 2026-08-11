@@ -3,7 +3,7 @@
   "patches": [
     {
       "file": "0001-disable-upstream-copilot.patch",
-      "sha256": "d0361ea3352e096d8d70d3a8eb1e652aee9cc985f7a7ded496085d1caa62c477"
+      "sha256": "03aadef53cb982036c91e2ade84dc11e173a3707fec5a63631741afa96c3e0cc"
     }
   ]
 }

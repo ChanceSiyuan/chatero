@@ -43,11 +43,15 @@ const fixtureItems = [
     year: 1992,
   },
 ];
+const fixtureCollections = [
+  { childCount: 1, collectionKey: "PHYSICS", itemCount: 2, libraryId: 1, name: "Physics" },
+  { childCount: 0, collectionKey: "RG", itemCount: 1, libraryId: 1, name: "Renormalization", parentKey: "PHYSICS" },
+];
 
 test("supervises an authenticated fixture Core over an owner-only Unix socket", async () => {
   const { startCore } = await import("../supervisor/core-supervisor.mjs");
   const { profileDirectory } = await createProfile();
-  const core = await startCore({ profileDirectory, fixtureItems });
+  const core = await startCore({ profileDirectory, fixtureCollections, fixtureItems });
   running.push(core);
 
   assert.equal(core.transport, "unix");
@@ -69,6 +73,12 @@ test("supervises an authenticated fixture Core over an owner-only Unix socket", 
   }), {
     items: [fixtureItems[1]],
     total: 1,
+  });
+  assert.deepEqual(await core.client.request("library.collections", {}), {
+    collections: [fixtureCollections[0]],
+  });
+  assert.deepEqual(await core.client.request("library.collections", { parentKey: "PHYSICS" }), {
+    collections: [fixtureCollections[1]],
   });
 });
 

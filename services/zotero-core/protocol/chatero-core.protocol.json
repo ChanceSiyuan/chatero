@@ -5,6 +5,7 @@
   "defaultDeadlineMs": 5000,
   "capabilities": [
     "events:read",
+    "library:read",
     "library:search",
     "profile:read"
   ],
@@ -26,6 +27,12 @@
       "capability": "profile:read",
       "paramsType": "ProfileStatusParams",
       "resultType": "ProfileStatusResult"
+    },
+    {
+      "name": "library.collections",
+      "capability": "library:read",
+      "paramsType": "LibraryCollectionsParams",
+      "resultType": "LibraryCollectionsResult"
     },
     {
       "name": "library.search",
@@ -83,6 +90,7 @@
     "LibrarySearchParams": {
       "kind": "object",
       "fields": {
+        "collectionKey?": "string",
         "cursor?": "string",
         "limit": "number",
         "query": "string"
@@ -92,12 +100,36 @@
       "kind": "object",
       "fields": {
         "attachmentCount": "number",
+        "collectionKeys?": "string[]",
         "creators": "string[]",
         "itemKey": "string",
         "itemType": "string",
         "libraryId": "number",
         "title": "string",
         "year?": "number"
+      }
+    },
+    "LibraryCollectionSummary": {
+      "kind": "object",
+      "fields": {
+        "childCount": "number",
+        "collectionKey": "string",
+        "itemCount": "number",
+        "libraryId": "number",
+        "name": "string",
+        "parentKey?": "string"
+      }
+    },
+    "LibraryCollectionsParams": {
+      "kind": "object",
+      "fields": {
+        "parentKey?": "string"
+      }
+    },
+    "LibraryCollectionsResult": {
+      "kind": "object",
+      "fields": {
+        "collections": "LibraryCollectionSummary[]"
       }
     },
     "LibrarySearchResult": {

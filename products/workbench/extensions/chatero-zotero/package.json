@@ -1,0 +1,98 @@
+{
+  "name": "chatero-zotero",
+  "displayName": "Chatero Library",
+  "description": "Native Zotero Library integration for the Chatero research workbench.",
+  "version": "0.1.0",
+  "publisher": "chatero",
+  "license": "AGPL-3.0-or-later",
+  "engines": {
+    "vscode": "^1.132.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "extensionKind": [
+    "ui"
+  ],
+  "main": "./extension.cjs",
+  "activationEvents": [
+    "onView:chatero.zotero.library"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "chatero.zotero.startCore",
+        "title": "Start Zotero Core",
+        "category": "Chatero"
+      },
+      {
+        "command": "chatero.zotero.stopCore",
+        "title": "Stop Zotero Core",
+        "category": "Chatero"
+      },
+      {
+        "command": "chatero.zotero.selectProfile",
+        "title": "Select Zotero Profile…",
+        "category": "Chatero"
+      },
+      {
+        "command": "chatero.zotero.refreshLibrary",
+        "title": "Refresh Library",
+        "category": "Chatero",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "chatero.zotero.searchLibrary",
+        "title": "Search Library",
+        "category": "Chatero",
+        "icon": "$(search)"
+      }
+    ],
+    "configuration": {
+      "title": "Chatero Zotero",
+      "properties": {
+        "chatero.zotero.profilePath": {
+          "type": "string",
+          "default": "",
+          "description": "Absolute path to the Zotero profile owned by Chatero Core."
+        },
+        "chatero.zotero.developerFixtureCore": {
+          "type": "boolean",
+          "default": false,
+          "description": "Use the data-free fixture Core while developing the Gecko adapter."
+        }
+      }
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "chatero.zotero.searchLibrary",
+          "when": "view == chatero.zotero.library",
+          "group": "navigation@1"
+        },
+        {
+          "command": "chatero.zotero.refreshLibrary",
+          "when": "view == chatero.zotero.library",
+          "group": "navigation@2"
+        }
+      ]
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "chatero-zotero",
+          "title": "Chatero Library",
+          "icon": "media/library.svg"
+        }
+      ]
+    },
+    "views": {
+      "chatero-zotero": [
+        {
+          "id": "chatero.zotero.library",
+          "name": "Library"
+        }
+      ]
+    }
+  }
+}

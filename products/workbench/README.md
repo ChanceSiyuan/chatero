@@ -115,3 +115,12 @@ Electron/Core contract executable before the pinned Gecko adapter replaces its
 method handlers. Bootstrap secrets travel over inherited fd 3, RPC uses only an
 owner-protected Unix-domain socket, and renderer code must call a workbench
 service rather than this transport directly.
+
+The first verified native extension is materialized from
+`products/workbench/extensions/chatero-zotero/`. It contributes a normal
+Activity Bar container, TreeView, commands, configuration, progress, and
+ThemeIcons. It does not use a webview. For safety, the Library remains stopped
+until a profile is selected; the data-free fixture can be enabled only with the
+`chatero.zotero.developerFixtureCore` developer setting. Without that setting,
+the current slice never opens the selected profile while the Gecko adapter is
+still under construction.

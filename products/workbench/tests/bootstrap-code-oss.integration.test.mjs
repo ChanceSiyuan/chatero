@@ -41,6 +41,7 @@ async function createFixture() {
   await mkdir(upstream, { recursive: true });
   await mkdir(join(upstream, "build", "npm"), { recursive: true });
   await mkdir(join(workbenchRoot, "patches", "code-oss"), { recursive: true });
+  await mkdir(join(root, "first-party-src"), { recursive: true });
   await git(upstream, "init", "--initial-branch=main");
   await git(upstream, "config", "user.name", "Chatero Tests");
   await git(upstream, "config", "user.email", "tests@chatero.invalid");
@@ -68,6 +69,7 @@ async function createFixture() {
   await writeFile(join(upstream, "build", "npm", "dirs.ts"), "export const dirs = [''];\n");
   await writeFile(join(upstream, "build", "gulpfile.vscode.ts"), "export const packageTasks = ['package-core'];\n");
   await writeFile(join(upstream, "build", "gulpfile.extensions.ts"), "export const extensionTasks = ['package-builtins'];\n");
+  await writeFile(join(upstream, "build", "gulpfile.reh.ts"), "export const remoteTasks = ['package-remote'];\n");
   await git(upstream, "add", "build", "package.json", "package-lock.json", "product.json");
   await git(upstream, "commit", "-m", "fixture Code-OSS");
   const commit = await git(upstream, "rev-parse", "HEAD");
@@ -83,6 +85,17 @@ async function createFixture() {
     builtInExtensions: [],
   }, null, 2)}\n`);
   await writeFile(join(workbenchRoot, "patches", "code-oss", "series.json"), '{"schemaVersion":1,"patches":[]}\n');
+  await writeFile(join(root, "first-party-src", "extension.mjs"), "export function activate() {}\n");
+  await writeFile(join(workbenchRoot, "first-party-extensions.json"), `${JSON.stringify({
+    schemaVersion: 1,
+    extensions: [{
+      id: "chatero.zotero",
+      files: [{
+        source: "first-party-src/extension.mjs",
+        destination: "extensions/chatero-zotero/extension.mjs",
+      }],
+    }],
+  })}\n`);
 
   const contract = Object.freeze({
     schemaVersion: 1,
@@ -118,7 +131,12 @@ test("materializes and verifies a pinned Chatero checkout without network access
   assert.equal(product.extensionsGallery.serviceUrl, "https://open-vsx.org/vscode/gallery");
   assert.equal(provenance.codeOssCommit, input.contract.codeOss.commit);
   assert.deepEqual(provenance.patches, []);
-  assert.deepEqual(provenance.managedPaths, ["product.json"]);
+  assert.equal(provenance.firstPartyExtensions[0].id, "chatero.zotero");
+  assert.deepEqual(provenance.managedPaths, [
+    "extensions/chatero-zotero/extension.mjs",
+    "product.json",
+  ]);
+  assert.equal(await readFile(join(input.destination, "extensions", "chatero-zotero", "extension.mjs"), "utf8"), "export function activate() {}\n");
   assert.match(provenance.productSha256, /^[0-9a-f]{64}$/);
   assert.match(provenance.worktreeDiffSha256, /^[0-9a-f]{64}$/);
   assert.equal((await verifyCodeOss(input)).ok, true);
