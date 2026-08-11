@@ -83,11 +83,6 @@ Zotero.QLab = Zotero.QLab || {};
 		}
 	}
 
-	function requiresStagedCommit(decision) {
-		return decision && (decision.action === 'open-readonly-qmd'
-			|| decision.action === 'open-readonly-bib');
-	}
-
 	function refuse(reason) {
 		return Object.freeze({ action: 'refuse', reason: String(reason || 'unsafe-document') });
 	}
@@ -395,17 +390,11 @@ Zotero.QLab = Zotero.QLab || {};
 								// snapshot above and this bridge invocation.
 								let bridgePromise = bridge(decision, capability);
 								let bridgeResult = await bridgePromise;
-								if (requiresStagedCommit(decision)) {
-									if (pendingRouteStage(bridgeResult)) {
-										routeStage = bridgeResult;
-										stagedDecision = decision;
-									}
-									else operationResult = refuse('routing-stage-required');
+								if (pendingRouteStage(bridgeResult)) {
+									routeStage = bridgeResult;
+									stagedDecision = decision;
 								}
-								else {
-									operationResult = bridgeResult === true
-										? decision : refuse('routing-bridge-refused');
-								}
+								else operationResult = refuse('routing-stage-required');
 							}
 						}
 					}

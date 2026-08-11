@@ -176,6 +176,43 @@ Zotero.QLab = Zotero.QLab || {};
 		}
 		return trees;
 	};
+
+	function snapshotContainsPath(nodes, path) {
+		for (let node of Array.isArray(nodes) ? nodes : []) {
+			if (node && node.path === path) return true;
+			if (snapshotContainsPath(node && node.children, path)) return true;
+		}
+		return false;
+	}
+
+	/** Keep active document authority stable while Explorer metadata refreshes. */
+	Zotero.QLab.reconcileQmdExplorerActiveDocument = async function ({
+		snapshot = [],
+		activeDocument = null,
+		reloadReadonly = async () => {},
+		failClosedReadonly = () => {},
+		observeDraft = async () => {},
+	} = {}) {
+		if (!activeDocument || typeof activeDocument.relativePath !== 'string') return 'idle';
+		let exists = snapshotContainsPath(snapshot, activeDocument.relativePath);
+		if (activeDocument.readOnly === true) {
+			if (!exists) {
+				failClosedReadonly(new Error('The active read-only document was removed'));
+				return 'closed-missing-readonly';
+			}
+			try {
+				await reloadReadonly();
+				return 'reloaded-readonly';
+			}
+			catch (error) {
+				failClosedReadonly(error);
+				return 'closed-unreadable-readonly';
+			}
+		}
+		if (!exists) return 'preserved-missing-draft';
+		await observeDraft();
+		return 'observed-draft';
+	};
 	
 	Zotero.QLab.createQmdExplorerWatcher = function ({
 		readSnapshot,

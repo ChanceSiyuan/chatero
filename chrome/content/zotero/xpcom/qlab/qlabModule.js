@@ -1121,18 +1121,9 @@ Zotero.QLab = Zotero.QLab || {};
 				return;
 			}
 			let draftRow = event.target.closest('[data-qlab-draft-row]');
-			if (draftRow) {
-				let path = draftRow.dataset.qlabDraftRow;
-				let select = host.querySelector('[data-qlab-draft]');
-				if (select) {
-					select.value = path;
-				}
-				for (let row of host.querySelectorAll('[data-qlab-draft-row]')) {
-					row.classList.toggle('is-active', row === draftRow);
-				}
-				void Zotero.QLab.loadDraftIntoShell(host, mountRoot, path);
-				return;
-			}
+			if (draftRow && Zotero.QLab.runLegacyDraftRowRoute({
+				host, root: mountRoot, row: draftRow,
+			})) return;
 			let atPick = event.target.closest('[data-qlab-at-pick]');
 			if (atPick) {
 				void Zotero.QLab.handleComposerAtPick(host, atPick.dataset.qlabAtPick);
@@ -1386,6 +1377,21 @@ Zotero.QLab = Zotero.QLab || {};
 			},
 			targetKey
 		);
+	};
+
+	/** Legacy shell-only Draft rows must never bypass the mounted workspace router. */
+	Zotero.QLab.runLegacyDraftRowRoute = function ({ host, root, row } = {}) {
+		if (!host || !row || host._qlabQmdWorkspace
+				|| row.dataset?.qlabDocumentRow) return false;
+		let path = String(row.dataset?.qlabDraftRow || '');
+		if (!path) return false;
+		let select = host.querySelector('[data-qlab-draft]');
+		if (select) select.value = path;
+		for (let draftRow of host.querySelectorAll('[data-qlab-draft-row]')) {
+			draftRow.classList.toggle('is-active', draftRow === row);
+		}
+		void Zotero.QLab.loadDraftIntoShell(host, root, path);
+		return true;
 	};
 
 	Zotero.QLab.loadDraftIntoShell = async function (host, root, relativePath) {
@@ -3283,7 +3289,7 @@ Zotero.QLab = Zotero.QLab || {};
 	/**
 	 * Window-scoped controller. Created from Zotero_Tabs.init when available.
 	 */
-	Zotero.QLab.createWindowController = function (tabsAPI) {
+	Zotero.QLab.createWindowController = function (tabsAPI, options = {}) {
 		let groups = new Zotero.QLab.TabGroups(() => {
 			try {
 				if (tabsAPI && typeof tabsAPI._onQLabGroupsChanged === 'function') {
@@ -3370,6 +3376,7 @@ Zotero.QLab = Zotero.QLab || {};
 		});
 		let workspaceDocumentAccess = null;
 		let workspaceDocumentLeaseHost = null;
+		let workspaceDocumentRouter = null;
 		let controllerDestroyed = false;
 		let getSelectedRepositoryState = async () => ({
 			root: String(Zotero.QLab.Settings && Zotero.QLab.Settings.getRoot() || ''),
@@ -3377,6 +3384,94 @@ Zotero.QLab = Zotero.QLab || {};
 				? windowController._workspaceTargetEpoch
 				: setupCoordinator.targetEpoch,
 		});
+		function mountedQmdWorkspace(root, epoch) {
+			let qmdTab = (tabsAPI?._tabs || []).find(tab => tab.type === 'qlabqmd');
+			let container = qmdTab && doc?.getElementById?.(qmdTab.id);
+			let host = container?.querySelector?.('.qlab-shell-host');
+			let workspace = host?._qlabQmdWorkspace;
+			return workspace && host._qlabMountRoot === root
+				&& host._qlabMountEpoch === epoch ? workspace : null;
+		}
+		function refuseWorkspaceDocument(reason) {
+			return Object.freeze({
+				action: 'refuse', reason: String(reason || 'workspace-document-router-unavailable'),
+			});
+		}
+		async function openDraftWithoutNativeBroker(input = {}) {
+			let allowed = new Set(['root', 'relativePath', 'source', 'placement']);
+			if (Object.keys(input).some(name => !allowed.has(name))
+					|| input.source !== 'explorer' || input.placement !== 'current') {
+				return refuseWorkspaceDocument('unsafe-draft-fallback-request');
+			}
+			let document = Zotero.QLab.classifyWorkspaceDocument(input.relativePath);
+			if (!document || document.authority !== 'draft' || document.kind !== 'qmd'
+					|| document.writable !== true) {
+				return refuseWorkspaceDocument('native-broker-required');
+			}
+			let selected;
+			try { selected = await getSelectedRepositoryState(); }
+			catch (error) { return refuseWorkspaceDocument('selected-repository-unavailable'); }
+			let validEpoch = (Number.isSafeInteger(selected?.epoch) && selected.epoch >= 0)
+				|| (typeof selected?.epoch === 'string' && selected.epoch.trim().length > 0);
+			if (!validEpoch || typeof selected.root !== 'string' || !selected.root.startsWith('/')
+					|| input.root !== selected.root) {
+				return refuseWorkspaceDocument('foreign-or-stale-draft-fallback');
+			}
+			let workspace = mountedQmdWorkspace(selected.root, selected.epoch);
+			if (!workspace || typeof workspace.prepareDraftRoute !== 'function'
+					|| typeof workspace.commitPreparedDraftRoute !== 'function'
+					|| typeof workspace.rollbackPreparedDraftRoute !== 'function') {
+				return refuseWorkspaceDocument('stale-draft-workspace');
+			}
+			let confirmed;
+			try { confirmed = await getSelectedRepositoryState(); }
+			catch (error) { confirmed = null; }
+			if (!confirmed || confirmed.root !== selected.root || confirmed.epoch !== selected.epoch
+					|| mountedQmdWorkspace(selected.root, selected.epoch) !== workspace) {
+				return refuseWorkspaceDocument('foreign-or-stale-draft-fallback');
+			}
+			let prepared = null;
+			try {
+				prepared = await workspace.prepareDraftRoute(document.path);
+				if (!prepared || (typeof prepared !== 'object' && typeof prepared !== 'function')
+						|| !Object.isFrozen(prepared)) {
+					if (prepared) {
+						try { workspace.rollbackPreparedDraftRoute(prepared); }
+						catch (rollbackError) { Zotero.logError && Zotero.logError(rollbackError); }
+					}
+					prepared = null;
+					return refuseWorkspaceDocument('draft-fallback-refused');
+				}
+				let finalState;
+				try { finalState = await getSelectedRepositoryState(); }
+				catch (error) { finalState = null; }
+				if (controllerDestroyed || !finalState
+						|| finalState.root !== selected.root || finalState.epoch !== selected.epoch
+						|| mountedQmdWorkspace(selected.root, selected.epoch) !== workspace) {
+					workspace.rollbackPreparedDraftRoute(prepared);
+					prepared = null;
+					return refuseWorkspaceDocument('foreign-or-stale-draft-fallback');
+				}
+				if (workspace.commitPreparedDraftRoute(prepared) !== true) {
+					workspace.rollbackPreparedDraftRoute(prepared);
+					prepared = null;
+					return refuseWorkspaceDocument('draft-fallback-refused');
+				}
+				prepared = null;
+				return Object.freeze({
+					action: 'open-draft', root: selected.root,
+					relativePath: document.path, placement: 'current',
+				});
+			}
+			catch (error) {
+				if (prepared) {
+					try { workspace.rollbackPreparedDraftRoute(prepared); }
+					catch (rollbackError) { Zotero.logError && Zotero.logError(rollbackError); }
+				}
+				Zotero.logError && Zotero.logError(error);
+				return refuseWorkspaceDocument('draft-fallback-failed');
+			}
+		}
 		try {
 			if (typeof Zotero.QLab.createGeckoWorkspaceDocumentLeaseHost === 'function'
 					&& typeof Zotero.QLab.createWindowWorkspaceDocumentAccess === 'function') {
@@ -3429,6 +3524,18 @@ Zotero.QLab = Zotero.QLab || {};
 				return workspaceDocumentAccess
 					? workspaceDocumentAccess.releaseVerifiedDocument(capability)
 					: Promise.resolve(false);
+			},
+
+			openWorkspaceDocument(input = {}) {
+				if (controllerDestroyed) {
+					return Promise.resolve(refuseWorkspaceDocument('workspace-controller-destroyed'));
+				}
+				if (!workspaceDocumentRouter) {
+					return workspaceDocumentAccess === null
+						? openDraftWithoutNativeBroker(input)
+						: Promise.resolve(refuseWorkspaceDocument());
+				}
+				return workspaceDocumentRouter.open(input);
 			},
 
 			workspaceSwitchBlocker() {
@@ -3821,6 +3928,55 @@ Zotero.QLab = Zotero.QLab || {};
 				return true;
 			},
 		};
+		if (workspaceDocumentAccess
+				&& typeof Zotero.QLab.createWorkspaceDocumentRouter === 'function') {
+			try {
+				let configured = options.workspaceDocumentBridges || {};
+				let prepareCurrentQmdDocument = async (decision, capability) => {
+					let workspace = mountedQmdWorkspace(
+						decision.root, windowController._workspaceTargetEpoch
+					);
+					if (!workspace
+							|| typeof workspace.prepareWorkspaceDocument !== 'function') return null;
+					let verifiedDraft = decision.action === 'open-draft'
+						? await workspaceDocumentAccess.readVerifiedDraft(capability)
+						: null;
+					return workspace.prepareWorkspaceDocument(
+						decision, capability, verifiedDraft
+					);
+				};
+				let actionBridges = {
+					openDraft: prepareCurrentQmdDocument,
+					openReadonlyQmd: prepareCurrentQmdDocument,
+					openReadonlyBib: prepareCurrentQmdDocument,
+				};
+				for (let name of [
+					'getCurrentSiteOrigin', 'getKnowledgePaths', 'findAttachment',
+					'openDraft', 'openReadonlyQmd', 'openReadonlyBib',
+					'openKnowledgeSite', 'openNativeReader', 'reviewPDFLink',
+				]) {
+					if (typeof configured[name] === 'function') actionBridges[name] = configured[name];
+				}
+				workspaceDocumentRouter = Zotero.QLab.createWorkspaceDocumentRouter({
+					...actionBridges,
+					getSelectedRepositoryState,
+					canonicalizeRoot: async root => {
+						let pathHost = Zotero.QLab.createGeckoQLabPathHost();
+						return pathHost.realPath(root);
+					},
+					acquireVerifiedDocument: request => (
+						workspaceDocumentAccess.acquireVerifiedDocument(request)
+					),
+					releaseVerifiedDocument: capability => (
+						workspaceDocumentAccess.releaseVerifiedDocument(capability)
+					),
+				});
+			}
+			catch (error) {
+				workspaceDocumentRouter = null;
+				Zotero.logError && Zotero.logError(error);
+			}
+		}
 		if (Zotero.QLab.registerMainSiteController) {
 			unregisterMainSiteController = Zotero.QLab.registerMainSiteController(
 				windowController,

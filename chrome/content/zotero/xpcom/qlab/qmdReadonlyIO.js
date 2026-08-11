@@ -13,6 +13,7 @@ Zotero.QLab = Zotero.QLab || {};
 
 (function () {
 	const VERIFIED_READS = new WeakSet();
+	const VERIFIED_DRAFT_READS = new WeakSet();
 	const VERIFIED_READ_CONTEXTS = new WeakMap();
 	const READONLY_IO_CONTEXTS = new WeakMap();
 	const READONLY_SESSION_CONTEXTS = new WeakMap();
@@ -364,9 +365,11 @@ Zotero.QLab = Zotero.QLab || {};
 				if (!leafIdentity) {
 					throw new Error('Workspace document leaf regular file identity is invalid');
 				}
-				let readableText = document.writable === false
-					&& ['knowledge', 'literature'].includes(document.authority)
-					&& ['qmd', 'markdown', 'bib'].includes(document.kind);
+				let readableText = (document.authority === 'draft'
+						&& document.kind === 'qmd' && document.writable === true)
+					|| (document.writable === false
+						&& ['knowledge', 'literature'].includes(document.authority)
+						&& ['qmd', 'markdown', 'bib'].includes(document.kind));
 				if (readableText && leafIdentity.size > maxTextBytes) {
 					throw new Error('Workspace document text exceeds the size limit');
 				}
@@ -437,7 +440,7 @@ Zotero.QLab = Zotero.QLab || {};
 				let record = privateRecord(access, capability);
 				if (!record) throw new Error('Workspace document lease access was revoked');
 				if (!record.readableText) {
-					throw new Error('Workspace document lease is not readable read-only text');
+					throw new Error('Workspace document lease is not readable verified text');
 				}
 				if (record.readConsumed) {
 					throw new Error('Workspace document read access was already consumed');
@@ -925,6 +928,40 @@ Zotero.QLab = Zotero.QLab || {};
 				return acquireForBinding(binding, request);
 			},
 			releaseVerifiedDocument: capability => leaseHost.releaseVerifiedDocument(capability),
+			async readVerifiedDraft(capability) {
+				if (lifecycle !== 'active' || typeof leaseHost.readVerified !== 'function') {
+					throw new Error('Window workspace Draft handle read is unavailable');
+				}
+				let before = await selectedState();
+				let handleAccess = opaqueAccess(capability);
+				if (!capability || typeof capability !== 'object' || !Object.isFrozen(capability)
+						|| !handleAccess || capability.root !== before.root
+						|| capability.relativePath === undefined
+						|| capability.canonicalPath !== `${before.root}/${capability.relativePath}`
+						|| capability.authority !== 'draft' || capability.kind !== 'qmd'
+						|| capability.writable !== true) {
+					throw new Error('Window workspace Draft capability is invalid');
+				}
+				let read = await leaseHost.readVerified(handleAccess, capability);
+				let after = await selectedState();
+				if (lifecycle !== 'active' || !sameBinding(before, after)) {
+					throw new Error('Window workspace Draft repository binding changed during read');
+				}
+				if (!read || typeof read !== 'object' || typeof read.text !== 'string') {
+					throw new Error('Window workspace Draft handle returned invalid text');
+				}
+				let text = read.text;
+				let revision = Zotero.QLab.QmdDraftIO && Zotero.QLab.QmdDraftIO._hash
+					? Zotero.QLab.QmdDraftIO._hash(text)
+					: String(text.length);
+				let result = Object.freeze({
+					relativePath: capability.relativePath,
+					text,
+					revision,
+				});
+				VERIFIED_DRAFT_READS.add(result);
+				return result;
+			},
 			async readonlyDocumentIOForRoot(root) {
 				if (lifecycle !== 'active') return null;
 				let canonicalRoot = canonicalRepositoryRoot(root);
@@ -959,6 +996,14 @@ Zotero.QLab = Zotero.QLab || {};
 			},
 		};
 		return Object.freeze(access);
+	};
+
+	Zotero.QLab.verifiedWorkspaceDraftReadMatches = function (read, relativePath) {
+		return !!read && VERIFIED_DRAFT_READS.has(read)
+			&& Object.isFrozen(read)
+			&& read.relativePath === relativePath
+			&& typeof read.text === 'string'
+			&& typeof read.revision === 'string' && read.revision.length > 0;
 	};
 
 	/**

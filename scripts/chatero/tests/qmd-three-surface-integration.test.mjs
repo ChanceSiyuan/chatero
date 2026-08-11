@@ -317,7 +317,10 @@ async function mountProductionWorkspace(QLab, t, {
 					if (result) Object.assign(controllerResources, next);
 					return result;
 				},
-				commit: () => failReadonlyResourceCommit ? false : transaction.commit(),
+				commit: () => failReadonlyResourceCommit
+					&& next.session?.snapshot?.().document?.readOnly === true
+					? false
+					: transaction.commit(),
 				rollback() {
 					const result = transaction.rollback();
 					if (result) controllerResources = previous;
@@ -1101,6 +1104,128 @@ test("production workspace activation rolls every resident Draft resource back a
 	assert.deepEqual(mounted.disposals(), { draft: 0, readonly: 1, preview: 0 });
 	assert.equal(draft.snapshot().disposed, false);
 	assert.equal(mounted.readonlySession().snapshot().disposed, true);
+});
+
+test("production Draft routing stages the real mounted workspace until lease release and final epoch", async t => {
+	const QLab = await loadQLab();
+	const order = [];
+	const targetPath = "drafts/a.qmd";
+	let targetPathReads = 0;
+	const mounted = await mountProductionWorkspace(QLab, t, {
+		readDraft: async (_root, relativePath) => {
+			if (relativePath === targetPath) {
+				targetPathReads++;
+				return { text: "PATH-SWAPPED\n", revision: "path-r1" };
+			}
+			return { text: `${relativePath}\n`, revision: "active-r1" };
+		},
+		findDraftProposal: async (_root, relativePath) => {
+			if (relativePath === targetPath) order.push("proposal-read");
+			return null;
+		},
+	});
+	t.after(() => mounted.workspace.dispose());
+	const previousSession = mounted.draftSession();
+	const previousSnapshot = mounted.workspace.documentSnapshot();
+	let stageCommits = 0;
+	let stageRollbacks = 0;
+	const originalCreateStage = QLab.createWorkspaceDocumentRouteStage;
+	QLab.createWorkspaceDocumentRouteStage = callbacks => originalCreateStage({
+		commit() {
+			stageCommits++;
+			order.push("commit");
+			return callbacks.commit();
+		},
+		rollback() {
+			stageRollbacks++;
+			order.push("rollback");
+			return callbacks.rollback();
+		},
+	});
+	t.after(() => { QLab.createWorkspaceDocumentRouteStage = originalCreateStage; });
+	let selectionReads = 0;
+	const selectedState = async () => {
+		order.push(`selection:${++selectionReads}`);
+		return { root: mounted.root, epoch: 11 };
+	};
+	let liveCapability = null;
+	const leaseHost = {
+		async acquireVerifiedDocument(request) {
+			liveCapability = Object.freeze({
+				root: request.root,
+				relativePath: request.relativePath,
+				canonicalPath: `${request.root}/${request.relativePath}`,
+				authority: request.authority,
+				kind: request.kind,
+				writable: request.writable,
+				access: Object.freeze({ retained: targetPath }),
+			});
+			return liveCapability;
+		},
+		async readVerified(access, capability) {
+			assert.equal(capability, liveCapability);
+			assert.equal(access, liveCapability.access);
+			order.push("handle-read");
+			return Object.freeze({
+				text: "HANDLE-BOUND\n",
+				size: 13,
+				lastModified: 23,
+			});
+		},
+		async releaseVerifiedDocument(capability) {
+			assert.equal(capability, liveCapability);
+			liveCapability = null;
+			return true;
+		},
+		async destroy() { return true; },
+	};
+	const windowAccess = QLab.createWindowWorkspaceDocumentAccess({
+		leaseHost,
+		getSelectedRepositoryState: selectedState,
+	});
+	t.after(() => windowAccess.destroy());
+	const router = QLab.createWorkspaceDocumentRouter({
+		getSelectedRepositoryState: selectedState,
+		canonicalizeRoot: async value => value,
+		acquireVerifiedDocument: request => windowAccess.acquireVerifiedDocument(request),
+		releaseVerifiedDocument: async capability => {
+			order.push("release");
+			assert.equal(mounted.workspace.document().relativePath, "drafts/active.qmd");
+			assert.deepEqual(
+				JSON.parse(JSON.stringify(mounted.workspace.documentSnapshot())),
+				JSON.parse(JSON.stringify(previousSnapshot)),
+				"preparation cannot publish the target Draft before release",
+			);
+			assert.equal(previousSession.snapshot().disposed, false);
+			return windowAccess.releaseVerifiedDocument(capability);
+		},
+		openDraft: async (decision, capability) => {
+			order.push("prepare");
+			let verifiedDraft = await windowAccess.readVerifiedDraft(capability);
+			return mounted.workspace.prepareWorkspaceDocument(
+				decision, capability, verifiedDraft
+			);
+		},
+	});
+
+	const result = await router.open({ root: mounted.root, relativePath: targetPath });
+	assert.equal(result.action, "open-draft");
+	assert.equal(mounted.workspace.document().relativePath, targetPath);
+	assert.equal(mounted.workspace.documentSnapshot().text, "HANDLE-BOUND\n");
+	assert.equal(targetPathReads, 0, "routed Draft preparation cannot read the pathname host");
+	assert.equal(stageCommits, 1);
+	assert.equal(stageRollbacks, 0);
+	const prepareIndex = order.indexOf("prepare");
+	const handleReadIndex = order.indexOf("handle-read");
+	const proposalReadIndex = order.indexOf("proposal-read");
+	const releaseIndex = order.indexOf("release");
+	const finalSelectionIndex = order.lastIndexOf(`selection:${selectionReads}`);
+	const commitIndex = order.indexOf("commit");
+	assert.ok(prepareIndex < handleReadIndex);
+	assert.ok(handleReadIndex < proposalReadIndex);
+	assert.ok(proposalReadIndex < releaseIndex);
+	assert.ok(releaseIndex < finalSelectionIndex);
+	assert.ok(finalSelectionIndex < commitIndex);
 });
 
 test("post-reset activation failure cannot cancel the previous Draft turn or compliance timer", async t => {

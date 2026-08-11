@@ -375,7 +375,7 @@ test("release continues closing every handle when one native close reports an er
 	assert.equal([...fixture.closes.values()].every(count => count === 1), true);
 });
 
-test("read-only text decoding is fatal and bounded without limiting Draft or PDF routing", async () => {
+test("verified text decoding is fatal and bounded for readonly text and routed Draft source", async () => {
 	const QLab = await loadQLab();
 	const fixture = nativeFixture({ maxTextBytes: 8 });
 	fixture.add("/repo/literature/invalid.md", Uint8Array.from([0xc3, 0x28]));
@@ -395,14 +395,21 @@ test("read-only text decoding is fatal and bounded without limiting Draft or PDF
 		/size|large|limit/i,
 	);
 
-	for (const relativePath of ["drafts/note.qmd", "literature/paper.pdf"]) {
-		const capability = await host.acquireVerifiedDocument(request(QLab, relativePath));
-		await assert.rejects(
-			() => host.readVerified(capability.access, capability),
-			/read-only text|not readable/i,
-		);
-		assert.equal(await host.releaseVerifiedDocument(capability), true);
-	}
+	const draft = await host.acquireVerifiedDocument(request(QLab, "drafts/note.qmd"));
+	fixture.replace("/repo/drafts/note.qmd", "# Path-swapped Draft\n");
+	assert.equal(
+		(await host.readVerified(draft.access, draft)).text,
+		"# Draft\n",
+		"the routed Draft is read from its retained leaf, not the replaced path",
+	);
+	assert.equal(await host.releaseVerifiedDocument(draft), true);
+
+	const pdf = await host.acquireVerifiedDocument(request(QLab, "literature/paper.pdf"));
+	await assert.rejects(
+		() => host.readVerified(pdf.access, pdf),
+		/readable|text/i,
+	);
+	assert.equal(await host.releaseVerifiedDocument(pdf), true);
 	assert.equal(fixture.live.size, 0);
 });
 

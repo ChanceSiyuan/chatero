@@ -317,13 +317,6 @@ Zotero.QLab = Zotero.QLab || {};
 			for (let [key, value] of values) host[key] = value;
 		}
 
-		function replaceActive(descriptor, session) {
-			let previous = activeSession;
-			activeDocument = descriptor;
-			activeSession = session;
-			if (previous && previous !== session) safeDispose(previous);
-		}
-
 		function requireSynchronousCallback(result, name, invalidate) {
 			if (result && typeof result.then === 'function') {
 				invalidate();
@@ -354,6 +347,69 @@ Zotero.QLab = Zotero.QLab || {};
 				Zotero.logError && Zotero.logError(callbackError);
 			}
 			return true;
+		}
+
+		function prepareDraftActivation(session) {
+			if (disposed) return null;
+			let descriptor = sessionDocument(session);
+			if (!descriptor || descriptor.authority !== 'draft') {
+				throw new Error('Workspace Draft activation requires a safe Draft session');
+			}
+			let ownPreparation = ++preparationGeneration;
+			reloadGeneration += 1;
+			let previous = {
+				generation,
+				document: activeDocument,
+				session: activeSession,
+				host: captureHostState(),
+			};
+			let state = 'pending';
+
+			function apply() {
+				if (state !== 'pending' || disposed
+						|| ownPreparation !== preparationGeneration) return false;
+				state = 'applying';
+				try {
+					generation = previous.generation + 1;
+					activeDocument = descriptor;
+					activeSession = session;
+					setHostDocumentState(host, descriptor, session.snapshot());
+					state = 'applied';
+					return true;
+				}
+				catch (error) {
+					generation = previous.generation;
+					activeDocument = previous.document;
+					activeSession = previous.session;
+					restoreHostState(previous.host);
+					state = 'pending';
+					throw error;
+				}
+			}
+
+			function commit() {
+				if (state !== 'applied') return false;
+				state = 'committed';
+				if (previous.session && previous.session !== session) {
+					safeDispose(previous.session);
+				}
+				return true;
+			}
+
+			function rollback() {
+				if (state === 'committed' || state === 'rolled-back') return false;
+				if (state === 'applied') {
+					generation = previous.generation;
+					activeDocument = previous.document;
+					activeSession = previous.session;
+					restoreHostState(previous.host);
+				}
+				state = 'rolled-back';
+				if (session !== previous.session) safeDispose(session);
+				return true;
+			}
+
+			return Object.freeze({ apply, commit, rollback });
 		}
 
 		async function prepareDocument(spec = {}, capability) {
@@ -467,6 +523,7 @@ Zotero.QLab = Zotero.QLab || {};
 		}
 
 		return Object.freeze({
+			prepareDraftActivation,
 			async prepareWorkspaceDocument(spec = {}, capability) {
 				let prepared = await prepareDocument(spec, capability);
 				return prepared ? prepared.stage : false;
@@ -485,16 +542,11 @@ Zotero.QLab = Zotero.QLab || {};
 				}
 			},
 			activateDraft(session) {
-				if (disposed) return false;
-				let descriptor = sessionDocument(session);
-				if (!descriptor || descriptor.authority !== 'draft') {
-					throw new Error('Workspace Draft activation requires a safe Draft session');
-				}
-				preparationGeneration += 1;
-				generation += 1;
-				replaceActive(descriptor, session);
-				setHostDocumentState(host, descriptor, session.snapshot());
-				return true;
+				let activation = prepareDraftActivation(session);
+				if (!activation || !activation.apply()) return false;
+				if (activation.commit()) return true;
+				activation.rollback();
+				return false;
 			},
 			async reloadActive() {
 				if (disposed || !activeDocument || !activeSession
@@ -537,6 +589,11 @@ Zotero.QLab = Zotero.QLab || {};
 					}
 				}
 				return changed;
+			},
+			closeActiveReadonly(error = null) {
+				if (disposed || !activeDocument || activeDocument.readOnly !== true
+						|| !activeSession) return false;
+				return failClosedActive(activeSession, error);
 			},
 			invalidate() {
 				if (disposed) return false;
@@ -844,12 +901,13 @@ Zotero.QLab = Zotero.QLab || {};
 				+ `</div></details>`;
 		}
 		let isDraft = !!node.writable && node.kind === 'qmd';
-		let attribute = isDraft
+		let authorityAttribute = isDraft
 			? `data-qlab-draft-row="${escapeHTML(node.path)}"`
 			: `data-qlab-context-path="${escapeHTML(node.path)}"`;
 		let readonly = isDraft ? '' : ' aria-readonly="true"';
 		return `<button type="button" class="qlab-qmd-explorer-file is-${escapeHTML(node.kind)}" `
-			+ `${attribute}${readonly} title="${escapeHTML(node.path)}">`
+			+ `data-qlab-document-row="${escapeHTML(node.path)}" ${authorityAttribute}`
+			+ `${readonly} title="${escapeHTML(node.path)}">`
 			+ `<span class="qlab-qmd-file-icon" aria-hidden="true">${node.kind === 'qmd' ? 'Q' : node.kind === 'bib' ? '@' : '•'}</span>`
 			+ `<span>${escapeHTML(node.name)}</span></button>`;
 	}
@@ -857,6 +915,42 @@ Zotero.QLab = Zotero.QLab || {};
 	Zotero.QLab.renderQmdExplorerHTML = function (explorer = []) {
 		let roots = explorer.length ? explorer : rootFromDrafts([]);
 		return roots.map(root => treeNodeHTML(root)).join('');
+	};
+
+	Zotero.QLab.createQmdExplorerDocumentDelegate = function ({
+		root,
+		route,
+		onResult = () => {},
+		onError = () => {},
+	} = {}) {
+		if (!root || typeof route !== 'function') {
+			throw new Error('QMD Explorer document routing requires a root and window router');
+		}
+		return async function routeExplorerDocument(event) {
+			let row = event && event.target && event.target.closest
+				? event.target.closest('[data-qlab-document-row]')
+				: null;
+			if (!row || row.disabled) return false;
+			let relativePath = String(row.dataset && row.dataset.qlabDocumentRow || '');
+			let document = Zotero.QLab.classifyWorkspaceDocument(relativePath);
+			if (!document || document.path !== relativePath) return false;
+			event.preventDefault && event.preventDefault();
+			event.stopImmediatePropagation && event.stopImmediatePropagation();
+			try {
+				let result = await route(Object.freeze({
+					root,
+					relativePath: document.path,
+					source: 'explorer',
+					placement: 'current',
+				}));
+				onResult(result, document);
+				return result;
+			}
+			catch (error) {
+				onError(error, document);
+				return false;
+			}
+		};
 	};
 
 	Zotero.QLab.renderQmdWorkspaceHTML = function ({
@@ -1455,15 +1549,6 @@ Zotero.QLab = Zotero.QLab || {};
 		return `${String(root || '').replace(/[\\/]+$/, '')}/${String(relativePath || '').replace(/^[\\/]+/, '')}`;
 	}
 
-	function findNode(nodes, path) {
-		for (let node of nodes || []) {
-			if (node.path === path) return node;
-			let found = findNode(node.children, path);
-			if (found) return found;
-		}
-		return null;
-	}
-
 	function diagnosticOffsets(text, diagnostics) {
 		let starts = [0];
 		for (let i = 0; i < text.length; i++) {
@@ -1515,6 +1600,8 @@ Zotero.QLab = Zotero.QLab || {};
 		let activeDocumentGeneration = 0;
 		let documentManager = null;
 		let openGate = Zotero.QLab.createQmdLatestRequestGate();
+		const preparedDraftRoutes = new WeakMap();
+		const pendingPreparedDraftRoutes = new Set();
 		let surfaceTransition = Promise.resolve(true);
 		let disposing = false;
 		let complianceTimer = null;
@@ -1762,22 +1849,31 @@ Zotero.QLab = Zotero.QLab || {};
 			onChange: async snapshot => {
 				let tree = host.querySelector('[data-qlab-qmd-explorer]');
 				if (tree) Zotero.QLab.setHTML(tree, Zotero.QLab.renderQmdExplorerHTML(snapshot));
-				for (let row of host.querySelectorAll('[data-qlab-draft-row]')) {
-					row.classList.toggle('is-active', row.dataset.qlabDraftRow === activePath);
+				for (let row of host.querySelectorAll('[data-qlab-document-row]')) {
+					row.classList.toggle('is-active', row.dataset.qlabDocumentRow === activePath);
 				}
-				if (activeSession && findNode(snapshot, activePath)) {
+				if (activeSession) {
 					try {
 						let descriptor = sessionDocument(activeSession);
-						if (descriptor && descriptor.readOnly) {
-							await documentManager?.reloadActive();
-							return;
-						}
 						let observedSession = activeSession;
 						let observedPath = activePath;
-						let disk = await Zotero.QLab.QmdDraftIO.readSource(root, observedPath, ioHost);
-						if (activeSession === observedSession && activePath === observedPath) {
-							observedSession.observeDisk(disk);
-						}
+						await Zotero.QLab.reconcileQmdExplorerActiveDocument({
+							snapshot,
+							activeDocument: descriptor,
+							reloadReadonly: async () => {
+								if (!documentManager) throw new Error('Verified read-only reload is unavailable');
+								return documentManager.reloadActive();
+							},
+							failClosedReadonly: error => documentManager?.closeActiveReadonly(error),
+							observeDraft: async () => {
+								let disk = await Zotero.QLab.QmdDraftIO.readSource(
+									root, observedPath, ioHost
+								);
+								if (activeSession === observedSession && activePath === observedPath) {
+									observedSession.observeDisk(disk);
+								}
+							},
+						});
 					}
 					catch (error) {
 						Zotero.logError && Zotero.logError(error);
@@ -1905,7 +2001,7 @@ Zotero.QLab = Zotero.QLab || {};
 				if (select) select.value = '';
 			});
 			cleanup(() => {
-				for (let row of host.querySelectorAll('[data-qlab-draft-row]')) {
+				for (let row of host.querySelectorAll('[data-qlab-document-row]')) {
 					row.classList.toggle('is-active', false);
 				}
 			});
@@ -2316,37 +2412,12 @@ Zotero.QLab = Zotero.QLab || {};
 			}
 		}
 
-		async function prepareWorkspaceDocument(spec = {}, capability) {
-			if (!documentManager) return false;
-			let request = openGate.begin();
-			documentManager.invalidatePrepared();
-			try {
-				if (!await Zotero.QLab.flushQmdDraftBeforeTransition(activeSession, visualEditor)) {
-					return false;
-				}
-			}
-			catch (error) {
-				if (!request.isCurrent()) return false;
-				setPersistenceStatus('error', error && error.message || String(error));
-				return false;
-			}
-			if (!request.isCurrent()) return false;
-			try {
-				return await documentManager.prepareWorkspaceDocument(spec, capability);
-			}
-			catch (error) {
-				if (!request.isCurrent()) return false;
-				setPersistenceStatus('error', error && error.message || String(error));
-				return false;
-			}
-		}
-
-		async function openDraft(relativePath) {
+		async function prepareDraftDocument(relativePath, verifiedDraft = null) {
 			let classification = Zotero.QLab.classifyWorkspaceDocument(relativePath);
 			if (!classification || classification.authority !== 'draft'
 					|| classification.kind !== 'qmd' || !classification.writable) return false;
 			let request = openGate.begin();
-			documentManager?.invalidate();
+			documentManager?.invalidatePrepared();
 			try {
 				if (!await Zotero.QLab.flushQmdDraftBeforeTransition(activeSession, visualEditor)) {
 					return false;
@@ -2358,15 +2429,43 @@ Zotero.QLab = Zotero.QLab || {};
 				return false;
 			}
 			if (!request.isCurrent()) return false;
-			if (activeSession && activePath === relativePath) return true;
-			let doc;
-			try {
-				doc = await Zotero.QLab.QmdDraftIO.readSource(root, relativePath, ioHost);
+			if (activeSession && activePath === relativePath) {
+				let state = 'pending';
+				let commit = () => {
+					if (state !== 'pending' || disposing || !request.isCurrent()
+							|| activeSession === null || activePath !== relativePath) return false;
+					state = 'committed';
+					return true;
+				};
+				let rollback = () => {
+					if (state !== 'pending') return false;
+					state = 'rolled-back';
+					return true;
+				};
+				return Object.freeze({
+					stage: Zotero.QLab.createWorkspaceDocumentRouteStage({ commit, rollback }),
+					commit,
+					rollback,
+				});
 			}
-			catch (error) {
-				if (!request.isCurrent()) return false;
-				setPersistenceStatus('error', error && error.message || String(error));
-				return false;
+			let doc;
+			if (verifiedDraft !== null) {
+				if (!Zotero.QLab.verifiedWorkspaceDraftReadMatches?.(
+					verifiedDraft, relativePath
+				)) {
+					throw new Error('Routed Draft preparation requires handle-bound verified bytes');
+				}
+				doc = verifiedDraft;
+			}
+			else {
+				try {
+					doc = await Zotero.QLab.QmdDraftIO.readSource(root, relativePath, ioHost);
+				}
+				catch (error) {
+					if (!request.isCurrent()) return false;
+					setPersistenceStatus('error', error && error.message || String(error));
+					return false;
+				}
 			}
 			if (!request.isCurrent()) return false;
 			let nextProposal = null;
@@ -2461,60 +2560,297 @@ Zotero.QLab = Zotero.QLab || {};
 				preview.dispose();
 				return false;
 			}
-			activeDocumentGeneration = sessionGeneration;
-			activePath = relativePath;
-			latestPreviewState = null;
-			persistence = 'saved';
-			persistenceMessage = 'Saved';
-			proposal = nextProposal;
-			complianceResult = null;
-			let complianceDetails = host.querySelector('[data-qlab-compliance-details]');
-			if (complianceDetails) {
-				complianceDetails.hidden = true;
-				complianceDetails.textContent = '';
+			let state = 'pending';
+			let resources = null;
+			let managerActivation = null;
+			let previous = null;
+			let dom = null;
+
+			function disposePrepared() {
+				try { session.dispose(); }
+				catch (error) { Zotero.logError && Zotero.logError(error); }
+				try { preview.dispose(); }
+				catch (error) { Zotero.logError && Zotero.logError(error); }
 			}
-			activeSession = session;
-			if (documentManager) documentManager.activateDraft(session);
-			else setHostDocumentState(host, session.document, session.snapshot());
-			visualBridge.setSession(session);
-			if (proposal) session.attachProposal(proposal.state);
-			previewSurface.clear();
-			activePreview = preview;
-			controller.setResources({ preview, session });
-			host._qlabDraftState = {
-				originalPath: relativePath,
-				workingPath: proposal ? proposal.state.workingPath : null,
-				basePath: proposal ? proposal.state.basePath : null,
-				revision: doc.revision,
-				viewingWorking: false,
-			};
-			host._qlabLastSaved = doc.text;
-			host._qlabBuffer = doc.text;
-			let tabs = view.Zotero_Tabs;
-			if (tabs && tabs.setTabData && host._qlabMountTabID) {
-				tabs.setTabData(host._qlabMountTabID, { draftPath: relativePath });
+
+			function restorePreviousView() {
+				if (state === 'committed' || state === 'rolled-back') return false;
+				state = 'rolling-back';
+				let rollbackError = null;
+				function restore(operation) {
+					try { operation(); }
+					catch (error) {
+						if (!rollbackError) rollbackError = error;
+						Zotero.logError && Zotero.logError(error);
+					}
+				}
+				if (previous) {
+					restore(() => { managerActivation?.rollback(); });
+					restore(() => { resources?.rollback(); });
+					if (!resources) restore(disposePrepared);
+					else if (documentManager && !managerActivation) {
+						restore(() => { session.dispose(); });
+					}
+					restore(() => {
+						activeDocumentGeneration = previous.activeDocumentGeneration;
+						activePath = previous.activePath;
+						activeSession = previous.activeSession;
+						activePreview = previous.activePreview;
+						proposal = previous.proposal;
+						previewVersion = previous.previewVersion;
+						latestPreviewState = previous.latestPreviewState;
+						persistence = previous.persistence;
+						persistenceMessage = previous.persistenceMessage;
+						complianceResult = previous.complianceResult;
+						host._qlabDraftState = previous.draftState;
+						host._qlabLastSaved = previous.lastSaved;
+						host._qlabBuffer = previous.buffer;
+						host._qlabDirty = previous.dirty;
+					});
+					restore(() => { controller.restoreState(previous.controller); });
+					restore(() => { visualBridge.setSession(previous.activeSession); });
+					restore(() => {
+						if (previous.previewState) showPreviewState(previous.previewState);
+						else previewSurface.clear();
+					});
+					restore(() => { monacoBridge.showNormal(); });
+					restore(() => { dom?.restore(); });
+					let tabs = view.Zotero_Tabs;
+					if (tabs && tabs.setTabData && host._qlabMountTabID) {
+						restore(() => { tabs.setTabData(host._qlabMountTabID, {
+							draftPath: previous.document && !previous.document.readOnly
+								? previous.document.relativePath
+								: null,
+							workspaceDocument: previous.document && previous.document.readOnly
+								? {
+									path: previous.document.relativePath,
+									authority: previous.document.authority,
+									format: previous.document.format,
+									readOnly: true,
+								}
+								: null,
+						}); });
+					}
+				}
+				else disposePrepared();
+				state = 'rolled-back';
+				if (rollbackError) throw rollbackError;
+				return true;
 			}
-			let pathLabel = host.querySelector('[data-qlab-draft-path]');
-			if (pathLabel) {
-				pathLabel.textContent = relativePath;
-				pathLabel.title = relativePath;
+
+			function commit() {
+				if (state !== 'pending' || disposing || !request.isCurrent()) return false;
+				previous = {
+					activeDocumentGeneration,
+					activePath,
+					activeSession,
+					activePreview,
+					proposal,
+					previewVersion,
+					latestPreviewState,
+					persistence,
+					persistenceMessage,
+					complianceResult,
+					draftState: host._qlabDraftState,
+					lastSaved: host._qlabLastSaved,
+					buffer: host._qlabBuffer,
+					dirty: host._qlabDirty,
+					controller: controller.snapshot(),
+					previewState: activePreview && typeof activePreview.snapshot === 'function'
+						? activePreview.snapshot()
+						: null,
+					document: sessionDocument(activeSession),
+				};
+				dom = captureWorkspaceActivationDOM();
+				resources = controller.beginResourceTransaction({ preview, session });
+				if (!resources) return false;
+				managerActivation = documentManager
+					? documentManager.prepareDraftActivation(session)
+					: null;
+				if (documentManager && !managerActivation) return false;
+				state = 'applying';
+				try {
+					activeDocumentGeneration = sessionGeneration;
+					activePath = relativePath;
+					latestPreviewState = null;
+					persistence = 'saved';
+					persistenceMessage = 'Saved';
+					proposal = nextProposal;
+					complianceResult = null;
+					let complianceDetails = host.querySelector('[data-qlab-compliance-details]');
+					if (complianceDetails) {
+						complianceDetails.hidden = true;
+						complianceDetails.textContent = '';
+					}
+					activeSession = session;
+					activePreview = preview;
+					visualBridge.setSession(session);
+					if (proposal) session.attachProposal(proposal.state);
+					previewSurface.clear();
+					if (!resources.apply()) throw new Error('Draft workspace resources refused');
+					host._qlabDraftState = {
+						originalPath: relativePath,
+						workingPath: proposal ? proposal.state.workingPath : null,
+						basePath: proposal ? proposal.state.basePath : null,
+						revision: doc.revision,
+						viewingWorking: false,
+					};
+					host._qlabLastSaved = doc.text;
+					host._qlabBuffer = doc.text;
+					let tabs = view.Zotero_Tabs;
+					if (tabs && tabs.setTabData && host._qlabMountTabID) {
+						tabs.setTabData(host._qlabMountTabID, {
+							draftPath: relativePath,
+							workspaceDocument: null,
+						});
+					}
+					let pathLabel = host.querySelector('[data-qlab-draft-path]');
+					if (pathLabel) {
+						pathLabel.textContent = relativePath;
+						pathLabel.title = relativePath;
+					}
+					let tab = host.querySelector('[data-qlab-editor-tab]');
+					if (tab) tab.textContent = relativePath.split('/').pop();
+					let select = host.querySelector('[data-qlab-draft]');
+					if (select) select.value = relativePath;
+					for (let row of host.querySelectorAll('[data-qlab-draft-row]')) {
+						row.classList.toggle('is-active', row.dataset.qlabDraftRow === relativePath);
+					}
+					updateProposalControls();
+					if (!applyDocumentChrome(session.document)) {
+						throw new Error('Draft workspace document chrome refused');
+					}
+					previewVersion = 'original';
+					if (controller.showVersionTarget('original') === false) {
+						throw new Error('Draft workspace version activation refused');
+					}
+					monacoBridge.showNormal();
+					setPersistenceStatus(proposal ? 'proposal' : 'saved');
+					if (managerActivation) {
+						if (!managerActivation.apply()) {
+							throw new Error('Draft document-manager activation refused');
+						}
+					}
+					else setHostDocumentState(host, session.document, session.snapshot());
+					if (!resources.commit()) {
+						throw new Error('Draft workspace resources could not commit');
+					}
+					if (managerActivation && !managerActivation.commit()) {
+						throw new Error('Draft document-manager activation could not commit');
+					}
+					state = 'committed';
+				}
+				catch (error) {
+					restorePreviousView();
+					throw error;
+				}
+				try {
+					let started = preview.start();
+					if (started && typeof started.then === 'function') {
+						Promise.resolve(started).catch(error => {
+							if (state === 'committed') Zotero.logError && Zotero.logError(error);
+						});
+					}
+					scheduleCompliance(0);
+				}
+				catch (error) { Zotero.logError && Zotero.logError(error); }
+				return true;
 			}
-			let tab = host.querySelector('[data-qlab-editor-tab]');
-			if (tab) tab.textContent = relativePath.split('/').pop();
-			let select = host.querySelector('[data-qlab-draft]');
-			if (select) select.value = relativePath;
-			for (let row of host.querySelectorAll('[data-qlab-draft-row]')) {
-				row.classList.toggle('is-active', row.dataset.qlabDraftRow === relativePath);
+
+			return Object.freeze({
+				stage: Zotero.QLab.createWorkspaceDocumentRouteStage({
+					commit,
+					rollback: restorePreviousView,
+				}),
+				commit,
+				rollback: restorePreviousView,
+			});
+		}
+
+		async function prepareWorkspaceDocument(spec = {}, capability, verifiedDraft = null) {
+			let classification = Zotero.QLab.classifyWorkspaceDocument(
+				spec.relativePath || spec.path
+			);
+			if (classification && classification.authority === 'draft') {
+				if (!Zotero.QLab.verifiedWorkspaceDraftReadMatches?.(
+					verifiedDraft, classification.path
+				)) return false;
+				let prepared = await prepareDraftDocument(classification.path, verifiedDraft);
+				return prepared ? prepared.stage : false;
 			}
-			updateProposalControls();
-			applyDocumentChrome(session.document);
-			previewVersion = 'original';
-			controller.showVersionTarget('original');
-			monacoBridge.showNormal();
-			setPersistenceStatus(proposal ? 'proposal' : 'saved');
-			void preview.start();
-			scheduleCompliance(0);
+			if (!documentManager) return false;
+			let request = openGate.begin();
+			documentManager.invalidatePrepared();
+			try {
+				if (!await Zotero.QLab.flushQmdDraftBeforeTransition(activeSession, visualEditor)) {
+					return false;
+				}
+			}
+			catch (error) {
+				if (!request.isCurrent()) return false;
+				setPersistenceStatus('error', error && error.message || String(error));
+				return false;
+			}
+			if (!request.isCurrent()) return false;
+			try {
+				return await documentManager.prepareWorkspaceDocument(spec, capability);
+			}
+			catch (error) {
+				if (!request.isCurrent()) return false;
+				setPersistenceStatus('error', error && error.message || String(error));
+				return false;
+			}
+		}
+
+		async function openDraft(relativePath) {
+			let prepared = await prepareDraftDocument(relativePath);
+			if (!prepared) return false;
+			try {
+				let committed = prepared.commit();
+				if (!committed) prepared.rollback();
+				return committed;
+			}
+			catch (error) {
+				prepared.rollback();
+				setPersistenceStatus('error', error && error.message || String(error));
+				return false;
+			}
+		}
+
+		async function prepareDraftRoute(relativePath) {
+			let prepared = await prepareDraftDocument(relativePath);
+			if (!prepared || disposing) {
+				prepared?.rollback();
+				return false;
+			}
+			let token = Object.freeze(Object.create(null));
+			let record = { prepared, state: 'pending' };
+			preparedDraftRoutes.set(token, record);
+			pendingPreparedDraftRoutes.add(record);
+			return token;
+		}
+
+		function commitPreparedDraftRoute(token) {
+			let record = token && preparedDraftRoutes.get(token);
+			if (!record || record.state !== 'pending' || disposing) return false;
+			let committed = record.prepared.commit();
+			if (committed !== true) return false;
+			record.state = 'committed';
+			preparedDraftRoutes.delete(token);
+			pendingPreparedDraftRoutes.delete(record);
 			return true;
+		}
+
+		function rollbackPreparedDraftRoute(token) {
+			let record = token && preparedDraftRoutes.get(token);
+			if (!record || record.state !== 'pending') return false;
+			record.state = 'rolling-back';
+			try { return record.prepared.rollback() === true; }
+			finally {
+				record.state = 'rolled-back';
+				preparedDraftRoutes.delete(token);
+				pendingPreparedDraftRoutes.delete(record);
+			}
 		}
 
 		async function runComplianceAction() {
@@ -2752,6 +3088,9 @@ Zotero.QLab = Zotero.QLab || {};
 		let workspace = {
 			controller,
 			openDraft,
+			prepareDraftRoute,
+			commitPreparedDraftRoute,
+			rollbackPreparedDraftRoute,
 			openWorkspaceDocument,
 			prepareWorkspaceDocument,
 			document() {
@@ -2927,6 +3266,12 @@ Zotero.QLab = Zotero.QLab || {};
 			dispose() {
 				if (disposing) return;
 				disposing = true;
+				for (let record of pendingPreparedDraftRoutes) {
+					try { record.prepared.rollback(); }
+					catch (error) { Zotero.logError && Zotero.logError(error); }
+					record.state = 'rolled-back';
+				}
+				pendingPreparedDraftRoutes.clear();
 				unbindWorkspaceClick();
 				openGate.dispose();
 				documentManager?.invalidate();
@@ -2964,8 +3309,32 @@ Zotero.QLab = Zotero.QLab || {};
 		};
 		host._qlabQmdWorkspace = workspace;
 		host._qlabSurfaceMode = controller.snapshot().surface;
+		let explorerDocumentDelegate = Zotero.QLab.createQmdExplorerDocumentDelegate({
+			root,
+			route: input => {
+				let windowController = view.Zotero_Tabs && view.Zotero_Tabs._qlab;
+				if (!windowController || typeof windowController.openWorkspaceDocument !== 'function') {
+					return Promise.resolve(Object.freeze({
+						action: 'refuse', reason: 'workspace-document-router-unavailable',
+					}));
+				}
+				return windowController.openWorkspaceDocument(input);
+			},
+			onResult: result => {
+				if (result && result.action === 'refuse') {
+					setPersistenceStatus('error', `Document could not be opened · ${result.reason}`);
+				}
+			},
+			onError: error => setPersistenceStatus(
+				'error', error && error.message || String(error)
+			),
+		});
 
 		function onWorkspaceClick(event) {
+			if (event.target.closest('[data-qlab-document-row]')) {
+				void explorerDocumentDelegate(event);
+				return;
+			}
 			let formalToggle = event.target.closest('[data-qlab-formal-toggle]');
 			let formalMenu = host.querySelector('[data-qlab-formal-menu]');
 			if (formalToggle && formalMenu
