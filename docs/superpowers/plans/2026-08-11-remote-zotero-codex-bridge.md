@@ -341,7 +341,7 @@ The canonical bootstrapped checkout is intentionally modified by the pinned Chat
 
 - [ ] **Step 4: Patch Agent Host policy and native Chat attachment**
 
-Patch `NodeAgentHostStarter` to inherit parent env before shell env and SDK env. Make OpenAI the Codex default/fallback, prohibit silent Copilot fallback, and set `requiresCopilotSignIn:false` for Codex. Add the narrowly-scoped explicit text-context command; it accepts exact bounded fields, adds a visible attachment, focuses Chat, and never auto-sends. Add extension `configurationDefaults` for Agent Host on, Codex on, Codex preferred, Codex multi-root on, BYOK off.
+Patch `NodeAgentHostStarter` to inherit parent env before shell env and SDK env. Make OpenAI the Codex default/fallback, prohibit silent Copilot fallback, and set `requiresCopilotSignIn:false` for Codex. Add the narrowly-scoped explicit text-context command; it accepts exact bounded fields, adds a visible attachment, focuses Chat, and never auto-sends. Code-OSS 1.132's explicit attach-provider picker currently emits `kind:"generic"` for a string while Agent Host serializes only `kind:"string"`; normalize a generic string to the same `Simple` attachment or make the picker emit a complete string entry, with a regression test proving native Codex receives it. The attach command returns its attachment ID and a companion remove command may remove an unsent chip without rewriting history. Add extension `configurationDefaults` for Agent Host on, Codex on, Codex preferred, Codex multi-root on, BYOK off.
 
 - [ ] **Step 5: Run Task 4 tests and commit**
 
@@ -379,11 +379,11 @@ Run: `node --test products/workbench/tests/zotero-{pdf-context,evidence-editors}
 
 - [ ] **Step 3: Render a selectable PDF.js text layer**
 
-For each page call `page.getTextContent()` and render PDF.js `TextLayer` above the canvas and below noninteractive Zotero highlights. On page render and debounced `selectionchange`, post only `{type:"pdf-context",panelNonce,sequence,pageIndex,pageLabel,pageText,selectedText}`. On Meta-K with nonempty selection request explicit Chat attachment. Never post a PDF URI or authoritative Zotero identity.
+For each page call `page.getTextContent()` and render bundled PDF.js 5.7.313 `TextLayer({textContentSource,container,viewport})` above the canvas and below noninteractive Zotero highlights, including its required scale CSS variables and cancellation on rerender. On page render and debounced `selectionchange`, post only `{type:"pdf-context",panelNonce,sequence,pageIndex,pageLabel,pageText,selectedText}`. On Meta-K with nonempty selection request explicit Chat attachment. Never post a PDF URI or authoritative Zotero identity.
 
 - [ ] **Step 4: Register explicit native Chat context**
 
-Use `vscode.chat.registerChatAttachContextProvider` with the `chatContextProvider` proposal to expose the frozen active/last PDF snapshot through Add Context. The PDF command and Meta-K call `chatero.chat.attachTextContext`; no custom chat view or history store is added. Format content as escaped `<chatero-context trust="untrusted-evidence">` and label remote chips `Local Zotero → <SSH alias>`.
+Use exactly `vscode.chat.registerChatAttachContextProvider(id, {provideAttachChatContext,resolveAttachChatContext})` with the `chatContextProvider` proposal to expose frozen PDF snapshots through explicit Add Context. Do not use `registerChatTabContextProvider`, whose implicit/suggested behavior violates the user-gesture boundary. The manifest contribution ID and registered ID must match, while the product proposal allowlist uses the real extension ID `chatero.chatero-zotero` (not the first-party provenance ID). The PDF command and Meta-K call `chatero.chat.attachTextContext`; no custom chat view or history store is added. Format content as escaped `<chatero-context trust="untrusted-evidence">` and label remote chips `Local Zotero → <SSH alias>`.
 
 - [ ] **Step 5: Run Task 5 tests and commit**
 
