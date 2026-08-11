@@ -1,11 +1,17 @@
-# Chatero Implementation Plan
+# Chatero Native-XUL Implementation Plan (Historical)
 
 - **Date:** 2026-08-07
-- **Status:** Active
+- **Status:** Superseded on 2026-08-11 by the Code-OSS/Electron workbench design
 - **Baseline:** Phase 1 frozen ([phase-1-freeze.md](./phase-1-freeze.md))
 - **Parity:** [parity-checklist.md](./parity-checklist.md)
 
 ## Goal
+
+> This document remains the behavioral record for the current Gecko/XUL
+> implementation and parity oracle. New product implementation follows
+> [`../superpowers/specs/2026-08-11-code-oss-zotero-workbench-design.md`](../superpowers/specs/2026-08-11-code-oss-zotero-workbench-design.md)
+> and
+> [`../superpowers/plans/2026-08-11-code-oss-workbench-bootstrap.md`](../superpowers/plans/2026-08-11-code-oss-workbench-bootstrap.md).
 
 Ship Chatero as a Cursor-like research OS on a complete Zotero core:
 

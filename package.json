@@ -24,6 +24,7 @@
     "workbench:verify": "node products/workbench/scripts/verify-code-oss.mjs",
     "package:chatero": "app/scripts/package_chatero_dmg",
     "verify:chatero-bundle": "app/scripts/verify_chatero_bundle app/staging/Chatero.app",
+    "verify:workbench-bootstrap": "npm run test:workbench-bootstrap && npm run workbench:verify",
     "test:chatero:staged": "app/scripts/verify_chatero_bundle app/staging/Chatero.app"
   },
   "license": "",
