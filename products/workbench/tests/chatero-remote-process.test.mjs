@@ -261,7 +261,7 @@ test("SshSession leaves cancellation ownership to the framed request and removes
       alias: "lab-a",
       generation: 1,
       controlPath: "/tmp/chatero-test-control",
-      installRelativePath: `.chatero-server/bin/${"a".repeat(40)}/linux-x86_64`,
+      installRelativePath: `.chatero-server/artifacts-v1/${"b".repeat(64)}/${"a".repeat(40)}/linux-x86_64`,
     };
     const controller = new AbortController();
     if (abortBeforeChannel) controller.abort(new Error("turn cancelled before channel creation"));
@@ -278,6 +278,43 @@ test("SshSession leaves cancellation ownership to the framed request and removes
     await assert.rejects(running, error => error?.name === "AbortError" && error?.code === "ABORT_ERR");
     assert.deepEqual(process.killCalls, ["SIGTERM"]);
     assert.equal(getEventListeners(controller.signal, "abort").length, 0);
+  }
+});
+
+test("fixed helper process and stdin failures are classified as resumable SSH transport loss", async t => {
+  for (const failure of ["process", "stdin"]) {
+    await t.test(failure, async () => {
+      class FakeSshProcess extends EventEmitter {
+        constructor() {
+          super();
+          this.stdin = new PassThrough();
+          this.stdout = new PassThrough();
+          this.stderr = new PassThrough();
+        }
+        kill() { return true; }
+      }
+      const process = new FakeSshProcess();
+      const session = new SshSession({ spawn: () => process });
+      session.generation = 1;
+      session.ready = {
+        alias: "lab-a",
+        generation: 1,
+        hostFingerprint: `SHA256:${"A".repeat(43)}`,
+        controlPath: "/tmp/chatero-test-control",
+        installRelativePath: `.chatero-server/artifacts-v1/${"b".repeat(64)}/${"a".repeat(40)}/linux-x86_64`,
+      };
+      const channel = session.openEvidenceCache({
+        generation: 1,
+        hostFingerprint: session.ready.hostFingerprint,
+      });
+      const closed = new Promise(resolve => channel.onClose(resolve));
+      const original = new Error("EPIPE /private/path must not become protocol data");
+      if (failure === "process") process.emit("error", original);
+      else process.stdin.emit("error", original);
+      const result = await closed;
+      assert.equal(result.error?.code, "SSH_TRANSPORT");
+      assert.doesNotMatch(result.error?.message ?? "", /private|EPIPE/);
+    });
   }
 });
 

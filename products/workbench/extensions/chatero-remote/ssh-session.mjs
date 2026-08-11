@@ -25,6 +25,7 @@ const CODEX_NATIVE_LAYOUTS = Object.freeze({
 
 export function makeCodexLoginTerminalOptions({
   codeOssCommit,
+  artifactSha256,
   installPath,
   tuple,
   cwd,
@@ -34,7 +35,10 @@ export function makeCodexLoginTerminalOptions({
   }
   const layout = CODEX_NATIVE_LAYOUTS[tuple];
   if (!layout) throw new Error("Codex login requires a verified remote tuple");
-  const installRelativePath = `.chatero-server/bin/${codeOssCommit}/${tuple}`;
+  if (typeof artifactSha256 !== "string" || !/^[0-9a-f]{64}$/u.test(artifactSha256)) {
+    throw new Error("Codex login requires a verified Remote Agent artifact");
+  }
+  const installRelativePath = `.chatero-server/artifacts-v1/${artifactSha256}/${codeOssCommit}/${tuple}`;
   assertRemoteInstallPath(installPath, installRelativePath);
   if (cwd?.scheme !== "vscode-remote"
     || typeof cwd.authority !== "string"
@@ -180,11 +184,19 @@ function masterArguments(runtime, alias) {
 
 function processBridgeRemoteCommand(installRelativePath) {
   if (typeof installRelativePath !== "string"
-    || !/^\.chatero-server\/bin\/[0-9a-f]{40}\/linux-(?:x86_64|aarch64)$/u.test(installRelativePath)) {
+    || !/^\.chatero-server\/artifacts-v1\/[0-9a-f]{64}\/[0-9a-f]{40}\/linux-(?:x86_64|aarch64)$/u.test(installRelativePath)) {
     throw new Error("verified Remote Agent install root is invalid");
   }
   // No user-controlled command, argument, cwd, token, or workspace path appears here.
   return `exec "$HOME/${installRelativePath}/node" "$HOME/${installRelativePath}/bin/chatero-process-bridge.mjs"`;
+}
+
+function evidenceCacheRemoteCommand(installRelativePath) {
+  if (typeof installRelativePath !== "string"
+    || !/^\.chatero-server\/artifacts-v1\/[0-9a-f]{64}\/[0-9a-f]{40}\/linux-(?:x86_64|aarch64)$/u.test(installRelativePath)) {
+    throw new Error("verified Remote Agent install root is invalid");
+  }
+  return `exec "$HOME/${installRelativePath}/node" "$HOME/${installRelativePath}/bin/chatero-evidence-cache.mjs"`;
 }
 
 function targetIdentity(target) {
@@ -205,9 +217,25 @@ function makeRawChannel(process, generation, isCurrent, log) {
   const closeListeners = new Set();
   const dataListeners = new Set();
   const errorListeners = new Set();
+  const drainWaiters = new Set();
+  const transportError = (message, cause) => {
+    const error = new Error(message, cause ? { cause } : undefined);
+    error.code = "SSH_TRANSPORT";
+    return error;
+  };
   const emitClose = result => {
     if (closed) return;
     closed = true;
+    let drainError = result?.error ?? null;
+    if (!drainError && (result?.code === 255 || result?.signal)) {
+      drainError = new Error("SSH remote helper channel was lost while draining");
+      drainError.code = "SSH_TRANSPORT";
+    }
+    drainError ??= new Error("remote helper channel closed before draining");
+    for (const waiter of [...drainWaiters]) {
+      waiter.reject(drainError);
+    }
+    drainWaiters.clear();
     for (const listener of [...closeListeners]) listener(result);
   };
   process.stdout.on("data", bytes => {
@@ -219,17 +247,43 @@ function makeRawChannel(process, generation, isCurrent, log) {
     log(value);
     for (const listener of [...errorListeners]) listener(value);
   });
-  process.on("error", error => { if (isCurrent()) emitClose({ code: null, signal: null, error }); });
+  process.stdin.on?.("drain", () => {
+    for (const waiter of [...drainWaiters]) waiter.resolve();
+    drainWaiters.clear();
+  });
+  process.stdin.on?.("error", error => {
+    if (isCurrent()) emitClose({
+      code: null,
+      signal: null,
+      error: transportError("SSH remote helper stdin was lost", error),
+    });
+  });
+  process.on("error", error => {
+    if (isCurrent()) emitClose({
+      code: null,
+      signal: null,
+      error: transportError("SSH remote helper process failed", error),
+    });
+  });
   process.on("close", (code, signal) => { if (isCurrent()) emitClose({ code, signal, error: null }); });
   const channel = {
     generation,
     write(bytes) {
-      if (closed || !isCurrent()) throw new Error("stale remote process bridge channel");
+      if (closed || !isCurrent()) throw transportError("stale remote process bridge channel");
       if (!(bytes instanceof Uint8Array)) throw new TypeError("process bridge accepts Uint8Array frames");
-      return process.stdin.write(Buffer.from(bytes));
+      try { return process.stdin.write(Buffer.from(bytes)); }
+      catch (error) { throw transportError("SSH remote helper write failed", error); }
+    },
+    drain() {
+      if (closed || !isCurrent()) {
+        return Promise.reject(transportError("stale remote helper channel"));
+      }
+      return new Promise((resolve, reject) => drainWaiters.add({ resolve, reject }));
     },
     end() {
-      if (!closed && isCurrent()) process.stdin.end();
+      if (closed || !isCurrent()) return;
+      try { process.stdin.end(); }
+      catch (error) { throw transportError("SSH remote helper end failed", error); }
     },
     onData(listener) {
       dataListeners.add(listener);
@@ -380,6 +434,7 @@ export class SshSession {
     if (!this.ready) throw new Error("No connected Chatero SSH session is active");
     return makeCodexLoginTerminalOptions({
       codeOssCommit: this.ready.codeOssCommit,
+      artifactSha256: this.ready.artifactSha256,
       installPath: this.ready.installPath,
       tuple: this.ready.tuple,
       cwd,
@@ -431,6 +486,37 @@ export class SshSession {
     return channel;
   }
 
+  openEvidenceCache(expected) {
+    if (!this.ready) throw new Error("SSH session is not ready");
+    const state = this.ready;
+    if (!expected || typeof expected !== "object" || Array.isArray(expected)
+        || Object.keys(expected).sort().join(",") !== "generation,hostFingerprint"
+        || expected.generation !== state.generation
+        || expected.hostFingerprint !== state.hostFingerprint) {
+      throw new Error("SSH evidence helper session identity changed");
+    }
+    const command = evidenceCacheRemoteCommand(state.installRelativePath);
+    const process = this.spawn(OPENSSH_EXECUTABLE, [
+      "-T", "-S", state.controlPath,
+      "-o", "BatchMode=yes",
+      "--", state.alias,
+      command,
+    ], {
+      detached: false,
+      shell: false,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    const channel = makeRawChannel(
+      process,
+      state.generation,
+      () => this.ready?.generation === state.generation,
+      this.log,
+    );
+    this.processChannels.add(channel);
+    channel.onClose(() => this.processChannels.delete(channel));
+    return channel;
+  }
+
   #invalidate(generation, error) {
     if (this.generation !== generation) return;
     this.generation++;
@@ -457,4 +543,10 @@ export class SshSession {
   }
 }
 
-export { masterArguments, parseAuthenticatedFingerprint, processBridgeRemoteCommand, targetIdentity };
+export {
+  evidenceCacheRemoteCommand,
+  masterArguments,
+  parseAuthenticatedFingerprint,
+  processBridgeRemoteCommand,
+  targetIdentity,
+};

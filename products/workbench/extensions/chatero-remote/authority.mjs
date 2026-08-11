@@ -1,5 +1,6 @@
 const PREFIX = "chatero-remote+";
-const TARGET_ID = /^[A-Za-z0-9](?:[A-Za-z0-9._:@-]{0,254}[A-Za-z0-9])?$/;
+// `profile:` plus the full concrete OpenSSH alias limit (255 characters).
+const TARGET_ID = /^[A-Za-z0-9](?:[A-Za-z0-9._:@-]{0,261}[A-Za-z0-9])?$/;
 const ENCODED = /^[A-Za-z0-9_-]+$/;
 
 function assertTargetId(value) {

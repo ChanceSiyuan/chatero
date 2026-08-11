@@ -35,14 +35,16 @@ test("remote resolver manifest is a local proposed-API UI extension", async () =
 
 test("Codex device authentication opens only the fixed bundled remote binary", async () => {
   const commit = "df53daabb18cd157bdb08c7f01c34df936cf12f4";
+  const artifactSha256 = "b".repeat(64);
   const cwd = Object.freeze({
     scheme: "vscode-remote",
     authority: encodeAuthority("profile:lab-a"),
     path: "/srv/project",
   });
-  const installPath = `/home/alice/.chatero-server/bin/${commit}/linux-x86_64`;
+  const installPath = `/home/alice/.chatero-server/artifacts-v1/${artifactSha256}/${commit}/linux-x86_64`;
   const options = makeCodexLoginTerminalOptions({
     codeOssCommit: commit,
+    artifactSha256,
     installPath,
     tuple: "linux-x86_64",
     cwd,
@@ -55,12 +57,14 @@ test("Codex device authentication opens only the fixed bundled remote binary", a
   });
   assert.throws(() => makeCodexLoginTerminalOptions({
     codeOssCommit: "a".repeat(40),
+    artifactSha256,
     installPath,
     tuple: "linux-x86_64",
     cwd,
   }), /pinned Code-OSS commit/);
   assert.throws(() => makeCodexLoginTerminalOptions({
     codeOssCommit: commit,
+    artifactSha256,
     installPath,
     tuple: "linux-riscv64",
     cwd,

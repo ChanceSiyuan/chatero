@@ -6,6 +6,7 @@ import { createReadStream } from "node:fs";
 import {
   mkdir,
   mkdtemp,
+  lstat,
   readFile,
   rm,
   symlink,
@@ -28,6 +29,10 @@ import {
 const CODE_OSS_COMMIT = "df53daabb18cd157bdb08c7f01c34df936cf12f4";
 const BRIDGE_PATH = fileURLToPath(new URL(
   "../remote-agent/runtime/chatero-process-bridge.mjs",
+  import.meta.url
+));
+const EVIDENCE_HELPER_PATH = fileURLToPath(new URL(
+  "../remote-agent/runtime/chatero-evidence-cache.mjs",
   import.meta.url
 ));
 const STAGE_PATH = fileURLToPath(new URL(
@@ -384,7 +389,7 @@ test("process bridge rejects unknown request keys and oversized environment entr
   assert.match(oversizedEnv.frames[0].message, /environment entry.*64 KiB/);
 });
 
-test("release staging injects the bridge and signs the final archive bytes", async () => {
+test("release staging injects both fixed helpers and signs the final archive bytes", async () => {
   const directory = await mkdtemp(join(tmpdir(), "chatero-stage-release-"));
   temporaryDirectories.push(directory);
   const inputs = join(directory, "inputs");
@@ -431,6 +436,20 @@ test("release staging injects the bridge and signs the final archive bytes", asy
       listed.stdout,
       new RegExp(`^chatero-agent-${artifact.tuple}/bin/chatero-process-bridge\\.mjs$`, "m")
     );
+    assert.match(
+      listed.stdout,
+      new RegExp(`^chatero-agent-${artifact.tuple}/bin/chatero-evidence-cache\\.mjs$`, "m")
+    );
+    const extracted = join(directory, `extracted-${artifact.tuple}`);
+    await mkdir(extracted);
+    const unpacked = await run("tar", ["-xzf", join(output, artifact.filename), "-C", extracted]);
+    assert.equal(unpacked.code, 0, unpacked.stderr);
+    const helper = join(extracted, `chatero-agent-${artifact.tuple}`, "bin", "chatero-evidence-cache.mjs");
+    const metadata = await lstat(helper);
+    assert.equal(metadata.isFile(), true);
+    assert.equal(metadata.nlink, 1);
+    assert.notEqual(metadata.mode & 0o111, 0);
+    assert.deepEqual(await readFile(helper), await readFile(EVIDENCE_HELPER_PATH));
   }
 });
 
@@ -551,6 +570,9 @@ test("release staging rejects a required payload behind an intermediate symlink"
 
 test("release staging rejects non-OpenAI providers and extra OpenAI packages", async t => {
   for (const [name, addForbiddenPayload, expected] of [
+    ["install marker symlink", async root => {
+      await symlink("product.json", join(root, ".chatero-release-sha256"));
+    }, /must not provide.*release marker/i],
     ["extra agent provider", async root => {
       await mkdir(join(root, "agent-sdk", "claude"), { recursive: true });
       await writeFile(join(root, "agent-sdk", "claude", "payload"), "forbidden\n", "utf8");

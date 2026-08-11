@@ -31,6 +31,7 @@ import { REMOTE_AGENT_NOTICE_FILES } from "./build-linux-agent.mjs";
 const RELEASE_VERSION = "1.132.0";
 const CODE_OSS_COMMIT = "df53daabb18cd157bdb08c7f01c34df936cf12f4";
 const BRIDGE_PATH = new URL("../runtime/chatero-process-bridge.mjs", import.meta.url);
+const EVIDENCE_HELPER_PATH = new URL("../runtime/chatero-evidence-cache.mjs", import.meta.url);
 const CODEX_SDK_VERSION = "0.142.0";
 const ARCHIVE_ARCHITECTURES = Object.freeze({
   "linux-x86_64": {
@@ -233,9 +234,22 @@ async function assertAgentPayload(root, tuple) {
   if (!architecture) {
     throw new Error(`unsupported Remote Agent tuple ${tuple}`);
   }
+  try {
+    await lstat(join(root, ".chatero-release-sha256"));
+    throw new Error("Remote Agent input must not provide the install release marker");
+  }
+  catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
   await assertRegularPayloadFile(root, "bin/chatero-server", "chatero-server", {
     executable: true,
   });
+  await assertRegularPayloadFile(
+    root,
+    "bin/chatero-evidence-cache.mjs",
+    "chatero-evidence-cache.mjs",
+    { executable: true },
+  );
   for (const relativePath of REMOTE_AGENT_NOTICE_FILES) {
     await assertRegularPayloadFile(root, relativePath, relativePath);
   }
@@ -373,6 +387,26 @@ async function stageArchive({ archive, tuple, workDirectory }) {
   }
   finally {
     await rm(temporaryBridge, { force: true });
+  }
+  const evidenceHelperDestination = join(bin, "chatero-evidence-cache.mjs");
+  try {
+    const destinationStat = await lstat(evidenceHelperDestination);
+    if (!destinationStat.isFile() || destinationStat.isSymbolicLink()
+        || destinationStat.nlink !== 1) {
+      throw new Error("evidence helper destination must be a regular file when it already exists");
+    }
+  }
+  catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+  const temporaryEvidenceHelper = join(bin, `.chatero-evidence-cache.${process.pid}.tmp`);
+  try {
+    await copyFile(EVIDENCE_HELPER_PATH, temporaryEvidenceHelper, constants.COPYFILE_EXCL);
+    await chmod(temporaryEvidenceHelper, 0o755);
+    await rename(temporaryEvidenceHelper, evidenceHelperDestination);
+  }
+  finally {
+    await rm(temporaryEvidenceHelper, { force: true });
   }
 
   await assertAgentPayload(root, tuple);
