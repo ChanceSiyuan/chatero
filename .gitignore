@@ -10,3 +10,6 @@ resource/chatero-build.mjs
 vendor/code-oss/
 products/workbench/.cache/
 products/workbench/dist/
+products/workbench/remote-agent/dist/
+products/workbench/remote-agent/.cache/
+products/workbench/remote-agent/**/*.private.pem
