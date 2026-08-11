@@ -7,3 +7,6 @@ app/win/codesign
 app/dist/
 app/staging/
 resource/chatero-build.mjs
+vendor/code-oss/
+products/workbench/.cache/
+products/workbench/dist/
