@@ -41,7 +41,12 @@ function defaultToken() {
 }
 
 function validateRouterOptions(options) {
-	if (!options?.adapter || typeof options.adapter.collections !== "function" || typeof options.adapter.search !== "function") {
+	if (!options?.adapter
+			|| typeof options.adapter.annotations !== "function"
+			|| typeof options.adapter.collections !== "function"
+			|| typeof options.adapter.itemChildren !== "function"
+			|| typeof options.adapter.note !== "function"
+			|| typeof options.adapter.search !== "function") {
 		throw new Error("Gecko Core router requires a read-only Library adapter");
 	}
 	if (typeof options.bootstrapToken !== "string" || options.bootstrapToken.length < 24) {
@@ -150,7 +155,10 @@ export function createGeckoCoreRequestRouter(options = {}) {
 				}
 				return { result: { profileEpoch, profileName, readOnly: true, schemaVersion, upstreamVersion } };
 			}
+			if (message.method === "library.annotations") return { result: await adapter.annotations(message.params) };
 			if (message.method === "library.collections") return { result: await adapter.collections(message.params) };
+			if (message.method === "library.item-children") return { result: await adapter.itemChildren(message.params) };
+			if (message.method === "library.note") return { result: await adapter.note(message.params) };
 			if (message.method === "library.search") {
 				if (typeof message.cancellationId !== "string" || !message.cancellationId) {
 					throw new Error("library.search cancellationId is required");

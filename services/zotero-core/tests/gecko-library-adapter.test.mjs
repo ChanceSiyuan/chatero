@@ -9,17 +9,53 @@ function creator(name) {
     : { name };
 }
 
-function item({ id, key, libraryID, title, type = "journalArticle", year, creators = [], collectionIDs = [], attachments = [] }) {
+function item({
+  id,
+  key,
+  libraryID,
+  title,
+  type = "journalArticle",
+  year,
+  creators = [],
+  collectionIDs = [],
+  attachments = [],
+  notes = [],
+  annotations = [],
+  parentItemID,
+  path,
+  contentType = "",
+  filename = "",
+  noteHTML = "",
+  annotation = {},
+}) {
   return Object.freeze({
     id,
     itemTypeID: type,
     key,
     libraryID,
+    parentItemID,
+    attachmentContentType: contentType,
+    attachmentFilename: filename,
+    annotationColor: annotation.color || "",
+    annotationComment: annotation.comment || "",
+    annotationPageLabel: annotation.pageLabel || "",
+    annotationPosition: annotation.positionJson || "",
+    annotationSortIndex: annotation.sortIndex || "",
+    annotationText: annotation.text || "",
+    annotationType: annotation.type || "",
     getAttachments: () => attachments.slice(),
+    getAnnotations: () => annotations.slice(),
     getCollections: () => collectionIDs.slice(),
     getCreatorsJSON: () => creators.map(creator),
     getDisplayTitle: () => title,
     getField: field => field === "year" ? year : "",
+    getFilePathAsync: async () => path || false,
+    getNote: () => noteHTML,
+    getNotes: () => notes.slice(),
+    isAnnotation: () => type === "annotation",
+    isAttachment: () => type === "attachment",
+    isFileAttachment: () => type === "attachment" && Boolean(path),
+    isNote: () => type === "note",
     isRegularItem: () => !["attachment", "note", "annotation"].includes(type),
   });
 }
@@ -37,7 +73,44 @@ function collection({ id, key, libraryID, name, parentKey, childCollections = []
 }
 
 function fixture() {
-  const attachment = item({ id: 90, key: "PDF00001", libraryID: 1, title: "PDF", type: "attachment" });
+  const highlight = item({
+    id: 92,
+    key: "ANN00001",
+    libraryID: 1,
+    title: "Highlight",
+    type: "annotation",
+    parentItemID: 90,
+    annotation: {
+      color: "#ffd400",
+      comment: "Key evidence",
+      pageLabel: "7",
+      positionJson: '{"pageIndex":6,"rects":[[1,2,3,4]]}',
+      sortIndex: "00006|000001|00000",
+      text: "Renormalization closes the flow.",
+      type: "highlight",
+    },
+  });
+  const attachment = item({
+    id: 90,
+    key: "PDF00001",
+    libraryID: 1,
+    title: "Accepted manuscript",
+    type: "attachment",
+    parentItemID: 11,
+    annotations: [highlight],
+    path: "/Users/example/Zotero/storage/PDF00001/paper.pdf",
+    contentType: "application/pdf",
+    filename: "paper.pdf",
+  });
+  const childNote = item({
+    id: 93,
+    key: "NOTE0002",
+    libraryID: 1,
+    title: "RG reading note",
+    type: "note",
+    parentItemID: 11,
+    noteHTML: "<div data-schema-version=\"9\"><p>Trusted Zotero note</p></div>",
+  });
   const alpha = item({
     id: 11,
     key: "ITEM0001",
@@ -47,17 +120,29 @@ function fixture() {
     year: "2024",
     creators: ["Ada Lovelace", "Collaboration"],
     attachments: [attachment.id],
+    notes: [childNote.id],
     collectionIDs: [101, 102],
   });
   const beta = item({ id: 12, key: "ITEM0002", libraryID: 1, title: "Beta Result", type: "book", year: "in press", creators: ["Emmy Noether"], collectionIDs: [101] });
-  const groupAlpha = item({ id: 21, key: "ITEM0001", libraryID: 2, title: "Group Alpha", creators: ["Group Author"], collectionIDs: [201] });
+  const groupAttachment = item({
+    id: 91,
+    key: "PDF00001",
+    libraryID: 2,
+    title: "Group PDF",
+    type: "attachment",
+    parentItemID: 21,
+    path: "/Users/example/Zotero/storage/GROUPPDF/group.pdf",
+    contentType: "application/pdf",
+    filename: "group.pdf",
+  });
+  const groupAlpha = item({ id: 21, key: "ITEM0001", libraryID: 2, title: "Group Alpha", creators: ["Group Author"], collectionIDs: [201], attachments: [groupAttachment.id] });
   const note = item({ id: 22, key: "NOTE0001", libraryID: 2, title: "Not a paper", type: "note", collectionIDs: [201] });
 
   const nested = collection({ id: 102, key: "NESTED01", libraryID: 1, name: "Renormalization", parentKey: "SHARED01", childItems: [alpha] });
   const personal = collection({ id: 101, key: "SHARED01", libraryID: 1, name: "Physics", childCollections: [nested], childItems: [beta, alpha] });
   const group = collection({ id: 201, key: "SHARED01", libraryID: 2, name: "Team Physics", childItems: [note, groupAlpha] });
   const collections = [personal, nested, group];
-  const items = [attachment, alpha, beta, groupAlpha, note];
+  const items = [attachment, groupAttachment, highlight, childNote, alpha, beta, groupAlpha, note];
 
   const Zotero = {
     Collections: {
@@ -66,8 +151,11 @@ function fixture() {
       getByLibraryAndKey: (libraryId, key) => collections.find(value => value.libraryID === libraryId && value.key === key) || false,
     },
     Items: {
-      get: id => items.find(value => value.id === id) || false,
+      get: id => Array.isArray(id)
+        ? id.map(value => items.find(itemValue => itemValue.id === value)).filter(Boolean)
+        : items.find(value => value.id === id) || false,
       getAll: async libraryId => items.filter(value => value.libraryID === libraryId && value.isRegularItem()),
+      getByLibraryAndKey: (libraryId, key) => items.find(value => value.libraryID === libraryId && value.key === key) || false,
     },
     ItemTypes: { getName: itemTypeID => itemTypeID },
     Libraries: { getAll: () => [{ libraryID: 2, name: "Group" }, { libraryID: 1, name: "My Library" }] },
@@ -110,7 +198,7 @@ test("search isolates duplicate collection keys and emits protocol-exact item su
   });
   assert.deepEqual(await adapter.search({ collectionKey: "SHARED01", libraryId: 2, limit: 50, query: "" }), {
     items: [{
-      attachmentCount: 0,
+      attachmentCount: 1,
       collectionKeys: ["SHARED01"],
       creators: ["Group Author"],
       itemKey: "ITEM0001",
@@ -153,6 +241,56 @@ test("search across libraries is deterministic and cursor pagination is stable",
   assert.deepEqual((await adapter.search({ cursor: "2", limit: 2, query: "" })).items.map(value => value.title), ["Group Alpha"]);
 });
 
+test("returns PDF and Note children with Zotero composite identity", async () => {
+  const adapter = createZoteroLibraryAdapter(fixture());
+
+  assert.deepEqual(await adapter.itemChildren({ libraryId: 1, itemKey: "ITEM0001" }), {
+    attachments: [{
+      annotationCount: 1,
+      attachmentKey: "PDF00001",
+      contentType: "application/pdf",
+      filename: "paper.pdf",
+      libraryId: 1,
+      parentItemKey: "ITEM0001",
+      path: "/Users/example/Zotero/storage/PDF00001/paper.pdf",
+      title: "Accepted manuscript",
+    }],
+    notes: [{
+      libraryId: 1,
+      noteKey: "NOTE0002",
+      parentItemKey: "ITEM0001",
+      title: "RG reading note",
+    }],
+  });
+  assert.equal((await adapter.itemChildren({ libraryId: 2, itemKey: "ITEM0001" })).attachments[0].path.endsWith("group.pdf"), true);
+});
+
+test("returns a Note and PDF annotations without crossing libraries", async () => {
+  const adapter = createZoteroLibraryAdapter(fixture());
+
+  assert.deepEqual(await adapter.note({ libraryId: 1, noteKey: "NOTE0002" }), {
+    html: "<div data-schema-version=\"9\"><p>Trusted Zotero note</p></div>",
+    libraryId: 1,
+    noteKey: "NOTE0002",
+    parentItemKey: "ITEM0001",
+    title: "RG reading note",
+  });
+  assert.deepEqual(await adapter.annotations({ libraryId: 1, attachmentKey: "PDF00001" }), {
+    annotations: [{
+      annotationKey: "ANN00001",
+      color: "#ffd400",
+      comment: "Key evidence",
+      libraryId: 1,
+      pageLabel: "7",
+      positionJson: '{"pageIndex":6,"rects":[[1,2,3,4]]}',
+      sortIndex: "00006|000001|00000",
+      text: "Renormalization closes the flow.",
+      type: "highlight",
+    }],
+  });
+  assert.deepEqual(await adapter.annotations({ libraryId: 2, attachmentKey: "PDF00001" }), { annotations: [] });
+});
+
 test("rejects malformed requests before touching Zotero APIs", async () => {
   let calls = 0;
   const { Zotero } = fixture();
@@ -164,5 +302,8 @@ test("rejects malformed requests before touching Zotero APIs", async () => {
   await assert.rejects(adapter.search({ cursor: "-1", limit: 50, query: "" }), /cursor/);
   await assert.rejects(adapter.search({ limit: 0, query: "" }), /limit/);
   await assert.rejects(adapter.collections({ libraryId: 1 }), /parentKey/);
+  await assert.rejects(adapter.itemChildren({ libraryId: 1, itemKey: "" }), /itemKey/);
+  await assert.rejects(adapter.note({ libraryId: 2, noteKey: "NOTE0002" }), /not found/);
+  await assert.rejects(adapter.annotations({ attachmentKey: "PDF00001", libraryId: 1, extra: true }), /unknown field/);
   assert.equal(calls, 0);
 });

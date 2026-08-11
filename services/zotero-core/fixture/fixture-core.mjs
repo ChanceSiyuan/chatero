@@ -61,6 +61,15 @@ function validateSearchParams(params) {
   }
 }
 
+function validateIdentityParams(params, keyField, label) {
+  if (!params || typeof params !== "object" || Array.isArray(params)
+    || Object.keys(params).length !== 2
+    || !Number.isSafeInteger(params.libraryId) || params.libraryId <= 0
+    || typeof params[keyField] !== "string" || !/^[A-Z0-9]{8}$/.test(params[keyField])) {
+    throw new Error(`${label} params require a libraryId and ${keyField}`);
+  }
+}
+
 async function main() {
   const {
     CHATERO_CORE_FIXTURE_PATH: fixturePath,
@@ -78,6 +87,9 @@ async function main() {
   const fixture = JSON.parse(await readFile(fixturePath, "utf8"));
   const fixtureItems = Array.isArray(fixture) ? fixture : fixture.items;
   const fixtureCollections = Array.isArray(fixture?.collections) ? fixture.collections : [];
+  const fixtureItemChildren = Array.isArray(fixture?.itemChildren) ? fixture.itemChildren : [];
+  const fixtureNotes = Array.isArray(fixture?.notes) ? fixture.notes : [];
+  const fixtureAnnotations = Array.isArray(fixture?.annotations) ? fixture.annotations : [];
   if (!Array.isArray(fixtureItems)) throw new Error("fixture items must be an array");
   const bootstrapToken = await readBootstrapToken();
   const searchDelayMs = Number(rawSearchDelayMs);
@@ -148,6 +160,23 @@ async function main() {
           : collection.parentKey === message.params.parentKey)
         .sort((left, right) => String(left.name).localeCompare(String(right.name)) || String(left.collectionKey).localeCompare(String(right.collectionKey)));
       return { result: { collections } };
+    }
+    if (message.method === "library.item-children") {
+      validateIdentityParams(message.params, "itemKey", "library.item-children");
+      const value = fixtureItemChildren.find(entry => entry.libraryId === message.params.libraryId && entry.itemKey === message.params.itemKey);
+      if (!value) throw new Error(`fixture item ${message.params.libraryId}/${message.params.itemKey} was not found`);
+      return { result: { attachments: value.attachments, notes: value.notes } };
+    }
+    if (message.method === "library.note") {
+      validateIdentityParams(message.params, "noteKey", "library.note");
+      const value = fixtureNotes.find(entry => entry.libraryId === message.params.libraryId && entry.noteKey === message.params.noteKey);
+      if (!value) throw new Error(`fixture note ${message.params.libraryId}/${message.params.noteKey} was not found`);
+      return { result: value };
+    }
+    if (message.method === "library.annotations") {
+      validateIdentityParams(message.params, "attachmentKey", "library.annotations");
+      const value = fixtureAnnotations.find(entry => entry.libraryId === message.params.libraryId && entry.attachmentKey === message.params.attachmentKey);
+      return { result: { annotations: value?.annotations || [] } };
     }
     if (message.method === "library.search") {
       validateSearchParams(message.params);

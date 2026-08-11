@@ -33,13 +33,16 @@ async function handshake(router, requestedCapabilities = ["library:read", "libra
 function createRouter(overrides = {}) {
   const calls = [];
   const adapter = {
+    async annotations(params) { calls.push(["annotations", params]); return { annotations: [] }; },
     async collections(params) { calls.push(["collections", params]); return { collections: [] }; },
+    async itemChildren(params) { calls.push(["itemChildren", params]); return { attachments: [], notes: [] }; },
+    async note(params) { calls.push(["note", params]); return { html: "<p>Note</p>", libraryId: 1, noteKey: "NOTE0001", parentItemKey: "ITEM0001", title: "Note" }; },
     async search(params, options) { calls.push(["search", params, options]); return { items: [], total: 0 }; },
   };
+  const selectedAdapter = { ...adapter, ...(overrides.adapter || {}) };
   return {
     calls,
     router: createGeckoCoreRequestRouter({
-      adapter,
       bootstrapToken: "bootstrap-token-with-enough-entropy",
       now: () => 1000,
       profileEpoch: "profile-epoch",
@@ -48,6 +51,7 @@ function createRouter(overrides = {}) {
       schemaVersion: 1,
       upstreamVersion: "7.1-real",
       ...overrides,
+      adapter: selectedAdapter,
     }),
   };
 }
@@ -89,6 +93,16 @@ test("enforces capabilities, profile epoch, session, and deadline before adapter
   await assert.rejects(router.handle(request(session, "library.collections", {}, { sessionToken: "wrong" })), /session authentication/);
   await assert.rejects(router.handle(request(session, "library.collections", {}, { deadline: 1000 })), /deadline expired/);
   assert.deepEqual(calls, []);
+});
+
+test("routes read-only PDF children, Note, and annotation methods through library:read", async () => {
+  const { calls, router } = createRouter();
+  const session = await handshake(router);
+
+  assert.deepEqual((await router.handle(request(session, "library.item-children", { libraryId: 1, itemKey: "ITEM0001" }))).result, { attachments: [], notes: [] });
+  assert.deepEqual((await router.handle(request(session, "library.annotations", { attachmentKey: "PDF00001", libraryId: 1 }))).result, { annotations: [] });
+  assert.equal((await router.handle(request(session, "library.note", { libraryId: 1, noteKey: "NOTE0001" }))).result.html, "<p>Note</p>");
+  assert.deepEqual(calls.map(value => value[0]), ["itemChildren", "annotations", "note"]);
 });
 
 test("cancels an in-flight search without changing the session", async () => {

@@ -80,7 +80,10 @@ async function terminate(child) {
 export async function startCore({
   profileDirectory,
   fixtureCollections = [],
+  fixtureAnnotations = [],
   fixtureItems = [],
+  fixtureItemChildren = [],
+  fixtureNotes = [],
   fixtureCorePath = DEFAULT_FIXTURE_CORE,
   fixtureSearchDelayMs = 0,
   geckoExecutable,
@@ -100,7 +103,13 @@ export async function startCore({
   const socketPath = join(sessionDirectory, "core.sock");
   await writeFile(markerPath, `${JSON.stringify({ nonce: sessionNonce, schemaVersion: 1 })}\n`, { mode: 0o600 });
   await writeFile(bootstrapPath, `${bootstrapToken}\n`, { mode: 0o600 });
-  await writeFile(fixturePath, `${JSON.stringify({ collections: fixtureCollections, items: fixtureItems })}\n`, { mode: 0o600 });
+  await writeFile(fixturePath, `${JSON.stringify({
+    annotations: fixtureAnnotations,
+    collections: fixtureCollections,
+    itemChildren: fixtureItemChildren,
+    items: fixtureItems,
+    notes: fixtureNotes,
+  })}\n`, { mode: 0o600 });
 
   const launch = buildCoreLaunchPlan({ fixtureCorePath, geckoExecutable, profileDirectory });
   const bootstrapHandle = await open(bootstrapPath, "r");

@@ -47,6 +47,43 @@ const fixtureCollections = [
   { childCount: 1, collectionKey: "PHYSICS", itemCount: 2, libraryId: 1, name: "Physics" },
   { childCount: 0, collectionKey: "RG", itemCount: 1, libraryId: 1, name: "Renormalization", parentKey: "PHYSICS" },
 ];
+const fixtureItemChildren = [{
+  attachments: [{
+    annotationCount: 1,
+    attachmentKey: "PDF00001",
+    contentType: "application/pdf",
+    filename: "paper.pdf",
+    libraryId: 1,
+    parentItemKey: "FISHER01",
+    path: "/tmp/paper.pdf",
+    title: "Paper PDF",
+  }],
+  itemKey: "FISHER01",
+  libraryId: 1,
+  notes: [{ libraryId: 1, noteKey: "NOTE0001", parentItemKey: "FISHER01", title: "Reading note" }],
+}];
+const fixtureNotes = [{
+  html: "<p>Reading note</p>",
+  libraryId: 1,
+  noteKey: "NOTE0001",
+  parentItemKey: "FISHER01",
+  title: "Reading note",
+}];
+const fixtureAnnotations = [{
+  annotations: [{
+    annotationKey: "ANN00001",
+    color: "#ffd400",
+    comment: "Evidence",
+    libraryId: 1,
+    pageLabel: "3",
+    positionJson: '{"pageIndex":2,"rects":[[1,2,3,4]]}',
+    sortIndex: "00002|000001|00000",
+    text: "Critical statement",
+    type: "highlight",
+  }],
+  attachmentKey: "PDF00001",
+  libraryId: 1,
+}];
 
 test("builds an explicit headless Gecko launch without putting secrets in argv or environment", async () => {
   const { buildCoreLaunchPlan } = await import("../supervisor/core-supervisor.mjs");
@@ -80,7 +117,14 @@ test("supervises an explicit Core executable through the same authenticated clie
 test("supervises an authenticated fixture Core over an owner-only Unix socket", async () => {
   const { startCore } = await import("../supervisor/core-supervisor.mjs");
   const { profileDirectory } = await createProfile();
-  const core = await startCore({ profileDirectory, fixtureCollections, fixtureItems });
+  const core = await startCore({
+    profileDirectory,
+    fixtureAnnotations,
+    fixtureCollections,
+    fixtureItemChildren,
+    fixtureItems,
+    fixtureNotes,
+  });
   running.push(core);
 
   assert.equal(core.transport, "unix");
@@ -108,6 +152,14 @@ test("supervises an authenticated fixture Core over an owner-only Unix socket", 
   });
   assert.deepEqual(await core.client.request("library.collections", { libraryId: 1, parentKey: "PHYSICS" }), {
     collections: [fixtureCollections[1]],
+  });
+  assert.deepEqual(await core.client.request("library.item-children", { libraryId: 1, itemKey: "FISHER01" }), {
+    attachments: fixtureItemChildren[0].attachments,
+    notes: fixtureItemChildren[0].notes,
+  });
+  assert.deepEqual(await core.client.request("library.note", { libraryId: 1, noteKey: "NOTE0001" }), fixtureNotes[0]);
+  assert.deepEqual(await core.client.request("library.annotations", { attachmentKey: "PDF00001", libraryId: 1 }), {
+    annotations: fixtureAnnotations[0].annotations,
   });
 });
 
