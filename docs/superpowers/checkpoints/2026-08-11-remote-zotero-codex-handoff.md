@@ -7,9 +7,10 @@ claim.
 ## Branches to fetch
 
 - `feat/remote-zotero-codex`
-  - Task 3 WIP commit: `0eadc81e8` (followed by this handoff document)
+  - Task 3 completion commit: `6ab1ff06f`
+  - The earlier interrupted checkpoint remains `0eadc81e8` for audit history.
   - Contains the approved design/plan, signed dual-architecture Remote Agent
-    contract, hardened system-OpenSSH resolver/installer, and the interrupted
+    contract, hardened system-OpenSSH resolver/installer, and the reviewed
     Task 3 workspace/process implementation.
 - `feat/remote-zotero-rehydrate`
   - Checkpoint head: `0140cce14`
@@ -29,34 +30,50 @@ Finish the gates and reviews below first.
 - Task 1+2/policy verification: 52/52 tests passed.
 - Independent re-review reported no remaining Critical/Important findings for
   Task 2.
+- Arbitrary/empty remote workspace UX and the trust-gated framed process API:
+  - `6ab1ff06f feat(workbench): open arbitrary remote workspaces`
+  - Task 1-3, first-party extension, and policy regression: 76/76 tests passed.
+  - Independent final review reported no remaining Critical/Important
+    findings for Task 3.
 
-## Task 3 interrupted state
+## Task 3 completed state
 
-Checkpoint: `0eadc81e8 wip(workbench): checkpoint remote workspace UX`
+Completion: `6ab1ff06f feat(workbench): open arbitrary remote workspaces`
 
-Implemented so far:
+Implemented and reviewed:
 
-- strict framed remote process client;
-- arbitrary/omitted remote `cwd` handling and containment checks;
-- workspace trust gate for arbitrary processes;
-- fixed product-owned workspace probe/create/realpath helper;
-- SIGHUP/SIGINT/SIGTERM child-process-group cleanup;
-- tests for frame failures, cancellation, stale generations, hostile argv,
-  empty folder confirmation, and a real detached-child SIGHUP case.
+- Connect to SSH, Open Remote Folder, Reconnect, Remote indicator menus,
+  status/error UX, and allowlisted recent-target global state;
+- arbitrary/omitted remote `cwd` handling from the remote workspace URI
+  `.path`, canonical containment, and the workspace trust gate;
+- fixed product-owned workspace probe/create/realpath helper and strict framed
+  remote process client;
+- bounded public extension API with no raw process bridge escape hatch;
+- single-owner cancellation that returns `AbortError`/`ABORT_ERR` and removes
+  listeners; and
+- SIGHUP/SIGINT/SIGTERM two-phase process-group cleanup, including stubborn
+  descendants and the leader-exits-first race.
 
-The checkpoint test run had 28 passing and 4 failing tests. The failures are
-expected consequences of interruption, not regressions in the completed
-Task 1/2 code:
+Verification command:
 
-- `formatRemoteStatus` is tested but not yet exported/implemented;
-- Connect/Open Folder/Reconnect commands are tested but not yet wired into
-  `extension.cjs` and `package.json`;
-- `remote-process.mjs` and `remote-workspace.mjs` are not yet listed in
-  `first-party-extensions.json`.
+```bash
+node --test \
+  products/workbench/tests/remote-agent-release.test.mjs \
+  products/workbench/tests/chatero-remote-transport.test.mjs \
+  products/workbench/tests/chatero-remote-manifest.test.mjs \
+  products/workbench/tests/chatero-remote-workspace.test.mjs \
+  products/workbench/tests/chatero-remote-process.test.mjs \
+  products/workbench/tests/first-party-extensions.test.mjs \
+  products/workbench/tests/workbench-policy.test.mjs
+```
 
-Next action: finish that wiring, status bar/global-state behavior, rerun the
-Task 3 focused suite plus Task 1/2 regressions, then replace the WIP checkpoint
-with a reviewed Task 3 completion commit.
+Result: 76/76 passed. The review's two non-blocking Minor follow-ups are to
+bound/dispose authenticated candidate sessions that never become active and to
+align the OpenSSH alias length check with the opaque authority length check.
+Neither bypasses the trust, authority, or data boundaries.
+
+Next action: finish and review the isolated Task 3B line, then cherry-pick its
+formal completion onto `feat/remote-zotero-codex`.
 
 ## Task 3B isolated state
 
