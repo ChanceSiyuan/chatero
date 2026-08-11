@@ -15,16 +15,17 @@ function nonce() {
 }
 
 class PdfEditorProvider {
-  constructor({ vscode, registry, getModel, renderPdfEditorHTML, extensionUri }) {
+  constructor({ vscode, registry, getModel, resolveDocument, renderPdfEditorHTML, extensionUri }) {
     this.vscode = vscode;
     this.registry = registry;
     this.getModel = getModel;
+    this.resolveDocument = resolveDocument || ((uri, kind) => registry.resolve(uri, kind));
     this.renderPdfEditorHTML = renderPdfEditorHTML;
     this.viewerRoot = vscode.Uri.joinPath(extensionUri, "media", "pdf-viewer");
   }
 
-  openCustomDocument(uri) {
-    return new EvidenceDocument(uri, this.registry.resolve(uri, "pdf"));
+  async openCustomDocument(uri) {
+    return new EvidenceDocument(uri, await this.resolveDocument(uri, "pdf"));
   }
 
   async resolveCustomEditor(document, panel) {
@@ -51,14 +52,15 @@ class PdfEditorProvider {
 }
 
 class NoteEditorProvider {
-  constructor({ registry, getModel, renderNoteEditorHTML }) {
+  constructor({ registry, getModel, resolveDocument, renderNoteEditorHTML }) {
     this.registry = registry;
     this.getModel = getModel;
+    this.resolveDocument = resolveDocument || ((uri, kind) => registry.resolve(uri, kind));
     this.renderNoteEditorHTML = renderNoteEditorHTML;
   }
 
-  openCustomDocument(uri) {
-    return new EvidenceDocument(uri, this.registry.resolve(uri, "note"));
+  async openCustomDocument(uri) {
+    return new EvidenceDocument(uri, await this.resolveDocument(uri, "note"));
   }
 
   async resolveCustomEditor(document, panel) {

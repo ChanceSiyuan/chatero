@@ -265,6 +265,24 @@ test("returns PDF and Note children with Zotero composite identity", async () =>
   assert.equal((await adapter.itemChildren({ libraryId: 2, itemKey: "ITEM0001" })).attachments[0].path.endsWith("group.pdf"), true);
 });
 
+test("looks up one file attachment by exact composite identity", async () => {
+  const adapter = createZoteroLibraryAdapter(fixture());
+
+  assert.deepEqual(await adapter.attachment({ libraryId: 1, attachmentKey: "PDF00001" }), {
+    annotationCount: 1,
+    attachmentKey: "PDF00001",
+    contentType: "application/pdf",
+    filename: "paper.pdf",
+    libraryId: 1,
+    parentItemKey: "ITEM0001",
+    path: "/Users/example/Zotero/storage/PDF00001/paper.pdf",
+    title: "Accepted manuscript",
+  });
+  assert.equal((await adapter.attachment({ libraryId: 2, attachmentKey: "PDF00001" })).title, "Group PDF");
+  await assert.rejects(adapter.attachment({ libraryId: 1, attachmentKey: "NOTE0002" }), /file attachment/);
+  await assert.rejects(adapter.attachment({ libraryId: 3, attachmentKey: "PDF00001" }), /not found/);
+});
+
 test("returns a Note and PDF annotations without crossing libraries", async () => {
   const adapter = createZoteroLibraryAdapter(fixture());
 
@@ -303,6 +321,7 @@ test("rejects malformed requests before touching Zotero APIs", async () => {
   await assert.rejects(adapter.search({ limit: 0, query: "" }), /limit/);
   await assert.rejects(adapter.collections({ libraryId: 1 }), /parentKey/);
   await assert.rejects(adapter.itemChildren({ libraryId: 1, itemKey: "" }), /itemKey/);
+  await assert.rejects(adapter.attachment({ libraryId: 1, attachmentKey: "pdf00001" }), /attachmentKey/);
   await assert.rejects(adapter.note({ libraryId: 2, noteKey: "NOTE0002" }), /not found/);
   await assert.rejects(adapter.annotations({ attachmentKey: "PDF00001", libraryId: 1, extra: true }), /unknown field/);
   assert.equal(calls, 0);

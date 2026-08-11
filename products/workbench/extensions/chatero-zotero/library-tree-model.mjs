@@ -75,6 +75,11 @@ export class LibraryTreeModel {
     return Object.freeze(result.annotations.map(validateAnnotation));
   }
 
+  async attachment({ attachmentKey, libraryId }) {
+    const result = await this.#request("library.attachment", { attachmentKey, libraryId });
+    return validateAttachment(result);
+  }
+
   async children({ itemKey, libraryId }) {
     const result = await this.#request("library.item-children", { itemKey, libraryId });
     if (!result || !Array.isArray(result.attachments) || !Array.isArray(result.notes)) {

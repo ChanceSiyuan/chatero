@@ -167,6 +167,14 @@ async function main() {
       if (!value) throw new Error(`fixture item ${message.params.libraryId}/${message.params.itemKey} was not found`);
       return { result: { attachments: value.attachments, notes: value.notes } };
     }
+    if (message.method === "library.attachment") {
+      validateIdentityParams(message.params, "attachmentKey", "library.attachment");
+      const value = fixtureItemChildren
+        .flatMap(entry => entry.attachments || [])
+        .find(entry => entry.libraryId === message.params.libraryId && entry.attachmentKey === message.params.attachmentKey);
+      if (!value) throw new Error(`fixture attachment ${message.params.libraryId}/${message.params.attachmentKey} was not found`);
+      return { result: value };
+    }
     if (message.method === "library.note") {
       validateIdentityParams(message.params, "noteKey", "library.note");
       const value = fixtureNotes.find(entry => entry.libraryId === message.params.libraryId && entry.noteKey === message.params.noteKey);

@@ -34,6 +34,7 @@ function createRouter(overrides = {}) {
   const calls = [];
   const adapter = {
     async annotations(params) { calls.push(["annotations", params]); return { annotations: [] }; },
+    async attachment(params) { calls.push(["attachment", params]); return { annotationCount: 0, attachmentKey: "PDF00001", contentType: "application/pdf", filename: "paper.pdf", libraryId: 1, parentItemKey: "ITEM0001", path: "/tmp/paper.pdf", title: "Paper" }; },
     async collections(params) { calls.push(["collections", params]); return { collections: [] }; },
     async itemChildren(params) { calls.push(["itemChildren", params]); return { attachments: [], notes: [] }; },
     async note(params) { calls.push(["note", params]); return { html: "<p>Note</p>", libraryId: 1, noteKey: "NOTE0001", parentItemKey: "ITEM0001", title: "Note" }; },
@@ -100,9 +101,10 @@ test("routes read-only PDF children, Note, and annotation methods through librar
   const session = await handshake(router);
 
   assert.deepEqual((await router.handle(request(session, "library.item-children", { libraryId: 1, itemKey: "ITEM0001" }))).result, { attachments: [], notes: [] });
+  assert.equal((await router.handle(request(session, "library.attachment", { attachmentKey: "PDF00001", libraryId: 1 }))).result.path, "/tmp/paper.pdf");
   assert.deepEqual((await router.handle(request(session, "library.annotations", { attachmentKey: "PDF00001", libraryId: 1 }))).result, { annotations: [] });
   assert.equal((await router.handle(request(session, "library.note", { libraryId: 1, noteKey: "NOTE0001" }))).result.html, "<p>Note</p>");
-  assert.deepEqual(calls.map(value => value[0]), ["itemChildren", "annotations", "note"]);
+  assert.deepEqual(calls.map(value => value[0]), ["itemChildren", "attachment", "annotations", "note"]);
 });
 
 test("cancels an in-flight search without changing the session", async () => {

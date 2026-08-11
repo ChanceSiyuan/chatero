@@ -97,12 +97,13 @@ class LibraryProvider {
 }
 
 async function activate(context) {
-  const [{ LibraryTreeModel }, { EvidenceRecordAuthority }, { EvidenceDocumentRegistry }, html] = await Promise.all([
+  const [{ LibraryTreeModel }, { EvidenceRecordAuthority }, registryModule, html] = await Promise.all([
     import("./library-tree-model.mjs"),
     import("./evidence-authority.mjs"),
     import("./evidence-editor-registry.mjs"),
     import("./evidence-editor-html.mjs"),
   ]);
+  const { EvidenceDocumentRegistry, createEnsureCore, createEvidenceDocumentResolver } = registryModule;
   const evidenceAuthority = new EvidenceRecordAuthority();
   const evidenceDocuments = new EvidenceDocumentRegistry();
   const provider = new LibraryProvider(evidenceAuthority);
@@ -110,18 +111,6 @@ async function activate(context) {
   let disposeEvents = null;
   context.subscriptions.push(provider);
   context.subscriptions.push(vscode.window.registerTreeDataProvider("chatero.zotero.library", provider));
-  context.subscriptions.push(vscode.window.registerCustomEditorProvider("chatero.zotero.pdf", new PdfEditorProvider({
-    vscode,
-    registry: evidenceDocuments,
-    getModel: () => provider.model,
-    renderPdfEditorHTML: html.renderPdfEditorHTML,
-    extensionUri: context.extensionUri,
-  }), { supportsMultipleEditorsPerDocument: false }));
-  context.subscriptions.push(vscode.window.registerCustomEditorProvider("chatero.zotero.note", new NoteEditorProvider({
-    registry: evidenceDocuments,
-    getModel: () => provider.model,
-    renderNoteEditorHTML: html.renderNoteEditorHTML,
-  }), { supportsMultipleEditorsPerDocument: false }));
 
   const stop = async () => {
     disposeEvents?.();
@@ -158,7 +147,7 @@ async function activate(context) {
     return selection[0].fsPath;
   };
 
-  const start = async () => {
+  const startCoreOnce = async () => {
     if (core) return core;
     const configuration = vscode.workspace.getConfiguration("chatero.zotero");
     let profileDirectory = configuration.get("profilePath", "");
@@ -194,10 +183,31 @@ async function activate(context) {
     });
     return core;
   };
+  const ensureCore = createEnsureCore({ getCurrent: () => core, start: startCoreOnce });
+  const resolveDocument = createEvidenceDocumentResolver({
+    ensureCore,
+    getModel: () => provider.model,
+    registry: evidenceDocuments,
+  });
+
+  context.subscriptions.push(vscode.window.registerCustomEditorProvider("chatero.zotero.pdf", new PdfEditorProvider({
+    vscode,
+    registry: evidenceDocuments,
+    getModel: () => provider.model,
+    resolveDocument,
+    renderPdfEditorHTML: html.renderPdfEditorHTML,
+    extensionUri: context.extensionUri,
+  }), { supportsMultipleEditorsPerDocument: false }));
+  context.subscriptions.push(vscode.window.registerCustomEditorProvider("chatero.zotero.note", new NoteEditorProvider({
+    registry: evidenceDocuments,
+    getModel: () => provider.model,
+    resolveDocument,
+    renderNoteEditorHTML: html.renderNoteEditorHTML,
+  }), { supportsMultipleEditorsPerDocument: false }));
 
   context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.selectProfile", selectProfile));
   context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.selectCoreExecutable", selectCoreExecutable));
-  context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.startCore", () => start().catch(error => vscode.window.showErrorMessage(`Could not start Zotero Core: ${error.message}`))));
+  context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.startCore", () => ensureCore().catch(error => vscode.window.showErrorMessage(`Could not start Zotero Core: ${error.message}`))));
   context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.stopCore", () => stop().catch(error => vscode.window.showErrorMessage(`Could not stop Zotero Core: ${error.message}`))));
   context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.refreshLibrary", () => provider.refresh()));
   context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.openAttachment", record => {
