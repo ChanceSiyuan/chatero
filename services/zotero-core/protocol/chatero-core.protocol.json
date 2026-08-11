@@ -47,6 +47,12 @@
       "resultType": "LibraryAnnotationsResult"
     },
     {
+      "name": "library.attachment",
+      "capability": "library:read",
+      "paramsType": "LibraryAttachmentParams",
+      "resultType": "LibraryAttachmentSummary"
+    },
+    {
       "name": "library.note",
       "capability": "library:read",
       "paramsType": "LibraryNoteParams",
@@ -178,6 +184,13 @@
         "parentItemKey": "string",
         "path": "string",
         "title": "string"
+      }
+    },
+    "LibraryAttachmentParams": {
+      "kind": "object",
+      "fields": {
+        "attachmentKey": "string",
+        "libraryId": "number"
       }
     },
     "LibraryNoteSummary": {

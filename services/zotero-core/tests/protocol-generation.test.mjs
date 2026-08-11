@@ -40,10 +40,12 @@ test("generates deterministic runtime constants and TypeScript declarations", as
   assert.match(firstJavaScript, /export const PROTOCOL_VERSION = "1\.0"/);
   assert.match(firstJavaScript, /"library\.search": "library:search"/);
   assert.match(firstJavaScript, /"library\.item-children": "library:read"/);
+  assert.match(firstJavaScript, /"library\.attachment": "library:read"/);
   assert.match(firstJavaScript, /"library\.annotations": "library:read"/);
   assert.match(firstJavaScript, /"library\.note": "library:read"/);
   assert.match(firstDeclarations, /export interface LibrarySearchParams/);
   assert.match(firstDeclarations, /export interface LibraryAttachmentSummary/);
+  assert.match(firstDeclarations, /export interface LibraryAttachmentParams/);
   assert.match(firstDeclarations, /export interface LibraryNoteSummary/);
   assert.match(firstDeclarations, /export interface LibraryAnnotationSummary/);
   assert.match(firstDeclarations, /export interface ProfileStatusResult/);

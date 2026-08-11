@@ -157,6 +157,7 @@ test("supervises an authenticated fixture Core over an owner-only Unix socket", 
     attachments: fixtureItemChildren[0].attachments,
     notes: fixtureItemChildren[0].notes,
   });
+  assert.deepEqual(await core.client.request("library.attachment", { attachmentKey: "PDF00001", libraryId: 1 }), fixtureItemChildren[0].attachments[0]);
   assert.deepEqual(await core.client.request("library.note", { libraryId: 1, noteKey: "NOTE0001" }), fixtureNotes[0]);
   assert.deepEqual(await core.client.request("library.annotations", { attachmentKey: "PDF00001", libraryId: 1 }), {
     annotations: fixtureAnnotations[0].annotations,

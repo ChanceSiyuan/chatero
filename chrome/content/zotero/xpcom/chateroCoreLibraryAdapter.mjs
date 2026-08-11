@@ -17,6 +17,7 @@ const COLLECTION_FIELDS = new Set(["libraryId", "parentKey"]);
 const SEARCH_FIELDS = new Set(["collectionKey", "cursor", "libraryId", "limit", "query"]);
 const ITEM_CHILDREN_FIELDS = new Set(["itemKey", "libraryId"]);
 const ANNOTATION_FIELDS = new Set(["attachmentKey", "libraryId"]);
+const ATTACHMENT_FIELDS = new Set(["attachmentKey", "libraryId"]);
 const NOTE_FIELDS = new Set(["libraryId", "noteKey"]);
 const MAX_PAGE_SIZE = 200;
 const MAX_NOTE_BYTES = 512 * 1024;
@@ -255,6 +256,21 @@ export function createZoteroLibraryAdapter({ Zotero } = {}) {
 				.sort((left, right) => compareText(left.sortIndex, right.sortIndex)
 					|| compareText(left.annotationKey, right.annotationKey));
 			return { annotations };
+		},
+
+		async attachment(params) {
+			validateCompositeParams(params, ATTACHMENT_FIELDS, "attachmentKey", "library.attachment");
+			let attachment = lookupItem(Zotero, params.libraryId, params.attachmentKey, "Zotero attachment");
+			if (!attachment.isAttachment?.() || !attachment.isFileAttachment?.()) {
+				throw new Error("library.attachment target must be a file attachment");
+			}
+			let parent = Zotero.Items.get(attachment.parentItemID);
+			if (!parent || parent.libraryID !== attachment.libraryID || !parent.isRegularItem?.()) {
+				throw new Error("Zotero attachment has no valid parent item");
+			}
+			let summary = await attachmentSummary(Zotero, attachment, parent);
+			if (!summary) throw new Error("library.attachment target must be an available file attachment");
+			return summary;
 		},
 
 		async collections(params) {

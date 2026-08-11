@@ -43,6 +43,7 @@ function defaultToken() {
 function validateRouterOptions(options) {
 	if (!options?.adapter
 			|| typeof options.adapter.annotations !== "function"
+			|| typeof options.adapter.attachment !== "function"
 			|| typeof options.adapter.collections !== "function"
 			|| typeof options.adapter.itemChildren !== "function"
 			|| typeof options.adapter.note !== "function"
@@ -156,6 +157,7 @@ export function createGeckoCoreRequestRouter(options = {}) {
 				return { result: { profileEpoch, profileName, readOnly: true, schemaVersion, upstreamVersion } };
 			}
 			if (message.method === "library.annotations") return { result: await adapter.annotations(message.params) };
+			if (message.method === "library.attachment") return { result: await adapter.attachment(message.params) };
 			if (message.method === "library.collections") return { result: await adapter.collections(message.params) };
 			if (message.method === "library.item-children") return { result: await adapter.itemChildren(message.params) };
 			if (message.method === "library.note") return { result: await adapter.note(message.params) };
