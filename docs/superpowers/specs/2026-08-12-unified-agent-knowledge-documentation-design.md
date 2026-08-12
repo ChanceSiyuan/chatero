@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-12
 
-**Status:** Product design approved; awaiting written-spec review
+**Status:** Approved for phased implementation
 
 **Product:** Chatero
 
@@ -73,7 +73,9 @@ must update repository policy and parity documents at the phase in which
   and Main Site publication. It is not an executable-content trust grant.
 - **Change Set**: one persistent proposal lineage with a stable ID.
 - **Change Set generation**: one immutable revision of that lineage containing
-  one or more private, reviewable file operations.
+  one or more private, reviewable file operations. Its generation ID is exactly
+  16 lowercase hexadecimal characters (`^[0-9a-f]{16}$`) and is never parsed
+  from or serialized as a decimal number.
 - **Settle**: the human-authorized operation that accepts, rejects, or defers
   reviewed Change Set decisions and applies the accepted subset.
 - **Live Preview**: the `chatero.documentation.livePreview` custom text editor,
@@ -224,6 +226,7 @@ interface DocumentationTransactions {
       | IncompleteDecisionSet
       | InvalidDecisionSet
       | DirtyWorkingCopy
+      | BarrierConflict
       | Recovering
       | RecoveryConflict
       | IdempotencyConflict
@@ -248,7 +251,7 @@ interface DocumentationTransactions {
 
   planMigration(
     scope: OpaqueWorkspaceScope,
-  ): Promise<MigrationPlan>;
+  ): Promise<MigrationPlanV1 | MigrationPlanV2>;
 
   migrate(
     approval: MigrationApproval,
@@ -259,6 +262,8 @@ interface DocumentationTransactions {
   ): Promise<
     MigrationCommitted
       | StalePlan
+      | DirtyWorkingCopy
+      | BarrierConflict
       | Recovering
       | RecoveryConflict
       | IdempotencyConflict
@@ -289,7 +294,8 @@ scope-bound capabilities issued by the workspace and UI authority. Approval
 capabilities are single-use and short-lived. They bind the workspace epoch and
 the exact request digest: settlement binds `reviewToken + decisions`, state
 change binds path + document revision + state generation + target state,
-migration binds `planToken`, and recovery binds `recoveryToken + resolutions`.
+migration binds a newly reviewed V2 `planToken + planDigest`, and recovery binds
+`recoveryToken + resolutions`. V1 cannot produce a migration approval.
 
 An `AgentProposalGrant` additionally binds allowed Documentation paths,
 operation kinds, maximum operation count, and maximum proposed bytes. Public
@@ -316,6 +322,12 @@ The transaction module owns and enforces:
 - local and remote execution adapters;
 - legacy proposal conversion and migration recovery.
 
+Every canonical or digest-bearing order compares normalized UTF-8 bytes, not a
+host locale collation. State keys, mappings, path proofs, output manifests,
+Change Set records, and retrieval tie-breaks therefore serialize identically
+under local and SSH processes with different locales, including non-ASCII
+paths.
+
 It exposes no generic `read`, `write`, or `exists` methods from which callers
 could recreate a read-then-write race. Internal adapters expose higher-level
 `snapshot`, `transact`, and `recover` operations.
@@ -334,6 +346,45 @@ Both adapters implement the same contract and run the same conformance suite.
 Neither renderer nor built-in extension uses Node `fs`, a private polling
 watcher, or an alternate remote path mapping for Documentation.
 
+### Product-private Working Copy Barrier
+
+Settlement, migration, and their recovery continuations use a Code-OSS
+product-private Working Copy Barrier available only to the built-in
+Documentation extension. The request binds an operation ID, reason, and the
+complete normalized affected-path set—not merely paths that happen to be open.
+Each resource binds the applicable expected `TextDocument.version`, current
+digest, intended digest, clean-working-copy requirement,
+`expectedDirectoryGeneration`, or target-absence proof. Directory generation
+is an explicit lease field and is revalidated; it is not metadata that remains
+only inside a migration plan.
+
+Code-OSS registers the barrier before enumerating loaded working copies. While
+it is held, matching standard Text Editors and Live Preview views cannot type,
+save, autosave, apply ordinary bulk edits, or create, copy, move, or delete
+resources. A matching document opened later is read-only from its first model
+state. The barrier returns `DirtyWorkingCopy` or `BarrierConflict` before the
+first transaction mutation if any proof fails.
+
+Only the barrier lease may apply one exact owner `WorkspaceEdit`. That edit
+must cover only the pre-bound resources at their expected versions and must
+produce every declared intended digest; otherwise Code-OSS applies zero of it
+and returns `BarrierConflict`. The lease is revalidated immediately before the
+authority helper's first mutation. A normal extension-host
+`workspace.applyEdit`, the standard editor, Live Preview, autosave, or a file
+operation has no bypass. The Live Preview per-URI queue remains an editor
+synchronization mechanism; it is not a settlement, migration, or security
+lock.
+
+Before a structural transaction can release the barrier, its lease consumes
+one exact `finalizeResourceOutcomes` record bound to the journal. Code-OSS
+rebinds a clean open rename source to the intended target, reloads a created
+target, and closes or tombstones a deleted/retired source so a stale editor's
+later Save or autosave cannot recreate the old URI. A digest, mapping, or
+working-copy mismatch keeps the recovery gate and returns `BarrierConflict`;
+the extension cannot synthesize or partially finalize outcomes. Tombstones
+survive lease disposal until the stale model is closed or helper-verified
+recovery gives it a new bound resource.
+
 ### Transaction guarantee
 
 Ordinary filesystems cannot promise that an unrelated external process will
@@ -342,20 +393,56 @@ over a third-party edit made during recovery. Chatero therefore promises a
 **recoverable, conflict-preserving transaction**, not snapshot isolation or an
 unconditional all-before/all-after result:
 
-1. all preconditions are checked against one captured generation and checked
-   again immediately before the first canonical resource mutation;
-2. intended outputs and an immutable journal are durably staged;
-3. canonical operations and the state update are applied in dependency order;
-4. an immutable receipt records the committed result;
-5. after a crash, recovery rolls forward or restores only when every observed
+1. all preconditions are checked against one captured generation, the complete
+   Working Copy Barrier is acquired, and both lease and helper revalidate;
+2. intended outputs, before/intended evidence, and an immutable private journal
+   are written and fsynced in `private-staged` phase with
+   `markerCommitted:false` and `canonicalMutationStarted:false`; canonical and
+   legacy resources remain byte-for-byte unchanged;
+3. the helper hashes the immutable prepared portion of that journal,
+   exclusively creates and fsyncs
+   `.chatero/documentation-operation-active.v1.json` bound to the operation,
+   workspace epoch, prepared-journal digest, and complete affected-path proofs;
+4. the helper appends and fsyncs a `marker-committed` phase record without
+   changing the marker-bound prepared bytes, then—and only then—may it record
+   `canonicalMutationStarted:true` and perform the first canonical mutation or
+   owner text edit;
+5. canonical operations and the state update are applied in dependency order;
+6. an immutable receipt is fsynced before the active marker may be cleared;
+7. after a crash, recovery rolls forward or restores only when every observed
    revision matches a journaled before, intermediate, or intended revision;
-6. any unrecognized revision produces `RecoveryConflict` with before, current,
+8. any unrecognized revision produces `RecoveryConflict` with before, current,
    and intended bytes preserved for human resolution.
 
-Only the affected transaction and paths enter `Recovering` or
-`RecoveryConflict`. Zotero Core, other workspaces, unrelated files, and
-read-only Literature remain available. No recovery path overwrites a
-third-party revision merely to make the receipt look complete.
+With intact marker/journal proof, only the affected transaction and paths enter
+`Recovering` or `RecoveryConflict`; control-state tampering uses the broader
+Documentation-only gate described below. Zotero Core, other workspaces,
+unrelated files, and read-only Literature remain available. No recovery path
+overwrites a third-party revision merely to make the receipt look complete.
+
+Code-OSS checks the active marker through the workspace authority during early
+window startup and SSH reconnect, before restoring editable Documentation
+models and without waiting for extension activation. A valid marker plus its
+matching journal reconstructs a recovery-owned barrier over the complete
+affected paths. If an active marker references a missing or digest-mismatched
+journal, Chatero treats this as control-state tampering. A missing marker is
+tampering only when a valid operation record has already durably declared
+`marker-committed`, `canonicalMutationStarted:true`, or a later phase. Either
+case installs a broad read-only gate over all Documentation paths because the
+narrower affected set is no longer trustworthy. Typing, save/autosave,
+bulk/file operations, state changes, settlement, migration, and editable new
+opens remain blocked until explicit helper-verified recovery. This gate never
+blocks Zotero Core, read-only Literature, unrelated workspace paths, or another
+workspace, and neither lease disposal nor extension failure can clear it.
+
+A marker-free journal whose last valid phase is only `private-staged` is not
+evidence that canonical mutation began and does not activate the broad gate.
+It is pre-marker private evidence from a zero-canonical-change crash. After
+revalidating that the active marker is absent and all canonical/legacy before
+proofs still match, the helper may idempotently resume from staging or abandon
+that private evidence. It may not infer `marker-committed`, publish state, or
+perform a canonical mutation. Invalid marker-free staging debris is diagnosed
+and quarantined as private evidence; it is not promoted into mutation authority.
 
 ### Persistent operation state and idempotency
 
@@ -363,13 +450,17 @@ Every settlement, state change, structural operation, migration, and recovery
 resolution has one durable operation record. Its lifecycle is:
 
 ~~~text
-prepared
-  -> applying
+private-staged (marker absent is safe; canonicalMutationStarted=false)
+  -> marker-committed
+  -> applying (canonicalMutationStarted=true before first canonical mutation)
   -> text-applied and/or resources-applied
   -> metadata-applied
   -> committed
 
-prepared/applying/intermediate
+private-staged
+  -> exact private retry | abandoned
+
+marker-committed/applying/intermediate
   -> recovering
   -> committed | aborted | recovery-conflict
 
@@ -389,11 +480,14 @@ idempotency key, and stores the exact request digest:
 - the same key and same digest returns the existing in-flight state or prior
   result without consuming a second approval or applying anything twice;
 - the same key with a different digest returns `IdempotencyConflict`;
-- an approval is marked consumed together with creation of the `prepared`
-  record, so a crash cannot create an unrecorded reusable approval.
+- an approval is marked consumed together with creation of the durable
+  `private-staged` record, so a crash cannot create an unrecorded reusable
+  approval; an exact retry reuses that same operation, while abandoning
+  pre-marker evidence does not make the approval reusable.
 
 For text-only settlement, “all or nothing” applies only to the body changes in
-the single text-only `WorkspaceEdit`. The `prepared` record exists first.
+the single text-only `WorkspaceEdit`. The `private-staged` record exists first,
+followed by the marker and durable `marker-committed` transition.
 `text-applied` records the resulting document versions; workflow state,
 receipt, and deferred-child metadata are then projected before `committed`.
 If that projection fails, touched pages are conservatively `working` through
@@ -447,18 +541,31 @@ Preview views:
 3. A user transaction updates the view optimistically and immediately sends
    `{ opId, baseVersion, changes }`. Changes use Code-OSS/CodeMirror UTF-16
    offsets.
-4. The bridge validates the base version and, in the same per-URI serialized
-   turn, applies the smallest practical `WorkspaceEdit` to the `TextDocument`.
-   Code-OSS stamps the edit with the current text-model version during
-   extension-host serialization; a later version cannot accept its old ranges.
-5. `onDidChangeTextDocument` is the only commit acknowledgement. The bridge
-   broadcasts the authoritative delta and new version to every view.
-6. The originating view acknowledges its pending operation. Other views apply
-   the delta with a `hostSync` annotation that update listeners ignore, which
-   prevents an echo loop.
+4. Before applying, the bridge registers the operation ID, originating session,
+   base version, and exact expected change fingerprint at the head of the
+   per-URI queue. It then applies the smallest practical `WorkspaceEdit` to the
+   `TextDocument`. Code-OSS stamps the edit with the current text-model version
+   during extension-host serialization; a later version cannot accept its old
+   ranges.
+5. `onDidChangeTextDocument` is the only commit acknowledgement. A change event
+   matching that registered queue head is sent as an authoritative delta only
+   to the other views; after the event-settled coordinator result, the origin
+   receives `operationAcknowledged` with the resulting version and digest. An
+   unmatched standard-editor, external, Undo, or Redo event is broadcast to
+   every view. Matching uses the queued version plus the exact change
+   fingerprint, never text equality alone.
+6. Other views apply authoritative deltas with a `hostSync` annotation that
+   update listeners ignore. The originating view never reapplies its own
+   optimistic delta, so one input transaction changes its mirror exactly once.
 
-Pending deltas, operation IDs, and base versions may be recovery state; the
-complete document body is not persisted as webview state. Every keypress that
+Full pending deltas exist only transiently in the originating view and the
+extension-host bridge while an operation is in flight. Webview state may store
+only bounded, content-free descriptors such as session/operation IDs, base
+version, change shape, and cryptographic digest; it never stores inserted text,
+deleted text, contexts, or a complete document body. On webview reload, a
+descriptor may correlate only with the same still-live bridge operation.
+Otherwise the current authoritative `TextDocument` snapshot wins and the
+descriptor is discarded rather than replayed. Every acknowledged keypress that
 changes text becomes dirty through the `TextDocument` path rather than a
 separate Live Preview dirty flag.
 
@@ -475,9 +582,12 @@ When a pending operation no longer matches `document.version`:
 - no side silently wins and no full-document `setValue` overwrites history.
 
 If the bridge or SSH connection drops, acknowledged `TextDocument` edits remain
-normal hot-exit content. Received but unacknowledged operation deltas remain
-recoverable and visibly pending. On reconnect, the bridge validates their base
-before replay. Chatero never reports an unacknowledged edit as saved.
+normal hot-exit content. A received but unacknowledged operation remains
+recoverable and visibly pending only while the authority-side bridge still
+holds its exact transient bytes; on reconnect it validates the base before any
+replay. After an extension-host restart, the `TextDocument` is the only content
+authority: content-free descriptors cannot reconstruct or replay bytes.
+Chatero never reports an unacknowledged edit as committed or saved.
 
 Code-OSS does not expose stable custom undo-stop grouping for
 `workspace.applyEdit`. The first release therefore defines one CodeMirror user
@@ -549,16 +659,34 @@ A new view derives its initial state from the QMD attribute. Interactive fold
 state is not shared between split views and is not written to repository
 metadata.
 
-### Exact Quarto preview
+### Sandboxed Quarto preview
 
-Live Preview is the primary editor. A separate command may open an exact,
-read-only Quarto preview for publication fidelity. It is not a resident third
-editing surface and never owns source.
+Live Preview is the primary editor. A separate command may open a read-only
+Quarto preview for the supported passive publication subset. It is not a
+resident third editing surface and never owns source. Chatero never silently
+removes active metadata and labels the result “exact”: a page using project
+scripts, filters, extensions, custom formats/templates, includes/shortcodes,
+raw active HTML, or another executable hook is refused with a source-linked
+diagnostic.
 
-Every Quarto invocation uses `--no-execute`, a document-scoped working
-directory, loopback-only serving, and workspace trust checks. Preview failure
-reports a Code-OSS Problem and retains the last successful preview. It does not
-disable Live Preview, Text Editor editing, Zotero Core, or workspace access.
+`--no-execute` is required but is not treated as a process-security boundary.
+The workspace authority first materializes a content-addressed disposable
+snapshot containing only the stabilized saved QMD, validated relative raster
+assets, and a product-generated fixed project configuration. A product-private
+deny-by-default child-process sandbox may read only the signed Quarto/Pandoc
+runtime and that snapshot, may write only its disposable output, has no network
+or canonical workspace/home/Codex access, cannot launch arbitrary child
+programs, and receives a fixed environment. If equivalent confinement is not
+available on the current local or SSH platform, the command is unavailable and
+does not fall back to an ordinary spawn.
+
+Chatero invokes one fixed-version `quarto render ... --no-execute` command with
+`shell:false`; it never runs Quarto's preview server in the user document or
+project directory. After a successful render, a Chatero-owned static loopback
+server exposes only the verified derived output through `asExternalUri`.
+Preview failure reports a Code-OSS Problem and retains the last successful
+preview. It does not disable Live Preview, Text Editor editing, Zotero Core, or
+workspace access.
 
 ## Agent Change Sets
 
@@ -580,6 +708,11 @@ generation contains:
 - structural dependencies between operations and hunks;
 - the state generation against which it was staged;
 - validation diagnostics and recovery metadata.
+
+Every Change Set generation ID uses the fixed-width 16-character lowercase
+hexadecimal form `^[0-9a-f]{16}$` (for example,
+`0000000000000001`). Parsers reject shorter, uppercase, signed, prefixed, or
+overflowing forms; sort order is therefore bytewise and deterministic.
 
 Capabilities and approval tokens are never serialized into a generation,
 journal, or receipt.
@@ -628,6 +761,16 @@ capability. A user manually typing a terminal command remains a human
 filesystem action. Workspace trust is necessary for Agent staging, but trust
 alone never grants these reserved-root accesses.
 
+Reserved-root enforcement also binds filesystem identity, not only a lexical
+path. Before every lifecycle request Chatero rejects reserved, trusted-runtime,
+and `CODEX_HOME` trees containing multiply linked regular files and revalidates
+their canonical device/inode ancestry. Installed local and SSH probes attempt
+pre-existing hard-link aliases, in-turn link/rename operations, and workspace
+ancestor renames under every Chatero permission profile. If the pinned sandbox
+can reach a denied object through any alias or renamed ancestor on a platform,
+that Native Codex profile is unavailable there; Chatero never falls back to a
+broader builtin or treats pathname rules as proven confinement.
+
 ### Review surfaces
 
 The same Change Set is visible from:
@@ -663,25 +806,33 @@ cannot be accepted while rejecting that rename.
 
 At settlement:
 
-1. the service validates the one-use approval, review token, complete decision
-   map, and all current revisions;
+1. the service validates the approval binding, review token, complete decision
+   map, and all current revisions without consuming approval yet;
 2. clean non-overlapping human edits are three-way reconciled;
 3. the service precomputes the complete accepted result and any deferred child
    generation; a conflict in either produces zero applied decisions;
 4. overlapping edits return a conflict with base, current, and proposed text
    preserved;
-5. under the shared per-URI working-copy mutex, the service rechecks every
-   `document.version`, constructs the edit, and immediately calls one text-only
-   `WorkspaceEdit`, including documents not previously visible in an editor;
-6. create, rename, and delete remain resource operations; dirty open rename or
-   delete targets return `DirtyWorkingCopy` and are not changed behind the
-   editor;
-7. accepted resource operations and state updates enter one recoverable,
-   conflict-preserving transaction;
-8. rejected material is recorded in the receipt and does not affect canonical
-   files;
-9. deferred material becomes a new immutable child generation rebased on the
-   committed result.
+5. it derives and acquires one Working Copy Barrier over every source, target,
+   text, structural, state, and private-publication path, including affected
+   documents not currently open; a dirty or stale proof produces zero
+   transaction mutations;
+6. after lease revalidation, the typed `prepare-settlement` request consumes
+   the one-use approval, durably stages private evidence/journal, fsyncs the
+   journal-digest-bound active marker, rechecks authority-side proofs, and
+   applies accepted create/rename/delete resource operations in dependency
+   order; dirty structural sources are never changed behind the editor;
+7. the helper returns an `awaiting-text` continuation bound to its operation
+   ID, operation digest, affected-resource digest, expected document versions,
+   intended text digests, and exact structural outcomes; the lease first
+   finalizes every rename/create/delete working-copy outcome, then only that
+   lease applies the exact all-or-nothing owner `WorkspaceEdit`, and it does
+   not save;
+8. `ack-settlement-text` carries the exact operation ID/digest and observed text
+   proof; the helper matches them to the durable journal before applying state,
+   exposing a deferred child, fsyncing the receipt, and clearing the marker;
+9. rejected material is receipt-only, while deferred material becomes a new
+   immutable child generation rebased on the committed result.
 
 Settlement does not auto-save edits to existing QMD buffers. Accepted text
 becomes normal dirty Workbench content, remains undoable, participates in hot
@@ -691,31 +842,41 @@ Create, rename, and delete require clean affected working copies because their
 resource changes are persistent.
 
 Text-only settlement uses the all-or-nothing behavior of one text-only
-`WorkspaceEdit`. A settlement that includes resource operations uses the
-journaled mixed-operation path and can enter `RecoveryConflict`; it does not
-claim filesystem atomicity. The state projection treats every touched target
-as `working` as soon as the accepted decision is applied and remains
-conservatively working after later Undo, Revert, or conflict recovery.
+`WorkspaceEdit`, but it uses the same prepare/barrier/ack protocol with an empty
+resource-operation phase. A mixed settlement is journaled and can enter
+`RecoveryConflict`; it does not claim filesystem atomicity. The state projection
+treats every touched target as `working` once the accepted decision is applied
+and remains conservatively working after later Undo, Revert, or conflict
+recovery.
 
 The final version check is not a free-standing read followed by an unguarded
-write. The Live Preview bridge and settlement service share a per-URI queue,
-and Code-OSS serializes each text edit with the current `versionId` when
-`workspace.applyEdit` crosses from the extension host to the bulk-edit
-service. A standard Text Editor change that races after Chatero's final check
-therefore changes the model version and makes the old-range edit fail; it
-cannot land on the newer text. Settlement records `text-applied` only after
-`applyEdit` succeeds and matching `onDidChangeTextDocument` events confirm all
-expected versions. Failure returns a fresh review requirement without
-committing state or a deferred child.
+write and no longer relies on the Live Preview per-URI queue to exclude a
+standard Text Editor race. The barrier prevents standard typing, manual save,
+autosave, ordinary bulk edits, file operations, and new editable opens across
+the complete affected set. Its owner edit is version- and digest-bound and is
+zero-partial; matching `onDidChangeTextDocument` events produce the text proof
+used by acknowledgement. A pre-prepare failure releases the lease with zero
+transaction writes. A failure after prepare keeps the active-marker recovery
+gate and exposes neither state nor a deferred child.
 
-For a mixed generation, the service durably stages the intended text overlay
-before committing create/rename/delete resource operations. It then applies
-the overlay to the resulting `TextDocument` working copies. The receipt
-records `ResourceCommitted` and `TextApplied` separately. Failure between them
-enters `Recovering`; a changed target enters `RecoveryConflict` instead of
-being overwritten. A deferred child generation is not exposed until both
-parts are complete. Workbench Undo can undo the text overlay, but reversing an
-accepted create, rename, or delete is a new, explicitly reviewed transaction.
+For a mixed generation, failure after resource application but before text or
+ack enters `Recovering`. `inspect-settlement` reads the journal-bound
+continuation: exact `before` text may receive the one exact owner overlay,
+exact `intended` text may be acknowledged without reapplying, and any unknown
+digest becomes `RecoveryConflict` without overwrite. An unknown result carries
+immutable before/current/intended evidence and an opaque recovery token. Only a
+human command may issue a fresh, single-use `RecoveryApproval` for one complete
+map of `keep-current`, `restore-before`, or `apply-intended` decisions. The
+typed `resolve-settlement` continuation reacquires or adopts the complete
+Working Copy Barrier, revalidates marker/journal/current revisions immediately
+before its first write, finalizes structural working-copy outcomes, and either
+writes one terminal receipt or returns a freshly bound `RecoveryConflict` with
+zero resolution writes. Inspection, startup/reconnect, the Agent, an old
+approval, or lease disposal cannot select a resolution or release the gate.
+The receipt records resource and text proof separately. A deferred child
+generation is not exposed until acknowledgement commits both parts. Workbench Undo can undo the text
+overlay after commit, but reversing an accepted create, rename, or delete is a
+new, explicitly reviewed transaction.
 
 Delete never rebases across a human modification. Rename remains a structural
 operation and never silently degrades into “edit the old path.”
@@ -819,21 +980,47 @@ site and default retrieval, not trusted programs.
 ### Explicit plan and approval
 
 Migration is invoked by a human command such as “Migrate Drafts and Knowledge
-to Documentation.” It has two separate steps:
+to Documentation.” Planning has two explicitly versioned contracts:
 
-1. a read-only dry run produces an immutable plan, collision report, link
-   rewrite report, proposal report, source hashes, target preconditions, and
-   opaque plan token;
-2. an explicit human approval capability executes that exact plan.
+- Phase 1 produces only a content-free `MigrationPlanV1` report containing
+  deterministic mapping/rewrite/proposal summaries, sorted affected paths, and
+  source/target path proofs. V1 is a read-only design-time report: it has no
+  complete intended-output manifest and is never executable.
+- After the Phase 4 Change Set builder exists, Phase 5 runs a fresh
+  authority-side plan and produces `MigrationPlanV2`. That fresh planning call
+  returns a new content-free V2 report and a newly generated V2 plan token. The
+  user must review that new report before the UI may issue a new short-lived
+  approval bound to the new token and plan digest. A V1 record, token, review,
+  or approval cannot be upgraded, rebound, or reused; it returns `StalePlan`
+  and requires this fresh V2 planning and review flow.
+
+The V2 digest covers the workspace epoch, complete normalized affected paths,
+path proofs, summaries, and a sorted `intendedOutputManifest`. Each manifest
+entry contains only an output-relative path, closed output kind, exact byte
+size, and SHA-256 for every canonical page/asset, workflow-state file,
+converted Change Set manifest/blob, and quarantine artifact. It contains no QMD
+body, asset bytes, legacy proposal body, base/proposed blob, capability, or
+approval. All legacy input and intended output bodies stay inside the
+authority-local helper; the extension and local renderer receive only the
+bounded content-free plan/report.
+
+Execution does not trust the planning process's transient bytes. Before any
+transaction write, the authority helper captures a fresh snapshot, reruns the
+deterministic mapping, structured rewriting, and proposal conversion, and
+recomputes every intended output. It requires exact path, kind, size, and hash
+equality with the approved V2 manifest and exact path-proof equality. A
+mismatch returns `StalePlan` with zero transaction or canonical writes.
 
 Any source hash, directory entry, state generation, dirty affected working
 copy, or target precondition change detected before the first canonical
-mutation makes the plan stale and produces zero canonical writes. Private
-bootstrap/staging evidence may remain for diagnosis. The user must inspect a
-new plan. Startup, extension activation, SSH connection, and repository
-bootstrap never count as approval. A third-party race detected after a legacy
-root has moved produces `RecoveryConflict` and can never be reported as a
-successful migration.
+mutation makes the V2 plan stale and produces zero canonical writes. Before
+execution the Working Copy Barrier merges the approved path proofs with current
+open-document version/dirty evidence and covers the complete affected paths,
+not a plan-time list of editors. The user must inspect a new V2 plan. Startup,
+extension activation, SSH connection/reconnect, repository bootstrap, a V1
+token, and an earlier approval never count as V2 approval. A third-party race
+detected after a legacy root has moved produces `RecoveryConflict` and can never
+be reported as a successful migration.
 
 A pre-existing non-empty `documentation/` root without a matching in-progress
 migration receipt is treated as a mixed-layout conflict. The planner reports
@@ -912,32 +1099,60 @@ are never silently skipped or deleted.
 
 Execution uses a journaled sequence:
 
-1. validate the one-use approval, plan token, and captured revisions;
-2. write a bootstrap journal before the first private staging write;
-3. stage the complete new tree, state file, converted Change Sets, and rewrite
-   results;
-4. validate staged hashes and containment;
-5. acquire the authority-local migration lease, require affected working copies
-   to be clean, and revalidate every source, directory entry, and target
-   immediately before the first canonical mutation;
+1. validate the new one-use V2 approval/token and acquire the Working Copy
+   Barrier from all approved affected paths and path proofs, enriched with
+   current `TextDocument.version` and dirty evidence;
+2. capture a fresh authority-side snapshot, deterministically recompute all
+   transformed bytes, and require its output manifest and every source,
+   directory, state, target-absence, and workspace-epoch proof to match V2;
+3. stage the complete new tree, state file, converted Change Sets, quarantine,
+   before/intended evidence, and immutable operation journal in private storage,
+   set its phase to `private-staged` with both marker/mutation flags false, then
+   fsync files and parent directories; through this step canonical and legacy
+   resources remain byte-for-byte unchanged;
+4. validate all staged hashes and containment, hash the durable journal, then
+   exclusively create and fsync the active marker bound to that journal digest,
+   workspace epoch, operation, and complete affected-path proofs; append and
+   fsync `marker-committed` without changing the marker-bound prepared bytes;
+5. revalidate both barrier and helper proofs immediately after the marker; only
+   after durably recording `canonicalMutationStarted:true` may the first
+   canonical mutation occur;
 6. move `drafts/`, `knowledge/`, and the legacy `draft-changes/` proposal root
    into the receipt's private recovery area and verify that the moved snapshot
    still matches the plan;
 7. install `documentation/`, its state, and converted Change Sets;
 8. verify canonical hashes and converted proposals;
-9. record an immutable committed receipt and release the lease.
+9. under the still-held barrier, finalize the exact journal-bound working-copy
+   outcomes: rebind clean open legacy pages to their migrated targets, reload
+   created canonical targets, and close/tombstone every retired legacy URI so
+   later Save/autosave/hot-exit cannot recreate `drafts/`, `knowledge/`, or the
+   proposal root;
+10. fsync an immutable committed receipt, clear the active marker only after
+   terminal receipt and working-copy-outcome verification, and release the
+   barrier. A finalize mismatch remains `Recovering`/`RecoveryConflict`.
 
-On restart or reconnect, recovery inspects the journal and receipt before
-allowing affected writes. It completes or restores a step only when current
-revisions match journaled proof. Otherwise it records `RecoveryConflict` and
-preserves before, current, and intended content for human resolution. Recovery
-copies remain private and are never indexed or published. Chatero does not
-delete them automatically.
+On startup or SSH reconnect, Code-OSS inspects the active marker before editor
+restoration and extension activation. A valid marker/journal pair restores the
+complete affected-path barrier before allowing any matching typing, save,
+autosave, bulk/file operation, or editable new open. A missing or
+digest-mismatched journal referenced by a marker is treated as tampering. With
+no marker, the broad Documentation gate is installed only if the operation has
+durably reached `marker-committed`, set `canonicalMutationStarted:true`, or
+advanced later. A marker-free `private-staged` journal with both flags false is
+safe pre-marker evidence: after before-proof validation it is retried exactly
+or abandoned without gating Documentation or touching canonical/legacy bytes.
+Recovery completes or restores a post-marker step only when current revisions
+match journaled proof. Otherwise it records `RecoveryConflict` and preserves
+before, current, and intended content for human resolution. Recovery copies
+remain private and are never indexed or published. Chatero does not delete them
+automatically, and only a helper-verified terminal receipt or explicit recovery
+resolution may release a post-marker gate.
 
-The same plan and recovery contract runs on local and SSH workspaces. A remote
-migration's authority-side transaction ends when the committed receipt is
-durable; personal content never transits the local renderer. The local
-extension observes that receipt and idempotently projects routers, retrieval,
+The same V2 plan, barrier, and recovery contract runs on local and SSH
+workspaces. A remote migration's authority-side transaction ends when the
+committed receipt is durable; personal content never transits the local
+renderer. The local extension observes that receipt and idempotently projects
+routers, retrieval,
 site, and UI labels to Documentation. This projection is rebuildable after
 restart and is not falsely included in the remote filesystem transaction.
 
@@ -960,10 +1175,15 @@ planning result is not treated as permanent proof.
 
 ### Live rendering
 
-Live Preview uses a restrictive webview CSP and `asWebviewUri`. Image preview
-accepts only relative, workspace-contained PNG, JPEG, GIF, WebP, or AVIF files
-whose detected MIME matches the file content. The default encoded-size limit
-is 20 MiB per image; larger files show a source-linked placeholder.
+Live Preview uses a restrictive webview CSP and `asWebviewUri`. One fresh nonce
+authorizes the script and CodeMirror's `EditorView.cspNonce` stylesheet only;
+there is no `unsafe-inline`. `img-src` and `font-src` admit only the exact
+materialized webview/derived-cache authorities required for validated raster
+snapshots and packaged KaTeX WOFF2 files. Network, `data:`, `blob:`, `file:`,
+SVG, and caller-selected sources remain denied. Image preview accepts only
+relative, workspace-contained PNG, JPEG, GIF, WebP, or AVIF files whose
+detected MIME matches the file content. The default encoded-size limit is 20
+MiB per image; larger files show a source-linked placeholder.
 
 Live Preview never loads:
 
@@ -975,6 +1195,12 @@ Live Preview never loads:
 KaTeX runs with trust disabled. Rendered links navigate only through the
 workbench's validated link handler. Unknown HTML and unsupported QMD remain
 editable source.
+
+Generated-bundle verification rejects network APIs, remote resource loading,
+dynamic imports, and non-allowlisted URL literals; it does not naïvely reject
+the fixed XML namespace strings embedded by KaTeX/MathML/SVG DOM
+implementations. Those namespace strings are inert identifiers, not permission
+to load SVG or network content.
 
 Safe passive Live Preview is allowed in an untrusted workspace. Quarto
 processes, Agent staging/settlement, migration, and any operation that can
@@ -999,13 +1225,17 @@ a prerequisite; it does not weaken Agent capability or reserved-root rules.
 | Decision map is incomplete or contradictory | Return the typed decision error and make zero changes |
 | Human edit overlaps Agent hunk | Preserve base/current/proposed and require conflict resolution |
 | Rename/delete target is dirty | Refuse the structural operation without background overwrite |
-| Transaction crashes | Mark affected paths Recovering; complete only from matching journaled revisions |
+| A barrier proof or owner edit digest is stale | Return DirtyWorkingCopy/BarrierConflict with zero partial edit or transaction mutation |
+| Transaction crashes in marker-free `private-staged` | Preserve zero-canonical-change private evidence; after before-proof validation retry exactly or abandon it without a broad gate |
+| Transaction crashes after marker fsync | Gate affected paths and complete only from matching marker/journal revisions |
+| Active marker references a missing/mismatched journal, or a `marker-committed`/mutation-started record lacks its marker | Treat as tampering and gate all Documentation editing/mutation until helper-verified recovery |
 | Third-party edit appears during recovery | Enter RecoveryConflict and preserve before/current/intended content |
 | Human recovery choice races another edit | Return a fresh RecoveryConflict; never overwrite it |
 | State file is missing/corrupt | Reject the snapshot, treat every page as working, and report a diagnostic |
-| Migration plan becomes stale before canonical mutation | Make zero canonical writes and require a new dry run |
+| MigrationPlanV1 is submitted for execution | Return StalePlan; require a fresh reviewed V2 plan, token, and approval |
+| MigrationPlanV2 or recomputed output manifest becomes stale before canonical mutation | Make zero transaction/canonical writes and require a new V2 dry run |
 | Legacy proposal is damaged | Quarantine and report it; never delete it |
-| Documentation subsystem fails to activate | Keep standard Code-OSS editing and Zotero Core available |
+| Documentation subsystem fails to activate | Keep Zotero Core and unrelated standard editing available; preserve any active-marker Documentation gate |
 
 ## Verification Strategy
 
@@ -1037,10 +1267,18 @@ Tests cover:
 - traversal, symlink escape, URI authority changes, and MIME/content mismatch;
 - migration mapping, total deterministic conflict-root allocation, safe
   reference rewriting,
-  original/migrated proposal blobs, multiple valid proposals, stale plans,
-  post-validation races, and crash injection at every journal boundary;
+  original/migrated proposal blobs, multiple valid proposals, non-executable V1
+  rejection, fresh V2 review/token/approval, content-free output manifests,
+  helper-private byte recomputation, stale plans, post-validation races, and
+  crash injection at every journal/marker boundary;
 - recovery proof matching and `RecoveryConflict` preservation when an external
-  writer creates an unrecognized revision.
+  writer creates an unrecognized revision;
+- pre-marker `private-staged` crash retry/abandon with zero canonical changes
+  and no broad gate;
+- active-marker/prepared-journal digest matching, missing referenced-journal
+  tamper detection, and missing-marker tamper detection only after the durable
+  `marker-committed` or mutation-started boundary, with the broad Documentation
+  gate when the affected subset cannot be trusted.
 
 ### Code-OSS integration tests
 
@@ -1056,9 +1294,19 @@ The integration suite proves:
 - one CodeMirror transaction produces one Workbench undo unit;
 - clean external edits reload and dirty external edits cannot overwrite memory;
 - version mismatches replay only safe non-overlapping pending edits;
-- an injected standard-editor change between final review validation and bulk
-  apply causes the version-bound `WorkspaceEdit` to fail without placing an
-  old range on new text;
+- settlement and migration barriers cover paths not open at planning time and
+  block standard typing, save/autosave, ordinary bulk edits, file operations,
+  and newly opened affected editors;
+- only the lease-owned exact `WorkspaceEdit` can cross a settlement barrier,
+  and a version/resource/intended-digest mismatch applies zero partial edits;
+- directory membership changes invalidate the explicit
+  `expectedDirectoryGeneration`; journal-bound create/rename/delete outcomes
+  rebind, reload, close, or tombstone clean open models before barrier release,
+  and later Save/autosave cannot recreate a retired URI;
+- startup and SSH reconnect restore an affected-path recovery gate before
+  editor restoration; a marker with a missing/mismatched journal or a
+  post-marker operation missing its marker installs the broad Documentation
+  gate, while marker-free pre-marker staging evidence does not;
 - the same scenarios pass under local and SSH authorities;
 - disconnect/reconnect recovers edit queues and transaction journals;
 - QLab/Documentation activation failure does not prevent Zotero Core startup.
@@ -1089,7 +1337,9 @@ operation-state transition, exact retry after each crash point, mixed
 `ResourceCommitted`/`TextApplied` recovery, reject, Workbench text undo after
 settlement, explicit inverse structural transactions, state effects, restart
 persistence, cancellation, `resolveRecovery`, and repeated
-`RecoveryConflict`.
+`RecoveryConflict`. They also cover complete barrier resources, one exact owner
+edit, typed prepare/apply/ack continuation, and crashes before/after the
+journal-bound active marker.
 
 ### Security tests
 
@@ -1151,8 +1401,8 @@ phase can weaken an earlier authority or recovery gate.
 - Add the deep transaction model, `documentation/` path type, workflow-state
   schema, status commands, and local/remote conformance tests behind a product
   flag.
-- Add a read-only legacy migration planner and reports, but do not execute a
-  personal migration.
+- Add the read-only, content-free, explicitly non-executable MigrationPlanV1
+  planner and report; do not expose migration execution or an upgradable token.
 - Preserve standard Text Editor compatibility for QMD.
 
 ### Phase 2: TextDocument-backed editor
@@ -1184,7 +1434,10 @@ phase can weaken an earlier authority or recovery gate.
 
 - Enable migration execution only after Phases 1–4 pass all automated and
   installed smoke gates.
-- Migrate one explicitly selected workspace using a reviewed dry-run plan.
+- Produce a fresh authority-side MigrationPlanV2 with a complete content-free
+  output manifest; require a new human review, token, and approval, then migrate
+  one explicitly selected workspace only after helper-private byte
+  recomputation exactly matches that manifest.
 - Switch current routes and labels to Documentation only after receipt
   verification.
 - Retain the Gecko implementation as a parity oracle until full workbench
@@ -1217,11 +1470,17 @@ following:
 10. Default retrieval and Main Site use only `reviewed` pages, while working
     pages remain explicitly accessible and labeled.
 11. Migration preserves both sides of every collision, converts valid pending
-    proposals, quarantines damaged ones, and is crash-recoverable.
+    proposals, quarantines damaged ones, keeps raw bodies authority-local, and
+    is crash-recoverable. V1 is non-executable; execution requires a freshly
+    reviewed V2 plan/token/approval and exact recomputed output-manifest match.
 12. The same editing, review, security, and recovery contracts pass locally
     and over SSH.
-13. QLab or Documentation failure cannot prevent Zotero Core or standard
-    Code-OSS editing from starting.
+13. Settlement and migration protect the complete affected paths with the
+    product-private barrier; only one exact owner edit can cross it, and an
+    early marker/journal recovery gate survives startup and SSH reconnect.
+14. QLab or Documentation failure cannot prevent Zotero Core or unrelated
+    standard Code-OSS editing from starting; a tampered or active operation
+    remains safely gated within Documentation.
 
 ## Public References
 
