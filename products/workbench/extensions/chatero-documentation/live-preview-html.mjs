@@ -47,7 +47,7 @@ export function createLivePreviewHtml({ webview, scriptUri, styleUri, nonce }) {
   const cspSource = trustedCspSource(webview.cspSource);
   const script = trustedResource(scriptUri, cspSource, "Live Preview script URI");
   const style = trustedResource(styleUri, cspSource, "Live Preview stylesheet URI");
-  const csp = `default-src 'none'; script-src 'nonce-${nonce}'; style-src ${cspSource} 'nonce-${nonce}';`;
+  const csp = `default-src 'none'; script-src 'nonce-${nonce}'; style-src ${cspSource} 'nonce-${nonce}'; font-src ${cspSource}; img-src ${cspSource};`;
   return [
     "<!DOCTYPE html>",
     '<html lang="en">',

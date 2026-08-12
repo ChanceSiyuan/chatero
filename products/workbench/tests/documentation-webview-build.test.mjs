@@ -18,6 +18,7 @@ test("builds deterministic, self-contained Documentation webview assets", async 
   temporaryDirectories.push(first, second);
   const {
     DOCUMENTATION_WEBVIEW_OUTPUTS,
+    KATEX_WOFF2_FILES,
     XML_NAMESPACE_URLS,
     auditDocumentationJavaScript,
     buildDocumentationWebview,
@@ -39,6 +40,13 @@ test("builds deterministic, self-contained Documentation webview assets", async 
       assert.ok(audit.urlLiterals.every(value => XML_NAMESPACE_URLS.includes(value)));
     }
   }
+  const stylesheet = await readFile(join(first, "live-preview.css"), "utf8");
+  assert.match(stylesheet, /\.katex/u);
+  assert.doesNotMatch(stylesheet, /\.(?:woff|ttf)\)/u);
+  assert.deepEqual(
+    a.files.filter(file => file.path.startsWith("fonts/")).map(file => file.path),
+    KATEX_WOFF2_FILES.map(name => `fonts/${name}`),
+  );
 });
 
 test("audits JavaScript syntax rather than comments or identifier substrings", async () => {
@@ -104,6 +112,8 @@ test("pins build dependencies and materializes only declared generated assets", 
     assert.match(entry.resolved, /^https:\/\/registry\.npmjs\.org\//);
     assert.match(entry.integrity, /^sha512-/);
   }
+  assert.equal(lockfile.packages[""].dependencies.katex, "0.16.22");
+  assert.equal(lockfile.packages["node_modules/katex"].version, "0.16.22");
   for (const entry of Object.values(lockfile.packages)) {
     if (entry?.resolved) {
       assert.match(entry.resolved, /^https:\/\/registry\.npmjs\.org\//);
@@ -117,6 +127,7 @@ test("pins build dependencies and materializes only declared generated assets", 
   assert.equal(mappings.get("extensions/chatero-documentation/media/documentation-webview/live-preview.js"), "products/workbench/.cache/documentation-webview/live-preview.js");
   assert.equal(mappings.get("extensions/chatero-documentation/media/documentation-webview/live-preview.css"), "products/workbench/.cache/documentation-webview/live-preview.css");
   assert.equal(mappings.get("extensions/chatero-documentation/licenses/CodeMirror-MIT.txt"), "products/workbench/extensions/chatero-documentation/licenses/CodeMirror-MIT.txt");
+  assert.equal(mappings.get("extensions/chatero-documentation/licenses/KaTeX-MIT.txt"), "products/workbench/extensions/chatero-documentation/licenses/KaTeX-MIT.txt");
 
   const bootstrap = await readFile(join(repositoryRoot, "products/workbench/scripts/bootstrap-code-oss.mjs"), "utf8");
   assert.ok(bootstrap.indexOf("await buildDocumentationWebview({ root") < bootstrap.indexOf("await materializeFirstPartyExtensions({"));

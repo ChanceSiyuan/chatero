@@ -1,3 +1,6 @@
+import katex from "katex";
+
+import { createFormulaDecorations } from "./formula-decorations.mjs";
 import { createQmdLanguage } from "./qmd-language.mjs";
 import { createProseDecorations } from "./prose-decorations.mjs";
 
@@ -6,5 +9,6 @@ export function createQmdPreviewExtensions({ postMessage }) {
   return Object.freeze([
     createQmdLanguage(),
     createProseDecorations({ postMessage }),
+    createFormulaDecorations({ katex }),
   ]);
 }

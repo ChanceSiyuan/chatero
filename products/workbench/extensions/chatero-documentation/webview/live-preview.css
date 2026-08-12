@@ -64,3 +64,23 @@ body {
   color: var(--vscode-textLink-foreground);
   text-decoration: underline;
 }
+
+.chatero-qmd-formula-inline {
+  display: inline-block;
+  min-width: 0.5em;
+  vertical-align: baseline;
+}
+
+.chatero-qmd-formula-display {
+  box-sizing: border-box;
+  display: block;
+  overflow-x: auto;
+  padding: 0.4rem 0;
+  text-align: center;
+}
+
+.chatero-qmd-formula-fallback {
+  color: var(--vscode-editorWarning-foreground);
+  font-family: var(--vscode-editor-font-family);
+  font-size: 0.9em;
+}

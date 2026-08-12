@@ -49,6 +49,10 @@
           "destination": "extensions/chatero-documentation/licenses/CodeMirror-MIT.txt"
         },
         {
+          "source": "products/workbench/extensions/chatero-documentation/licenses/KaTeX-MIT.txt",
+          "destination": "extensions/chatero-documentation/licenses/KaTeX-MIT.txt"
+        },
+        {
           "source": "products/workbench/extensions/chatero-documentation/live-preview-bridge.mjs",
           "destination": "extensions/chatero-documentation/live-preview-bridge.mjs"
         },
@@ -75,6 +79,86 @@
         {
           "source": "products/workbench/.cache/documentation-webview/live-preview.js",
           "destination": "extensions/chatero-documentation/media/documentation-webview/live-preview.js"
+        },
+        {
+          "source": "products/workbench/.cache/documentation-webview/fonts/KaTeX_AMS-Regular.woff2",
+          "destination": "extensions/chatero-documentation/media/documentation-webview/fonts/KaTeX_AMS-Regular.woff2"
+        },
+        {
+          "source": "products/workbench/.cache/documentation-webview/fonts/KaTeX_Caligraphic-Bold.woff2",
+          "destination": "extensions/chatero-documentation/media/documentation-webview/fonts/KaTeX_Caligraphic-Bold.woff2"
+        },
+        {
+          "source": "products/workbench/.cache/documentation-webview/fonts/KaTeX_Caligraphic-Regular.woff2",
+          "destination": "extensions/chatero-documentation/media/documentation-webview/fonts/KaTeX_Caligraphic-Regular.woff2"
+        },
+        {
+          "source": "products/workbench/.cache/documentation-webview/fonts/KaTeX_Fraktur-Bold.woff2",
+          "destination": "extensions/chatero-documentation/media/documentation-webview/fonts/KaTeX_Fraktur-Bold.woff2"
+        },
+        {
+          "source": "products/workbench/.cache/documentation-webview/fonts/KaTeX_Fraktur-Regular.woff2",
+          "destination": "extensions/chatero-documentation/media/documentation-webview/fonts/KaTeX_Fraktur-Regular.woff2"
+        },
+        {
+          "source": "products/workbench/.cache/documentation-webview/fonts/KaTeX_Main-Bold.woff2",
+          "destination": "extensions/chatero-documentation/media/documentation-webview/fonts/KaTeX_Main-Bold.woff2"
+        },
+        {
+          "source": "products/workbench/.cache/documentation-webview/fonts/KaTeX_Main-BoldItalic.woff2",
+          "destination": "extensions/chatero-documentation/media/documentation-webview/fonts/KaTeX_Main-BoldItalic.woff2"
+        },
+        {
+          "source": "products/workbench/.cache/documentation-webview/fonts/KaTeX_Main-Italic.woff2",
+          "destination": "extensions/chatero-documentation/media/documentation-webview/fonts/KaTeX_Main-Italic.woff2"
+        },
+        {
+          "source": "products/workbench/.cache/documentation-webview/fonts/KaTeX_Main-Regular.woff2",
+          "destination": "extensions/chatero-documentation/media/documentation-webview/fonts/KaTeX_Main-Regular.woff2"
+        },
+        {
+          "source": "products/workbench/.cache/documentation-webview/fonts/KaTeX_Math-BoldItalic.woff2",
+          "destination": "extensions/chatero-documentation/media/documentation-webview/fonts/KaTeX_Math-BoldItalic.woff2"
+        },
+        {
+          "source": "products/workbench/.cache/documentation-webview/fonts/KaTeX_Math-Italic.woff2",
+          "destination": "extensions/chatero-documentation/media/documentation-webview/fonts/KaTeX_Math-Italic.woff2"
+        },
+        {
+          "source": "products/workbench/.cache/documentation-webview/fonts/KaTeX_SansSerif-Bold.woff2",
+          "destination": "extensions/chatero-documentation/media/documentation-webview/fonts/KaTeX_SansSerif-Bold.woff2"
+        },
+        {
+          "source": "products/workbench/.cache/documentation-webview/fonts/KaTeX_SansSerif-Italic.woff2",
+          "destination": "extensions/chatero-documentation/media/documentation-webview/fonts/KaTeX_SansSerif-Italic.woff2"
+        },
+        {
+          "source": "products/workbench/.cache/documentation-webview/fonts/KaTeX_SansSerif-Regular.woff2",
+          "destination": "extensions/chatero-documentation/media/documentation-webview/fonts/KaTeX_SansSerif-Regular.woff2"
+        },
+        {
+          "source": "products/workbench/.cache/documentation-webview/fonts/KaTeX_Script-Regular.woff2",
+          "destination": "extensions/chatero-documentation/media/documentation-webview/fonts/KaTeX_Script-Regular.woff2"
+        },
+        {
+          "source": "products/workbench/.cache/documentation-webview/fonts/KaTeX_Size1-Regular.woff2",
+          "destination": "extensions/chatero-documentation/media/documentation-webview/fonts/KaTeX_Size1-Regular.woff2"
+        },
+        {
+          "source": "products/workbench/.cache/documentation-webview/fonts/KaTeX_Size2-Regular.woff2",
+          "destination": "extensions/chatero-documentation/media/documentation-webview/fonts/KaTeX_Size2-Regular.woff2"
+        },
+        {
+          "source": "products/workbench/.cache/documentation-webview/fonts/KaTeX_Size3-Regular.woff2",
+          "destination": "extensions/chatero-documentation/media/documentation-webview/fonts/KaTeX_Size3-Regular.woff2"
+        },
+        {
+          "source": "products/workbench/.cache/documentation-webview/fonts/KaTeX_Size4-Regular.woff2",
+          "destination": "extensions/chatero-documentation/media/documentation-webview/fonts/KaTeX_Size4-Regular.woff2"
+        },
+        {
+          "source": "products/workbench/.cache/documentation-webview/fonts/KaTeX_Typewriter-Regular.woff2",
+          "destination": "extensions/chatero-documentation/media/documentation-webview/fonts/KaTeX_Typewriter-Regular.woff2"
         },
         {
           "source": "products/workbench/extensions/chatero-documentation/migration-model.mjs",
@@ -115,6 +199,10 @@
         {
           "source": "products/workbench/extensions/chatero-documentation/text-change-set.mjs",
           "destination": "extensions/chatero-documentation/text-change-set.mjs"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-documentation/webview/formula-decorations.mjs",
+          "destination": "extensions/chatero-documentation/webview/formula-decorations.mjs"
         },
         {
           "source": "products/workbench/extensions/chatero-documentation/webview/line-ending-map.mjs",

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { createHash } from "node:crypto";
-import { copyFile, mkdir, readFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -13,9 +13,33 @@ const DEFAULT_ROOT = resolve(SCRIPT_DIRECTORY, "..", "..", "..");
 const DEFAULT_OUTDIR = join(DEFAULT_ROOT, "products", "workbench", ".cache", "documentation-webview");
 const MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 
+export const KATEX_WOFF2_FILES = Object.freeze([
+  "KaTeX_AMS-Regular.woff2",
+  "KaTeX_Caligraphic-Bold.woff2",
+  "KaTeX_Caligraphic-Regular.woff2",
+  "KaTeX_Fraktur-Bold.woff2",
+  "KaTeX_Fraktur-Regular.woff2",
+  "KaTeX_Main-Bold.woff2",
+  "KaTeX_Main-BoldItalic.woff2",
+  "KaTeX_Main-Italic.woff2",
+  "KaTeX_Main-Regular.woff2",
+  "KaTeX_Math-BoldItalic.woff2",
+  "KaTeX_Math-Italic.woff2",
+  "KaTeX_SansSerif-Bold.woff2",
+  "KaTeX_SansSerif-Italic.woff2",
+  "KaTeX_SansSerif-Regular.woff2",
+  "KaTeX_Script-Regular.woff2",
+  "KaTeX_Size1-Regular.woff2",
+  "KaTeX_Size2-Regular.woff2",
+  "KaTeX_Size3-Regular.woff2",
+  "KaTeX_Size4-Regular.woff2",
+  "KaTeX_Typewriter-Regular.woff2",
+]);
+
 export const DOCUMENTATION_WEBVIEW_OUTPUTS = Object.freeze([
   "live-preview.css",
   "live-preview.js",
+  ...KATEX_WOFF2_FILES.map(name => `fonts/${name}`),
 ]);
 
 export const XML_NAMESPACE_URLS = Object.freeze([
@@ -75,6 +99,18 @@ function calleeContainsIdentifier(node, name) {
   return false;
 }
 
+function isGlobalCallable(node, name) {
+  if (!node || typeof node !== "object") return false;
+  if (node.type === "Identifier") return node.name === name;
+  if (node.type === "MemberExpression") {
+    const owner = node.object?.type === "Identifier" ? node.object.name : undefined;
+    return ["globalThis", "window", "self"].includes(owner) && staticPropertyName(node) === name;
+  }
+  if (node.type === "SequenceExpression") return node.expressions.some(value => isGlobalCallable(value, name));
+  if (node.type === "ChainExpression") return isGlobalCallable(node.expression, name);
+  return false;
+}
+
 function literalStrings(node) {
   if (node.type === "Literal" && typeof node.value === "string") return [node.value];
   if (node.type === "TemplateLiteral" && node.expressions.length === 0) {
@@ -117,8 +153,8 @@ export function auditDocumentationJavaScript(source) {
       if (calleeContainsIdentifier(node.callee, "eval") || calleeContainsIdentifier(node.callee, "Function")) {
         throw new Error("dynamic code execution is forbidden in the Documentation webview");
       }
-      if (calleeContainsIdentifier(node.callee, "fetch")
-        || calleeContainsIdentifier(node.callee, "importScripts")
+      if (isGlobalCallable(node.callee, "fetch")
+        || isGlobalCallable(node.callee, "importScripts")
         || staticPropertyName(node.callee) === "sendBeacon"
         || staticPropertyName(node.callee) === "open" && calleeContainsIdentifier(node.callee, "XMLHttpRequest")) {
         throw new Error("network API use is forbidden in the Documentation webview");
@@ -151,12 +187,33 @@ function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
+export function woff2OnlyKatexCss(source) {
+  if (typeof source !== "string") throw new TypeError("KaTeX stylesheet must be a string");
+  let declarations = 0;
+  const css = source.replace(
+    /src:url\((fonts\/[A-Za-z0-9_-]+\.woff2)\) format\("woff2"\),url\(fonts\/[A-Za-z0-9_-]+\.woff\) format\("woff"\),url\(fonts\/[A-Za-z0-9_-]+\.ttf\) format\("truetype"\)/gu,
+    (_match, path) => {
+      declarations += 1;
+      return `src:url(${path}) format("woff2")`;
+    },
+  );
+  if (declarations !== KATEX_WOFF2_FILES.length || /\.(?:woff|ttf)\)/u.test(css) || /\bdata:/iu.test(css)) {
+    throw new Error("KaTeX stylesheet font provenance is unexpected");
+  }
+  const referenced = [...css.matchAll(/url\(fonts\/([A-Za-z0-9_-]+\.woff2)\)/gu)].map(match => match[1]);
+  if (JSON.stringify(referenced) !== JSON.stringify(KATEX_WOFF2_FILES)) {
+    throw new Error("KaTeX stylesheet does not reference the exact pinned WOFF2 set");
+  }
+  return css;
+}
+
 export async function buildDocumentationWebview({
   root = DEFAULT_ROOT,
   outdir = join(root, "products", "workbench", ".cache", "documentation-webview"),
 } = {}) {
   const entry = join(root, "products", "workbench", "extensions", "chatero-documentation", "webview", "live-preview-entry.mjs");
   const stylesheet = join(root, "products", "workbench", "extensions", "chatero-documentation", "webview", "live-preview.css");
+  const katexRoot = join(root, "node_modules", "katex", "dist");
   await mkdir(outdir, { recursive: true });
   const buildResult = await esbuild.build({
     ...ESBUILD_OPTIONS,
@@ -169,7 +226,16 @@ export async function buildDocumentationWebview({
       throw new Error("Documentation webview bundle contains an external import");
     }
   }
-  await copyFile(stylesheet, join(outdir, "live-preview.css"));
+  const [baseCss, katexCss] = await Promise.all([
+    readFile(stylesheet, "utf8"),
+    readFile(join(katexRoot, "katex.min.css"), "utf8"),
+  ]);
+  await writeFile(join(outdir, "live-preview.css"), `${baseCss.trimEnd()}\n\n${woff2OnlyKatexCss(katexCss)}\n`);
+  await mkdir(join(outdir, "fonts"), { recursive: true });
+  await Promise.all(KATEX_WOFF2_FILES.map(name => copyFile(
+    join(katexRoot, "fonts", name),
+    join(outdir, "fonts", name),
+  )));
 
   const files = [];
   for (const path of DOCUMENTATION_WEBVIEW_OUTPUTS) {

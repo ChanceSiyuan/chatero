@@ -100,7 +100,7 @@ test("creates fresh 144-bit nonces and exact restrictive HTML", () => {
     styleUri: new TestUri("vscode-webview-resource:/live-preview.css"),
     nonce: first,
   });
-  const csp = `default-src 'none'; script-src 'nonce-${first}'; style-src ${panel.webview.cspSource} 'nonce-${first}';`;
+  const csp = `default-src 'none'; script-src 'nonce-${first}'; style-src ${panel.webview.cspSource} 'nonce-${first}'; font-src ${panel.webview.cspSource}; img-src ${panel.webview.cspSource};`;
   assert.match(html, new RegExp(`content="${csp.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"`));
   assert.match(html, new RegExp(`<script nonce="${first}" src="vscode-webview-resource:/live-preview\\.js"></script>`));
   assert.match(html, /<link rel="stylesheet" href="vscode-webview-resource:\/live-preview\.css">/);
@@ -154,6 +154,7 @@ test("provider confines resources and passes one unique nonce to each shared-bri
     const attachedNonce = attachments[index].options.cspNonce;
     assert.match(panel.webview.html, new RegExp(`script-src 'nonce-${attachedNonce}'`));
     assert.match(panel.webview.html, new RegExp(`style-src vscode-webview-resource: 'nonce-${attachedNonce}'`));
+    assert.match(panel.webview.html, /font-src vscode-webview-resource:; img-src vscode-webview-resource:;/u);
     assert.match(panel.webview.html, new RegExp(`<script nonce="${attachedNonce}"`));
   }
 });
