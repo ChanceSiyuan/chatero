@@ -6,6 +6,8 @@ import {
 } from "./runtime/protocol.mjs";
 import { documentationWorkspaceUri } from "./documentation-path.mjs";
 
+export const documentationPlanningEvidence = Symbol("chatero.documentation.planningEvidence");
+
 function uriString(uri) {
   if (!uri || typeof uri.toString !== "function") throw new TypeError("workspace URI is invalid");
   return uri.toString(true);
@@ -33,6 +35,21 @@ function withinUri(root, candidate) {
   const prefix = base.pathname === "/" ? "/" : `${base.pathname.replace(/\/+$/u, "")}/`;
   return base.protocol === value.protocol && base.host === value.host
     && (value.pathname === base.pathname || value.pathname.startsWith(prefix));
+}
+
+function migrationOverlay(scopeUri, overlay) {
+  const root = canonicalUri(scopeUri);
+  const candidate = canonicalUri(overlay.uri);
+  const prefix = root.pathname === "/" ? "/" : `${root.pathname.replace(/\/+$/u, "")}/`;
+  if (candidate.protocol !== root.protocol || candidate.host !== root.host
+    || !candidate.pathname.startsWith(prefix)) return false;
+  let relativePath;
+  try { relativePath = decodeURIComponent(candidate.pathname.slice(prefix.length)); }
+  catch { throw new TypeError("migration overlay URI encoding is invalid"); }
+  return relativePath === ".chatero/documentation-state.v1.json"
+    || new Set(["documentation", "drafts", "knowledge"]).has(relativePath)
+    || ["documentation/", "drafts/", "knowledge/", "work/qlab-zotero/draft-changes/"].some(value =>
+      relativePath.startsWith(value));
 }
 
 function sha256Utf8(value) {
@@ -181,6 +198,7 @@ export function createWorkspaceTransactionAdapter({ scope, transport, workspaceV
     return response.result;
   };
 
+  const planningEvidence = new WeakMap();
   const snapshot = async request => {
     if (!request || typeof request !== "object" || Array.isArray(request)) {
       throw new TypeError("snapshot request is invalid");
@@ -201,11 +219,13 @@ export function createWorkspaceTransactionAdapter({ scope, transport, workspaceV
         throw new TypeError("migration snapshot request has unknown field");
       }
       const evidence = workspaceView.capture(scope, null);
-      return invoke("snapshot", "snapshot", {
+      const result = await invoke("snapshot", "snapshot", {
         kind: "plan-migration",
         limits: request.limits,
-        overlays: evidence.overlays,
+        overlays: evidence.overlays.filter(overlay => migrationOverlay(scope.uri, overlay)),
       }, evidence);
+      planningEvidence.set(result, Object.freeze(evidence.proofs.map(proof => Object.freeze({ ...proof }))));
+      return result;
     }
     if (request.kind === "documentation-state") {
       if (Object.keys(request).some(key => !new Set(["kind", "workspaceScopeDigest"]).has(key))
@@ -247,5 +267,12 @@ export function createWorkspaceTransactionAdapter({ scope, transport, workspaceV
     return invoke("recover", "recovery", payload, evidence);
   };
 
-  return Object.freeze({ snapshot, transact, recover });
+  return Object.freeze({
+    snapshot,
+    transact,
+    recover,
+    [documentationPlanningEvidence](result) {
+      return planningEvidence.get(result) ?? Object.freeze([]);
+    },
+  });
 }

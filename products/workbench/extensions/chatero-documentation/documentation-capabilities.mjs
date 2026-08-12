@@ -114,7 +114,8 @@ function grantDigest(record) {
 }
 
 export function createDocumentationCapabilityIssuer({ clock, randomUUID }) {
-  const now = typeof clock === "function" ? clock : clock?.now?.bind(clock);
+  const now = typeof clock?.now === "function" ? clock.now.bind(clock)
+    : typeof clock === "function" ? clock : null;
   if (typeof now !== "function" || typeof randomUUID !== "function") {
     throw new TypeError("capability issuer dependencies are invalid");
   }

@@ -10,7 +10,8 @@ function compareUtf8Bytes(left, right) {
 }
 
 function compareEntries(left, right) {
-  return compareUtf8Bytes(left.sourceRoot, right.sourceRoot)
+  const rootOrder = { knowledge: 0, drafts: 1 };
+  return rootOrder[left.sourceRoot] - rootOrder[right.sourceRoot]
     || compareUtf8Bytes(left.sourcePath, right.sourcePath);
 }
 
@@ -158,7 +159,7 @@ export function buildLegacyMigrationMapping({ knowledge, drafts, documentation }
     return Object.freeze({
       kind: "knowledge-draft",
       path: draft.path,
-      content: draft.revision === knowledgeEntry.revision ? "equal" : "different",
+      contentRelation: draft.revision === knowledgeEntry.revision ? "equal" : "different",
       knowledgeRevision: knowledgeEntry.revision,
       draftRevision: draft.revision,
       draftDestination: `${conflictRoot}/${draft.path}`,

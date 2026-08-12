@@ -64,9 +64,14 @@ test("first-party materialization declares the complete Documentation authority"
     "extensions/chatero-documentation/documentation-workspace.mjs",
     "extensions/chatero-documentation/extension.cjs",
     "extensions/chatero-documentation/media/documentation.svg",
+    "extensions/chatero-documentation/migration-model.mjs",
+    "extensions/chatero-documentation/migration-planner.mjs",
+    "extensions/chatero-documentation/migration-rewrite.mjs",
     "extensions/chatero-documentation/package.json",
     "extensions/chatero-documentation/runtime/chatero-documentation-authority.mjs",
     "extensions/chatero-documentation/runtime/protocol.mjs",
+    "extensions/chatero-documentation/runtime/yaml-2.9.0.mjs",
+    "extensions/chatero-documentation/runtime/yaml-LICENSE",
   ]);
 });
 
@@ -372,4 +377,44 @@ test("Mark Reviewed waits for explicit Save and New Page uses one WorkspaceEdit"
   assert.equal(harness.workspaceEdits[0].operations[1][3], "# New\n");
   assert.equal(harness.commands.executed.at(-1)[0], "vscode.openWith");
   assert.equal(harness.commands.executed.at(-1)[2], "default");
+});
+
+test("migration planning opens only a read-only virtual report", async () => {
+  const harness = createDocumentationHarness({ trusted: true });
+  const base = createDocumentationServices();
+  const reportUri = new ExtensionTestUri({
+    scheme: "chatero-documentation-report",
+    path: "/plan.md",
+  });
+  const publications = [];
+  const services = {
+    ...base,
+    migrationReports: {
+      publish(plan, report, Uri) {
+        publications.push({ plan, report, Uri });
+        return reportUri;
+      },
+    },
+    transactions: {
+      ...base.transactions,
+      async planMigration() {
+        return {
+          kind: "planned",
+          plan: { schemaVersion: 1, digest: `sha256:${"a".repeat(64)}` },
+          planToken: `mp_${"A".repeat(43)}`,
+          report: "# Dry run\n",
+        };
+      },
+    },
+  };
+  harness.context.documentationServices = services;
+  const { registerDocumentation } = await loadDocumentationTree();
+  await registerDocumentation(harness.vscode, harness.context);
+
+  const result = await harness.commands.run("chatero.documentation.planMigration");
+  assert.equal(result.kind, "planned");
+  assert.equal(publications.length, 1);
+  assert.equal(publications[0].report.includes(result.planToken), false);
+  assert.deepEqual(harness.commands.executed.at(-1), ["vscode.openWith", reportUri, "default"]);
+  assert.equal(harness.workspaceEdits.length, 0);
 });

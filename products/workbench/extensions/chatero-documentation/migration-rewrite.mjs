@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { posix } from "node:path";
 
-import { isMap, isScalar, isSeq, parseDocument } from "yaml";
+import { isMap, isScalar, isSeq, parseDocument } from "./runtime/yaml-2.9.0.mjs";
 
 const CHANGE_ROOT = "work/qlab-zotero/draft-changes";
 const MAIN_SITE_FIELDS = new Set(["file", "href", "input", "page", "path", "route", "source", "target"]);

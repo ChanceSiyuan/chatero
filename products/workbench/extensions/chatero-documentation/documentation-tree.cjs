@@ -270,7 +270,12 @@ async function registerDocumentation(vscode, context, injectedServices) {
       await vscode.window.showErrorMessage?.("Documentation migration planning is not available yet.");
       return Object.freeze({ kind: "feature-unavailable" });
     }
-    return services.transactions.planMigration(services.scope);
+    const result = await services.transactions.planMigration(services.scope);
+    if (result?.kind !== "planned") return result;
+    if (!services.migrationReports) throw new TypeError("Documentation migration report provider is unavailable");
+    const uri = services.migrationReports.publish(result.plan, result.report, vscode.Uri);
+    await vscode.commands.executeCommand("vscode.openWith", uri, "default");
+    return result;
   }));
 
   return Object.freeze(registrations.map(disposable));

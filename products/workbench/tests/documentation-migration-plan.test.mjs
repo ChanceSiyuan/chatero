@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { Readable, Writable } from "node:stream";
 import { test } from "node:test";
 
 import {
@@ -9,6 +13,19 @@ import {
   classifyLegacyProposals,
   rewriteLegacyReferences,
 } from "../extensions/chatero-documentation/migration-rewrite.mjs";
+import {
+  MIGRATION_PLAN_LIMITS,
+  canonicalMigrationPlanDigest,
+  createMigrationPlanner,
+  MigrationReportContentProvider,
+} from "../extensions/chatero-documentation/migration-planner.mjs";
+import {
+  decodeAuthorityResponse,
+  encodeAuthorityRequest,
+} from "../documentation-authority/protocol.mjs";
+import {
+  runDocumentationAuthority,
+} from "../documentation-authority/runtime/chatero-documentation-authority.mjs";
 
 function revision(value) {
   return `sha256:${createHash("sha256").update(value).digest("hex")}`;
@@ -61,16 +78,16 @@ test("legacy mapping gives Knowledge precedence and preserves every colliding Dr
     entry.state,
     entry.reason,
   ]), [
-    ["drafts", "draft-only.qmd", "draft-only.qmd", "working", "draft-only"],
-    ["drafts", "topic.qmd", "_migrated-2/drafts/topic.qmd", "working", "draft-preserved"],
     ["knowledge", "nested/result.qmd", "nested/result.qmd", "reviewed", "knowledge-only"],
     ["knowledge", "topic.qmd", "topic.qmd", "reviewed", "knowledge-precedence"],
+    ["drafts", "draft-only.qmd", "draft-only.qmd", "working", "draft-only"],
+    ["drafts", "topic.qmd", "_migrated-2/drafts/topic.qmd", "working", "draft-preserved"],
   ]);
   assert.deepEqual(mapping.assets.map(entry => [entry.sourceRoot, entry.destination.value]), [
-    ["drafts", "_migrated-2/drafts/assets/plot.png"],
     ["knowledge", "assets/plot.png"],
+    ["drafts", "_migrated-2/drafts/assets/plot.png"],
   ]);
-  assert.deepEqual(mapping.collisions.map(value => [value.path, value.content]), [
+  assert.deepEqual(mapping.collisions.map(value => [value.path, value.contentRelation]), [
     ["assets/plot.png", "different"],
     ["topic.qmd", "equal"],
   ]);
@@ -256,4 +273,279 @@ test("legacy proposal classification is deterministic and never returns proposal
   assert.equal(serialized.includes(base), false);
   assert.equal(serialized.includes(proposed), false);
   assert.equal(Object.isFrozen(result), true);
+});
+
+function planRecordFixture() {
+  const pathProofs = [{
+    path: "knowledge/topic.qmd",
+    role: "source",
+    expectedDigest: revision("topic"),
+    requireClean: true,
+  }];
+  return {
+    schemaVersion: 1,
+    sourceSnapshotDigest: revision("snapshot"),
+    verificationSnapshotDigest: revision("snapshot"),
+    affectedPaths: ["knowledge/topic.qmd"],
+    pathProofs,
+    mappings: [{
+      kind: "page",
+      sourceRoot: "knowledge",
+      sourcePath: "topic.qmd",
+      sourceRevision: revision("topic"),
+      destinationPath: "topic.qmd",
+      state: "reviewed",
+      reason: "knowledge-only",
+    }],
+    stateOutput: { generation: "0000000000000001", documents: [{ path: "topic.qmd", state: "reviewed" }] },
+    collisions: [],
+    rewrites: [],
+    proposals: [],
+    diagnostics: [],
+  };
+}
+
+function authorityPlanFixture() {
+  const planRecord = planRecordFixture();
+  return {
+    kind: "migration-plan",
+    workspaceEpoch: "epoch-1",
+    planDigest: canonicalMigrationPlanDigest(planRecord),
+    planRecord,
+    reportModel: {
+      schemaVersion: 1,
+      title: "Documentation migration dry run",
+      summary: { pages: 1, assets: 0, collisions: 0, proposals: 0, followUps: 0 },
+      sections: [
+        {
+          heading: "Planned mappings",
+          items: ["knowledge/topic.qmd -> documentation/topic.qmd"],
+        },
+        { heading: "Conflicts and follow-ups", items: [] },
+      ],
+    },
+  };
+}
+
+test("migration planner performs one read-only request and keeps its token extension-private", async () => {
+  const requests = [];
+  let trusted = true;
+  let entropy = 0xaa;
+  const result = authorityPlanFixture();
+  const planner = createMigrationPlanner({
+    adapter: {
+      async snapshot(request) {
+        requests.push(request);
+        return result;
+      },
+    },
+    capabilities: {
+      consumeScope() {
+        return {
+          uri: "file:///workspace",
+          authority: "local",
+          epoch: "epoch-1",
+          workspaceScopeDigest: "a".repeat(64),
+        };
+      },
+    },
+    clock: { now: () => 1_000 },
+    limits: MIGRATION_PLAN_LIMITS,
+    randomBytes: size => Buffer.alloc(size, ++entropy),
+    isWorkspaceTrusted: () => trusted,
+    workingCopyEvidence: () => [],
+  });
+
+  const firstScope = Object.freeze({ kind: "scope" });
+  const planned = await planner.planMigration(firstScope);
+  assert.equal(planned.kind, "planned");
+  assert.deepEqual(requests, [{ kind: "plan-migration", limits: MIGRATION_PLAN_LIMITS }]);
+  assert.match(planned.planToken, /^mp_[A-Za-z0-9_-]{43}$/u);
+  assert.equal(planned.report.includes(planned.planToken), false);
+  assert.equal(JSON.stringify(planned).includes("file:///workspace"), false);
+  assert.equal(planned.plan.schemaVersion, 1);
+  assert.equal("intendedOutputManifest" in planned.plan, false);
+  assert.equal(planner.consumePlanToken(planned.planToken, Object.freeze({ kind: "clone" })).kind, "invalid-plan-token");
+  const secondScope = Object.freeze({ kind: "scope-2" });
+  const second = await planner.planMigration(secondScope);
+  const consumed = planner.consumePlanToken(second.planToken, secondScope);
+  assert.equal(consumed.kind, "consumed-plan");
+  assert.equal(consumed.planDigest, second.plan.digest);
+  assert.equal(planner.consumePlanToken(second.planToken, secondScope).kind, "invalid-plan-token");
+
+  trusted = false;
+  assert.deepEqual(await planner.planMigration(Object.freeze({ kind: "scope-3" })), { kind: "workspace-untrusted" });
+  assert.equal(requests.length, 2);
+});
+
+test("migration planner returns no token for dirty evidence or trust lost in flight", async () => {
+  let trusted = true;
+  const result = authorityPlanFixture();
+  const scopeRecord = {
+    uri: "file:///workspace",
+    authority: "local",
+    epoch: "epoch-1",
+    workspaceScopeDigest: "a".repeat(64),
+  };
+  const planner = createMigrationPlanner({
+    adapter: {
+      async snapshot() {
+        trusted = false;
+        return result;
+      },
+    },
+    capabilities: { consumeScope: () => scopeRecord },
+    clock: { now: () => 1_000 },
+    limits: MIGRATION_PLAN_LIMITS,
+    randomBytes: size => Buffer.alloc(size, 1),
+    isWorkspaceTrusted: () => trusted,
+    workingCopyEvidence: () => [],
+  });
+  assert.deepEqual(await planner.planMigration({}), { kind: "workspace-untrusted" });
+
+  trusted = true;
+  const dirty = createMigrationPlanner({
+    adapter: { snapshot: async () => result },
+    capabilities: { consumeScope: () => scopeRecord },
+    clock: { now: () => 1_000 },
+    limits: MIGRATION_PLAN_LIMITS,
+    randomBytes: size => Buffer.alloc(size, 2),
+    isWorkspaceTrusted: () => true,
+    workingCopyEvidence: () => [{
+      uri: "file:///workspace/knowledge/topic.qmd",
+      version: 7,
+      dirty: true,
+      revision: `text-document:7:${revision("topic")}`,
+    }],
+  });
+  assert.deepEqual(await dirty.planMigration({}), {
+    kind: "dirty-working-copy",
+    paths: ["knowledge/topic.qmd"],
+  });
+});
+
+test("migration reports are digest-addressed read-only virtual documents", () => {
+  const provider = new MigrationReportContentProvider();
+  const digest = `sha256:${"c".repeat(64)}`;
+  const report = "# Documentation migration dry run\n";
+  const uri = provider.publish({ digest }, report, {
+    parse(value) {
+      const parsed = new URL(value);
+      return { scheme: parsed.protocol.slice(0, -1), path: parsed.pathname };
+    },
+  });
+  assert.equal(uri.scheme, "chatero-documentation-report");
+  assert.equal(provider.provideTextDocumentContent(uri), report);
+  assert.throws(
+    () => provider.provideTextDocumentContent({ path: `/${"d".repeat(64)}.md` }),
+    /unknown/,
+  );
+  provider.dispose();
+  assert.throws(() => provider.provideTextDocumentContent(uri), /unknown/);
+});
+
+async function invokePlanningHelper(workspace, filesystem) {
+  const output = [];
+  const stdout = new Writable({
+    write(chunk, _encoding, callback) { output.push(Buffer.from(chunk)); callback(); },
+  });
+  const request = {
+    protocolVersion: 1,
+    requestId: "migration-request",
+    kind: "snapshot",
+    workspace: new URL(`file://${workspace}`).href,
+    epoch: "epoch-1",
+    snapshot: { kind: "plan-migration", limits: MIGRATION_PLAN_LIMITS, overlays: [] },
+  };
+  await runDocumentationAuthority({
+    stdin: Readable.from([`${encodeAuthorityRequest(request)}\n`]),
+    stdout,
+    filesystem,
+    clock: { now: () => 1_000 },
+  });
+  return decodeAuthorityResponse(Buffer.concat(output).toString("ascii").trimEnd()).result;
+}
+
+test("authority helper plans from two matching private snapshots without writing", async t => {
+  const workspace = await mkdtemp(join(tmpdir(), "chatero-migration-plan-"));
+  t.after(() => rm(workspace, { recursive: true, force: true }));
+  await mkdir(join(workspace, "knowledge", "assets"), { recursive: true });
+  await mkdir(join(workspace, "drafts"));
+  await writeFile(join(workspace, "knowledge", "topic.qmd"), "# Topic\n![Plot](assets/plot.png)\n");
+  await writeFile(join(workspace, "knowledge", "assets", "plot.png"), Buffer.from([1, 2, 3]));
+  await writeFile(join(workspace, "drafts", "topic.qmd"), "# Draft\n");
+
+  const mutations = [];
+  const filesystem = new Proxy(await import("node:fs/promises"), {
+    get(target, property) {
+      if (new Set(["appendFile", "copyFile", "mkdir", "rename", "rm", "unlink", "writeFile"]).has(property)) {
+        return async (...args) => {
+          mutations.push([property, ...args]);
+          return target[property](...args);
+        };
+      }
+      return Reflect.get(target, property);
+    },
+  });
+  mutations.length = 0;
+  const before = await stat(join(workspace, "knowledge", "topic.qmd"));
+  const result = await invokePlanningHelper(workspace, filesystem);
+  const after = await stat(join(workspace, "knowledge", "topic.qmd"));
+
+  assert.equal(result.kind, "migration-plan");
+  assert.equal(result.planRecord.sourceSnapshotDigest, result.planRecord.verificationSnapshotDigest);
+  assert.equal(result.planDigest, canonicalMigrationPlanDigest(result.planRecord));
+  assert.deepEqual(result.planRecord.affectedPaths, [
+    ...new Set(result.planRecord.pathProofs.map(proof => proof.path)),
+  ].sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right))));
+  assert.equal(result.planRecord.mappings.length, 3);
+  assert.equal(result.planRecord.collisions.length, 1);
+  assert.equal(JSON.stringify(result).includes("# Topic"), false);
+  assert.equal(JSON.stringify(result).includes("AQID"), false);
+  assert.equal(JSON.stringify(result).includes(workspace), false);
+  assert.deepEqual(mutations, []);
+  assert.equal(after.mtimeMs, before.mtimeMs);
+  assert.equal(await readFile(join(workspace, "drafts", "topic.qmd"), "utf8"), "# Draft\n");
+
+  const scope = Object.freeze({ kind: "helper-scope" });
+  const planner = createMigrationPlanner({
+    adapter: { snapshot: async () => result },
+    capabilities: {
+      consumeScope: () => ({
+        uri: new URL(`file://${workspace}`).href,
+        authority: "local",
+        epoch: "epoch-1",
+        workspaceScopeDigest: "b".repeat(64),
+      }),
+    },
+    clock: { now: () => 1_000 },
+    limits: MIGRATION_PLAN_LIMITS,
+    randomBytes: size => Buffer.alloc(size, 3),
+    isWorkspaceTrusted: () => true,
+    workingCopyEvidence: () => [],
+  });
+  const planned = await planner.planMigration(scope);
+  assert.equal(planned.kind, "planned");
+  assert.equal(planned.plan.digest, result.planDigest);
+});
+
+test("authority helper rejects a pre-existing mixed Documentation layout without a partial plan", async t => {
+  const workspace = await mkdtemp(join(tmpdir(), "chatero-migration-conflict-"));
+  t.after(() => rm(workspace, { recursive: true, force: true }));
+  await mkdir(join(workspace, "knowledge"));
+  await mkdir(join(workspace, "documentation"));
+  await writeFile(join(workspace, "knowledge", "topic.qmd"), "# Legacy\n");
+  await writeFile(join(workspace, "documentation", "existing.qmd"), "# Existing\n");
+
+  const result = await invokePlanningHelper(workspace, await import("node:fs/promises"));
+  assert.deepEqual(result, {
+    kind: "migration-conflict",
+    workspaceEpoch: "epoch-1",
+    code: "documentation-not-empty",
+    paths: ["documentation/existing.qmd"],
+  });
+  assert.equal("planRecord" in result, false);
+  assert.equal("reportModel" in result, false);
+  assert.equal("planToken" in result, false);
+  assert.equal(await readFile(join(workspace, "documentation", "existing.qmd"), "utf8"), "# Existing\n");
 });

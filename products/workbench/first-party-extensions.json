@@ -49,6 +49,18 @@
           "destination": "extensions/chatero-documentation/media/documentation.svg"
         },
         {
+          "source": "products/workbench/extensions/chatero-documentation/migration-model.mjs",
+          "destination": "extensions/chatero-documentation/migration-model.mjs"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-documentation/migration-planner.mjs",
+          "destination": "extensions/chatero-documentation/migration-planner.mjs"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-documentation/migration-rewrite.mjs",
+          "destination": "extensions/chatero-documentation/migration-rewrite.mjs"
+        },
+        {
           "source": "products/workbench/extensions/chatero-documentation/package.json",
           "destination": "extensions/chatero-documentation/package.json"
         },
@@ -59,6 +71,14 @@
         {
           "source": "products/workbench/documentation-authority/protocol.mjs",
           "destination": "extensions/chatero-documentation/runtime/protocol.mjs"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-documentation/runtime/yaml-2.9.0.mjs",
+          "destination": "extensions/chatero-documentation/runtime/yaml-2.9.0.mjs"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-documentation/runtime/yaml-LICENSE",
+          "destination": "extensions/chatero-documentation/runtime/yaml-LICENSE"
         }
       ]
     },

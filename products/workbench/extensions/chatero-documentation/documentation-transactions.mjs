@@ -101,13 +101,16 @@ async function setDocumentState({ adapter, capabilities, workspaceView, approval
   return result;
 }
 
-export function createDocumentationTransactions({ adapter, capabilities, workspaceView }) {
+export function createDocumentationTransactions({ adapter, capabilities, workspaceView, migrationPlanner }) {
   if (!adapter || typeof adapter.snapshot !== "function" || typeof adapter.transact !== "function"
     || !capabilities || typeof capabilities.consumeScope !== "function"
     || typeof capabilities.consumeHumanApproval !== "function"
     || !workspaceView || typeof workspaceView.capture !== "function"
     || typeof workspaceView.revalidate !== "function") {
     throw new TypeError("Documentation transaction dependencies are invalid");
+  }
+  if (migrationPlanner !== undefined && typeof migrationPlanner?.planMigration !== "function") {
+    throw new TypeError("Documentation migration planner is invalid");
   }
   return Object.freeze({
     state: scope => readProjectedState({ adapter, capabilities, workspaceView, scope }),
@@ -118,5 +121,8 @@ export function createDocumentationTransactions({ adapter, capabilities, workspa
       approval,
       input,
     }),
+    ...(migrationPlanner ? {
+      planMigration: scope => migrationPlanner.planMigration(scope),
+    } : {}),
   });
 }

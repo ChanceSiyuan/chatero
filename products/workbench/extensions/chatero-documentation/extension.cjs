@@ -11,7 +11,20 @@ async function activate(context) {
     const services = context.documentationServices
       ?? await import("./documentation-services.mjs").then(module =>
         module.createProductionDocumentationServices({ vscode, context }));
-    context.subscriptions.push(...await registerDocumentation(vscode, context, services));
+    let registrationServices = services;
+    if (typeof services.transactions?.planMigration === "function") {
+      const { MigrationReportContentProvider } = await import("./migration-planner.mjs");
+      const migrationReports = new MigrationReportContentProvider();
+      context.subscriptions.push(
+        migrationReports,
+        vscode.workspace.registerTextDocumentContentProvider(
+          "chatero-documentation-report",
+          migrationReports,
+        ),
+      );
+      registrationServices = Object.freeze({ ...services, migrationReports });
+    }
+    context.subscriptions.push(...await registerDocumentation(vscode, context, registrationServices));
   }
   catch (error) {
     if (!vscode) return;

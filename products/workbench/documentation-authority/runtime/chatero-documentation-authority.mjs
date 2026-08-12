@@ -7,6 +7,11 @@ import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { createStateTransactionExecutor } from "../documentation-operations.mjs";
+import { buildLegacyMigrationMapping } from "../migration-model.mjs";
+import {
+  classifyLegacyProposals,
+  rewriteLegacyReferences,
+} from "../migration-rewrite.mjs";
 import {
   decodeAuthorityRequest,
   encodeAuthorityResponse,
@@ -21,6 +26,17 @@ const RECEIPTS_PATH = ".chatero/documentation-receipts";
 const LEASE_PATH = ".chatero/documentation-authority.lock";
 const PRIVATE_DIRECTORY_MODE = 0o700;
 const PRIVATE_FILE_MODE = 0o600;
+const MIGRATION_ROOTS = Object.freeze(["documentation", "drafts", "knowledge"]);
+const LEGACY_PROPOSAL_ROOT = "work/qlab-zotero/draft-changes";
+
+class MigrationLimitError extends Error {
+  constructor(code) {
+    super(code);
+    this.code = code;
+  }
+}
+
+class MigrationSnapshotChangedError extends Error {}
 
 function compareUtf8Bytes(left, right) {
   return Buffer.compare(Buffer.from(left, "utf8"), Buffer.from(right, "utf8"));
@@ -39,6 +55,10 @@ function canonicalJson(value) {
   if (!value || typeof value !== "object") throw new TypeError("authority journal contains a non-JSON value");
   const keys = Object.keys(value).sort(compareUtf8Bytes);
   return `{${keys.map(key => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
+}
+
+function digestValue(value) {
+  return `sha256:${sha256(Buffer.from(canonicalJson(value), "utf8"))}`;
 }
 
 function serializedJson(value) {
@@ -263,6 +283,458 @@ async function collectDocumentationPages(fs, root, overlays) {
   return [...pages.values()].sort((left, right) => compareUtf8Bytes(left.path, right.path));
 }
 
+function migrationLimits(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)
+    || value.maximumEntries !== 50_000
+    || value.maximumBlobBytes !== 16 * 1024 * 1024
+    || value.maximumAggregateBytes !== 64 * 1024 * 1024
+    || value.maximumReportBytes !== 2 * 1024 * 1024) {
+    throw new TypeError("migration planning limits differ from the product contract");
+  }
+  return value;
+}
+
+function contentFreeSnapshotRecord(record) {
+  if (record.type === "file") {
+    return Object.freeze({ path: record.path, type: record.type, digest: record.digest });
+  }
+  if (record.type === "directory") {
+    return Object.freeze({
+      path: record.path,
+      type: record.type,
+      directoryGeneration: record.directoryGeneration,
+    });
+  }
+  return Object.freeze({ path: record.path, type: "absent" });
+}
+
+async function collectMigrationSnapshot(fs, root, request) {
+  const limits = migrationLimits(request.snapshot.limits);
+  const overlays = overlayPaths(request);
+  const records = new Map();
+  let aggregateBytes = 0;
+
+  const add = record => {
+    if (records.has(record.path)) throw new TypeError("migration snapshot contains a duplicate path");
+    if (records.size >= limits.maximumEntries) throw new MigrationLimitError("maximum-entries");
+    records.set(record.path, Object.freeze(record));
+  };
+
+  const addFile = async (relativePath, absolutePath) => {
+    const overlay = overlays.get(relativePath);
+    let bytes;
+    if (overlay) bytes = Buffer.from(overlay.text, "utf8");
+    else {
+      const metadata = await fs.lstat(absolutePath);
+      if (metadata.size > limits.maximumBlobBytes) throw new MigrationLimitError("maximum-blob-bytes");
+      bytes = await readRegularFile(fs, absolutePath, limits.maximumBlobBytes);
+    }
+    if (bytes.byteLength > limits.maximumBlobBytes) throw new MigrationLimitError("maximum-blob-bytes");
+    aggregateBytes += bytes.byteLength;
+    if (aggregateBytes > limits.maximumAggregateBytes) {
+      throw new MigrationLimitError("maximum-aggregate-bytes");
+    }
+    add({
+      path: relativePath,
+      type: "file",
+      bytes,
+      digest: `sha256:${sha256(bytes)}`,
+    });
+  };
+
+  const visitDirectory = async (relativePath, absolutePath) => {
+    const before = await directoryGeneration(fs, absolutePath);
+    add({ path: relativePath, type: "directory", directoryGeneration: before });
+    for (const name of await directoryNames(fs, absolutePath)) {
+      const childRelative = `${relativePath}/${name}`;
+      const child = join(absolutePath, name);
+      const metadata = await fs.lstat(child);
+      if (metadata.isSymbolicLink()) throw new TypeError("migration source contains a symbolic link");
+      if (metadata.isDirectory()) await visitDirectory(childRelative, child);
+      else if (metadata.isFile() && metadata.nlink === 1) await addFile(childRelative, child);
+      else throw new TypeError("migration source contains an unsafe entry");
+    }
+    if (await directoryGeneration(fs, absolutePath) !== before) {
+      throw new MigrationSnapshotChangedError("migration directory changed during snapshot");
+    }
+  };
+
+  const collectRoot = async relativePath => {
+    const inspected = await inspectRelative(fs, root, relativePath);
+    if (!inspected.metadata) {
+      add({ path: relativePath, type: "absent" });
+      return;
+    }
+    if (!inspected.metadata.isDirectory() || inspected.metadata.isSymbolicLink()) {
+      throw new TypeError("migration root is not a real directory");
+    }
+    await visitDirectory(relativePath, inspected.path);
+  };
+
+  for (const relativePath of MIGRATION_ROOTS) await collectRoot(relativePath);
+  await collectRoot(LEGACY_PROPOSAL_ROOT);
+
+  const privateRoot = await inspectRelative(fs, root, ".chatero");
+  if (!privateRoot.metadata) add({ path: ".chatero", type: "absent" });
+  else if (privateRoot.metadata.isDirectory() && !privateRoot.metadata.isSymbolicLink()) {
+    add({
+      path: ".chatero",
+      type: "directory",
+      directoryGeneration: await directoryGeneration(fs, privateRoot.path),
+    });
+  }
+  else throw new TypeError("Documentation private root is unsafe");
+
+  const state = await inspectRelative(fs, root, STATE_PATH);
+  if (!state.metadata) add({ path: STATE_PATH, type: "absent" });
+  else if (state.metadata.isFile() && !state.metadata.isSymbolicLink() && state.metadata.nlink === 1) {
+    await addFile(STATE_PATH, state.path);
+  }
+  else throw new TypeError("Documentation state path is unsafe");
+
+  for (const [relativePath, overlay] of overlays) {
+    const tracked = MIGRATION_ROOTS.some(prefix => relativePath.startsWith(`${prefix}/`))
+      || relativePath.startsWith(`${LEGACY_PROPOSAL_ROOT}/`) || relativePath === STATE_PATH;
+    if (!tracked || records.get(relativePath)?.type === "file") continue;
+    const bytes = Buffer.from(overlay.text, "utf8");
+    if (bytes.byteLength > limits.maximumBlobBytes) throw new MigrationLimitError("maximum-blob-bytes");
+    aggregateBytes += bytes.byteLength;
+    if (aggregateBytes > limits.maximumAggregateBytes) {
+      throw new MigrationLimitError("maximum-aggregate-bytes");
+    }
+    if (records.has(relativePath)) records.delete(relativePath);
+    add({ path: relativePath, type: "file", bytes, digest: `sha256:${sha256(bytes)}` });
+  }
+
+  const sorted = [...records.values()].sort((left, right) => compareUtf8Bytes(left.path, right.path));
+  const digest = digestValue(sorted.map(contentFreeSnapshotRecord));
+  return Object.freeze({ records: Object.freeze(sorted), digest });
+}
+
+function migrationEntries(snapshot, root) {
+  const prefix = `${root}/`;
+  return snapshot.records
+    .filter(record => record.type === "file" && record.path.startsWith(prefix))
+    .map(record => Object.freeze({
+      path: record.path.slice(prefix.length),
+      revision: record.digest,
+    }));
+}
+
+function migrationMappingRecords(mapping) {
+  return [...mapping.pages, ...mapping.assets]
+    .map(entry => {
+      const value = {
+        kind: entry.kind,
+        sourceRoot: entry.sourceRoot,
+        sourcePath: entry.sourcePath,
+        sourceRevision: entry.sourceRevision,
+        destinationPath: entry.destination.value,
+        reason: entry.reason,
+      };
+      if (entry.kind === "page") value.state = entry.state;
+      return Object.freeze(value);
+    })
+    .sort((left, right) => ({ knowledge: 0, drafts: 1 })[left.sourceRoot]
+      - ({ knowledge: 0, drafts: 1 })[right.sourceRoot]
+      || compareUtf8Bytes(left.sourcePath, right.sourcePath));
+}
+
+function migrationRecord(snapshot, path) {
+  return snapshot.records.find(record => record.path === path) ?? null;
+}
+
+function migrationRewriteSummaries(snapshot, mapping) {
+  const summaries = [];
+  const outputDigests = new Map();
+  for (const entry of [...mapping.pages, ...mapping.assets]) {
+    const sourcePath = `${entry.sourceRoot}/${entry.sourcePath}`;
+    const source = migrationRecord(snapshot, sourcePath);
+    if (!source || source.type !== "file") throw new MigrationSnapshotChangedError("migration source disappeared");
+    if (entry.kind === "asset") {
+      outputDigests.set(entry.destination.value, source.digest);
+      continue;
+    }
+    const rewritten = rewriteLegacyReferences({
+      sourcePath,
+      destinationPath: entry.destination,
+      bytes: source.bytes,
+      mapping,
+    });
+    const migratedDigest = `sha256:${sha256(rewritten.bytes)}`;
+    outputDigests.set(entry.destination.value, migratedDigest);
+    summaries.push(Object.freeze({
+      sourcePath,
+      destinationPath: entry.destination.value,
+      sourceDigest: source.digest,
+      migratedDigest,
+      edits: Object.freeze(rewritten.edits.map(edit => Object.freeze({
+        from: edit.from,
+        to: edit.to,
+        syntax: edit.syntax,
+      }))),
+      followUps: Object.freeze(rewritten.followUps.map(value => Object.freeze({
+        from: value.from,
+        to: value.to,
+        code: value.code,
+      }))),
+    }));
+  }
+  summaries.sort((left, right) => compareUtf8Bytes(left.sourcePath, right.sourcePath));
+  return Object.freeze({ summaries: Object.freeze(summaries), outputDigests });
+}
+
+function migrationProposalEvidence(snapshot) {
+  const records = [];
+  const blobs = new Map();
+  for (const record of snapshot.records) {
+    if (record.type !== "file" || !record.path.startsWith(`${LEGACY_PROPOSAL_ROOT}/`)) continue;
+    if (record.path.endsWith("/manifest.json")) {
+      records.push(Object.freeze({ path: record.path, bytes: record.bytes }));
+    }
+    else blobs.set(record.path, record.bytes);
+  }
+  return Object.freeze({ records: Object.freeze(records), blobs });
+}
+
+function migrationStateOutput(mapping) {
+  const documents = mapping.pages.map(entry => Object.freeze({
+    path: entry.destination.value,
+    state: entry.state,
+  }));
+  documents.sort((left, right) => compareUtf8Bytes(left.path, right.path));
+  return Object.freeze({
+    generation: "0000000000000001",
+    documents: Object.freeze(documents),
+  });
+}
+
+function stateOutputBytes(stateOutput) {
+  const documents = Object.fromEntries(stateOutput.documents.map(value => [value.path, { state: value.state }]));
+  return Buffer.from(`${canonicalJson({ schemaVersion: 1, generation: stateOutput.generation, documents })}\n`, "utf8");
+}
+
+function migrationPathProofs(snapshot, mapping, outputDigests, stateOutput) {
+  const proofs = new Map();
+  const add = proof => {
+    if (proofs.has(proof.path)) throw new TypeError("migration path proofs contain a duplicate path");
+    proofs.set(proof.path, Object.freeze(proof));
+  };
+  for (const record of snapshot.records) {
+    const source = ["knowledge", "drafts", LEGACY_PROPOSAL_ROOT].some(root =>
+      record.path === root || record.path.startsWith(`${root}/`));
+    if (!source || record.type === "absent") continue;
+    add(record.type === "file"
+      ? { path: record.path, role: "source", expectedDigest: record.digest, requireClean: true }
+      : {
+          path: record.path,
+          role: "source",
+          directoryGeneration: record.directoryGeneration,
+          requireClean: true,
+        });
+  }
+  for (const rootPath of [".chatero", "documentation"]) {
+    const record = migrationRecord(snapshot, rootPath);
+    add(record?.type === "directory"
+      ? {
+          path: rootPath,
+          role: "target",
+          directoryGeneration: record.directoryGeneration,
+          requireClean: true,
+        }
+      : { path: rootPath, role: "target", targetAbsent: true, requireClean: true });
+  }
+  for (const entry of [...mapping.pages, ...mapping.assets]) {
+    const path = `documentation/${entry.destination.value}`;
+    add({
+      path,
+      role: "target",
+      intendedDigest: outputDigests.get(entry.destination.value),
+      targetAbsent: true,
+      requireClean: true,
+    });
+  }
+  add({
+    path: STATE_PATH,
+    role: "target",
+    intendedDigest: `sha256:${sha256(stateOutputBytes(stateOutput))}`,
+    targetAbsent: true,
+    requireClean: true,
+  });
+  return Object.freeze([...proofs.values()].sort((left, right) => compareUtf8Bytes(left.path, right.path)));
+}
+
+function migrationDiagnostics(rewrites, proposalDiagnostics) {
+  const values = proposalDiagnostics.map(value => Object.freeze({
+    code: value.code,
+    recordPath: value.recordPath,
+  }));
+  for (const rewrite of rewrites) {
+    if (rewrite.followUps.length > 0) {
+      values.push(Object.freeze({ code: "reference-follow-up", path: rewrite.sourcePath }));
+    }
+  }
+  values.sort((left, right) => compareUtf8Bytes(left.path ?? left.recordPath, right.path ?? right.recordPath)
+    || compareUtf8Bytes(left.code, right.code));
+  return Object.freeze(values);
+}
+
+function migrationReportModel({ mappings, collisions, proposals, rewrites, diagnostics }) {
+  const followUps = rewrites.reduce((count, value) => count + value.followUps.length, 0)
+    + diagnostics.length;
+  return Object.freeze({
+    schemaVersion: 1,
+    title: "Documentation migration dry run",
+    summary: Object.freeze({
+      pages: mappings.filter(value => value.kind === "page").length,
+      assets: mappings.filter(value => value.kind === "asset").length,
+      collisions: collisions.length,
+      proposals: proposals.length,
+      followUps,
+    }),
+    sections: Object.freeze([
+      Object.freeze({
+        heading: "Planned mappings",
+        items: Object.freeze(mappings.map(value =>
+          `${value.sourceRoot}/${value.sourcePath} -> documentation/${value.destinationPath}`)),
+      }),
+      Object.freeze({
+        heading: "Conflicts and follow-ups",
+        items: Object.freeze([
+          ...collisions.map(value => `${value.path}: ${value.contentRelation} Knowledge/Draft collision`),
+          ...diagnostics.map(value => `${value.path ?? value.recordPath}: ${value.code}`),
+        ]),
+      }),
+    ]),
+  });
+}
+
+async function planMigrationResult(fs, root, request) {
+  const limits = migrationLimits(request.snapshot.limits);
+  let source;
+  try { source = await collectMigrationSnapshot(fs, root, request); }
+  catch (error) {
+    if (error instanceof MigrationLimitError) {
+      return Object.freeze({ kind: "migration-limit", workspaceEpoch: request.epoch, code: error.code });
+    }
+    if (error instanceof MigrationSnapshotChangedError) {
+      return Object.freeze({ kind: "stale-plan-evidence", workspaceEpoch: request.epoch, code: "snapshot-changed" });
+    }
+    throw error;
+  }
+
+  const documentationEntries = source.records.filter(record =>
+    record.path.startsWith("documentation/") && record.type !== "absent");
+  if (documentationEntries.length > 0) {
+    return Object.freeze({
+      kind: "migration-conflict",
+      workspaceEpoch: request.epoch,
+      code: "documentation-not-empty",
+      paths: Object.freeze(documentationEntries.map(value => value.path).sort(compareUtf8Bytes)),
+    });
+  }
+  if (migrationRecord(source, STATE_PATH)?.type === "file") {
+    return Object.freeze({
+      kind: "migration-conflict",
+      workspaceEpoch: request.epoch,
+      code: "documentation-state-exists",
+      paths: Object.freeze([STATE_PATH]),
+    });
+  }
+
+  let mapping;
+  try {
+    mapping = buildLegacyMigrationMapping({
+      knowledge: migrationEntries(source, "knowledge"),
+      drafts: migrationEntries(source, "drafts"),
+      documentation: [],
+    });
+  }
+  catch (error) {
+    if (error instanceof TypeError) {
+      return Object.freeze({
+        kind: "migration-conflict",
+        workspaceEpoch: request.epoch,
+        code: "unsafe-legacy-layout",
+        paths: Object.freeze([]),
+      });
+    }
+    throw error;
+  }
+  const rewrites = migrationRewriteSummaries(source, mapping);
+  const proposalEvidence = migrationProposalEvidence(source);
+  const classified = classifyLegacyProposals({
+    records: proposalEvidence.records,
+    blobs: proposalEvidence.blobs,
+    mapping,
+  });
+  const mappings = Object.freeze(migrationMappingRecords(mapping));
+  const stateOutput = migrationStateOutput(mapping);
+  const pathProofs = migrationPathProofs(source, mapping, rewrites.outputDigests, stateOutput);
+  const affectedPaths = Object.freeze(pathProofs.map(value => value.path));
+  const diagnostics = migrationDiagnostics(rewrites.summaries, classified.diagnostics);
+  let verification;
+  try { verification = await collectMigrationSnapshot(fs, root, request); }
+  catch (error) {
+    if (error instanceof MigrationLimitError) {
+      return Object.freeze({ kind: "migration-limit", workspaceEpoch: request.epoch, code: error.code });
+    }
+    if (error instanceof MigrationSnapshotChangedError) {
+      return Object.freeze({ kind: "stale-plan-evidence", workspaceEpoch: request.epoch, code: "snapshot-changed" });
+    }
+    throw error;
+  }
+  if (source.digest !== verification.digest) {
+    return Object.freeze({
+      kind: "stale-plan-evidence",
+      workspaceEpoch: request.epoch,
+      code: "snapshot-changed",
+    });
+  }
+
+  const planRecord = Object.freeze({
+    schemaVersion: 1,
+    sourceSnapshotDigest: source.digest,
+    verificationSnapshotDigest: verification.digest,
+    affectedPaths,
+    pathProofs,
+    mappings,
+    stateOutput,
+    collisions: mapping.collisions,
+    rewrites: rewrites.summaries,
+    proposals: classified.proposals,
+    diagnostics,
+  });
+  if (Buffer.byteLength(canonicalJson(planRecord), "utf8") > MAX_FILE_BYTES) {
+    return Object.freeze({
+      kind: "migration-limit",
+      workspaceEpoch: request.epoch,
+      code: "maximum-plan-bytes",
+    });
+  }
+  const reportModel = migrationReportModel({
+    mappings,
+    collisions: mapping.collisions,
+    proposals: classified.proposals,
+    rewrites: rewrites.summaries,
+    diagnostics,
+  });
+  if (Buffer.byteLength(canonicalJson(reportModel), "utf8") > limits.maximumReportBytes) {
+    return Object.freeze({
+      kind: "migration-limit",
+      workspaceEpoch: request.epoch,
+      code: "maximum-report-bytes",
+    });
+  }
+  return Object.freeze({
+    kind: "migration-plan",
+    workspaceEpoch: request.epoch,
+    planDigest: digestValue(planRecord),
+    planRecord,
+    reportModel,
+  });
+}
+
 async function snapshotResult(fs, root, request) {
   const overlays = overlayPaths(request);
   if (request.snapshot.kind === "paths") {
@@ -298,6 +770,9 @@ async function snapshotResult(fs, root, request) {
         revision: `sha256:${digest}`,
       }),
     });
+  }
+  if (request.snapshot.kind === "plan-migration") {
+    return planMigrationResult(fs, root, request);
   }
   throw new TypeError("Documentation snapshot operation is not implemented");
 }

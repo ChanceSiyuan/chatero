@@ -151,7 +151,7 @@ test("production local composition revalidates materialized provenance before ev
   };
   let sequence = 0;
   const services = await createProductionDocumentationServices({
-    vscode: { workspace: { workspaceFolders: [{ uri }], textDocuments: [] } },
+    vscode: { workspace: { workspaceFolders: [{ uri }], textDocuments: [], isTrusted: true } },
     context: {
       extensionUri: { scheme: "file", path: extensionRoot, fsPath: extensionRoot },
     },
@@ -159,6 +159,10 @@ test("production local composition revalidates materialized provenance before ev
   });
   const state = await services.transactions.state(services.scope);
   assert.equal(state.generation, "0000000000000000");
+  const migration = await services.transactions.planMigration(services.scope);
+  assert.equal(migration.kind, "planned");
+  assert.equal(migration.plan.schemaVersion, 1);
+  assert.equal(JSON.stringify(migration).includes(workspace), false);
 
   await writeFile(join(extensionRoot, "runtime", "protocol.mjs"), "tampered\n");
   await assert.rejects(
@@ -214,12 +218,16 @@ test("production SSH composition revalidates the complete signed install tree be
   let sequence = 0;
   const extensionRoot = join(installRoot, "extensions", "chatero-documentation");
   const services = await createProductionDocumentationServices({
-    vscode: { workspace: { workspaceFolders: [{ uri }], textDocuments: [] } },
+    vscode: { workspace: { workspaceFolders: [{ uri }], textDocuments: [], isTrusted: true } },
     context: { extensionUri: { scheme: "file", path: extensionRoot, fsPath: extensionRoot } },
     environment,
     uuid: () => `10000000-0000-4000-8000-${String(++sequence).padStart(12, "0")}`,
   });
   assert.equal((await services.transactions.state(services.scope)).generation, "0000000000000000");
+  const migration = await services.transactions.planMigration(services.scope);
+  assert.equal(migration.kind, "planned");
+  assert.equal(migration.plan.schemaVersion, 1);
+  assert.equal(JSON.stringify(migration).includes(workspace), false);
 
   await writeFile(unrelated, "tampered\n");
   await assert.rejects(

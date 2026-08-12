@@ -10,6 +10,10 @@ import {
 import { createDocumentationCapabilityIssuer } from "./documentation-capabilities.mjs";
 import { createDocumentationTransactions } from "./documentation-transactions.mjs";
 import { createDocumentationWorkspaceView } from "./documentation-workspace.mjs";
+import {
+  createMigrationPlanner,
+  MIGRATION_PLAN_LIMITS,
+} from "./migration-planner.mjs";
 
 const SHA256 = /^[0-9a-f]{64}$/u;
 const EXTENSION_DESTINATION = "extensions/chatero-documentation";
@@ -253,10 +257,18 @@ export async function createProductionDocumentationServices({
     }),
   });
   const adapter = createDocumentationAuthorityClient({ scope: scopeRecord, workspaceView, fixedTransport });
+  const migrationPlanner = createMigrationPlanner({
+    adapter,
+    capabilities,
+    clock,
+    limits: MIGRATION_PLAN_LIMITS,
+    isWorkspaceTrusted: () => vscode.workspace.isTrusted === true,
+  });
   const transactions = createDocumentationTransactions({
     adapter,
     capabilities,
     workspaceView,
+    migrationPlanner,
   });
   return Object.freeze({
     adapter,

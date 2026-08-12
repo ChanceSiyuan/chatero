@@ -537,6 +537,18 @@ test("release staging injects fixed helpers and signs the exact install tree", a
       listed.stdout,
       new RegExp(`^chatero-agent-${artifact.tuple}/extensions/chatero-documentation/runtime/chatero-documentation-authority\\.mjs$`, "m")
     );
+    for (const path of [
+      "migration-model.mjs",
+      "migration-planner.mjs",
+      "migration-rewrite.mjs",
+      "runtime/yaml-2.9.0.mjs",
+      "runtime/yaml-LICENSE",
+    ]) {
+      assert.match(
+        listed.stdout,
+        new RegExp(`^chatero-agent-${artifact.tuple}/extensions/chatero-documentation/${path.replaceAll(".", "\\.")}$`, "m"),
+      );
+    }
     const extracted = join(directory, `extracted-${artifact.tuple}`);
     await mkdir(extracted);
     const unpacked = await run("tar", ["-xzf", join(output, artifact.filename), "-C", extracted]);
