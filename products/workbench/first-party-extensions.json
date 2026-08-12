@@ -201,6 +201,14 @@
           "destination": "extensions/chatero-documentation/text-change-set.mjs"
         },
         {
+          "source": "products/workbench/extensions/chatero-documentation/webview/formal-block-decorations.mjs",
+          "destination": "extensions/chatero-documentation/webview/formal-block-decorations.mjs"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-documentation/webview/formal-block-parser.mjs",
+          "destination": "extensions/chatero-documentation/webview/formal-block-parser.mjs"
+        },
+        {
           "source": "products/workbench/extensions/chatero-documentation/webview/formula-decorations.mjs",
           "destination": "extensions/chatero-documentation/webview/formula-decorations.mjs"
         },

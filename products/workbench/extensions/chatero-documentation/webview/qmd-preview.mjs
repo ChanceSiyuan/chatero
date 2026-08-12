@@ -1,6 +1,7 @@
 import katex from "katex";
 
 import { createFormulaDecorations } from "./formula-decorations.mjs";
+import { createFormalBlockDecorations } from "./formal-block-decorations.mjs";
 import { createQmdLanguage } from "./qmd-language.mjs";
 import { createProseDecorations } from "./prose-decorations.mjs";
 import { createTableDecorations } from "./table-decorations.mjs";
@@ -12,5 +13,6 @@ export function createQmdPreviewExtensions({ postMessage }) {
     createProseDecorations({ postMessage }),
     createFormulaDecorations({ katex }),
     createTableDecorations(),
+    createFormalBlockDecorations(),
   ]);
 }

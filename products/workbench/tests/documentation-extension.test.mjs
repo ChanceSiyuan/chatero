@@ -142,6 +142,8 @@ test("first-party materialization declares the complete Documentation authority"
     "extensions/chatero-documentation/runtime/yaml-2.9.0.mjs",
     "extensions/chatero-documentation/runtime/yaml-LICENSE",
     "extensions/chatero-documentation/text-change-set.mjs",
+    "extensions/chatero-documentation/webview/formal-block-decorations.mjs",
+    "extensions/chatero-documentation/webview/formal-block-parser.mjs",
     "extensions/chatero-documentation/webview/formula-decorations.mjs",
     "extensions/chatero-documentation/webview/line-ending-map.mjs",
     "extensions/chatero-documentation/webview/prose-decorations.mjs",

@@ -115,3 +115,36 @@ body {
   height: 0;
   overflow: hidden;
 }
+
+.chatero-qmd-formal {
+  border-inline-start: 0.3rem solid var(--vscode-textBlockQuote-border);
+  box-sizing: border-box;
+  padding: 0.45rem 0.75rem;
+}
+
+.chatero-qmd-formal-theorem {
+  border-color: var(--vscode-charts-blue);
+}
+
+.chatero-qmd-formal-lemma {
+  border-color: var(--vscode-charts-purple);
+}
+
+.chatero-qmd-formal-proof {
+  border-color: var(--vscode-charts-green);
+}
+
+.chatero-qmd-formal-kind {
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.cm-line.chatero-qmd-formal-line {
+  border-inline: 1px solid var(--vscode-editorWidget-border);
+  padding-inline: 0.75rem;
+}
+
+.chatero-qmd-formal-closer {
+  border-block-end: 1px solid var(--vscode-editorWidget-border);
+  height: 0.35rem;
+}

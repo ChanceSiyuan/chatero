@@ -59,12 +59,13 @@ function nestedChildren(state, node) {
 
 function nodeRecord(state, node, kind = kindForName(node.name)) {
   const source = state.doc.sliceString(node.from, node.to, "\n");
+  const effectiveKind = kind === "prose" && /^[\t ]*:{3,}(?:[\t ]|$)/u.test(source) ? "unsupported" : kind;
   return {
-    kind: kind ?? "unsupported",
+    kind: effectiveKind ?? "unsupported",
     from: node.from,
     to: node.to,
     source,
-    displayText: displayText(kind, source),
+    displayText: displayText(effectiveKind, source),
     reveal: sourceRange(node.from, node.to),
     children: nestedChildren(state, node),
   };
