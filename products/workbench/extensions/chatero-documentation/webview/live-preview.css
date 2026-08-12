@@ -139,6 +139,27 @@ body {
   letter-spacing: 0.02em;
 }
 
+.chatero-qmd-proof-toggle {
+  background: transparent;
+  border: 1px solid var(--vscode-button-border, transparent);
+  border-radius: 0.2rem;
+  color: var(--vscode-textLink-foreground);
+  cursor: pointer;
+  float: inline-end;
+  padding: 0.15rem 0.45rem;
+}
+
+.chatero-qmd-proof-toggle:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: 2px;
+}
+
+.chatero-qmd-proof-collapsed {
+  color: var(--vscode-descriptionForeground);
+  font-style: italic;
+  padding: 0.35rem 0.75rem;
+}
+
 .cm-line.chatero-qmd-formal-line {
   border-inline: 1px solid var(--vscode-editorWidget-border);
   padding-inline: 0.75rem;

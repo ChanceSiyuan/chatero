@@ -221,6 +221,10 @@
           "destination": "extensions/chatero-documentation/webview/prose-decorations.mjs"
         },
         {
+          "source": "products/workbench/extensions/chatero-documentation/webview/proof-collapse.mjs",
+          "destination": "extensions/chatero-documentation/webview/proof-collapse.mjs"
+        },
+        {
           "source": "products/workbench/extensions/chatero-documentation/webview/qmd-language.mjs",
           "destination": "extensions/chatero-documentation/webview/qmd-language.mjs"
         },

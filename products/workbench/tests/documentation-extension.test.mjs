@@ -147,6 +147,7 @@ test("first-party materialization declares the complete Documentation authority"
     "extensions/chatero-documentation/webview/formula-decorations.mjs",
     "extensions/chatero-documentation/webview/line-ending-map.mjs",
     "extensions/chatero-documentation/webview/prose-decorations.mjs",
+    "extensions/chatero-documentation/webview/proof-collapse.mjs",
     "extensions/chatero-documentation/webview/qmd-language.mjs",
     "extensions/chatero-documentation/webview/qmd-preview.mjs",
     "extensions/chatero-documentation/webview/qmd-source-model.mjs",

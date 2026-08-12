@@ -106,6 +106,15 @@ test("reveals the smallest formal source part and emits fixed safe header DOM", 
   assert.equal(element.attributes["aria-label"], "Lemma: Label");
   assert.equal(element.className, "chatero-qmd-formal chatero-qmd-formal-lemma");
   assert.equal(JSON.stringify(element).includes("onclick"), false);
+
+  const proofSource = '::: {#proof-toggle .proof collapse="true"}\nBody.\n:::\n';
+  const proof = parseFormalBlock(proofSource, 0, proofSource.length);
+  const proofElement = renderFormalHeaderElement(fakeDocument(), proof, proofSource, { collapsed: true });
+  const button = proofElement.children[1];
+  assert.equal(button.tagName, "BUTTON");
+  assert.equal(button.attributes.type, "button");
+  assert.equal(button.attributes["aria-expanded"], "false");
+  assert.equal(button.textContent, "Show proof");
 });
 
 test("formal modules never activate source HTML or serialize attributes", async () => {

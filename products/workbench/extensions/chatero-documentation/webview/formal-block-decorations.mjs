@@ -1,6 +1,13 @@
 import { Decoration, ViewPlugin, WidgetType } from "@codemirror/view";
 
 import { collectFormalBlocks } from "./formal-block-parser.mjs";
+import {
+  isProofCollapsed,
+  isProofTemporarilyRevealed,
+  proofKey,
+  setProofCollapsed,
+  toggleProof,
+} from "./proof-collapse.mjs";
 
 function rangeIntersectsSelection(range, selection) {
   const ranges = selection?.ranges
@@ -23,7 +30,7 @@ function formalTitle(block, source) {
   return label ? `${kind}: ${label}` : kind;
 }
 
-export function renderFormalHeaderElement(document, block, source) {
+export function renderFormalHeaderElement(document, block, source, { collapsed = false, onToggle } = {}) {
   if (!document || typeof document.createElement !== "function" || typeof source !== "string") {
     throw new TypeError("formal header DOM dependencies are invalid");
   }
@@ -37,23 +44,44 @@ export function renderFormalHeaderElement(document, block, source) {
   badge.className = "chatero-qmd-formal-kind";
   badge.textContent = block.kind[0].toUpperCase() + block.kind.slice(1);
   element.append(badge);
+  if (block.kind === "proof") {
+    const button = document.createElement("button");
+    button.className = "chatero-qmd-proof-toggle";
+    button.setAttribute("type", "button");
+    button.setAttribute("aria-expanded", String(!collapsed));
+    button.setAttribute("aria-controls", `chatero-proof-${block.opener.from}`);
+    button.textContent = collapsed ? "Show proof" : "Hide proof";
+    if (typeof button.addEventListener === "function" && typeof onToggle === "function") {
+      button.addEventListener("mousedown", event => event.stopPropagation());
+      button.addEventListener("click", event => {
+        event.preventDefault();
+        onToggle();
+      });
+    }
+    element.append(button);
+  }
   return element;
 }
 
 class FormalHeaderWidget extends WidgetType {
-  constructor(block, source) {
+  constructor(block, source, collapsed) {
     super();
     this.block = block;
     this.source = source;
+    this.collapsed = collapsed;
   }
 
   eq(other) {
     return other.block.kind === this.block.kind && other.block.from === this.block.from
-      && other.block.to === this.block.to && other.source === this.source;
+      && other.block.to === this.block.to && other.source === this.source
+      && other.collapsed === this.collapsed;
   }
 
   toDOM(view) {
-    const element = renderFormalHeaderElement(view.dom.ownerDocument, this.block, this.source);
+    const element = renderFormalHeaderElement(view.dom.ownerDocument, this.block, this.source, {
+      collapsed: this.collapsed,
+      onToggle: () => toggleProof(view, this.block),
+    });
     element.addEventListener("mousedown", event => {
       event.preventDefault();
       view.dispatch({ selection: { anchor: this.block.attributes.from ?? this.block.attributes.range.from } });
@@ -64,6 +92,26 @@ class FormalHeaderWidget extends WidgetType {
 
   ignoreEvent() {
     return false;
+  }
+}
+
+class CollapsedProofWidget extends WidgetType {
+  constructor(block) {
+    super();
+    this.block = block;
+  }
+
+  eq(other) {
+    return proofKey(other.block) === proofKey(this.block);
+  }
+
+  toDOM(view) {
+    const element = view.dom.ownerDocument.createElement("div");
+    element.id = `chatero-proof-${this.block.opener.from}`;
+    element.className = "chatero-qmd-proof-collapsed";
+    element.setAttribute("role", "note");
+    element.textContent = "Proof collapsed";
+    return element;
   }
 }
 
@@ -81,12 +129,21 @@ function formalDecorations(view) {
   const source = view.state.doc.toString();
   for (const block of collectFormalBlocks(view.state, view.visibleRanges)) {
     if (block.kind === "unsupported") continue;
+    const collapsed = block.kind === "proof" && isProofCollapsed(view.state, block);
+    const temporarilyRevealed = block.kind === "proof" && isProofTemporarilyRevealed(view.state, block);
     if (!rangeIntersectsSelection(block.opener, view.state.selection)) {
       ranges.push(Decoration.replace({
         block: true,
         inclusive: false,
-        widget: new FormalHeaderWidget(block, source),
+        widget: new FormalHeaderWidget(block, source, collapsed),
       }).range(block.opener.from, block.opener.to));
+    }
+    if (collapsed && !temporarilyRevealed && block.body.from < block.body.to) {
+      ranges.push(Decoration.replace({
+        block: true,
+        inclusive: false,
+        widget: new CollapsedProofWidget(block),
+      }).range(block.body.from, block.body.to));
     }
     if (!rangeIntersectsSelection(block.closer, view.state.selection)) {
       ranges.push(Decoration.replace({
@@ -112,7 +169,8 @@ export function createFormalBlockDecorations() {
     }
 
     update(update) {
-      if (update.docChanged || update.selectionSet || update.viewportChanged || update.focusChanged) {
+      if (update.docChanged || update.selectionSet || update.viewportChanged || update.focusChanged
+        || update.transactions.some(transaction => transaction.effects.some(effect => effect.is(setProofCollapsed)))) {
         this.decorations = formalDecorations(update.view);
       }
     }
