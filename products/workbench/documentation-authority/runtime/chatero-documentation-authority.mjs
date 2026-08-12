@@ -28,6 +28,15 @@ const PRIVATE_DIRECTORY_MODE = 0o700;
 const PRIVATE_FILE_MODE = 0o600;
 const MIGRATION_ROOTS = Object.freeze(["documentation", "drafts", "knowledge"]);
 const LEGACY_PROPOSAL_ROOT = "work/qlab-zotero/draft-changes";
+const PASSIVE_IMAGE_MIME = Object.freeze(["image/png", "image/jpeg", "image/gif", "image/webp", "image/avif"]);
+const PASSIVE_IMAGE_EXTENSIONS = Object.freeze(new Map([
+  [".png", "image/png"],
+  [".jpg", "image/jpeg"],
+  [".jpeg", "image/jpeg"],
+  [".gif", "image/gif"],
+  [".webp", "image/webp"],
+  [".avif", "image/avif"],
+]));
 
 class MigrationLimitError extends Error {
   constructor(code) {
@@ -163,6 +172,93 @@ async function readRegularFile(fs, path, maximumBytes = MAX_FILE_BYTES) {
   finally {
     await handle.close();
   }
+}
+
+function passiveImagePlaceholder(epoch, reason) {
+  return Object.freeze({ kind: "passive-image-placeholder", epoch, reason });
+}
+
+function passivePagePath(workspace, pageUri) {
+  const root = new URL(workspace);
+  const page = new URL(pageUri);
+  const prefix = root.pathname === "/" ? "/" : `${root.pathname.replace(/\/+$/u, "")}/`;
+  if (page.protocol !== root.protocol || page.host !== root.host || !page.pathname.startsWith(prefix)) return null;
+  let relative;
+  try { relative = decodeURIComponent(page.pathname.slice(prefix.length)); }
+  catch { return null; }
+  if (!relative.startsWith("documentation/") || !relative.toLowerCase().endsWith(".qmd")) return null;
+  try { safeRelativePath(relative); }
+  catch { return null; }
+  return relative;
+}
+
+function passiveTargetPath(pagePath, target) {
+  if (typeof target !== "string" || target.length === 0 || Buffer.byteLength(target, "utf8") > 4096
+    || target.startsWith("/") || target.includes("\\") || /[%:?#\u0000-\u001f\u007f]/u.test(target)
+    || target.normalize("NFC") !== target) return null;
+  const parts = pagePath.split("/");
+  parts.pop();
+  for (const part of target.split("/")) {
+    if (!part || part === ".") continue;
+    if (part === "..") {
+      if (parts.length <= 1) return null;
+      parts.pop();
+      continue;
+    }
+    if (part.normalize("NFC") !== part) return null;
+    parts.push(part);
+  }
+  if (parts[0] !== "documentation" || parts.length < 2) return null;
+  const value = parts.join("/");
+  try { safeRelativePath(value); }
+  catch { return null; }
+  return value;
+}
+
+function imageMime(bytes) {
+  if (bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return "image/png";
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
+  if (bytes.length >= 6 && new Set(["GIF87a", "GIF89a"]).has(bytes.subarray(0, 6).toString("ascii"))) return "image/gif";
+  if (bytes.length >= 12 && bytes.subarray(0, 4).toString("ascii") === "RIFF" && bytes.subarray(8, 12).toString("ascii") === "WEBP") return "image/webp";
+  if (bytes.length >= 12 && bytes.subarray(4, 8).toString("ascii") === "ftyp") {
+    const brands = bytes.subarray(8, Math.min(bytes.length, 32)).toString("ascii");
+    if (brands.includes("avif") || brands.includes("avis")) return "image/avif";
+  }
+  return null;
+}
+
+async function passiveImageResult(fs, root, request) {
+  const pagePath = passivePagePath(request.workspace, request.snapshot.pageUri);
+  const relativePath = pagePath && passiveTargetPath(pagePath, request.snapshot.target);
+  if (!relativePath) return passiveImagePlaceholder(request.epoch, "unsafe");
+  const dot = relativePath.lastIndexOf(".");
+  const expectedMime = dot < 0 ? undefined : PASSIVE_IMAGE_EXTENSIONS.get(relativePath.slice(dot).toLowerCase());
+  if (!expectedMime || !PASSIVE_IMAGE_MIME.includes(expectedMime)) return passiveImagePlaceholder(request.epoch, "unsupported-type");
+  let inspected;
+  try { inspected = await inspectRelative(fs, root, relativePath); }
+  catch { return passiveImagePlaceholder(request.epoch, "unsafe"); }
+  if (!inspected.metadata) return passiveImagePlaceholder(request.epoch, "missing");
+  if (!inspected.metadata.isFile() || inspected.metadata.isSymbolicLink() || inspected.metadata.nlink !== 1) {
+    return passiveImagePlaceholder(request.epoch, "unsafe");
+  }
+  if (inspected.metadata.size > request.snapshot.maxBytes) return passiveImagePlaceholder(request.epoch, "too-large");
+  let bytes;
+  try { bytes = await readRegularFile(fs, inspected.path, request.snapshot.maxBytes); }
+  catch { return passiveImagePlaceholder(request.epoch, "unavailable"); }
+  const detected = imageMime(bytes);
+  if (!detected || detected !== expectedMime || !request.snapshot.allowedMime.includes(detected)) {
+    return passiveImagePlaceholder(request.epoch, "mime-mismatch");
+  }
+  const digest = sha256(bytes);
+  return Object.freeze({
+    kind: "passive-image",
+    epoch: request.epoch,
+    mime: detected,
+    size: bytes.byteLength,
+    sha256: digest,
+    revision: `sha256:${digest}`,
+    bytes: bytes.toString("base64url"),
+  });
 }
 
 function overlayPaths(request) {
@@ -737,6 +833,7 @@ async function planMigrationResult(fs, root, request) {
 
 async function snapshotResult(fs, root, request) {
   const overlays = overlayPaths(request);
+  if (request.snapshot.kind === "passive-image") return passiveImageResult(fs, root, request);
   if (request.snapshot.kind === "paths") {
     const entries = [];
     for (const path of request.snapshot.paths) entries.push(await snapshotEntry(fs, root, path, overlays.get(path)));

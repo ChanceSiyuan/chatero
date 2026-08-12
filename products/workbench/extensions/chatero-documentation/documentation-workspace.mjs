@@ -238,6 +238,20 @@ export function createWorkspaceTransactionAdapter({ scope, transport, workspaceV
         overlays: evidence.overlays,
       }, evidence);
     }
+    if (request.kind === "passive-image") {
+      if (Object.keys(request).some(key => !new Set(["kind", "pageUri", "target", "maxBytes", "allowedMime"]).has(key))) {
+        throw new TypeError("passive image snapshot request has unknown field");
+      }
+      const evidence = workspaceView.capture(scope, []);
+      return invoke("snapshot", "snapshot", {
+        kind: "passive-image",
+        pageUri: request.pageUri,
+        target: request.target,
+        maxBytes: request.maxBytes,
+        allowedMime: request.allowedMime,
+        overlays: [],
+      }, evidence);
+    }
     throw new TypeError("snapshot request kind is unsupported");
   };
 

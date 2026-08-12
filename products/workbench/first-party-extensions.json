@@ -13,6 +13,10 @@
           "destination": "extensions/chatero-documentation/documentation-capabilities.mjs"
         },
         {
+          "source": "products/workbench/extensions/chatero-documentation/documentation-image-resolver.mjs",
+          "destination": "extensions/chatero-documentation/documentation-image-resolver.mjs"
+        },
+        {
           "source": "products/workbench/extensions/chatero-documentation/documentation-operations.mjs",
           "destination": "extensions/chatero-documentation/documentation-operations.mjs"
         },
@@ -211,6 +215,10 @@
         {
           "source": "products/workbench/extensions/chatero-documentation/webview/formula-decorations.mjs",
           "destination": "extensions/chatero-documentation/webview/formula-decorations.mjs"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-documentation/webview/image-decorations.mjs",
+          "destination": "extensions/chatero-documentation/webview/image-decorations.mjs"
         },
         {
           "source": "products/workbench/extensions/chatero-documentation/webview/line-ending-map.mjs",

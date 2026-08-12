@@ -144,6 +144,7 @@ function buildDecorations(view) {
   const ranges = [];
   for (const node of collectVisualNodes(view.state, view.visibleRanges)) {
     if (!["heading", "prose", "list"].includes(node.kind)) continue;
+    if (node.children.some(child => ["formula-inline", "formula-display", "image"].includes(child.kind))) continue;
     if (sourceRevealRange(node, view.state.selection)) continue;
     ranges.push(Decoration.replace({
       block: true,

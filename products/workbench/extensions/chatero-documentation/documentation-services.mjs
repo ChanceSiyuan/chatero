@@ -277,5 +277,6 @@ export async function createProductionDocumentationServices({
     transactions,
     workspaceFolderUri: folder.uri,
     randomUUID: uuid,
+    snapshotPassiveImage: request => adapter.snapshot(request),
   });
 }

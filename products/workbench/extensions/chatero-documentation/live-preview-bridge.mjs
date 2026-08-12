@@ -82,7 +82,7 @@ class PerUriLivePreviewBridge {
     }));
   }
 
-  attach(panel, { cspNonce }) {
+  attach(panel, { cspNonce, imageResolver }) {
     if (this.disposed) throw new Error("Live Preview bridge is disposed");
     if (!panel?.webview || typeof panel.webview.onDidReceiveMessage !== "function"
       || typeof panel.webview.postMessage !== "function" || typeof panel.onDidDispose !== "function") {
@@ -95,6 +95,7 @@ class PerUriLivePreviewBridge {
       sessionId: undefined,
       initialized: false,
       disposed: false,
+      imageResolver,
       messageTail: Promise.resolve(),
     };
     const messageSubscription = panel.webview.onDidReceiveMessage(value => {
@@ -107,6 +108,7 @@ class PerUriLivePreviewBridge {
       if (state.disposed) return;
       state.disposed = true;
       messageSubscription.dispose();
+      void state.imageResolver?.dispose?.();
       panelSubscription?.dispose();
       this.panels.delete(panel);
       if (notify && !this.disposed && this.panels.size === 0) this.onEmpty(this);
@@ -145,6 +147,19 @@ class PerUriLivePreviewBridge {
     if (message.type === "history") {
       await this.coordinator.drain(this.uri);
       await this.commands.executeCommand(message.direction);
+      return;
+    }
+    if (message.type === "imageRequest") {
+      let resolution;
+      try {
+        resolution = panelState.imageResolver
+          ? await panelState.imageResolver.resolve(this.uri, message.target)
+          : Object.freeze({ kind: "placeholder", target: message.target, reason: "unavailable" });
+      }
+      catch {
+        resolution = Object.freeze({ kind: "placeholder", target: message.target, reason: "unavailable" });
+      }
+      await this.post(panelState, { type: "imageResult", requestId: message.requestId, resolution });
     }
   }
 
@@ -428,7 +443,7 @@ export class LivePreviewBridgeRegistry {
     return this.bridges.size;
   }
 
-  attach(document, panel, { cspNonce }) {
+  attach(document, panel, { cspNonce, imageResolver }) {
     if (this.disposed) throw new Error("LivePreviewBridgeRegistry is disposed");
     const key = uriKey(document.uri);
     let bridge = this.bridges.get(key);
@@ -441,7 +456,7 @@ export class LivePreviewBridgeRegistry {
       });
       this.bridges.set(key, bridge);
     }
-    return bridge.attach(panel, { cspNonce });
+    return bridge.attach(panel, { cspNonce, imageResolver });
   }
 
   #broadcastChange(event) {

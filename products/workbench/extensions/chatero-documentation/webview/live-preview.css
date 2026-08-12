@@ -160,6 +160,22 @@ body {
   padding: 0.35rem 0.75rem;
 }
 
+.chatero-qmd-image {
+  display: inline-block;
+  height: auto;
+  max-height: 70vh;
+  max-width: 100%;
+  object-fit: contain;
+  vertical-align: middle;
+}
+
+.chatero-qmd-image-placeholder {
+  border: 1px dashed var(--vscode-editorWidget-border);
+  color: var(--vscode-descriptionForeground);
+  display: inline-block;
+  padding: 0.35rem 0.55rem;
+}
+
 .cm-line.chatero-qmd-formal-line {
   border-inline: 1px solid var(--vscode-editorWidget-border);
   padding-inline: 0.75rem;

@@ -26,7 +26,7 @@ async function openDocumentation(vscode, uri) {
 }
 
 class LivePreviewProvider {
-  constructor({ vscode, context, bridgeRegistry, randomBytes = nodeRandomBytes, createHtml }) {
+  constructor({ vscode, context, bridgeRegistry, randomBytes = nodeRandomBytes, createHtml, imageResolverFactory }) {
     if (!vscode?.Uri || !vscode?.commands || !vscode?.window) throw new TypeError("Live Preview provider requires VS Code APIs");
     if (!context?.extensionUri) throw new TypeError("Live Preview provider requires context.extensionUri");
     if (!bridgeRegistry || typeof bridgeRegistry.attach !== "function") throw new TypeError("Live Preview provider requires a bridge registry");
@@ -35,6 +35,7 @@ class LivePreviewProvider {
     this.bridgeRegistry = bridgeRegistry;
     this.randomBytes = randomBytes;
     this.createHtml = createHtml;
+    this.imageResolverFactory = imageResolverFactory;
   }
 
   async fallback(document, message) {
@@ -51,33 +52,41 @@ class LivePreviewProvider {
     }
 
     let attachment;
+    let imageResolver;
     try {
       const mediaRoot = this.vscode.Uri.joinPath(
         this.context.extensionUri,
         "media",
         "documentation-webview",
       );
+      const cspNonce = createLivePreviewNonce(this.randomBytes);
+      if (this.imageResolverFactory) {
+        try { imageResolver = await this.imageResolverFactory({ document, panel, sessionId: cspNonce }); }
+        catch { imageResolver = undefined; }
+      }
+      const localResourceRoots = [mediaRoot];
+      if (imageResolver?.rootUri) localResourceRoots.push(imageResolver.rootUri);
       panel.webview.options = Object.freeze({
         enableScripts: true,
-        localResourceRoots: Object.freeze([mediaRoot]),
+        localResourceRoots: Object.freeze(localResourceRoots),
       });
       const scriptUri = panel.webview.asWebviewUri(this.vscode.Uri.joinPath(mediaRoot, "live-preview.js"));
       const styleUri = panel.webview.asWebviewUri(this.vscode.Uri.joinPath(mediaRoot, "live-preview.css"));
-      const cspNonce = createLivePreviewNonce(this.randomBytes);
       const htmlFactory = this.createHtml
         ?? await import("./live-preview-html.mjs").then(module => module.createLivePreviewHtml);
-      attachment = this.bridgeRegistry.attach(document, panel, { cspNonce });
+      attachment = this.bridgeRegistry.attach(document, panel, { cspNonce, imageResolver });
       panel.webview.html = htmlFactory({ webview: panel.webview, scriptUri, styleUri, nonce: cspNonce });
     }
     catch (error) {
       attachment?.dispose();
+      if (!attachment) await imageResolver?.dispose?.();
       const detail = error instanceof Error ? error.message : String(error);
       await this.fallback(document, `Chatero Live Preview could not open this page: ${detail}`);
     }
   }
 }
 
-async function registerLivePreview({ vscode, context, bridgeRegistry }) {
+async function registerLivePreview({ vscode, context, bridgeRegistry, createServices }) {
   let coordinator;
   let registry = bridgeRegistry;
   const owned = [];
@@ -99,7 +108,31 @@ async function registerLivePreview({ vscode, context, bridgeRegistry }) {
     });
     owned.push(registry, coordinator);
   }
-  const provider = new LivePreviewProvider({ vscode, context, bridgeRegistry: registry });
+  let servicesPromise;
+  const imageResolverFactory = context.storageUri && vscode.workspace?.fs
+    ? async ({ panel, sessionId }) => {
+      servicesPromise ??= createServices
+        ? Promise.resolve(createServices())
+        : import("./documentation-services.mjs").then(module => module.createProductionDocumentationServices({ vscode, context }));
+      const services = await servicesPromise;
+      const { createDocumentationImageResolver } = await import("./documentation-image-resolver.mjs");
+      return createDocumentationImageResolver({
+        scope: services.scope,
+        snapshotPassiveImage: services.snapshotPassiveImage,
+        workspace: vscode.workspace,
+        Uri: vscode.Uri,
+        storageUri: context.storageUri,
+        webview: panel.webview,
+        sessionId,
+      });
+    }
+    : undefined;
+  const provider = new LivePreviewProvider({
+    vscode,
+    context,
+    bridgeRegistry: registry,
+    imageResolverFactory,
+  });
   let registration;
   try {
     registration = vscode.window.registerCustomEditorProvider(LIVE_PREVIEW_VIEW_TYPE, provider);

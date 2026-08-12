@@ -95,6 +95,7 @@ test("first-party materialization declares the complete Documentation authority"
   assert.deepEqual(documentation.files.map(file => file.destination), [
     "extensions/chatero-documentation/documentation-authority-client.mjs",
     "extensions/chatero-documentation/documentation-capabilities.mjs",
+    "extensions/chatero-documentation/documentation-image-resolver.mjs",
     "extensions/chatero-documentation/documentation-operations.mjs",
     "extensions/chatero-documentation/documentation-path.mjs",
     "extensions/chatero-documentation/documentation-services.mjs",
@@ -145,6 +146,7 @@ test("first-party materialization declares the complete Documentation authority"
     "extensions/chatero-documentation/webview/formal-block-decorations.mjs",
     "extensions/chatero-documentation/webview/formal-block-parser.mjs",
     "extensions/chatero-documentation/webview/formula-decorations.mjs",
+    "extensions/chatero-documentation/webview/image-decorations.mjs",
     "extensions/chatero-documentation/webview/line-ending-map.mjs",
     "extensions/chatero-documentation/webview/prose-decorations.mjs",
     "extensions/chatero-documentation/webview/proof-collapse.mjs",

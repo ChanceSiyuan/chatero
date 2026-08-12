@@ -25,6 +25,7 @@ export const VIEW_KEYS = Object.freeze({
   edit: Object.freeze(["type", "sessionId", "opId", "baseVersion", "changes"]),
   history: Object.freeze(["type", "sessionId", "direction"]),
   focus: Object.freeze(["type", "sessionId", "anchor", "head"]),
+  imageRequest: Object.freeze(["type", "sessionId", "requestId", "target"]),
 });
 
 export const HOST_KEYS = Object.freeze({
@@ -34,6 +35,7 @@ export const HOST_KEYS = Object.freeze({
   resync: Object.freeze(["type", "sessionId", "source", "version", "digest", "reason"]),
   pendingConflict: Object.freeze(["type", "sessionId", "opId", "reason", "authoritativeExcerpt", "pendingInsert"]),
   connectionState: Object.freeze(["type", "sessionId", "state"]),
+  imageResult: Object.freeze(["type", "sessionId", "requestId", "resolution"]),
 });
 
 const RESYNC_REASONS = new Set([
@@ -46,6 +48,8 @@ const RESYNC_REASONS = new Set([
 ]);
 const CONFLICT_REASONS = new Set(["overlap", "ambiguous-anchor", "missing-anchor"]);
 const CONNECTION_STATES = new Set(["connected", "disconnected", "reconnecting"]);
+const IMAGE_PLACEHOLDER_REASONS = new Set(["missing", "unsafe", "too-large", "mime-mismatch", "unsupported-type", "unavailable"]);
+const IMAGE_MIME = new Set(["image/png", "image/jpeg", "image/gif", "image/webp", "image/avif"]);
 const textEncoder = new TextEncoder();
 
 function utf8Length(value) {
@@ -102,6 +106,50 @@ function operationId(value, expectedSession) {
     throw new TypeError("operation ID sequence is malformed");
   }
   return Object.freeze({ value, sessionId: owner, sequence: Number(sequenceText) });
+}
+
+function imageRequestId(value) {
+  if (typeof value !== "string" || !/^[A-Za-z0-9_-]{1,128}$/u.test(value)) throw new TypeError("image request ID is invalid");
+  return value;
+}
+
+function imageResolution(value) {
+  if (value?.kind === "placeholder") {
+    exactObject(value, ["kind", "target", "reason"], "image placeholder");
+    if (!IMAGE_PLACEHOLDER_REASONS.has(value.reason)) throw new TypeError("image placeholder reason is unsupported");
+    const target = boundedString(value.target, "image target", 4096);
+    if (!target) throw new TypeError("image target is empty");
+    return Object.freeze({
+      kind: "placeholder",
+      target,
+      reason: value.reason,
+    });
+  }
+  exactObject(value, ["kind", "target", "src", "mime", "size", "revision"], "image resolution");
+  if (value.kind !== "ready" || !IMAGE_MIME.has(value.mime) || !/^sha256:[0-9a-f]{64}$/u.test(value.revision)) {
+    throw new TypeError("image resolution metadata is invalid");
+  }
+  const src = boundedString(value.src, "derived image URI", 16 * 1024);
+  let parsed;
+  try { parsed = new URL(src); }
+  catch { throw new TypeError("derived image URI is invalid"); }
+  const vscodeHttps = parsed.protocol.length === 6
+    && parsed.protocol.slice(0, 5) === "https"
+    && parsed.hostname.endsWith(".vscode-cdn.net");
+  if (!vscodeHttps && parsed.protocol !== "vscode-webview-resource:" && parsed.protocol !== "chatero-test-webview:") {
+    throw new TypeError("derived image URI authority is unsupported");
+  }
+  const target = boundedString(value.target, "image target", 4096);
+  const size = safeInteger(value.size, "image size");
+  if (!target || size > 20 * 1024 * 1024) throw new TypeError("image resolution exceeds the fixed policy");
+  return Object.freeze({
+    kind: "ready",
+    target,
+    src,
+    mime: value.mime,
+    size,
+    revision: value.revision,
+  });
 }
 
 function serializedBytes(value, label, maximum) {
@@ -292,6 +340,16 @@ export function parseViewMessage(value) {
     if (value.direction !== "undo" && value.direction !== "redo") throw new TypeError("history direction must be undo or redo");
     return Object.freeze({ type: "history", sessionId: owner, direction: value.direction });
   }
+  if (value.type === "imageRequest") {
+    const target = boundedString(value.target, "image target", 4096);
+    if (!target) throw new TypeError("image target is empty");
+    return Object.freeze({
+      type: "imageRequest",
+      sessionId: owner,
+      requestId: imageRequestId(value.requestId),
+      target,
+    });
+  }
   return Object.freeze({
     type: "focus",
     sessionId: owner,
@@ -364,6 +422,14 @@ export function parseHostMessage(value) {
       reason: value.reason,
       authoritativeExcerpt: boundedString(value.authoritativeExcerpt, "pendingConflict authoritative excerpt", MAX_CHANGE_TEXT_FIELD_UTF8),
       pendingInsert: boundedString(value.pendingInsert, "pendingConflict pending insert", MAX_CHANGE_TEXT_FIELD_UTF8),
+    });
+  }
+  if (value.type === "imageResult") {
+    return Object.freeze({
+      type: "imageResult",
+      sessionId: owner,
+      requestId: imageRequestId(value.requestId),
+      resolution: imageResolution(value.resolution),
     });
   }
   if (!CONNECTION_STATES.has(value.state)) throw new TypeError("connectionState state is unsupported");

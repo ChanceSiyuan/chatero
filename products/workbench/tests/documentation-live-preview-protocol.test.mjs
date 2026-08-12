@@ -51,6 +51,12 @@ test("parses only closed view message schemas", () => {
   assert.equal(parseViewMessage({ type: "ready", sessionId: "session-a", pendingDescriptors: [descriptor()] }).type, "ready");
   assert.equal(parseViewMessage({ type: "history", sessionId: "session-a", direction: "undo" }).direction, "undo");
   assert.equal(parseViewMessage({ type: "focus", sessionId: "session-a", anchor: 2, head: 4 }).head, 4);
+  assert.deepEqual(parseViewMessage({
+    type: "imageRequest", sessionId: "session-a", requestId: "image_1", target: "assets/plot.png",
+  }), { type: "imageRequest", sessionId: "session-a", requestId: "image_1", target: "assets/plot.png" });
+  assert.throws(() => parseViewMessage({
+    type: "imageRequest", sessionId: "session-a", requestId: "bad:id", target: "assets/plot.png",
+  }), /image request ID/u);
   assert.throws(() => parseViewMessage({ type: "history", sessionId: "session-a", direction: "back" }), /direction/);
   assert.throws(() => parseViewMessage({ type: "unknown", sessionId: "session-a" }), /message type/);
 });
@@ -80,6 +86,25 @@ test("parses only closed host schemas and enum values", () => {
     type: "pendingConflict", sessionId: "session-a", opId: "session-a:1", reason: "overlap", authoritativeExcerpt: "q", pendingInsert: "Q",
   }).reason, "overlap");
   assert.equal(parseHostMessage({ type: "connectionState", sessionId: "session-a", state: "connected" }).state, "connected");
+  assert.equal(parseHostMessage({
+    type: "imageResult",
+    sessionId: "session-a",
+    requestId: "image_1",
+    resolution: {
+      kind: "ready", target: "assets/plot.png",
+      src: "https://file+.vscode-resource.vscode-cdn.net/session/digest.png",
+      mime: "image/png", size: 10, revision: `sha256:${DIGEST}`,
+    },
+  }).resolution.kind, "ready");
+  assert.throws(() => parseHostMessage({
+    type: "imageResult",
+    sessionId: "session-a",
+    requestId: "image_1",
+    resolution: {
+      kind: "ready", target: "assets/plot.png", src: "data:image/png;base64,AAAA",
+      mime: "image/png", size: 3, revision: `sha256:${DIGEST}`,
+    },
+  }), /authority|unsupported/u);
 
   assert.throws(() => parseHostMessage({ ...initialize, nonce: NONCE }), /unknown field/);
   assert.throws(() => parseHostMessage({ ...initialize, cspNonce: "short" }), /nonce/);

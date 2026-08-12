@@ -159,6 +159,36 @@ test("provider confines resources and passes one unique nonce to each shared-bri
   }
 });
 
+test("provider grants each panel only its own derived image session root", async () => {
+  const { LivePreviewProvider } = loadProvider();
+  const harness = createVscode();
+  const attachments = [];
+  const roots = [];
+  const provider = new LivePreviewProvider({
+    vscode: harness.vscode,
+    context: { extensionUri: new TestUri("file:/extension"), storageUri: new TestUri("file:/storage") },
+    bridgeRegistry: {
+      attach(document, panel, options) { attachments.push({ document, panel, options }); return { dispose() {} }; },
+    },
+    randomBytes: size => Buffer.alloc(size, 7),
+    async imageResolverFactory({ sessionId }) {
+      const rootUri = new TestUri(`file:/storage/live-preview-images/${sessionId}`);
+      roots.push(rootUri);
+      return { rootUri, async resolve() {}, async dispose() {} };
+    },
+  });
+  const panel = createPanel();
+  const document = { uri: new TestUri("file:/workspace/documentation/page.qmd"), getText: () => "![Plot](plot.png)\n" };
+  await provider.resolveCustomTextEditor(document, panel, { isCancellationRequested: false });
+  assert.equal(attachments.length, 1);
+  assert.equal(attachments[0].options.imageResolver.rootUri, roots[0]);
+  assert.deepEqual(panel.webview.options.localResourceRoots.map(uri => uri.toString()), [
+    "file:/extension/media/documentation-webview",
+    roots[0].toString(),
+  ]);
+  assert.doesNotMatch(JSON.stringify(panel.webview.options.localResourceRoots), /workspace\/documentation/u);
+});
+
 test("registers without a multiple-editor option and routes only Chatero opens by preference", async () => {
   const { LIVE_PREVIEW_VIEW_TYPE, openDocumentation, registerLivePreview } = loadProvider();
   const enabled = createVscode({ livePreview: true });

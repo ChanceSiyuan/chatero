@@ -142,6 +142,36 @@ async function attachReady(registry, document, panel, sessionId, cspNonce) {
   return attachment;
 }
 
+test("binds passive image requests to the attached document and disposes the panel resolver", async () => {
+  const target = uri("/workspace/documentation/page.qmd");
+  const { coordinator, document, registry } = createComposition(target);
+  const panel = createPanel("image");
+  const calls = [];
+  let disposed = 0;
+  const imageResolver = {
+    async resolve(pageUri, imageTarget) {
+      calls.push({ pageUri, imageTarget });
+      return Object.freeze({ kind: "placeholder", target: imageTarget, reason: "missing" });
+    },
+    dispose() { disposed += 1; },
+  };
+  registry.attach(document, panel, { cspNonce: NONCE_A, imageResolver });
+  await panel.receive({ type: "ready", sessionId: "image", pendingDescriptors: [] });
+  panel.messages.length = 0;
+  await panel.receive({ type: "imageRequest", sessionId: "image", requestId: "image_1", target: "assets/plot.png" });
+  assert.deepEqual(calls, [{ pageUri: target, imageTarget: "assets/plot.png" }]);
+  assert.deepEqual(panel.messages.at(-1), {
+    type: "imageResult",
+    sessionId: "image",
+    requestId: "image_1",
+    resolution: { kind: "placeholder", target: "assets/plot.png", reason: "missing" },
+  });
+  panel.dispose();
+  assert.equal(disposed, 1);
+  registry.dispose();
+  coordinator.dispose();
+});
+
 function createComposition(target, text = "qmd", version = 1, options = {}) {
   const { document, workspace } = createWorkspace(target, text, version, options);
   const commands = {

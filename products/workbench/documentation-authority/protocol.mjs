@@ -7,6 +7,8 @@ const MAX_PATHS = 50_000;
 const DIGEST_RE = /^[0-9a-f]{64}$/u;
 const REVISION_RE = /^sha256:([0-9a-f]{64})$/u;
 const OPEN_REVISION_RE = /^text-document:(0|[1-9][0-9]*):sha256:([0-9a-f]{64})$/u;
+const PASSIVE_IMAGE_MIME = Object.freeze(["image/png", "image/jpeg", "image/gif", "image/webp", "image/avif"]);
+const PASSIVE_IMAGE_REASONS = new Set(["missing", "unsafe", "too-large", "mime-mismatch", "unsupported-type", "unavailable"]);
 
 function compareUtf8Bytes(left, right) {
   return Buffer.compare(Buffer.from(left, "utf8"), Buffer.from(right, "utf8"));
@@ -156,6 +158,20 @@ function validateSnapshotPayload(value, workspace) {
   else if (value.kind === "documentation-state") {
     exactObject(value, ["kind", "overlays"], [], "Documentation state snapshot payload");
   }
+  else if (value.kind === "passive-image") {
+    exactObject(value, ["kind", "pageUri", "target", "maxBytes", "allowedMime", "overlays"], [], "passive image snapshot payload");
+    const page = validateWorkspaceUri(value.pageUri, "passive image page URI");
+    const root = validateWorkspaceUri(workspace);
+    const prefix = root.pathname === "/" ? "/" : `${root.pathname.replace(/\/+$/u, "")}/`;
+    if (page.protocol !== root.protocol || page.host !== root.host || !page.pathname.startsWith(prefix)) {
+      throw new TypeError("passive image page URI is outside the workspace");
+    }
+    boundedString(value.target, "passive image target", 4096);
+    safeInteger(value.maxBytes, "passive image maximum bytes", { minimum: 1, maximum: 20 * 1024 * 1024 });
+    if (JSON.stringify(value.allowedMime) !== JSON.stringify(PASSIVE_IMAGE_MIME) || !Array.isArray(value.overlays) || value.overlays.length !== 0) {
+      throw new TypeError("passive image policy differs from the fixed product policy");
+    }
+  }
   else {
     throw new TypeError("snapshot payload kind is unsupported");
   }
@@ -300,12 +316,34 @@ function validateDocumentationStateResult(value) {
   return value;
 }
 
+function validatePassiveImageResult(value) {
+  if (value.kind === "passive-image-placeholder") {
+    exactObject(value, ["kind", "epoch", "reason"], [], "passive image placeholder");
+    boundedString(value.epoch, "passive image epoch");
+    if (!PASSIVE_IMAGE_REASONS.has(value.reason)) throw new TypeError("passive image placeholder reason is unsupported");
+    return value;
+  }
+  exactObject(value, ["kind", "epoch", "mime", "size", "sha256", "revision", "bytes"], [], "passive image result");
+  if (value.kind !== "passive-image" || !PASSIVE_IMAGE_MIME.includes(value.mime) || !DIGEST_RE.test(value.sha256)) {
+    throw new TypeError("passive image result metadata is invalid");
+  }
+  boundedString(value.epoch, "passive image epoch");
+  safeInteger(value.size, "passive image size", { maximum: 20 * 1024 * 1024 });
+  const bytes = assertBase64url(value.bytes, "passive image bytes", { allowEmpty: true });
+  const digest = createHash("sha256").update(bytes).digest("hex");
+  if (bytes.byteLength !== value.size || digest !== value.sha256 || value.revision !== `sha256:${digest}`) {
+    throw new TypeError("passive image result bytes do not match metadata");
+  }
+  return value;
+}
+
 function validateAuthorityResponse(value) {
   exactObject(value, ["protocolVersion", "requestId", "result"], [], "authority response");
   if (value.protocolVersion !== 1) throw new TypeError("authority protocol version is unsupported");
   boundedString(value.requestId, "authority request id");
   if (value.result?.kind === "snapshot") validateSnapshotResult(value.result);
   else if (value.result?.kind === "documentation-state") validateDocumentationStateResult(value.result);
+  else if (value.result?.kind === "passive-image" || value.result?.kind === "passive-image-placeholder") validatePassiveImageResult(value.result);
   else validateTaggedPayload(value.result, "authority result");
   return value;
 }

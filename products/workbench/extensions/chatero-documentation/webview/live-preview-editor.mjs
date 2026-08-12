@@ -121,6 +121,24 @@ export async function createLivePreviewEditor({
   const editable = new Compartment();
   const status = createStatusElement(parent);
   const conflictPanels = new Set();
+  const imageRequests = new Map();
+  let nextImageSequence = 1;
+
+  function requestImage(target) {
+    const requestId = `image_${nextImageSequence++}`;
+    return new Promise(resolveRequest => {
+      imageRequests.set(requestId, resolveRequest);
+      Promise.resolve(postMessage(parseViewMessage({
+        type: "imageRequest",
+        sessionId: initialized.sessionId,
+        requestId,
+        target,
+      }))).catch(() => {
+        imageRequests.delete(requestId);
+        resolveRequest(Object.freeze({ kind: "placeholder", target, reason: "unavailable" }));
+      });
+    });
+  }
 
   function actualDescriptors() {
     return Array.from(pendingMetadata.values(), metadata => metadata.descriptor).filter(Boolean);
@@ -260,7 +278,7 @@ export async function createLivePreviewEditor({
       rejectOverLimitTransactions,
       forwardUserChanges,
       workbenchHistoryKeys,
-      ...createQmdPreviewExtensions({ postMessage }),
+      ...createQmdPreviewExtensions({ postMessage, requestImage }),
     ],
   });
   view = new EditorView({ parent, state });
@@ -347,6 +365,14 @@ export async function createLivePreviewEditor({
       conflictPanels.add(panel);
       return;
     }
+    if (message.type === "imageResult") {
+      const resolveRequest = imageRequests.get(message.requestId);
+      if (resolveRequest) {
+        imageRequests.delete(message.requestId);
+        resolveRequest(message.resolution);
+      }
+      return;
+    }
     if (message.type === "connectionState") {
       status.textContent = message.state === "connected" ? "" : `Documentation connection: ${message.state}`;
     }
@@ -359,6 +385,10 @@ export async function createLivePreviewEditor({
     status.remove();
     for (const panel of conflictPanels) panel.remove();
     conflictPanels.clear();
+    for (const resolveRequest of imageRequests.values()) {
+      resolveRequest(Object.freeze({ kind: "placeholder", target: "", reason: "unavailable" }));
+    }
+    imageRequests.clear();
   }
 
   return Object.freeze({
