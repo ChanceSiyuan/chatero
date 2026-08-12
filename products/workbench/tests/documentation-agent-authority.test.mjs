@@ -75,6 +75,8 @@ test("Working Copy Barrier is product-private and binds optimistic concurrency",
   assert.match(patch, /expectedDigest/);
   assert.match(patch, /intendedDigest/);
   assert.match(patch, /expectedDirectoryGeneration/);
+  assert.match(patch, /directoryGeneration\(this\.services\.fileSystem\.value, resource\.uri\)/);
+  assert.doesNotMatch(patch, /directory generation requires the authority-side verifier/);
   assert.match(patch, /finalizeResourceOutcomes/);
   assert.match(patch, /product-private/);
 });

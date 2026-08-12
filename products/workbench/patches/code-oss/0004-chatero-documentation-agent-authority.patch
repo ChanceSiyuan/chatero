@@ -1125,7 +1125,7 @@ new file mode 100644
 index 0000000000000000000000000000000000000000..b1921c624901eb2b1a2b498abddf186452c625b0
 --- /dev/null
 +++ b/src/vs/workbench/api/common/chateroDocumentationBarrier.ts
-@@ -0,0 +1,306 @@
+@@ -0,0 +1,326 @@
 +/*---------------------------------------------------------------------------------------------
 + *  Copyright (c) Chatero contributors. All rights reserved.
 + *  Licensed under the MIT License. See License.txt in the project root for license information.
@@ -1253,8 +1253,9 @@ index 0000000000000000000000000000000000000000..b1921c624901eb2b1a2b498abddf1864
 +			if (!stat) {
 +				return conflict('bound resource is missing', resource.uri);
 +			}
-+			if (resource.expectedDirectoryGeneration !== undefined) {
-+				return conflict('directory generation requires the authority-side verifier', resource.uri);
++			if (resource.expectedDirectoryGeneration !== undefined
++				&& await directoryGeneration(this.services.fileSystem.value, resource.uri) !== resource.expectedDirectoryGeneration) {
++				return conflict('directory generation changed', resource.uri);
 +			}
 +			if (resource.expectedDigest) {
 +				const bytes = await this.services.fileSystem.value.readFile(resource.uri);
@@ -1416,6 +1417,25 @@ index 0000000000000000000000000000000000000000..b1921c624901eb2b1a2b498abddf1864
 +async function sha256Bytes(value: Uint8Array): Promise<string> {
 +	const digest = new Uint8Array(await globalThis.crypto.subtle.digest('SHA-256', value));
 +	return `sha256:${[...digest].map(byte => byte.toString(16).padStart(2, '0')).join('')}`;
++}
++
++async function directoryGeneration(fileSystem: vscode.FileSystem, uri: URI): Promise<string> {
++	const entries = await fileSystem.readDirectory(uri);
++	entries.sort((left, right) => compareBytes(left[0], right[0]));
++	const records: [string, string][] = [];
++	for (const [name, type] of entries) {
++		if (type & files.FileType.SymbolicLink) {
++			throw new Error('Documentation barrier refuses symbolic-link directory members');
++		}
++		if (type & files.FileType.Directory) {
++			records.push([name, 'directory']);
++		} else if (type & files.FileType.File) {
++			records.push([name, 'file']);
++		} else {
++			throw new Error('Documentation barrier refuses unsafe directory members');
++		}
++	}
++	return sha256Text(JSON.stringify(records));
 +}
 +
 +function conflict(reason: string, uri?: URI): vscode.DocumentationWorkingCopyBarrierConflict {
