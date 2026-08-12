@@ -49,6 +49,10 @@
           "destination": "extensions/chatero-documentation/licenses/CodeMirror-MIT.txt"
         },
         {
+          "source": "products/workbench/extensions/chatero-documentation/live-preview-bridge.mjs",
+          "destination": "extensions/chatero-documentation/live-preview-bridge.mjs"
+        },
+        {
           "source": "products/workbench/extensions/chatero-documentation/live-preview-protocol.mjs",
           "destination": "extensions/chatero-documentation/live-preview-protocol.mjs"
         },
