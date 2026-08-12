@@ -1,0 +1,17 @@
+{
+  "name": "chatero-documentation-integration-driver",
+  "displayName": "Chatero Documentation Integration Driver",
+  "version": "0.1.0",
+  "publisher": "chatero",
+  "private": true,
+  "engines": {
+    "vscode": "^1.132.0"
+  },
+  "extensionKind": [
+    "ui"
+  ],
+  "main": "./extension.cjs",
+  "activationEvents": [
+    "onStartupFinished"
+  ]
+}

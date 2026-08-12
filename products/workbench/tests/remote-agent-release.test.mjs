@@ -27,6 +27,7 @@ import {
   selectArtifact,
   verifyRelease,
 } from "../remote-agent/release-contract.mjs";
+import { buildDocumentationWebview } from "../scripts/build-documentation-webview.mjs";
 
 const CODE_OSS_COMMIT = "df53daabb18cd157bdb08c7f01c34df936cf12f4";
 const BRIDGE_PATH = fileURLToPath(new URL(
@@ -51,6 +52,8 @@ const FIRST_PARTY_MANIFEST_PATH = fileURLToPath(new URL(
   import.meta.url,
 ));
 const temporaryDirectories = [];
+
+await buildDocumentationWebview({ root: REPOSITORY_ROOT });
 
 afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map(directory => rm(directory, {
@@ -538,11 +541,20 @@ test("release staging injects fixed helpers and signs the exact install tree", a
       new RegExp(`^chatero-agent-${artifact.tuple}/extensions/chatero-documentation/runtime/chatero-documentation-authority\\.mjs$`, "m")
     );
     for (const path of [
+      "live-preview-bridge.mjs",
+      "live-preview-html.mjs",
+      "live-preview-protocol.mjs",
+      "live-preview-provider.cjs",
+      "media/documentation-webview/live-preview.css",
+      "media/documentation-webview/live-preview.js",
       "migration-model.mjs",
       "migration-planner.mjs",
       "migration-rewrite.mjs",
+      "pending-edit-rebase.mjs",
       "runtime/yaml-2.9.0.mjs",
       "runtime/yaml-LICENSE",
+      "text-change-set.mjs",
+      "working-copy-coordinator.mjs",
     ]) {
       assert.match(
         listed.stdout,

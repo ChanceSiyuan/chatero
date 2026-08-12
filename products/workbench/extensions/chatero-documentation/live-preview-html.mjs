@@ -8,15 +8,32 @@ function attribute(value, label) {
 
 function trustedResource(value, cspSource, label) {
   const resource = String(value);
-  if (!resource.startsWith(cspSource) || /[\s"'<>]/u.test(resource)) {
+  let underCspSource = resource.startsWith(cspSource);
+  const wildcard = cspSource.match(/^https:\/\/\*\.([A-Za-z0-9.-]+)$/u);
+  if (wildcard) {
+    try {
+      const parsed = new URL(resource);
+      underCspSource = parsed.protocol === "https:"
+        && parsed.hostname.endsWith(`.${wildcard[1]}`)
+        && parsed.hostname.length > wildcard[1].length + 1;
+    }
+    catch {
+      underCspSource = false;
+    }
+  }
+  if (!underCspSource || /[\s"'<>]/u.test(resource)) {
     throw new TypeError(`${label} is outside the materialized webview resource authority`);
   }
   return attribute(resource, label);
 }
 
 function trustedCspSource(value) {
-  if (typeof value !== "string" || !/^[A-Za-z][A-Za-z0-9+.-]*:[^\s;'"<>]*$/u.test(value)
-    || /^(?:data|blob|file|javascript):/iu.test(value) || value.includes("*")) {
+  const fixedScheme = typeof value === "string"
+    && /^[A-Za-z][A-Za-z0-9+.-]*:[^\s;'"<>*]*$/u.test(value);
+  const vscodeCdnWildcard = typeof value === "string"
+    && /^https:\/\/\*\.[A-Za-z0-9.-]+$/u.test(value);
+  if ((!fixedScheme && !vscodeCdnWildcard)
+    || /^(?:data|blob|file|javascript):/iu.test(value)) {
     throw new TypeError("webview.cspSource is invalid");
   }
   return value;

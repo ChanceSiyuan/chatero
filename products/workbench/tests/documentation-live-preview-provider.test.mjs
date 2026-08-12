@@ -106,6 +106,20 @@ test("creates fresh 144-bit nonces and exact restrictive HTML", () => {
   assert.match(html, /<link rel="stylesheet" href="vscode-webview-resource:\/live-preview\.css">/);
   assert.doesNotMatch(html, /unsafe-inline|unsafe-eval|\bdata:|\bblob:|https?:|on(?:click|load)=|style="|<iframe|<object|<embed/i);
   assert.equal((html.match(new RegExp(first, "g")) ?? []).length, 3);
+
+  const currentDesktopCsp = createLivePreviewHtml({
+    webview: { cspSource: "https://*.vscode-cdn.net" },
+    scriptUri: "https://file+.vscode-resource.vscode-cdn.net/extension/live-preview.js",
+    styleUri: "https://file+.vscode-resource.vscode-cdn.net/extension/live-preview.css",
+    nonce: first,
+  });
+  assert.match(currentDesktopCsp, /style-src https:\/\/\*\.vscode-cdn\.net/);
+  assert.throws(() => createLivePreviewHtml({
+    webview: { cspSource: "https://*.vscode-cdn.net" },
+    scriptUri: "https://evil.example/live-preview.js",
+    styleUri: "https://file+.vscode-resource.vscode-cdn.net/extension/live-preview.css",
+    nonce: first,
+  }), /outside/);
 });
 
 test("provider confines resources and passes one unique nonce to each shared-bridge attachment", async () => {
