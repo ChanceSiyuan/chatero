@@ -465,7 +465,7 @@ test("settlement prepare is durable before text ack and never writes QMD bytes",
   assert.equal(JSON.parse(await readFile(journalPath, "utf8")).phase, "committed");
 });
 
-test("helper never follows a Documentation symlink and rejects case aliases", async t => {
+test("helper never follows a Documentation symlink", async t => {
   const root = await mkdtemp(join(tmpdir(), "chatero-documentation-unsafe-helper-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   await mkdir(join(root, "documentation"));
@@ -486,16 +486,30 @@ test("helper never follows a Documentation symlink and rejects case aliases", as
     target: outside,
   }]);
   assert.doesNotMatch(JSON.stringify(response), /must not be read/);
+});
 
+test("helper rejects Documentation case aliases", async t => {
+  const root = await mkdtemp(join(tmpdir(), "chatero-documentation-alias-helper-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(join(root, "documentation"));
   await writeFile(join(root, "documentation", "Index.qmd"), "upper\n");
-  await writeFile(join(root, "documentation", "index.qmd"), "lower\n");
+  const aliasText = "lower\n";
   await assert.rejects(invokeHelper({
     protocolVersion: 1,
     requestId: "alias-1",
     kind: "snapshot",
     workspace: pathToFileURL(root).href,
     epoch: "epoch-1",
-    snapshot: { kind: "documentation-state", overlays: [] },
+    snapshot: {
+      kind: "documentation-state",
+      overlays: [{
+        uri: pathToFileURL(join(root, "documentation", "index.qmd")).href,
+        version: 1,
+        dirty: true,
+        text: aliasText,
+        revision: `text-document:1:sha256:${createHash("sha256").update(aliasText).digest("hex")}`,
+      }],
+    },
   }), /case-fold alias/);
 });
 

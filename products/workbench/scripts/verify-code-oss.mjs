@@ -11,6 +11,9 @@ import { verifyWorkbenchPolicy } from "./lib/workbench-policy.mjs";
 
 const execFile = promisify(execFileCallback);
 const PROVENANCE_FILE = ".chatero-provenance.json";
+const BUILD_GENERATED_TRACKED_PATHS = Object.freeze([
+  "src/vs/platform/extensions/common/extensionsApiProposals.ts",
+]);
 const MAX_PROVENANCE_BYTES = 128 * 1024;
 const SCRIPT_DIRECTORY = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_WORKBENCH_ROOT = resolve(SCRIPT_DIRECTORY, "..");
@@ -149,13 +152,20 @@ export async function verifyCodeOss({
     cwd: canonicalDestination,
   });
   const managedPaths = parseStatusPaths(status)
-    .filter(path => path !== PROVENANCE_FILE);
+    .filter(path => path !== PROVENANCE_FILE && !BUILD_GENERATED_TRACKED_PATHS.includes(path));
   if (JSON.stringify(managedPaths) !== JSON.stringify(provenance.managedPaths)) {
     throw new Error(`managed checkout paths differ from provenance: ${managedPaths.join(", ")}`);
   }
 
   const worktreeDiff = await runGit({
-    args: ["diff", "--binary", "HEAD", "--"],
+    args: [
+      "diff",
+      "--binary",
+      "HEAD",
+      "--",
+      ".",
+      ...BUILD_GENERATED_TRACKED_PATHS.map(path => `:(exclude)${path}`),
+    ],
     cwd: canonicalDestination,
   });
   if (sha256(worktreeDiff) !== provenance.worktreeDiffSha256) {

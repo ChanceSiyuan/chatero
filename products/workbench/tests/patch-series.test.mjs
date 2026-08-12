@@ -193,13 +193,18 @@ test("rejects traversal, absolute paths, duplicate files, and unknown fields", a
   }
 });
 
-test("the canonical series pins Documentation authority after native Codex", async () => {
+test("the canonical series pins Documentation authority and its compatibility patch after native Codex", async () => {
   const series = JSON.parse(await readFile(join(canonicalPatchDirectory, "series.json"), "utf8"));
-  const entry = series.patches.at(-1);
+  const entry = series.patches.at(-2);
+  const compatibilityEntry = series.patches.at(-1);
 
   assert.equal(entry.file, "0004-chatero-documentation-agent-authority.patch");
-  assert.equal(series.patches.at(-2)?.file, "0003-chatero-native-codex.patch");
+  assert.equal(series.patches.at(-3)?.file, "0003-chatero-native-codex.patch");
+  assert.equal(compatibilityEntry.file, "0005-fix-chatero-codex-tests.patch");
   const bytes = await readFile(join(canonicalPatchDirectory, entry.file));
+  const compatibilityBytes = await readFile(join(canonicalPatchDirectory, compatibilityEntry.file));
   assert.equal(entry.sha256, sha256(bytes));
+  assert.equal(compatibilityEntry.sha256, sha256(compatibilityBytes));
   assert.match(bytes.toString("utf8"), /acquireDocumentationWorkingCopyBarrier/);
+  assert.match(compatibilityBytes.toString("utf8"), /chatero_workspace/);
 });

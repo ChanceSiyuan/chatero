@@ -1,0 +1,160 @@
+diff --git a/src/vs/platform/agentHost/test/node/codex/chateroCodexPermissions.test.ts b/src/vs/platform/agentHost/test/node/codex/chateroCodexPermissions.test.ts
+index 278dab4348c..78c511285dd 100644
+--- a/src/vs/platform/agentHost/test/node/codex/chateroCodexPermissions.test.ts
++++ b/src/vs/platform/agentHost/test/node/codex/chateroCodexPermissions.test.ts
+@@ -58,7 +58,7 @@ suite('ChateroCodexPermissions', () => {
+ 				layers: [{
+ 					name: { type: 'sessionFlags' },
+ 					version: 'session-v1',
+-					config: { default_permissions: 'chatero_read_only', permissions: context.productProfiles },
++					config: { default_permissions: 'chatero_read_only', permissions: context.productProfiles } as unknown as ConfigReadResponse['config'],
+ 					disabledReason: null,
+ 				}, {
+ 					name: { type: 'user', file: '/tmp/config.toml', profile: null },
+diff --git a/src/vs/platform/agentHost/test/node/codex/codexPrewarmEviction.test.ts b/src/vs/platform/agentHost/test/node/codex/codexPrewarmEviction.test.ts
+index dfa46205cbd..043a06df266 100644
+--- a/src/vs/platform/agentHost/test/node/codex/codexPrewarmEviction.test.ts
++++ b/src/vs/platform/agentHost/test/node/codex/codexPrewarmEviction.test.ts
+@@ -31,7 +31,6 @@ import { ICopilotApiService } from '../../../node/shared/copilotApiService.js';
+ import { createTestGitHubEndpointService } from '../testGitHubEndpointService.js';
+ import { AgentHostCodexMultiRootEnabledConfigKey } from '../../../common/agentHostSchema.js';
+ import { CodexSessionConfigKey } from '../../../common/codexSessionConfigKeys.js';
+-import type { SandboxPolicy } from '../../../node/codex/protocol/generated/v2/SandboxPolicy.js';
+ import { createSessionDataService, TestSessionDatabase } from '../../common/sessionTestHelpers.js';
+ 
+ interface ITestWireRequest {
+@@ -41,7 +40,7 @@ interface ITestWireRequest {
+ 		readonly cwd?: string;
+ 		readonly threadId?: string;
+ 		readonly runtimeWorkspaceRoots?: readonly string[];
+-		readonly sandboxPolicy?: SandboxPolicy;
++		readonly permissions?: string;
+ 	};
+ }
+ 
+@@ -238,7 +237,7 @@ suite('CodexAgent prewarm eviction', () => {
+ 		await assertPrewarmEvictedOnSend(disposables, false);
+ 	});
+ 
+-	test('multi-root start and turn separate workspace roots from additional writable directories', async () => {
++	test('multi-root start and turn use the Chatero workspace permission profile', async () => {
+ 		const additionalDirectory = URI.file('/manual-write').fsPath;
+ 		const sessionUri = AgentSession.uri('codex', 'multi-root');
+ 		const agent = await createAgent(disposables, {
+@@ -283,35 +282,29 @@ suite('CodexAgent prewarm eviction', () => {
+ 				start: { cwd: start.params.cwd, runtimeWorkspaceRoots: start.params.runtimeWorkspaceRoots },
+ 				turn: {
+ 					runtimeWorkspaceRoots: turn.params.runtimeWorkspaceRoots,
+-					sandboxPolicy: turn.params.sandboxPolicy,
++					permissions: turn.params.permissions,
+ 				},
+ 				fullAccess: {
+ 					runtimeWorkspaceRoots: fullAccess.runtimeWorkspaceRoots,
+-					sandboxPolicy: fullAccess.sandboxPolicy,
++					permissions: fullAccess.permissions,
+ 				},
+ 				readOnly: {
+ 					runtimeWorkspaceRoots: readOnly.runtimeWorkspaceRoots,
+-					sandboxPolicy: readOnly.sandboxPolicy,
++					permissions: readOnly.permissions,
+ 				},
+ 			}, {
+ 				start: { cwd: repoA.fsPath, runtimeWorkspaceRoots: [repoA.fsPath, repoB.fsPath] },
+ 				turn: {
+ 					runtimeWorkspaceRoots: [repoA.fsPath, repoB.fsPath],
+-					sandboxPolicy: {
+-						type: 'workspaceWrite',
+-						writableRoots: [repoA.fsPath, repoB.fsPath, additionalDirectory],
+-						networkAccess: false,
+-						excludeTmpdirEnvVar: false,
+-						excludeSlashTmp: false,
+-					},
++					permissions: 'chatero_workspace',
+ 				},
+ 				fullAccess: {
+ 					runtimeWorkspaceRoots: [repoA.fsPath, repoB.fsPath],
+-					sandboxPolicy: { type: 'dangerFullAccess' },
++					permissions: 'chatero_full_access',
+ 				},
+ 				readOnly: {
+ 					runtimeWorkspaceRoots: [repoA.fsPath, repoB.fsPath],
+-					sandboxPolicy: { type: 'readOnly', networkAccess: false },
++					permissions: 'chatero_read_only',
+ 				},
+ 			});
+ 		} finally {
+@@ -319,7 +312,7 @@ suite('CodexAgent prewarm eviction', () => {
+ 		}
+ 	});
+ 
+-	test('disabled multi-root preserves the existing additional-directory payload', async () => {
++	test('disabled multi-root uses one named workspace permission profile', async () => {
+ 		const additionalDirectory = URI.file('/manual-write').fsPath;
+ 		const sessionUri = AgentSession.uri('codex', 'single-root');
+ 		const agent = await createAgent(disposables, {
+@@ -353,18 +346,18 @@ suite('CodexAgent prewarm eviction', () => {
+ 			assert.deepStrictEqual({
+ 				startRuntimeWorkspaceRoots: start.params.runtimeWorkspaceRoots,
+ 				turnRuntimeWorkspaceRoots: turn.params.runtimeWorkspaceRoots,
+-				writableRoots: turn.params.sandboxPolicy?.type === 'workspaceWrite' ? turn.params.sandboxPolicy.writableRoots : undefined,
++				permissions: turn.params.permissions,
+ 			}, {
+ 				startRuntimeWorkspaceRoots: undefined,
+ 				turnRuntimeWorkspaceRoots: [repoA.fsPath, additionalDirectory],
+-				writableRoots: [repoA.fsPath, additionalDirectory],
++				permissions: 'chatero_workspace',
+ 			});
+ 		} finally {
+ 			peer.exit();
+ 		}
+ 	});
+ 
+-	test('enabled multi-root preserves single-folder protocol and sandbox behavior', async () => {
++	test('enabled multi-root preserves single-folder protocol and named permission behavior', async () => {
+ 		const additionalDirectory = `${URI.file('/manual-write').fsPath}${sep}`;
+ 		const sessionUri = AgentSession.uri('codex', 'enabled-single-root');
+ 		const agent = await createAgent(disposables, {
+@@ -408,15 +401,15 @@ suite('CodexAgent prewarm eviction', () => {
+ 				},
+ 				turn: {
+ 					runtimeWorkspaceRoots: turn.params.runtimeWorkspaceRoots,
+-					sandboxPolicy: turn.params.sandboxPolicy,
++					permissions: turn.params.permissions,
+ 				},
+ 				fullAccess: {
+ 					runtimeWorkspaceRoots: fullAccess.runtimeWorkspaceRoots,
+-					sandboxPolicy: fullAccess.sandboxPolicy,
++					permissions: fullAccess.permissions,
+ 				},
+ 				readOnly: {
+ 					runtimeWorkspaceRoots: readOnly.runtimeWorkspaceRoots,
+-					sandboxPolicy: readOnly.sandboxPolicy,
++					permissions: readOnly.permissions,
+ 				},
+ 			}, {
+ 				start: {
+@@ -425,21 +418,15 @@ suite('CodexAgent prewarm eviction', () => {
+ 				},
+ 				turn: {
+ 					runtimeWorkspaceRoots: [repo.fsPath, additionalDirectory],
+-					sandboxPolicy: {
+-						type: 'workspaceWrite',
+-						writableRoots: [repo.fsPath, additionalDirectory],
+-						networkAccess: false,
+-						excludeTmpdirEnvVar: false,
+-						excludeSlashTmp: false,
+-					},
++					permissions: 'chatero_workspace',
+ 				},
+ 				fullAccess: {
+ 					runtimeWorkspaceRoots: undefined,
+-					sandboxPolicy: { type: 'dangerFullAccess' },
++					permissions: 'chatero_full_access',
+ 				},
+ 				readOnly: {
+ 					runtimeWorkspaceRoots: undefined,
+-					sandboxPolicy: { type: 'readOnly', networkAccess: false },
++					permissions: 'chatero_read_only',
+ 				},
+ 			});
+ 		} finally {

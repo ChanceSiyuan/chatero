@@ -16,6 +16,10 @@
     {
       "file": "0004-chatero-documentation-agent-authority.patch",
       "sha256": "df3f10e94cc21994377d0aae9b47343441b2583b35ab3903727dfc64c647402f"
+    },
+    {
+      "file": "0005-fix-chatero-codex-tests.patch",
+      "sha256": "628d1d9d18f79507a4c01a5fd56d0c61bb12a43e45ff78e26f392eef37146ae9"
     }
   ]
 }

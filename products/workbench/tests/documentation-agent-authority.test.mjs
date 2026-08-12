@@ -14,20 +14,32 @@ const patchPath = join(
   "code-oss",
   "0004-chatero-documentation-agent-authority.patch",
 );
+const compatibilityPatchPath = join(
+  workbenchRoot,
+  "patches",
+  "code-oss",
+  "0005-fix-chatero-codex-tests.patch",
+);
 const checkout = join(repositoryRoot, "vendor", "code-oss");
 
 function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
-test("Documentation authority patch is digest-pinned last", async () => {
-  const [patch, seriesText] = await Promise.all([
+test("Documentation authority and its test compatibility patch are digest-pinned last", async () => {
+  const [patch, compatibilityPatch, seriesText] = await Promise.all([
     readFile(patchPath),
+    readFile(compatibilityPatchPath),
     readFile(join(workbenchRoot, "patches", "code-oss", "series.json"), "utf8"),
   ]);
-  const entry = JSON.parse(seriesText).patches.at(-1);
-  assert.equal(entry.file, "0004-chatero-documentation-agent-authority.patch");
-  assert.equal(entry.sha256, sha256(patch));
+  const entries = JSON.parse(seriesText).patches;
+  assert.deepEqual(entries.slice(-2), [{
+    file: "0004-chatero-documentation-agent-authority.patch",
+    sha256: sha256(patch),
+  }, {
+    file: "0005-fix-chatero-codex-tests.patch",
+    sha256: sha256(compatibilityPatch),
+  }]);
 });
 
 test("all Native Codex lifecycle requests select one fail-closed product profile", async () => {

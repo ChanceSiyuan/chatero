@@ -54,6 +54,7 @@ const INSTALL_INTEGRITY_HELPER_PATH = fileURLToPath(new URL(
   "../remote-agent/runtime/chatero-install-integrity.mjs",
   import.meta.url,
 ));
+const linuxTest = process.platform === "linux" ? test : test.skip;
 
 function runShell(script, args, { home, env = {}, input = null } = {}) {
   const child = spawn("sh", ["-c", script, "chatero", ...args], {
@@ -383,7 +384,7 @@ test("invalid public requests are rejected before session, Zotero, or SSH lookup
     hostFingerprint: FINGERPRINT,
   }), /request/i);
   assert.deepEqual(effects, []);
-  service.dispose();
+  await service.dispose();
 });
 
 test("local PDF source opens once with no-follow and sanitizes every local-path failure", async () => {
@@ -517,7 +518,7 @@ test("Remote Agent installation path is immutable per signed artifact digest", (
   assert.notEqual(first, upgraded);
 });
 
-test("real install probe rejects symlinked executables and hardlinked fixed helpers", async t => {
+linuxTest("real install probe rejects symlinked executables and hardlinked fixed helpers", async t => {
   const home = await mkdtemp(join(tmpdir(), "chatero-install-probe-"));
   t.after(() => rm(home, { recursive: true, force: true }));
   const commit = "a".repeat(40);
@@ -604,7 +605,7 @@ test("real install probe rejects symlinked executables and hardlinked fixed help
   assert.equal((await probe()).stdout.trim(), "missing");
 });
 
-test("real finalize installs into a disjoint digest root and leaves a legacy install untouched", async t => {
+linuxTest("real finalize installs into a disjoint digest root and leaves a legacy install untouched", async t => {
   const home = await mkdtemp(join(tmpdir(), "chatero-install-finalize-"));
   t.after(() => rm(home, { recursive: true, force: true }));
   const fixture = await makeInstallArchive(home);
@@ -635,7 +636,7 @@ test("real finalize installs into a disjoint digest root and leaves a legacy ins
   await assert.rejects(lstat(join(home, fixture.partRelativePath)), error => error?.code === "ENOENT");
 });
 
-test("real finalize replaces a tampered immutable cache only from the signed archive", async t => {
+linuxTest("real finalize replaces a tampered immutable cache only from the signed archive", async t => {
   const home = await mkdtemp(join(tmpdir(), "chatero-install-repair-"));
   t.after(() => rm(home, { recursive: true, force: true }));
   const fixture = await makeInstallArchive(home);
@@ -668,7 +669,7 @@ test("real finalize replaces a tampered immutable cache only from the signed arc
   ], { home })).stdout.trim(), "ready");
 });
 
-test("real finalize rejects an artifact-ancestor symlink without writing or chmodding outside HOME", async t => {
+linuxTest("real finalize rejects an artifact-ancestor symlink without writing or chmodding outside HOME", async t => {
   const home = await mkdtemp(join(tmpdir(), "chatero-install-ancestor-"));
   t.after(() => rm(home, { recursive: true, force: true }));
   const fixture = await makeInstallArchive(home);
@@ -690,7 +691,7 @@ test("real finalize rejects an artifact-ancestor symlink without writing or chmo
   assert.deepEqual(await readdir(outside), ["sentinel"]);
 });
 
-test("real finalize never replaces a destination inserted at its publish boundary", async t => {
+linuxTest("real finalize never replaces a destination inserted at its publish boundary", async t => {
   const home = await mkdtemp(join(tmpdir(), "chatero-install-noclobber-"));
   t.after(() => rm(home, { recursive: true, force: true }));
   const fixture = await makeInstallArchive(home);
@@ -721,7 +722,7 @@ test("real finalize never replaces a destination inserted at its publish boundar
   assert.equal(parentEntries.some(name => name.startsWith(".installing.")), false);
 });
 
-test("the next finalize recovers an installing directory left by a killed owner", async t => {
+linuxTest("the next finalize recovers an installing directory left by a killed owner", async t => {
   const home = await mkdtemp(join(tmpdir(), "chatero-install-recover-"));
   t.after(() => rm(home, { recursive: true, force: true }));
   const fixture = await makeInstallArchive(home);
@@ -760,7 +761,7 @@ test("the next finalize recovers an installing directory left by a killed owner"
   ], { home })).stdout.trim(), "ready");
 });
 
-test("finalize rejects a same-second archive mutation across extraction", async t => {
+linuxTest("finalize rejects a same-second archive mutation across extraction", async t => {
   const home = await mkdtemp(join(tmpdir(), "chatero-install-live-archive-"));
   t.after(() => rm(home, { recursive: true, force: true }));
   const fixture = await makeInstallArchive(home);
@@ -783,7 +784,7 @@ test("finalize rejects a same-second archive mutation across extraction", async 
   await assert.rejects(lstat(join(home, fixture.installRelativePath)), error => error?.code === "ENOENT");
 });
 
-test("remote upload transaction scripts reject hardlinks and symlinks without touching the source", async t => {
+linuxTest("remote upload transaction scripts reject hardlinks and symlinks without touching the source", async t => {
   const home = await mkdtemp(join(tmpdir(), "chatero-install-part-"));
   t.after(() => rm(home, { recursive: true, force: true }));
   const commit = "a".repeat(40);
@@ -841,7 +842,7 @@ test("remote upload transaction scripts reject hardlinks and symlinks without to
   assert.equal(await readFile(`${livePart}.old`, "utf8"), "signed bytes-APPEND");
 });
 
-test("remote finalize refuses an archive-provided release marker symlink", async t => {
+linuxTest("remote finalize refuses an archive-provided release marker symlink", async t => {
   const home = await mkdtemp(join(tmpdir(), "chatero-install-marker-"));
   t.after(() => rm(home, { recursive: true, force: true }));
   const sentinel = join(home, "marker-sentinel");
@@ -862,7 +863,7 @@ test("remote finalize refuses an archive-provided release marker symlink", async
   await assert.rejects(lstat(join(home, fixture.installRelativePath)), error => error?.code === "ENOENT");
 });
 
-test("remote finalize refuses to publish an archive under a different architecture leaf", async t => {
+linuxTest("remote finalize refuses to publish an archive under a different architecture leaf", async t => {
   const home = await mkdtemp(join(tmpdir(), "chatero-install-tuple-"));
   t.after(() => rm(home, { recursive: true, force: true }));
   const fixture = await makeInstallArchive(home);
@@ -878,7 +879,7 @@ test("remote finalize refuses to publish an archive under a different architectu
   await assert.rejects(lstat(join(home, mismatched)), error => error?.code === "ENOENT");
 });
 
-test("createRuntime kills an unready server and removes transaction secrets on failure or cancellation", async t => {
+linuxTest("createRuntime kills an unready server and removes transaction secrets on failure or cancellation", async t => {
   const home = await mkdtemp(join(tmpdir(), "chatero-runtime-cleanup-"));
   t.after(() => rm(home, { recursive: true, force: true }));
   const fixture = await makeInstallArchive(home);
@@ -4040,7 +4041,7 @@ async function temporaryHome(prefix) {
   return mkdtemp(join(tmpdir(), prefix));
 }
 
-test("dispose receives a real helper abort acknowledgement and leaves no partial transaction", async t => {
+linuxTest("dispose receives a real helper abort acknowledgement and leaves no partial transaction", async t => {
   const home = await temporaryHome("chatero-evidence-dispose-abort-");
   const children = [];
   t.after(async () => {
@@ -4081,7 +4082,7 @@ test("dispose receives a real helper abort acknowledgement and leaves no partial
     && /\.(?:part|state\.json)$/u.test(entry)), false);
 });
 
-test("dispose waits through a delayed real finalize then revokes the published instance", async t => {
+linuxTest("dispose waits through a delayed real finalize then revokes the published instance", async t => {
   const home = await temporaryHome("chatero-evidence-dispose-finalize-");
   const hook = join(home, "pause-finalize.cjs");
   const ready = join(home, "finalize-ready");
@@ -4175,7 +4176,7 @@ async function completeHelperStage(home, bytes, { transferId = "1".repeat(32) } 
   return { complete, digest, resume };
 }
 
-test("fixed helper stages an owner-only digest-verified PDF outside the workspace for exactly 24 hours", async t => {
+linuxTest("fixed helper stages an owner-only digest-verified PDF outside the workspace for exactly 24 hours", async t => {
   const home = await temporaryHome("chatero-evidence-helper-");
   t.after(() => rm(home, { recursive: true, force: true }));
   const bytes = Buffer.from("%PDF-1.7\ncomplete fixture\n");
@@ -4203,7 +4204,7 @@ test("fixed helper stages an owner-only digest-verified PDF outside the workspac
   assert.equal(finalMetadata.nlink, 1);
 });
 
-test("each explicit stage keeps an independent 24-hour generation and revoke removes them all", async t => {
+linuxTest("each explicit stage keeps an independent 24-hour generation and revoke removes them all", async t => {
   const home = await temporaryHome("chatero-evidence-generations-");
   t.after(() => rm(home, { recursive: true, force: true }));
   const bytes = Buffer.from("%PDF repeated explicit authorization");
@@ -4225,7 +4226,7 @@ test("each explicit stage keeps an independent 24-hour generation and revoke rem
   await assert.rejects(readFile(second.complete.remotePath), /ENOENT/);
 });
 
-test("two concurrently confirmed grants for one digest both complete in distinct cache instances", async t => {
+linuxTest("two concurrently confirmed grants for one digest both complete in distinct cache instances", async t => {
   const home = await temporaryHome("chatero-evidence-concurrent-instances-");
   t.after(() => rm(home, { recursive: true, force: true }));
   const bytes = Buffer.from("%PDF concurrent explicit grants");
@@ -4255,7 +4256,7 @@ test("two concurrently confirmed grants for one digest both complete in distinct
   assert.deepEqual(await readFile(completed[1].remotePath), bytes);
 });
 
-test("helper resumes only a matching partial prefix and explicit abort removes the transaction", async t => {
+linuxTest("helper resumes only a matching partial prefix and explicit abort removes the transaction", async t => {
   const home = await temporaryHome("chatero-evidence-resume-");
   t.after(() => rm(home, { recursive: true, force: true }));
   const bytes = Buffer.from("%PDF resumable fixture bytes");
@@ -4286,7 +4287,7 @@ test("helper resumes only a matching partial prefix and explicit abort removes t
   assert.equal(entries.some(value => value.includes(transferId)), false);
 });
 
-test("same-transfer lease blocks a second writer and recovers a killed owner before resume", async t => {
+linuxTest("same-transfer lease blocks a second writer and recovers a killed owner before resume", async t => {
   const home = await temporaryHome("chatero-evidence-transfer-lease-");
   const helpers = [];
   t.after(async () => {
@@ -4326,7 +4327,7 @@ test("same-transfer lease blocks a second writer and recovers a killed owner bef
   assert.deepEqual(await readFile(complete.remotePath), bytes);
 });
 
-test("revoke is idempotent, target-side generation wins a concurrent finalize, and removes the final", async t => {
+linuxTest("revoke is idempotent, target-side generation wins a concurrent finalize, and removes the final", async t => {
   const home = await temporaryHome("chatero-evidence-revoke-");
   t.after(() => rm(home, { recursive: true, force: true }));
   const bytes = Buffer.from("%PDF revoke race");
@@ -4352,7 +4353,7 @@ test("revoke is idempotent, target-side generation wins a concurrent finalize, a
   assert.equal(entries.some(entry => entry.startsWith(`${digest}.`) && entry.endsWith(".pdf")), false);
 });
 
-test("revoke cannot return while an older generation is paused immediately before publish", async t => {
+linuxTest("revoke cannot return while an older generation is paused immediately before publish", async t => {
   const home = await temporaryHome("chatero-evidence-publish-barrier-");
   const hook = join(home, "pause-link.cjs");
   const ready = join(home, "publish-ready");
@@ -4427,7 +4428,7 @@ test("revoke cannot return while an older generation is paused immediately befor
   assert.equal(entries.some(entry => entry.startsWith(`${digest}.`) && /\.(?:pdf|meta\.json)$/u.test(entry)), false);
 });
 
-test("a killed digest-lock owner and a killed recovery claimant are both recoverable", async t => {
+linuxTest("a killed digest-lock owner and a killed recovery claimant are both recoverable", async t => {
   const home = await temporaryHome("chatero-evidence-lock-recovery-");
   const helpers = [];
   const releases = [join(home, "owner-release"), join(home, "claim-release")];
@@ -4504,7 +4505,7 @@ test("a killed digest-lock owner and a killed recovery claimant are both recover
   assert.equal((await recovered.closed)[0], 0);
 });
 
-test("cleanup removes malformed metadata but does not rotate for an old-generation stale transaction", async t => {
+linuxTest("cleanup removes malformed metadata but does not rotate for an old-generation stale transaction", async t => {
   const home = await temporaryHome("chatero-evidence-cleanup-");
   t.after(() => rm(home, { recursive: true, force: true }));
   const bytes = Buffer.from("%PDF cleanup generations");
@@ -4543,7 +4544,7 @@ test("cleanup removes malformed metadata but does not rotate for an old-generati
   await assert.rejects(readFile(staged.complete.remotePath), /ENOENT/);
 });
 
-test("invalid and out-of-range metadata dates are cleaned without blocking later evidence", async t => {
+linuxTest("invalid and out-of-range metadata dates are cleaned without blocking later evidence", async t => {
   const home = await temporaryHome("chatero-evidence-invalid-date-");
   t.after(() => rm(home, { recursive: true, force: true }));
   for (const [index, createdAt] of ["not-a-date", "+999999-01-01T00:00:00.000Z"].entries()) {
@@ -4561,7 +4562,7 @@ test("invalid and out-of-range metadata dates are cleaned without blocking later
   }
 });
 
-test("malformed transaction state cannot block target-bound revoke", async t => {
+linuxTest("malformed transaction state cannot block target-bound revoke", async t => {
   const home = await temporaryHome("chatero-evidence-malformed-state-");
   t.after(() => rm(home, { recursive: true, force: true }));
   const bytes = Buffer.from("%PDF revoke despite malformed state");
@@ -4578,7 +4579,7 @@ test("malformed transaction state cannot block target-bound revoke", async t => 
   await assert.rejects(readFile(staged.complete.remotePath), /ENOENT/);
 });
 
-test("helper rejects duplicate, unknown, and oversized JSON without retaining a stage", async t => {
+linuxTest("helper rejects duplicate, unknown, and oversized JSON without retaining a stage", async t => {
   const home = await temporaryHome("chatero-evidence-strict-json-");
   t.after(() => rm(home, { recursive: true, force: true }));
   for (const [line, code] of [
@@ -4593,7 +4594,7 @@ test("helper rejects duplicate, unknown, and oversized JSON without retaining a 
   }
 });
 
-test("helper rejects symlink and hardlink cache attacks", async t => {
+linuxTest("helper rejects symlink and hardlink cache attacks", async t => {
   const home = await temporaryHome("chatero-evidence-unsafe-");
   t.after(() => rm(home, { recursive: true, force: true }));
   await mkdir(join(home, ".cache"));
