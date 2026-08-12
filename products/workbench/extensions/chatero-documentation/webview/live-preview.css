@@ -43,3 +43,24 @@ body {
   overflow: auto;
   white-space: pre-wrap;
 }
+
+.chatero-qmd-heading,
+.chatero-qmd-prose,
+.chatero-qmd-list {
+  box-sizing: border-box;
+  display: block;
+  min-height: 1.4em;
+  padding: 0.1rem 0;
+  white-space: pre-wrap;
+}
+
+.chatero-qmd-heading {
+  font-size: 1.45em;
+  font-weight: 650;
+  line-height: 1.25;
+}
+
+.chatero-qmd-link {
+  color: var(--vscode-textLink-foreground);
+  text-decoration: underline;
+}

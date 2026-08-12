@@ -11,6 +11,8 @@ import {
 } from "../live-preview-protocol.mjs";
 import { formatPendingConflict, rebasePendingOperations } from "../pending-edit-rebase.mjs";
 import { applyOffsetChanges, withChangeContext } from "../text-change-set.mjs";
+import { createLineEndingMap } from "./line-ending-map.mjs";
+import { createQmdPreviewExtensions } from "./qmd-preview.mjs";
 
 export const hostSync = Annotation.define();
 
@@ -29,13 +31,16 @@ function descriptorShape(changes) {
   })));
 }
 
-function transactionChanges(startState, changeSet) {
-  const source = startState.doc.toString();
+function transactionChanges(sourceMap, changeSet) {
   const changes = [];
   changeSet.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
-    changes.push({ from: fromA, to: toA, insert: inserted.toString() });
+    changes.push({
+      from: sourceMap.toSourceOffset(fromA),
+      to: sourceMap.toSourceOffset(toA),
+      insert: sourceMap.encodeEditorText(inserted.toString()),
+    });
   });
-  return withChangeContext(source, changes);
+  return withChangeContext(sourceMap.source, changes);
 }
 
 function sameDescriptor(left, right) {
@@ -112,6 +117,7 @@ export async function createLivePreviewEditor({
   let disposed = false;
   let outboundTail = Promise.resolve();
   let view;
+  let sourceMap = createLineEndingMap(displaySource);
   const editable = new Compartment();
   const status = createStatusElement(parent);
   const conflictPanels = new Set();
@@ -206,7 +212,7 @@ export async function createLivePreviewEditor({
   const rejectOverLimitTransactions = EditorState.transactionFilter.of(transaction => {
     if (!transaction.docChanged || transaction.annotation(hostSync)) return transaction;
     try {
-      canAccept(transactionChanges(transaction.startState, transaction.changes));
+      canAccept(transactionChanges(sourceMap, transaction.changes));
       return transaction;
     }
     catch {
@@ -217,15 +223,18 @@ export async function createLivePreviewEditor({
 
   const forwardUserChanges = EditorView.updateListener.of(update => {
     if (update.docChanged && !update.transactions.some(transaction => transaction.annotation(hostSync))) {
-      queueUserOperation(transactionChanges(update.startState, update.changes));
+      const changes = transactionChanges(sourceMap, update.changes);
+      displaySource = applyOffsetChanges(displaySource, changes);
+      sourceMap = createLineEndingMap(displaySource);
+      queueUserOperation(changes);
     }
     if (update.selectionSet) {
       const selection = update.state.selection.main;
       void postMessage(parseViewMessage({
         type: "focus",
         sessionId: initialized.sessionId,
-        anchor: selection.anchor,
-        head: selection.head,
+        anchor: sourceMap.toSourceOffset(selection.anchor),
+        head: sourceMap.toSourceOffset(selection.head),
       }));
     }
   });
@@ -242,14 +251,16 @@ export async function createLivePreviewEditor({
   ]));
 
   const state = EditorState.create({
-    doc: displaySource,
+    doc: sourceMap.editorText,
     extensions: [
+      EditorState.lineSeparator.of(sourceMap.lineBreak),
       editable.of(EditorView.editable.of(true)),
       EditorView.lineWrapping,
       EditorView.cspNonce.of(cspNonce),
       rejectOverLimitTransactions,
       forwardUserChanges,
       workbenchHistoryKeys,
+      ...createQmdPreviewExtensions({ postMessage }),
     ],
   });
   view = new EditorView({ parent, state });
@@ -260,11 +271,18 @@ export async function createLivePreviewEditor({
     if (message.sessionId !== initialized.sessionId) throw new Error("host message belongs to a foreign Live Preview session");
     if (message.type === "initialize") throw new Error("Live Preview cannot be initialized twice");
     if (message.type === "documentChanged") {
+      const editorChanges = message.changes.map(change => ({
+        from: sourceMap.toEditorOffset(change.from),
+        to: sourceMap.toEditorOffset(change.to),
+        insert: change.insert,
+      }));
       authoritativeSource = applyOffsetChanges(authoritativeSource, message.changes);
+      displaySource = applyOffsetChanges(displaySource, message.changes);
       authoritativeVersion = message.afterVersion;
       authoritativeDigest = message.digest;
+      sourceMap = createLineEndingMap(displaySource);
       view.dispatch({
-        changes: message.changes.map(change => ({ from: change.from, to: change.to, insert: change.insert })),
+        changes: editorChanges,
         annotations: hostSync.of(true),
       });
       return;
@@ -313,6 +331,8 @@ export async function createLivePreviewEditor({
         changes: { from: 0, to: view.state.doc.length, insert: display },
         annotations: hostSync.of(true),
       });
+      displaySource = display;
+      sourceMap = createLineEndingMap(displaySource);
       persist();
       return;
     }
@@ -343,7 +363,7 @@ export async function createLivePreviewEditor({
 
   return Object.freeze({
     dispose,
-    get source() { return view.state.doc.toString(); },
+    get source() { return displaySource; },
     get authoritative() {
       return Object.freeze({ source: authoritativeSource, version: authoritativeVersion, digest: authoritativeDigest });
     },

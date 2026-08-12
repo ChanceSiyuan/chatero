@@ -117,6 +117,30 @@
           "destination": "extensions/chatero-documentation/text-change-set.mjs"
         },
         {
+          "source": "products/workbench/extensions/chatero-documentation/webview/line-ending-map.mjs",
+          "destination": "extensions/chatero-documentation/webview/line-ending-map.mjs"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-documentation/webview/prose-decorations.mjs",
+          "destination": "extensions/chatero-documentation/webview/prose-decorations.mjs"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-documentation/webview/qmd-language.mjs",
+          "destination": "extensions/chatero-documentation/webview/qmd-language.mjs"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-documentation/webview/qmd-preview.mjs",
+          "destination": "extensions/chatero-documentation/webview/qmd-preview.mjs"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-documentation/webview/qmd-source-model.mjs",
+          "destination": "extensions/chatero-documentation/webview/qmd-source-model.mjs"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-documentation/webview/source-reveal.mjs",
+          "destination": "extensions/chatero-documentation/webview/source-reveal.mjs"
+        },
+        {
           "source": "products/workbench/extensions/chatero-documentation/working-copy-coordinator.mjs",
           "destination": "extensions/chatero-documentation/working-copy-coordinator.mjs"
         }
