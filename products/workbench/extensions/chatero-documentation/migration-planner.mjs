@@ -51,6 +51,19 @@ export function canonicalMigrationPlanDigest(planRecord) {
   return `sha256:${createHash("sha256").update(canonicalJson(planRecord), "utf8").digest("hex")}`;
 }
 
+export function migrationApprovalDigest({ operationId, planDigest, idempotencyKey } = {}) {
+  if (!/^migration-[0-9a-f]{32}$/u.test(operationId ?? "") || !DIGEST.test(planDigest ?? "")
+    || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(idempotencyKey ?? "")) {
+    throw new TypeError("migration approval identity is invalid");
+  }
+  return `sha256:${createHash("sha256").update(canonicalJson({
+    kind: "migration-approval-v2",
+    operationId,
+    planDigest,
+    idempotencyKey,
+  }), "utf8").digest("hex")}`;
+}
+
 function exactKeys(value, required, optional, label) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new TypeError(`${label} must be an object`);
@@ -563,7 +576,7 @@ export function createMigrationPlanner({
     });
   };
 
-  const consumePlanToken = (token, scope) => {
+  const resolvePlanToken = (token, scope) => {
     if (typeof token !== "string" || !PLAN_TOKEN.test(token)) {
       return Object.freeze({ kind: "invalid-plan-token" });
     }
@@ -579,6 +592,28 @@ export function createMigrationPlanner({
       tokens.delete(token);
       return Object.freeze({ kind: "invalid-plan-token" });
     }
+    return Object.freeze({ binding, current });
+  };
+
+  const inspectPlanToken = (token, scope) => {
+    const resolved = resolvePlanToken(token, scope);
+    if (resolved.kind === "invalid-plan-token") return resolved;
+    return Object.freeze({
+      kind: "planned-token",
+      planDigest: resolved.binding.planDigest,
+      workspaceEpoch: resolved.binding.workspaceEpoch,
+      plan: immutableClone({
+        ...resolved.binding.planRecord,
+        digest: resolved.binding.planDigest,
+        workspaceEpoch: resolved.binding.workspaceEpoch,
+      }),
+    });
+  };
+
+  const consumePlanToken = (token, scope) => {
+    const resolved = resolvePlanToken(token, scope);
+    if (resolved.kind === "invalid-plan-token") return resolved;
+    const binding = resolved.binding;
     tokens.delete(token);
     return Object.freeze({
       kind: "consumed-plan",
@@ -588,7 +623,7 @@ export function createMigrationPlanner({
     });
   };
 
-  return Object.freeze({ planMigration, consumePlanToken });
+  return Object.freeze({ planMigration, inspectPlanToken, consumePlanToken });
 }
 
 export class MigrationReportContentProvider {

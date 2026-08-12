@@ -227,6 +227,19 @@ function workspaceIdentity(folder, epoch) {
   return Object.freeze({ uri: value, authority, epoch });
 }
 
+function workspaceRelativeUri(root, relativePath) {
+  if (typeof relativePath !== "string" || relativePath.length === 0 || relativePath.startsWith("/")
+    || relativePath.includes("\\") || relativePath.split("/").some(value => !value || value === "." || value === "..")) {
+    throw new TypeError("Documentation migration path is unsafe");
+  }
+  const prefix = root.path === "/" ? "/" : `${root.path.replace(/\/+$/u, "")}/`;
+  return root.with({
+    path: `${prefix}${relativePath.split("/").map(encodeURIComponent).join("/")}`,
+    query: "",
+    fragment: "",
+  });
+}
+
 export async function createProductionDocumentationServices({
   vscode,
   context,
@@ -273,6 +286,7 @@ export async function createProductionDocumentationServices({
     isWorkspaceTrusted: () => vscode.workspace.isTrusted === true,
   });
   let settlement;
+  let migration;
   if (typeof vscode.workspace.acquireDocumentationWorkingCopyBarrier === "function"
     && typeof vscode.workspace.openTextDocument === "function"
     && typeof vscode.workspace.applyEdit === "function"
@@ -295,6 +309,10 @@ export async function createProductionDocumentationServices({
       openDocuments: paths => Promise.all(paths.map(path =>
         vscode.workspace.openTextDocument(documentationWorkspaceUri(folder.uri, path)))),
     });
+    migration = Object.freeze({
+      barrier: settlement.barrier,
+      uriFor: path => workspaceRelativeUri(folder.uri, path),
+    });
   }
   const recoveryStatus = settlement
     ? await recoverSettlement({
@@ -310,6 +328,7 @@ export async function createProductionDocumentationServices({
     capabilities,
     workspaceView,
     migrationPlanner,
+    ...(migration ? { migration } : {}),
     changeSetStore,
     reviewRegistry,
     ...(settlement ? { settlement } : {}),

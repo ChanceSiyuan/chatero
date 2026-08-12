@@ -7,6 +7,10 @@ import { executeSettlement } from "./settlement-executor.mjs";
 import { planSettlement } from "./settlement-planner.mjs";
 import { settlementApprovalDigest } from "./settlement-protocol.mjs";
 import {
+  executeMigration,
+  migrationApprovalRequest,
+} from "./migration-executor.mjs";
+import {
   canonicalOperationDigest,
   stateOperationId,
 } from "./documentation-operations.mjs";
@@ -494,6 +498,7 @@ export function createDocumentationTransactions({
   capabilities,
   workspaceView,
   migrationPlanner,
+  migration,
   changeSetStore,
   reviewRegistry,
   settlement,
@@ -509,6 +514,11 @@ export function createDocumentationTransactions({
   }
   if (migrationPlanner !== undefined && typeof migrationPlanner?.planMigration !== "function") {
     throw new TypeError("Documentation migration planner is invalid");
+  }
+  if (migration !== undefined && (!migrationPlanner || !scope
+    || typeof migration?.barrier?.acquire !== "function" || typeof migration?.uriFor !== "function"
+    || typeof capabilities?.consumeMigrationApproval !== "function")) {
+    throw new TypeError("Documentation migration execution dependencies are invalid");
   }
   if (changeSetStore !== undefined && (typeof changeSetStore?.stageGeneration !== "function"
     || typeof changeSetStore?.loadCurrentRef !== "function") || typeof clock?.now !== "function") {
@@ -535,6 +545,23 @@ export function createDocumentationTransactions({
     }),
     ...(migrationPlanner ? {
       planMigration: scope => migrationPlanner.planMigration(scope),
+      ...(migration ? {
+        migrationApprovalRequest: input => migrationApprovalRequest({
+          ...input,
+          planner: migrationPlanner,
+          scope,
+        }),
+        migrate: (approval, input) => executeMigration({
+          ...input,
+          approval,
+          planner: migrationPlanner,
+          capabilities,
+          scope,
+          adapter,
+          barrier: migration.barrier,
+          uriFor: migration.uriFor,
+        }),
+      } : {}),
     } : {}),
     ...(changeSetStore ? {
       stage: (grant, input) => stageAgentGeneration({

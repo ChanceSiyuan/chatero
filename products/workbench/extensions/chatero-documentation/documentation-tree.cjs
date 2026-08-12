@@ -150,6 +150,7 @@ async function registerDocumentation(vscode, context, injectedServices) {
     diagnostics,
     vscode.window.registerTreeDataProvider("chatero.documentation.pages", provider),
   ];
+  let pendingMigration = null;
 
   const requireTrusted = async () => {
     if (vscode.workspace.isTrusted === true) return true;
@@ -281,6 +282,53 @@ async function registerDocumentation(vscode, context, injectedServices) {
     if (!services.migrationReports) throw new TypeError("Documentation migration report provider is unavailable");
     const uri = services.migrationReports.publish(result.plan, result.report, vscode.Uri);
     await vscode.commands.executeCommand("vscode.openWith", uri, "default");
+    pendingMigration = Object.freeze({
+      planToken: result.planToken,
+      operationId: result.plan.operationId,
+      planDigest: result.plan.digest,
+    });
+    return result;
+  }));
+
+  registrations.push(vscode.commands.registerCommand("chatero.documentation.migrate", async () => {
+    if (!await requireTrusted()) return Object.freeze({ kind: "workspace-untrusted" });
+    if (!pendingMigration) {
+      await vscode.window.showErrorMessage?.("Plan and review the Documentation migration first.");
+      return Object.freeze({ kind: "no-reviewed-plan" });
+    }
+    if (typeof services.transactions.migrationApprovalRequest !== "function"
+      || typeof services.transactions.migrate !== "function") {
+      await vscode.window.showErrorMessage?.("Documentation migration execution is unavailable.");
+      return Object.freeze({ kind: "feature-unavailable" });
+    }
+    const choice = await vscode.window.showWarningMessage(
+      "Migrate the reviewed Drafts and Knowledge plan into Documentation? Legacy source directories are preserved.",
+      { modal: true },
+      "Migrate",
+      "Cancel",
+    );
+    if (choice !== "Migrate") return Object.freeze({ kind: "cancelled" });
+    const idempotencyKey = `migration-${(services.randomUUID ?? nodeRandomUUID)()}`;
+    const request = services.transactions.migrationApprovalRequest({
+      planToken: pendingMigration.planToken,
+      idempotencyKey,
+    });
+    if (request?.kind !== "migration-approval-request") {
+      pendingMigration = null;
+      return request;
+    }
+    const approval = services.capabilities.issueMigrationApproval(services.scope, {
+      digest: request.digest,
+      expiresInMs: 30_000,
+    });
+    const result = await services.transactions.migrate(approval, {
+      planToken: pendingMigration.planToken,
+      idempotencyKey,
+    });
+    if (result?.kind === "migration-committed" || result?.kind === "stale-plan") {
+      pendingMigration = null;
+    }
+    if (result?.kind === "migration-committed") provider.refresh();
     return result;
   }));
 

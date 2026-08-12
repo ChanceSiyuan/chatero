@@ -69,6 +69,7 @@ test("Documentation remains a disabled workspace extension with an optional Live
     "chatero.documentation.markWorking",
     "chatero.documentation.markReviewed",
     "chatero.documentation.planMigration",
+    "chatero.documentation.migrate",
     "chatero.documentation.reviewChangeSet",
     "chatero.documentation.refresh",
   ]);
@@ -151,6 +152,7 @@ test("first-party materialization declares the complete Documentation authority"
     "extensions/chatero-documentation/media/documentation-webview/fonts/KaTeX_Size4-Regular.woff2",
     "extensions/chatero-documentation/media/documentation-webview/fonts/KaTeX_Typewriter-Regular.woff2",
     "extensions/chatero-documentation/migration-model.mjs",
+    "extensions/chatero-documentation/migration-executor.mjs",
     "extensions/chatero-documentation/migration-planner.mjs",
     "extensions/chatero-documentation/migration-rewrite.mjs",
     "extensions/chatero-documentation/package.json",
@@ -526,8 +528,8 @@ test("Mark Reviewed waits for explicit Save and New Page uses one WorkspaceEdit"
   assert.equal(harness.commands.executed.at(-1)[2], "chatero.documentation.livePreview");
 });
 
-test("migration planning opens only a read-only virtual report", async () => {
-  const harness = createDocumentationHarness({ trusted: true });
+test("migration planning opens a read-only report before a separate explicit migration", async () => {
+  const harness = createDocumentationHarness({ trusted: true, warning: "Migrate" });
   const base = createDocumentationServices();
   const reportUri = new ExtensionTestUri({
     scheme: "chatero-documentation-report",
@@ -547,9 +549,27 @@ test("migration planning opens only a read-only virtual report", async () => {
       async planMigration() {
         return {
           kind: "planned",
-          plan: { schemaVersion: 1, digest: `sha256:${"a".repeat(64)}` },
+          plan: {
+            schemaVersion: 2,
+            operationId: `migration-${"1".repeat(32)}`,
+            digest: `sha256:${"a".repeat(64)}`,
+          },
           planToken: `mp_${"A".repeat(43)}`,
           report: "# Dry run\n",
+        };
+      },
+      migrationApprovalRequest(input) {
+        return {
+          kind: "migration-approval-request",
+          digest: `sha256:${"b".repeat(64)}`,
+          ...input,
+        };
+      },
+      async migrate(_approval, input) {
+        return {
+          kind: "migration-committed",
+          operationId: `migration-${"1".repeat(32)}`,
+          receipt: input.idempotencyKey,
         };
       },
     },
@@ -563,5 +583,8 @@ test("migration planning opens only a read-only virtual report", async () => {
   assert.equal(publications.length, 1);
   assert.equal(publications[0].report.includes(result.planToken), false);
   assert.deepEqual(harness.commands.executed.at(-1), ["vscode.openWith", reportUri, "default"]);
+  assert.equal(harness.workspaceEdits.length, 0);
+  const migrated = await harness.commands.run("chatero.documentation.migrate");
+  assert.equal(migrated.kind, "migration-committed");
   assert.equal(harness.workspaceEdits.length, 0);
 });

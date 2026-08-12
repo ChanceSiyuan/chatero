@@ -189,6 +189,10 @@
           "destination": "extensions/chatero-documentation/migration-model.mjs"
         },
         {
+          "source": "products/workbench/extensions/chatero-documentation/migration-executor.mjs",
+          "destination": "extensions/chatero-documentation/migration-executor.mjs"
+        },
+        {
           "source": "products/workbench/extensions/chatero-documentation/migration-planner.mjs",
           "destination": "extensions/chatero-documentation/migration-planner.mjs"
         },

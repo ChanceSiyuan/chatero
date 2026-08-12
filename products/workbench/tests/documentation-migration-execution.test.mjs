@@ -6,7 +6,11 @@ import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
 import { test } from "node:test";
 
-import { MIGRATION_PLAN_LIMITS } from "../extensions/chatero-documentation/migration-planner.mjs";
+import {
+  MIGRATION_PLAN_LIMITS,
+  migrationApprovalDigest,
+} from "../extensions/chatero-documentation/migration-planner.mjs";
+import { executeMigration } from "../extensions/chatero-documentation/migration-executor.mjs";
 import { decodeAuthorityResponse, encodeAuthorityRequest } from "../documentation-authority/protocol.mjs";
 import { runDocumentationAuthority } from "../documentation-authority/runtime/chatero-documentation-authority.mjs";
 
@@ -107,4 +111,107 @@ test("changed legacy bytes make an approved V2 plan stale before transaction wri
   assert.deepEqual(result.result, { kind: "stale-plan" });
   await assert.rejects(readFile(join(workspace, "documentation", "topic.qmd")), { code: "ENOENT" });
   await assert.rejects(readFile(join(workspace, ".chatero", "documentation-operation-active.v1.json")), { code: "ENOENT" });
+});
+
+test("extension executes a reviewed token only inside the complete migration barrier", async () => {
+  const events = [];
+  const scope = Object.freeze({ kind: "scope" });
+  const approval = Object.freeze({ kind: "approval" });
+  const plan = Object.freeze({
+    schemaVersion: 2,
+    plannerVersion: "documentation-migration-v2",
+    operationId: "migration-11111111111111111111111111111111",
+    workspaceEpoch: "epoch-1",
+    digest: digest("plan"),
+    affectedPaths: Object.freeze(["documentation/topic.qmd", "knowledge/topic.qmd"]),
+    pathProofs: Object.freeze([
+      Object.freeze({
+        path: "documentation/topic.qmd", role: "target", targetAbsent: true,
+        intendedDigest: digest("intended"), requireClean: true,
+      }),
+      Object.freeze({
+        path: "knowledge/topic.qmd", role: "source", expectedDigest: digest("before"), requireClean: true,
+      }),
+    ]),
+  });
+  const planner = {
+    inspectPlanToken(token, value) {
+      assert.equal(token, "mp_token");
+      assert.equal(value, scope);
+      return { kind: "planned-token", plan, planDigest: plan.digest };
+    },
+    consumePlanToken(token, value) {
+      assert.equal(token, "mp_token");
+      assert.equal(value, scope);
+      events.push("token-consumed");
+      return { kind: "consumed-plan", planRecord: plan, planDigest: plan.digest, workspaceEpoch: "epoch-1" };
+    },
+  };
+  const expectedApproval = migrationApprovalDigest({
+    operationId: plan.operationId,
+    planDigest: plan.digest,
+    idempotencyKey: "migration-1",
+  });
+  const lease = {
+    async revalidate() { events.push("revalidated"); return { kind: "valid" }; },
+    dispose() { events.push("disposed"); },
+  };
+  let barrierRequest;
+  let transaction;
+  const result = await executeMigration({
+    planToken: "mp_token",
+    idempotencyKey: "migration-1",
+    approval,
+    planner,
+    capabilities: {
+      consumeMigrationApproval(value, approvalDigest, options) {
+        assert.equal(value, approval);
+        assert.equal(approvalDigest, expectedApproval);
+        assert.deepEqual(options, { scope });
+        events.push("approval-consumed");
+        return { epoch: "epoch-1" };
+      },
+    },
+    scope,
+    adapter: {
+      async transact(value) {
+        transaction = value;
+        events.push("dispatched");
+        return {
+          kind: "migration-committed",
+          operationId: plan.operationId,
+          planDigest: plan.digest,
+          approvalAcceptanceProof: digest("accepted"),
+        };
+      },
+    },
+    barrier: {
+      async acquire(value) { barrierRequest = value; events.push("acquired"); return lease; },
+    },
+    uriFor: path => new URL(`file:///workspace/${path}`),
+  });
+
+  assert.equal(result.kind, "migration-committed");
+  assert.deepEqual(events, [
+    "acquired", "revalidated", "approval-consumed", "token-consumed", "dispatched", "disposed",
+  ]);
+  assert.equal(barrierRequest.reason, "migration");
+  assert.deepEqual(barrierRequest.resources.map(value => ({
+    path: value.uri.pathname.slice("/workspace/".length),
+    expectedDigest: value.expectedDigest,
+    intendedDigest: value.intendedDigest,
+    targetAbsent: value.targetAbsent,
+  })), [
+    {
+      path: "documentation/topic.qmd", expectedDigest: undefined,
+      intendedDigest: digest("intended"), targetAbsent: true,
+    },
+    {
+      path: "knowledge/topic.qmd", expectedDigest: digest("before"),
+      intendedDigest: undefined, targetAbsent: undefined,
+    },
+  ]);
+  assert.equal(transaction.kind, "execute-migration");
+  assert.equal(transaction.planRecord, plan);
+  assert.equal(transaction.approvalDigest, expectedApproval);
 });

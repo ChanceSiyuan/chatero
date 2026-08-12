@@ -77,6 +77,11 @@
         "category": "Chatero"
       },
       {
+        "command": "chatero.documentation.migrate",
+        "title": "Migrate Drafts and Knowledge to Documentation",
+        "category": "Chatero"
+      },
+      {
         "command": "chatero.documentation.reviewChangeSet",
         "title": "Review Documentation Change Set",
         "category": "Chatero"
