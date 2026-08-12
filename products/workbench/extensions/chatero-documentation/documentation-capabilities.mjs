@@ -39,11 +39,16 @@ function canonicalWorkspaceIdentity({ uri, authority, epoch }) {
     throw new TypeError("workspace URI scheme is unsupported");
   }
   const canonicalUri = parsed.toString();
+  const workspaceScopeDigest = createHash("sha256")
+    .update([canonicalUri, authority, epoch]
+      .map(value => `${Buffer.byteLength(value, "utf8")}:${value}`).join("|"), "utf8")
+    .digest("hex");
   return freezeRecord({
     authority,
     epoch,
     uri: canonicalUri,
     workspaceKey: `${canonicalUri}\0${authority}`,
+    workspaceScopeDigest,
   });
 }
 
@@ -206,6 +211,7 @@ export function createDocumentationCapabilityIssuer({ clock, randomUUID }) {
       authority: workspace.authority,
       epoch: workspace.epoch,
       workspaceKey: workspace.workspaceKey,
+      workspaceScopeDigest: workspace.workspaceScopeDigest,
       pathPrefixes: validateBrandedPaths(input.paths),
       operationKinds: validateOperationKinds(input.operationKinds),
       maximumOperationCount: validateLimit(input.maximumOperationCount, "maximum operation count"),
@@ -249,6 +255,7 @@ export function createDocumentationCapabilityIssuer({ clock, randomUUID }) {
       authority: workspace.authority,
       epoch: workspace.epoch,
       workspaceKey: workspace.workspaceKey,
+      workspaceScopeDigest: workspace.workspaceScopeDigest,
       digest: validateDigest(input.digest),
       expiresAt: timestamp() + validateExpiry(input.expiresInMs),
     });

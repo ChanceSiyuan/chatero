@@ -45,9 +45,9 @@ function currentValues(source) {
 }
 
 function validateScopeRecord(scope) {
-  if (!scope || typeof scope !== "object" || scope.kind !== "workspace-scope"
+  if (!scope || typeof scope !== "object"
     || typeof scope.uri !== "string" || typeof scope.authority !== "string"
-    || typeof scope.epoch !== "string") {
+    || typeof scope.epoch !== "string" || typeof scope.workspaceScopeDigest !== "string") {
     throw new TypeError("workspace scope is invalid");
   }
   return scope;
@@ -207,17 +207,42 @@ export function createWorkspaceTransactionAdapter({ scope, transport, workspaceV
         overlays: evidence.overlays,
       }, evidence);
     }
+    if (request.kind === "documentation-state") {
+      if (Object.keys(request).some(key => !new Set(["kind", "workspaceScopeDigest"]).has(key))
+        || request.workspaceScopeDigest !== scope.workspaceScopeDigest) {
+        throw new TypeError("Documentation state snapshot scope does not match");
+      }
+      const evidence = workspaceView.capture(scope, null);
+      return invoke("snapshot", "snapshot", {
+        kind: "documentation-state",
+        overlays: evidence.overlays,
+      }, evidence);
+    }
     throw new TypeError("snapshot request kind is unsupported");
   };
 
   const transact = async request => {
     const payload = exactPublicRequest(request, request?.kind);
+    if (request.workspaceScopeDigest !== undefined
+      && request.workspaceScopeDigest !== scope.workspaceScopeDigest) {
+      throw new TypeError("transaction workspace scope does not match");
+    }
+    if (request.workspaceEpoch !== undefined && request.workspaceEpoch !== scope.epoch) {
+      throw new TypeError("transaction workspace epoch does not match");
+    }
     const evidence = workspaceView.capture(scope, []);
     return invoke("transact", "transaction", payload, evidence);
   };
 
   const recover = async request => {
     const payload = exactPublicRequest(request, request?.kind);
+    if (request.workspaceScopeDigest !== undefined
+      && request.workspaceScopeDigest !== scope.workspaceScopeDigest) {
+      throw new TypeError("recovery workspace scope does not match");
+    }
+    if (request.workspaceEpoch !== undefined && request.workspaceEpoch !== scope.epoch) {
+      throw new TypeError("recovery workspace epoch does not match");
+    }
     const evidence = workspaceView.capture(scope, []);
     return invoke("recover", "recovery", payload, evidence);
   };

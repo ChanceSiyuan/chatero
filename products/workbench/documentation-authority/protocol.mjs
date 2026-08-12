@@ -153,6 +153,9 @@ function validateSnapshotPayload(value, workspace) {
     exactObject(value, ["kind", "limits", "overlays"], [], "migration snapshot payload");
     validateLimits(value.limits);
   }
+  else if (value.kind === "documentation-state") {
+    exactObject(value, ["kind", "overlays"], [], "Documentation state snapshot payload");
+  }
   else {
     throw new TypeError("snapshot payload kind is unsupported");
   }
@@ -251,11 +254,58 @@ function validateSnapshotResult(value) {
   return value;
 }
 
+function validateRevision(value, label) {
+  if (typeof value !== "string" || (!REVISION_RE.test(value) && !OPEN_REVISION_RE.test(value))) {
+    throw new TypeError(`${label} is invalid`);
+  }
+  return value;
+}
+
+function validateDocumentationStateResult(value) {
+  exactObject(value, ["kind", "epoch", "pages", "state"], [], "Documentation state result");
+  boundedString(value.epoch, "Documentation state epoch");
+  if (!Array.isArray(value.pages) || value.pages.length > MAX_PATHS) {
+    throw new TypeError("Documentation state pages must be an array");
+  }
+  let previous = null;
+  const aliases = new Set();
+  for (const page of value.pages) {
+    exactObject(page, ["path", "revision"], [], "Documentation state page");
+    validateRelativePath(page.path, "Documentation state page path");
+    if (!page.path.toLowerCase().endsWith(".qmd")) throw new TypeError("Documentation state page must use .qmd");
+    validateRevision(page.revision, "Documentation state page revision");
+    if (previous !== null && compareUtf8Bytes(previous, page.path) >= 0) {
+      throw new TypeError("Documentation state pages must be unique and bytewise sorted");
+    }
+    const folded = page.path.toLowerCase();
+    if (aliases.has(folded)) throw new TypeError("Documentation state pages contain a case-fold alias");
+    aliases.add(folded);
+    previous = page.path;
+  }
+  if (value.state?.kind === "missing") {
+    exactObject(value.state, ["kind"], [], "missing Documentation state evidence");
+  }
+  else if (value.state?.kind === "file") {
+    exactObject(value.state, ["kind", "bytes", "sha256", "revision"], [], "Documentation state file evidence");
+    if (!DIGEST_RE.test(value.state.sha256)) throw new TypeError("Documentation state digest is invalid");
+    const bytes = assertBase64url(value.state.bytes, "Documentation state bytes", { allowEmpty: true });
+    const actual = createHash("sha256").update(bytes).digest("hex");
+    if (actual !== value.state.sha256 || value.state.revision !== `sha256:${actual}`) {
+      throw new TypeError("Documentation state digest or revision does not match its exact bytes");
+    }
+  }
+  else {
+    throw new TypeError("Documentation state file evidence is invalid");
+  }
+  return value;
+}
+
 function validateAuthorityResponse(value) {
   exactObject(value, ["protocolVersion", "requestId", "result"], [], "authority response");
   if (value.protocolVersion !== 1) throw new TypeError("authority protocol version is unsupported");
   boundedString(value.requestId, "authority request id");
   if (value.result?.kind === "snapshot") validateSnapshotResult(value.result);
+  else if (value.result?.kind === "documentation-state") validateDocumentationStateResult(value.result);
   else validateTaggedPayload(value.result, "authority result");
   return value;
 }

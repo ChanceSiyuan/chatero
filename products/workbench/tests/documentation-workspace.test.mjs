@@ -14,6 +14,8 @@ import {
   createDocumentationWorkspaceView,
   createWorkspaceTransactionAdapter,
 } from "../extensions/chatero-documentation/documentation-workspace.mjs";
+import { canonicalOperationDigest } from "../extensions/chatero-documentation/documentation-operations.mjs";
+import { createDocumentationTransactions } from "../extensions/chatero-documentation/documentation-transactions.mjs";
 
 const digest = value => createHash("sha256").update(value, "utf8").digest("hex");
 
@@ -234,4 +236,147 @@ test("adapter rejects changed overlays, workspace epochs, and foreign scopes", a
       .snapshot({ kind: "paths", paths: [] }),
     /workspace scope is unavailable/,
   );
+});
+
+test("state facade binds a clean reviewed command to scope, revision, and generation", async () => {
+  let sequence = 0;
+  const capabilities = createDocumentationCapabilityIssuer({
+    clock: { now: () => 1_000 },
+    randomUUID: () => `capability-${++sequence}`,
+  });
+  const scope = capabilities.issueScope({
+    uri: "file:///srv/research",
+    authority: "local",
+    epoch: "epoch-1",
+  });
+  const scopeRecord = capabilities.consumeScope(scope);
+  const folder = {
+    epoch: "epoch-1",
+    uri: new TestUri({ scheme: "file", path: "/srv/research" }),
+  };
+  const pageText = "# Inspected\n";
+  const pageRevision = `text-document:3:sha256:${digest(pageText)}`;
+  const document = {
+    uri: folder.uri.with({ path: "/srv/research/documentation/index.qmd" }),
+    version: 3,
+    isDirty: false,
+    getText: () => pageText,
+  };
+  const stateBytes = Buffer.from(
+    '{"schemaVersion":1,"generation":"0000000000000001","documents":{"index.qmd":{"state":"working"}}}\n',
+  );
+  const transactionRequests = [];
+  const adapter = {
+    async snapshot(request) {
+      assert.deepEqual(request, {
+        kind: "documentation-state",
+        workspaceScopeDigest: scopeRecord.workspaceScopeDigest,
+      });
+      return {
+        kind: "documentation-state",
+        epoch: "epoch-1",
+        pages: [{ path: "index.qmd", revision: pageRevision }],
+        state: {
+          kind: "file",
+          bytes: stateBytes.toString("base64url"),
+          sha256: digest(stateBytes),
+          revision: `sha256:${digest(stateBytes)}`,
+        },
+      };
+    },
+    async transact(request) {
+      transactionRequests.push(request);
+      return {
+        kind: "state-committed",
+        generation: "0000000000000002",
+        receipt: "state-index-reviewed-1",
+      };
+    },
+    async recover() { throw new Error("unexpected recovery"); },
+  };
+  const workspaceView = createDocumentationWorkspaceView({
+    workspaceFolders: [folder],
+    textDocuments: [document],
+  });
+  const transactions = createDocumentationTransactions({ adapter, capabilities, workspaceView });
+  assert.deepEqual(Object.keys(transactions), ["state", "setDocumentState"]);
+  const projected = await transactions.state(scope);
+  assert.equal(projected.documents["index.qmd"].state, "working");
+
+  const input = Object.freeze({
+    path: documentationPagePath("index.qmd"),
+    expectedDocumentRevision: pageRevision,
+    expectedStateGeneration: "0000000000000001",
+    state: "reviewed",
+    idempotencyKey: "state-index-reviewed-1",
+  });
+  const requestDigest = canonicalOperationDigest(input);
+  const approval = capabilities.issueHumanApproval(scope, { digest: requestDigest, expiresInMs: 30_000 });
+  assert.deepEqual(await transactions.setDocumentState(approval, input), {
+    kind: "state-committed",
+    generation: "0000000000000002",
+    receipt: "state-index-reviewed-1",
+  });
+  assert.equal(transactionRequests.length, 1);
+  assert.deepEqual(transactionRequests[0], {
+    kind: "set-document-state",
+    schemaVersion: 1,
+    operationId: transactionRequests[0].operationId,
+    idempotencyKey: input.idempotencyKey,
+    requestDigest,
+    workspaceEpoch: "epoch-1",
+    workspaceScopeDigest: scopeRecord.workspaceScopeDigest,
+    path: "index.qmd",
+    expectedDocumentRevision: pageRevision,
+    expectedStateGeneration: "0000000000000001",
+    intendedState: "reviewed",
+    workingCopy: {
+      version: 3,
+      dirty: false,
+      revision: pageRevision,
+    },
+  });
+  assert.doesNotMatch(JSON.stringify(transactionRequests[0]), /approval|\/srv\/research/);
+});
+
+test("state facade refuses dirty and stale working copies before adapter mutation", async () => {
+  let sequence = 0;
+  const capabilities = createDocumentationCapabilityIssuer({
+    clock: { now: () => 1_000 },
+    randomUUID: () => `capability-${++sequence}`,
+  });
+  const scope = capabilities.issueScope({ uri: "file:///srv/research", authority: "local", epoch: "epoch-1" });
+  const folder = { epoch: "epoch-1", uri: new TestUri({ scheme: "file", path: "/srv/research" }) };
+  const document = {
+    uri: folder.uri.with({ path: "/srv/research/documentation/index.qmd" }),
+    version: 4,
+    isDirty: true,
+    getText: () => "dirty\n",
+  };
+  let mutations = 0;
+  const transactions = createDocumentationTransactions({
+    adapter: {
+      async snapshot() { throw new Error("unexpected snapshot"); },
+      async transact() { mutations++; },
+      async recover() { mutations++; },
+    },
+    capabilities,
+    workspaceView: createDocumentationWorkspaceView({ workspaceFolders: [folder], textDocuments: [document] }),
+  });
+  const input = {
+    path: documentationPagePath("index.qmd"),
+    expectedDocumentRevision: `text-document:4:sha256:${digest("dirty\n")}`,
+    expectedStateGeneration: "0000000000000001",
+    state: "reviewed",
+    idempotencyKey: "dirty-reviewed-1",
+  };
+  const approval = capabilities.issueHumanApproval(scope, {
+    digest: canonicalOperationDigest(input),
+    expiresInMs: 30_000,
+  });
+  assert.deepEqual(await transactions.setDocumentState(approval, input), {
+    kind: "dirty-working-copy",
+    paths: [input.path],
+  });
+  assert.equal(mutations, 0);
 });
