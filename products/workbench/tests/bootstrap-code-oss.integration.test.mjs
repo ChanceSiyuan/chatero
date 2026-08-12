@@ -41,6 +41,7 @@ async function createFixture() {
   await mkdir(upstream, { recursive: true });
   await mkdir(join(upstream, "build", "npm"), { recursive: true });
   await mkdir(join(workbenchRoot, "patches", "code-oss"), { recursive: true });
+  await mkdir(join(workbenchRoot, "extensions", "chatero-documentation", "webview"), { recursive: true });
   await mkdir(join(root, "first-party-src"), { recursive: true });
   await git(upstream, "init", "--initial-branch=main");
   await git(upstream, "config", "user.name", "Chatero Tests");
@@ -85,6 +86,8 @@ async function createFixture() {
     builtInExtensions: [],
   }, null, 2)}\n`);
   await writeFile(join(workbenchRoot, "patches", "code-oss", "series.json"), '{"schemaVersion":1,"patches":[]}\n');
+  await writeFile(join(workbenchRoot, "extensions", "chatero-documentation", "webview", "live-preview-entry.mjs"), "document.body.textContent = 'fixture';\n");
+  await writeFile(join(workbenchRoot, "extensions", "chatero-documentation", "webview", "live-preview.css"), "body { margin: 0; }\n");
   await writeFile(join(root, "first-party-src", "extension.mjs"), "export function activate() {}\n");
   await writeFile(join(workbenchRoot, "first-party-extensions.json"), `${JSON.stringify({
     schemaVersion: 1,

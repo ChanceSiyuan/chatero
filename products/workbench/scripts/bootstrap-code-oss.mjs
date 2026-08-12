@@ -6,6 +6,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 import { ensureCheckout } from "./lib/git-checkout.mjs";
+import { buildDocumentationWebview } from "./build-documentation-webview.mjs";
 import { materializeFirstPartyExtensions } from "./lib/first-party-extensions.mjs";
 import { applyPatchSeries } from "./lib/patch-series.mjs";
 import { materializeProduct } from "./lib/product-materializer.mjs";
@@ -133,6 +134,7 @@ export async function bootstrapCodeOss({
   if (!policy.ok) {
     throw new Error(`workbench policy rejected generated product: ${policy.violations.map(value => value.rule).join(", ")}`);
   }
+  await buildDocumentationWebview({ root });
   const firstParty = await materializeFirstPartyExtensions({
     root,
     checkout: canonicalDestination,

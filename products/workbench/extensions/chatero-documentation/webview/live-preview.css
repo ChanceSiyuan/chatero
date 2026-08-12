@@ -1,0 +1,22 @@
+:root {
+  color-scheme: light dark;
+}
+
+html,
+body,
+[data-documentation-editor] {
+  box-sizing: border-box;
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--vscode-editor-background);
+  color: var(--vscode-editor-foreground);
+  font-family: var(--vscode-editor-font-family);
+  font-size: var(--vscode-editor-font-size);
+}
+
+.cm-editor {
+  height: 100%;
+}

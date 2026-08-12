@@ -45,8 +45,20 @@
           "destination": "extensions/chatero-documentation/extension.cjs"
         },
         {
+          "source": "products/workbench/extensions/chatero-documentation/licenses/CodeMirror-MIT.txt",
+          "destination": "extensions/chatero-documentation/licenses/CodeMirror-MIT.txt"
+        },
+        {
           "source": "products/workbench/extensions/chatero-documentation/media/documentation.svg",
           "destination": "extensions/chatero-documentation/media/documentation.svg"
+        },
+        {
+          "source": "products/workbench/.cache/documentation-webview/live-preview.css",
+          "destination": "extensions/chatero-documentation/media/documentation-webview/live-preview.css"
+        },
+        {
+          "source": "products/workbench/.cache/documentation-webview/live-preview.js",
+          "destination": "extensions/chatero-documentation/media/documentation-webview/live-preview.js"
         },
         {
           "source": "products/workbench/extensions/chatero-documentation/migration-model.mjs",
