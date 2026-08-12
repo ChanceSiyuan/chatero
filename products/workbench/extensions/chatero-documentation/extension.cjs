@@ -79,6 +79,11 @@ async function activate(context) {
         scope: services.scope,
       }));
     }
+    if (typeof services.transactions?.review === "function"
+      && typeof services.transactions?.settle === "function") {
+      const { registerDocumentationReview } = require("./documentation-review.cjs");
+      registrations.push(...await registerDocumentationReview({ vscode, services }));
+    }
     registrations.push(...await registerDocumentation(vscode, context, registrationServices));
     return registrations;
   });

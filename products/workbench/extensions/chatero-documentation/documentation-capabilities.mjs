@@ -124,7 +124,10 @@ export function createDocumentationCapabilityIssuer({ clock, randomUUID }) {
   const humanApprovalRecords = new WeakMap();
   const migrationApprovalRecords = new WeakMap();
   const recoveryApprovalRecords = new WeakMap();
+  const humanApprovalReservationRecords = new WeakMap();
   const consumed = new WeakSet();
+  const reserved = new WeakSet();
+  const settledReservations = new WeakSet();
   const issuedIds = new Set();
   const currentEpochs = new Map();
 
@@ -281,6 +284,55 @@ export function createDocumentationCapabilityIssuer({ clock, randomUUID }) {
   function consumeHumanApproval(approval, digest, options) {
     return consumeApproval("human-approval", humanApprovalRecords, approval, digest, options);
   }
+  function reserveHumanApproval(approval, digest, options) {
+    const record = resolve(humanApprovalRecords, approval);
+    if (record.kind !== "human-approval") throw new TypeError("unrecognized capability");
+    if (reserved.has(approval)) throw new TypeError("capability already has an active reservation");
+    assertUsable(approval, record, options);
+    if (record.digest !== validateDigest(digest)) throw new TypeError("capability request digest does not match");
+    const reservationRecord = freezeRecord({
+      kind: "human-approval-reservation",
+      capability: approval,
+      record,
+      digest: `sha256:${createHash("sha256")
+        .update(["chatero-human-approval-reservation-v1", record.capabilityId, record.digest, record.workspaceScopeDigest]
+          .map(value => `${Buffer.byteLength(value, "utf8")}:${value}`).join("|"), "utf8")
+        .digest("hex")}`,
+    });
+    const reservation = token("opaque-human-approval-reservation", humanApprovalReservationRecords, reservationRecord);
+    reserved.add(approval);
+    return reservation;
+  }
+  function humanApprovalReservation(reservation) {
+    const value = resolve(humanApprovalReservationRecords, reservation);
+    if (settledReservations.has(reservation)) throw new TypeError("approval reservation is already settled");
+    assertUsable(value.capability, value.record);
+    return Object.freeze({
+      digest: value.digest,
+      workspaceScopeDigest: value.record.workspaceScopeDigest,
+      epoch: value.record.epoch,
+    });
+  }
+  function acceptHumanApprovalReservation(reservation, acceptanceProof) {
+    const value = resolve(humanApprovalReservationRecords, reservation);
+    if (settledReservations.has(reservation) || consumed.has(value.capability)) {
+      throw new TypeError("approval reservation is already settled");
+    }
+    if (typeof acceptanceProof !== "string" || !DIGEST_RE.test(acceptanceProof)) {
+      throw new TypeError("approval acceptance proof is invalid");
+    }
+    assertUsable(value.capability, value.record);
+    consumed.add(value.capability);
+    settledReservations.add(reservation);
+    return Object.freeze({ digest: value.digest, acceptanceProof });
+  }
+  function releaseHumanApprovalReservation(reservation) {
+    const value = resolve(humanApprovalReservationRecords, reservation);
+    if (settledReservations.has(reservation)) throw new TypeError("approval reservation is already settled");
+    settledReservations.add(reservation);
+    reserved.delete(value.capability);
+    return true;
+  }
   function issueMigrationApproval(scope, input) {
     return issueApproval("migration-approval", migrationApprovalRecords, scope, input);
   }
@@ -301,6 +353,10 @@ export function createDocumentationCapabilityIssuer({ clock, randomUUID }) {
     consumeAgentProposalGrant,
     issueHumanApproval,
     consumeHumanApproval,
+    reserveHumanApproval,
+    humanApprovalReservation,
+    acceptHumanApprovalReservation,
+    releaseHumanApprovalReservation,
     issueMigrationApproval,
     consumeMigrationApproval,
     issueRecoveryApproval,

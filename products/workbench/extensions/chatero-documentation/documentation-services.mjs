@@ -11,7 +11,9 @@ import { createDocumentationCapabilityIssuer } from "./documentation-capabilitie
 import { createChangeSetStore } from "./change-set-store.mjs";
 import { createDocumentationTransactions } from "./documentation-transactions.mjs";
 import { createReviewSnapshotRegistry } from "./review-snapshot.mjs";
+import { documentationWorkspaceUri } from "./documentation-path.mjs";
 import { createDocumentationWorkspaceView } from "./documentation-workspace.mjs";
+import { createWorkingCopyCoordinator } from "./working-copy-coordinator.mjs";
 import {
   createMigrationPlanner,
   MIGRATION_PLAN_LIMITS,
@@ -268,6 +270,30 @@ export async function createProductionDocumentationServices({
     limits: MIGRATION_PLAN_LIMITS,
     isWorkspaceTrusted: () => vscode.workspace.isTrusted === true,
   });
+  let settlement;
+  if (typeof vscode.workspace.acquireDocumentationWorkingCopyBarrier === "function"
+    && typeof vscode.workspace.openTextDocument === "function"
+    && typeof vscode.workspace.applyEdit === "function"
+    && typeof vscode.workspace.onDidChangeTextDocument === "function"
+    && typeof vscode.WorkspaceEdit === "function" && typeof vscode.Position === "function"
+    && typeof vscode.Range === "function") {
+    const coordinator = createWorkingCopyCoordinator({
+      workspace: vscode.workspace,
+      WorkspaceEdit: vscode.WorkspaceEdit,
+      Position: vscode.Position,
+      Range: vscode.Range,
+    });
+    context.subscriptions?.push?.(coordinator);
+    settlement = Object.freeze({
+      coordinator,
+      barrier: Object.freeze({
+        acquire: input => vscode.workspace.acquireDocumentationWorkingCopyBarrier(input),
+      }),
+      uriFor: path => documentationWorkspaceUri(folder.uri, path),
+      openDocuments: paths => Promise.all(paths.map(path =>
+        vscode.workspace.openTextDocument(documentationWorkspaceUri(folder.uri, path)))),
+    });
+  }
   const transactions = createDocumentationTransactions({
     adapter,
     capabilities,
@@ -275,6 +301,7 @@ export async function createProductionDocumentationServices({
     migrationPlanner,
     changeSetStore,
     reviewRegistry,
+    ...(settlement ? { settlement } : {}),
     scope,
     clock,
   });

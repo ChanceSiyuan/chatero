@@ -141,6 +141,10 @@ test("approval capabilities reject clones, wrong scopes, expiry, and replay", ()
     "consumeAgentProposalGrant",
     "issueHumanApproval",
     "consumeHumanApproval",
+    "reserveHumanApproval",
+    "humanApprovalReservation",
+    "acceptHumanApprovalReservation",
+    "releaseHumanApprovalReservation",
     "issueMigrationApproval",
     "consumeMigrationApproval",
     "issueRecoveryApproval",
@@ -181,6 +185,23 @@ test("approval capabilities reject clones, wrong scopes, expiry, and replay", ()
   const expired = issuer.issueHumanApproval(nextEpoch, { digest: requestDigest, expiresInMs: 10 });
   harness.setNow(1_011);
   assert.throws(() => issuer.consumeHumanApproval(expired, requestDigest), /expired/);
+});
+
+test("human approvals can be released before prepare but become one-use after durable acceptance", () => {
+  const { issuer } = createIssuerHarness();
+  const scope = issuer.issueScope({ uri: "file:///srv/research", authority: "local", epoch: "epoch-a" });
+  const approval = issuer.issueHumanApproval(scope, { digest: requestDigest, expiresInMs: 30_000 });
+  const first = issuer.reserveHumanApproval(approval, requestDigest, { scope });
+  assert.match(issuer.humanApprovalReservation(first).digest, /^sha256:[0-9a-f]{64}$/u);
+  assert.throws(() => issuer.reserveHumanApproval(approval, requestDigest, { scope }), /active reservation/);
+  assert.equal(issuer.releaseHumanApprovalReservation(first), true);
+  assert.throws(() => issuer.humanApprovalReservation(first), /already settled/);
+
+  const second = issuer.reserveHumanApproval(approval, requestDigest, { scope });
+  const accepted = issuer.acceptHumanApprovalReservation(second, `sha256:${"a".repeat(64)}`);
+  assert.match(accepted.digest, /^sha256:[0-9a-f]{64}$/u);
+  assert.throws(() => issuer.consumeHumanApproval(approval, requestDigest), /already consumed/);
+  assert.throws(() => issuer.releaseHumanApprovalReservation(second), /already settled/);
 });
 
 test("migration, recovery, and Agent grants stay type- and scope-bound", () => {

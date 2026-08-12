@@ -3,6 +3,9 @@ import { createHash } from "node:crypto";
 import { documentationPagePath, validateOperationPathSet } from "./documentation-path.mjs";
 import { buildChangeSetGeneration, changeSetGenerationId } from "./change-set-model.mjs";
 import { createReviewSnapshot } from "./review-snapshot.mjs";
+import { executeSettlement } from "./settlement-executor.mjs";
+import { planSettlement } from "./settlement-planner.mjs";
+import { settlementApprovalDigest } from "./settlement-protocol.mjs";
 import {
   canonicalOperationDigest,
   stateOperationId,
@@ -266,6 +269,27 @@ function reviewPathValues(operation) {
   return operation.kind === "rename" ? [operation.from, operation.to] : [operation.path];
 }
 
+function documentsFromPathSnapshot(snapshot) {
+  if (snapshot?.kind !== "snapshot" || !Array.isArray(snapshot.entries)) {
+    throw new TypeError("review source snapshot is invalid");
+  }
+  return snapshot.entries.map(entry => {
+    const path = entry.path.replace(/^documentation\//u, "");
+    if (entry.type === "absent") return Object.freeze({ path, absent: true });
+    if (entry.type !== "file") throw new TypeError("review path is not a regular file");
+    const bytes = Buffer.from(entry.bytes, "base64url");
+    const text = bytes.toString("utf8");
+    if (bytes.toString("base64url") !== entry.bytes || !Buffer.from(text, "utf8").equals(bytes)
+      || sha256Bytes(bytes) !== entry.sha256) throw new TypeError("review source bytes are invalid");
+    return Object.freeze({
+      path,
+      text,
+      revision: entry.revision,
+      dirty: entry.dirty ?? entry.revision.startsWith("text-document:"),
+    });
+  });
+}
+
 async function createBoundReview({ adapter, capabilities, scope, store, registry, ref }) {
   const generation = await store.loadGeneration(ref);
   if (generation?.kind === "generation-missing") return generation;
@@ -284,27 +308,106 @@ async function createBoundReview({ adapter, capabilities, scope, store, registry
     }),
   ]);
   if (snapshot?.kind !== "snapshot") throw new TypeError("review source snapshot is invalid");
-  const documents = snapshot.entries.map(entry => {
-    const path = entry.path.replace(/^documentation\//u, "");
-    if (entry.type === "absent") return Object.freeze({ path, absent: true });
-    if (entry.type !== "file") throw new TypeError("review path is not a regular file");
-    const bytes = Buffer.from(entry.bytes, "base64url");
-    const text = bytes.toString("utf8");
-    if (bytes.toString("base64url") !== entry.bytes || !Buffer.from(text, "utf8").equals(bytes)
-      || sha256Bytes(bytes) !== entry.sha256) throw new TypeError("review source bytes are invalid");
-    return Object.freeze({
-      path,
-      text,
-      revision: entry.revision,
-      dirty: entry.dirty ?? entry.revision.startsWith("text-document:"),
-    });
-  });
+  const documents = documentsFromPathSnapshot(snapshot);
   return createReviewSnapshot({
     registry,
     generation,
     currentDocuments: documents,
     stateGeneration: stateGenerationFromSnapshot(state),
   });
+}
+
+function settlementInput(input) {
+  exactKeys(input, ["reviewToken", "reviewDigest", "decisions", "idempotencyKey"], [], "settlement input");
+  boundedIdentifier(input.reviewToken, "review token");
+  if (typeof input.reviewDigest !== "string" || !/^sha256:[0-9a-f]{64}$/u.test(input.reviewDigest)) {
+    throw new TypeError("review digest is invalid");
+  }
+  boundedIdentifier(input.idempotencyKey, "settlement idempotency key");
+  if (!Array.isArray(input.decisions) || input.decisions.length === 0 || input.decisions.length > 1024) {
+    throw new TypeError("settlement decisions are invalid");
+  }
+  const seen = new Set();
+  const decisions = input.decisions.map(value => {
+    exactKeys(value, ["id", "decision"], [], "settlement decision");
+    if (typeof value.id !== "string" || value.id.length === 0 || Buffer.byteLength(value.id, "utf8") > 256
+      || !new Set(["accept", "reject", "defer"]).has(value.decision) || seen.has(value.id)) {
+      throw new TypeError("settlement decision is invalid");
+    }
+    seen.add(value.id);
+    return Object.freeze({ id: value.id, decision: value.decision });
+  });
+  return Object.freeze({ ...input, decisions: Object.freeze(decisions) });
+}
+
+async function settleBoundReview({
+  adapter, capabilities, scope, registry, settlement, approval, input,
+}) {
+  const normalized = settlementInput(input);
+  const approvalDigest = settlementApprovalDigest(normalized);
+  const reservation = capabilities.reserveHumanApproval(approval, approvalDigest, { scope });
+  let reservationActive = true;
+  const release = () => {
+    if (!reservationActive) return;
+    capabilities.releaseHumanApprovalReservation(reservation);
+    reservationActive = false;
+  };
+  let snapshot;
+  try { snapshot = registry.consume(normalized.reviewToken, normalized.reviewDigest).snapshot; }
+  catch (error) { release(); throw error; }
+  const paths = snapshot.documents.map(value => value.path);
+  if (typeof settlement.openDocuments === "function") await settlement.openDocuments(paths);
+  let currentSnapshot;
+  let state;
+  try {
+    [currentSnapshot, state] = await Promise.all([
+      adapter.snapshot({ kind: "paths", paths }),
+      adapter.snapshot({
+        kind: "documentation-state",
+        workspaceScopeDigest: capabilities.consumeScope(scope).workspaceScopeDigest,
+      }),
+    ]);
+  }
+  catch (error) { release(); throw error; }
+  const currentStateGeneration = stateGenerationFromSnapshot(state);
+  if (currentStateGeneration !== snapshot.stateGeneration) {
+    release();
+    return Object.freeze({ kind: "stale-review", reason: "state-generation-changed" });
+  }
+  const plan = planSettlement({
+    snapshot,
+    decisions: new Map(normalized.decisions.map(value => [value.id, value.decision])),
+    currentDocuments: documentsFromPathSnapshot(currentSnapshot),
+    idempotencyKey: normalized.idempotencyKey,
+  });
+  if (plan.kind !== "settlement-plan") {
+    release();
+    return plan;
+  }
+  const reservationRecord = capabilities.humanApprovalReservation(reservation);
+  const approvalReservation = Object.freeze({
+    digest: reservationRecord.digest,
+    accept(proof) {
+      if (!reservationActive) throw new TypeError("approval reservation is already settled");
+      capabilities.acceptHumanApprovalReservation(reservation, proof);
+      reservationActive = false;
+    },
+    release,
+  });
+  try {
+    return await executeSettlement({
+      plan,
+      adapter,
+      barrier: settlement.barrier,
+      coordinator: settlement.coordinator,
+      uriFor: settlement.uriFor,
+      approvalReservation,
+    });
+  }
+  catch (error) {
+    if (reservationActive) release();
+    throw error;
+  }
 }
 
 function decodeStateEvidence(evidence) {
@@ -393,6 +496,7 @@ export function createDocumentationTransactions({
   migrationPlanner,
   changeSetStore,
   reviewRegistry,
+  settlement,
   scope,
   clock = Date,
 }) {
@@ -412,6 +516,13 @@ export function createDocumentationTransactions({
   }
   if (reviewRegistry !== undefined && (typeof reviewRegistry?.register !== "function" || !scope)) {
     throw new TypeError("Documentation review registry is invalid");
+  }
+  if (settlement !== undefined && (typeof reviewRegistry?.consume !== "function"
+    || typeof capabilities?.reserveHumanApproval !== "function"
+    || typeof settlement?.barrier?.acquire !== "function"
+    || typeof settlement?.coordinator?.applyVersionedTextEdits !== "function"
+    || typeof settlement?.uriFor !== "function")) {
+    throw new TypeError("Documentation settlement dependencies are invalid");
   }
   return Object.freeze({
     state: scope => readProjectedState({ adapter, capabilities, workspaceView, scope }),
@@ -443,6 +554,17 @@ export function createDocumentationTransactions({
           registry: reviewRegistry,
           ref,
         }),
+        ...(settlement ? {
+          settle: (approval, input) => settleBoundReview({
+            adapter,
+            capabilities,
+            scope,
+            registry: reviewRegistry,
+            settlement,
+            approval,
+            input,
+          }),
+        } : {}),
       } : {}),
     } : {}),
   });

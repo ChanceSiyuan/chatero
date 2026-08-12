@@ -76,6 +76,11 @@
         "category": "Chatero"
       },
       {
+        "command": "chatero.documentation.reviewChangeSet",
+        "title": "Review Documentation Change Set",
+        "category": "Chatero"
+      },
+      {
         "command": "chatero.documentation.refresh",
         "title": "Refresh Documentation",
         "category": "Chatero",

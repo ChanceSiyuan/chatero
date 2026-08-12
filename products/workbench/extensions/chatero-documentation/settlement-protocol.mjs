@@ -70,3 +70,18 @@ export function settlementTextProofDigest(value) {
     resources: value.resources,
   });
 }
+
+export function settlementApprovalDigest(value) {
+  if (!value || typeof value.reviewDigest !== "string" || typeof value.idempotencyKey !== "string"
+    || !Array.isArray(value.decisions)) {
+    throw new TypeError("settlement approval input is invalid");
+  }
+  return digestSettlementValue({
+    kind: "settlement-human-approval",
+    reviewDigest: value.reviewDigest,
+    idempotencyKey: value.idempotencyKey,
+    decisions: [...value.decisions]
+      .map(decision => ({ id: decision.id, decision: decision.decision }))
+      .sort((left, right) => Buffer.compare(Buffer.from(left.id, "utf8"), Buffer.from(right.id, "utf8"))),
+  });
+}

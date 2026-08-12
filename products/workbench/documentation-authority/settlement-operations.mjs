@@ -112,7 +112,7 @@ function stateChanges(values) {
 function prepareRequest(value) {
   exactObject(value, [
     "kind", "schemaVersion", "operationId", "idempotencyKey", "operationDigest",
-    "affectedResourceDigest", "reviewDigest", "generationDigest", "expectedStateGeneration",
+    "affectedResourceDigest", "approvalReservationDigest", "reviewDigest", "generationDigest", "expectedStateGeneration",
     "decisions", "textOverlay", "resourceOperations", "stateChanges", "deferredOperations",
   ], "prepare settlement request");
   if (value.kind !== "prepare-settlement" || value.schemaVersion !== 1 || !OPERATION_RE.test(value.operationId)
@@ -123,6 +123,7 @@ function prepareRequest(value) {
   for (const [member, label] of [
     [value.operationDigest, "settlement operation digest"],
     [value.affectedResourceDigest, "settlement affected resource digest"],
+    [value.approvalReservationDigest, "settlement approval reservation digest"],
     [value.reviewDigest, "settlement review digest"],
     [value.generationDigest, "settlement generation digest"],
   ]) digest(member, label);
@@ -184,6 +185,7 @@ function makeJournal(request, state) {
     idempotencyKey: request.idempotencyKey,
     operationDigest: request.operationDigest,
     affectedResourceDigest: request.affectedResourceDigest,
+    approvalReservationDigest: request.approvalReservationDigest,
     phase: "private-staged",
     markerCommitted: false,
     canonicalMutationStarted: false,
@@ -199,6 +201,7 @@ function makeJournal(request, state) {
     idempotencyKey: staged.idempotencyKey,
     operationDigest: staged.operationDigest,
     affectedResourceDigest: staged.affectedResourceDigest,
+    approvalReservationDigest: staged.approvalReservationDigest,
     request: staged.request,
     state: staged.state,
   });
@@ -221,6 +224,7 @@ function markerFor(record) {
     operationDigest: record.operationDigest,
     affectedResourceDigest: record.affectedResourceDigest,
     journalDigest: record.journalDigest,
+    approvalReservationDigest: record.approvalReservationDigest,
   });
 }
 
@@ -230,6 +234,7 @@ function acceptanceProof(record) {
     operationId: record.operationId,
     operationDigest: record.operationDigest,
     journalDigest: record.journalDigest,
+    approvalReservationDigest: record.approvalReservationDigest,
   });
 }
 
@@ -261,6 +266,7 @@ function sameRequest(record, request) {
     && record.idempotencyKey === request.idempotencyKey
     && record.operationDigest === request.operationDigest
     && record.affectedResourceDigest === request.affectedResourceDigest
+    && record.approvalReservationDigest === request.approvalReservationDigest
     && canonicalSettlementJson(record.request) === canonicalSettlementJson(request);
 }
 

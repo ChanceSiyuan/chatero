@@ -68,6 +68,7 @@ test("Documentation remains a disabled workspace extension with an optional Live
     "chatero.documentation.markWorking",
     "chatero.documentation.markReviewed",
     "chatero.documentation.planMigration",
+    "chatero.documentation.reviewChangeSet",
     "chatero.documentation.refresh",
   ]);
   assert.ok(commandIds.every(command => command.startsWith("chatero.documentation.")));
@@ -111,6 +112,7 @@ test("first-party materialization declares the complete Documentation authority"
     "extensions/chatero-documentation/documentation-image-resolver.mjs",
     "extensions/chatero-documentation/documentation-operations.mjs",
     "extensions/chatero-documentation/documentation-path.mjs",
+    "extensions/chatero-documentation/documentation-review.cjs",
     "extensions/chatero-documentation/documentation-services.mjs",
     "extensions/chatero-documentation/documentation-state.mjs",
     "extensions/chatero-documentation/documentation-transactions.mjs",
@@ -153,6 +155,10 @@ test("first-party materialization declares the complete Documentation authority"
     "extensions/chatero-documentation/pending-edit-rebase.mjs",
     "extensions/chatero-documentation/review-decisions.mjs",
     "extensions/chatero-documentation/review-snapshot.mjs",
+    "extensions/chatero-documentation/settlement-planner.mjs",
+    "extensions/chatero-documentation/settlement-protocol.mjs",
+    "extensions/chatero-documentation/settlement-operations.mjs",
+    "extensions/chatero-documentation/settlement-executor.mjs",
     "extensions/chatero-documentation/runtime/chatero-documentation-authority.mjs",
     "extensions/chatero-documentation/runtime/protocol.mjs",
     "extensions/chatero-documentation/runtime/yaml-2.9.0.mjs",

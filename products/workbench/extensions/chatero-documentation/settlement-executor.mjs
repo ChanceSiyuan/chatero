@@ -4,7 +4,7 @@ import {
   settlementTextProofDigest,
 } from "./settlement-protocol.mjs";
 
-function validateDependencies({ plan, adapter, barrier, coordinator, uriFor }) {
+function validateDependencies({ plan, adapter, barrier, coordinator, uriFor, approvalReservation }) {
   if (!plan || plan.kind !== "settlement-plan" || !Array.isArray(plan.textOperations)
     || !Array.isArray(plan.resourceOperations) || typeof plan.operationId !== "string"
     || typeof plan.operationDigest !== "string" || typeof plan.affectedResourceDigest !== "string") {
@@ -13,6 +13,10 @@ function validateDependencies({ plan, adapter, barrier, coordinator, uriFor }) {
   if (typeof adapter?.transact !== "function" || typeof barrier?.acquire !== "function"
     || typeof coordinator?.applyVersionedTextEdits !== "function" || typeof uriFor !== "function") {
     throw new TypeError("settlement executor dependencies are invalid");
+  }
+  if (!approvalReservation || typeof approvalReservation.digest !== "string"
+    || typeof approvalReservation.accept !== "function" || typeof approvalReservation.release !== "function") {
+    throw new TypeError("settlement approval reservation is invalid");
   }
   if (plan.resourceOperations.length > 0) {
     throw new TypeError("structural settlement requires the resource continuation");
@@ -33,7 +37,7 @@ function textOverlay(plan) {
   })));
 }
 
-function authorityPlan(plan, overlay) {
+function authorityPlan(plan, overlay, approvalReservationDigest) {
   return Object.freeze({
     kind: "prepare-settlement",
     schemaVersion: 1,
@@ -41,6 +45,7 @@ function authorityPlan(plan, overlay) {
     idempotencyKey: plan.idempotencyKey,
     operationDigest: plan.operationDigest,
     affectedResourceDigest: plan.affectedResourceDigest,
+    approvalReservationDigest,
     reviewDigest: plan.reviewDigest,
     generationDigest: plan.generationDigest,
     expectedStateGeneration: plan.stateGeneration,
@@ -96,8 +101,8 @@ function validationFailure(value) {
   return value?.kind === "dirty-working-copy" || value?.kind === "barrier-conflict";
 }
 
-export async function executeSettlement({ plan, adapter, barrier, coordinator, uriFor } = {}) {
-  validateDependencies({ plan, adapter, barrier, coordinator, uriFor });
+export async function executeSettlement({ plan, adapter, barrier, coordinator, uriFor, approvalReservation } = {}) {
+  validateDependencies({ plan, adapter, barrier, coordinator, uriFor, approvalReservation });
   const overlay = textOverlay(plan).map(value => Object.freeze({
     ...value,
     uri: uriFor(documentationPagePath(value.path)),
@@ -117,7 +122,10 @@ export async function executeSettlement({ plan, adapter, barrier, coordinator, u
     resources,
     reason: "settlement",
   }));
-  if (validationFailure(acquired)) return acquired;
+  if (validationFailure(acquired)) {
+    approvalReservation.release();
+    return acquired;
+  }
   if (!acquired || typeof acquired.revalidate !== "function"
     || typeof acquired.applyWorkspaceEdit !== "function" || typeof acquired.dispose !== "function") {
     throw new TypeError("Documentation barrier returned an invalid lease");
@@ -128,17 +136,32 @@ export async function executeSettlement({ plan, adapter, barrier, coordinator, u
     for (let attempt = 0; attempt < 2; attempt++) {
       const valid = await lease.revalidate();
       if (valid?.kind !== "valid") {
+        approvalReservation.release();
         lease.dispose();
         return valid;
       }
     }
     const publicOverlay = Object.freeze(overlay.map(({ uri: _uri, ...value }) => Object.freeze(value)));
-    const preparedResult = validatePrepared(
-      await adapter.transact(authorityPlan(plan, publicOverlay)),
-      plan,
-      publicOverlay,
-    );
+    let rawPrepared;
+    try {
+      rawPrepared = await adapter.transact(authorityPlan(plan, publicOverlay, approvalReservation.digest));
+    }
+    catch (error) {
+      return Object.freeze({
+        kind: "settlement-recovery-required",
+        operationId: plan.operationId,
+        operationDigest: plan.operationDigest,
+        cause: Object.freeze({ kind: "authority-disconnected", message: error instanceof Error ? error.message : String(error) }),
+      });
+    }
+    if (rawPrepared?.kind !== "awaiting-text") {
+      approvalReservation.release();
+      lease.dispose();
+      return rawPrepared;
+    }
+    const preparedResult = validatePrepared(rawPrepared, plan, publicOverlay);
     prepared = true;
+    approvalReservation.accept(preparedResult.approvalAcceptanceProof);
     const applied = await coordinator.applyVersionedTextEdits(Object.freeze({
       operationId: plan.operationId,
       origin: "settlement",
