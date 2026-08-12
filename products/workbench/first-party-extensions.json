@@ -95,6 +95,10 @@
         {
           "source": "products/workbench/extensions/chatero-documentation/text-change-set.mjs",
           "destination": "extensions/chatero-documentation/text-change-set.mjs"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-documentation/working-copy-coordinator.mjs",
+          "destination": "extensions/chatero-documentation/working-copy-coordinator.mjs"
         }
       ]
     },

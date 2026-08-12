@@ -105,6 +105,7 @@ test("first-party materialization declares the complete Documentation authority"
     "extensions/chatero-documentation/runtime/yaml-2.9.0.mjs",
     "extensions/chatero-documentation/runtime/yaml-LICENSE",
     "extensions/chatero-documentation/text-change-set.mjs",
+    "extensions/chatero-documentation/working-copy-coordinator.mjs",
   ]);
 });
 
