@@ -8,10 +8,12 @@ import {
   createReviewSnapshot,
   createReviewSnapshotRegistry,
 } from "../extensions/chatero-documentation/review-snapshot.mjs";
+import { executeSettlement } from "../extensions/chatero-documentation/settlement-executor.mjs";
 import { planSettlement } from "../extensions/chatero-documentation/settlement-planner.mjs";
 
 const sha256 = value => createHash("sha256").update(value, "utf8").digest("hex");
 const revision = value => `sha256:${sha256(value)}`;
+const openRevision = (value, version) => `text-document:${version}:sha256:${sha256(value)}`;
 
 function reviewFixture({ currentText = "human preface\none\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\n" } = {}) {
   const baseText = "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\n";
@@ -108,4 +110,102 @@ test("returns immutable conflict evidence before planning any write", () => {
   assert.match(result.evidenceRef, /^review-conflict:sha256:[0-9a-f]{64}$/u);
   assert.equal(Object.hasOwn(result, "plan"), false);
   assert.ok(Object.isFrozen(result));
+});
+
+test("executes one barrier-bound WorkspaceEdit and acknowledges its exact text proof", async () => {
+  const fixture = reviewFixture();
+  const decisions = new Map(fixture.snapshot.leaves.map(value => [value.id, "accept"]));
+  const plan = planSettlement({
+    snapshot: fixture.snapshot,
+    decisions,
+    currentDocuments: [{
+      path: "topic.qmd",
+      text: fixture.currentText,
+      revision: openRevision(fixture.currentText, 7),
+      dirty: true,
+    }],
+    idempotencyKey: "settle-review-execute",
+  });
+  assert.equal(plan.kind, "settlement-plan");
+
+  const uri = Object.freeze({
+    value: "file:///workspace/documentation/topic.qmd",
+    toString() { return this.value; },
+  });
+  const acquireCalls = [];
+  const leaseCalls = { revalidate: 0, apply: 0, dispose: 0 };
+  const lease = {
+    async revalidate() { leaseCalls.revalidate++; return { kind: "valid" }; },
+    async applyWorkspaceEdit(edit) { leaseCalls.apply++; assert.equal(edit, "workspace-edit"); return true; },
+    async finalizeResourceOutcomes() { throw new Error("text-only settlement must not finalize structural outcomes"); },
+    dispose() { leaseCalls.dispose++; },
+  };
+  const barrier = {
+    async acquire(input) { acquireCalls.push(input); return lease; },
+  };
+  const coordinatorCalls = [];
+  const coordinator = {
+    async applyVersionedTextEdits(input) {
+      coordinatorCalls.push(input);
+      assert.equal(await input.applyWorkspaceEdit("workspace-edit"), true);
+      return {
+        kind: "applied",
+        operationId: input.operationId,
+        versions: input.edits.map(edit => ({ uri: edit.uri, before: edit.baseVersion, after: edit.baseVersion + 1 })),
+      };
+    },
+  };
+  const requests = [];
+  const adapter = {
+    async transact(request) {
+      requests.push(request);
+      if (request.kind === "prepare-settlement") {
+        return {
+          kind: "awaiting-text",
+          operationId: request.operationId,
+          operationDigest: request.operationDigest,
+          affectedResourceDigest: request.affectedResourceDigest,
+          textOverlay: request.textOverlay,
+          approvalAcceptanceProof: `approval:${request.operationDigest}`,
+        };
+      }
+      assert.equal(request.kind, "ack-settlement-text");
+      return {
+        kind: "settlement-committed",
+        operationId: request.operationId,
+        receipt: "receipt-a",
+      };
+    },
+  };
+
+  const result = await executeSettlement({
+    plan,
+    adapter,
+    barrier,
+    coordinator,
+    uriFor: () => uri,
+  });
+
+  assert.deepEqual(result, {
+    kind: "settlement-committed",
+    operationId: plan.operationId,
+    receipt: "receipt-a",
+  });
+  assert.equal(acquireCalls.length, 1);
+  assert.equal(acquireCalls[0].reason, "settlement");
+  assert.deepEqual(acquireCalls[0].resources, [{
+    uri,
+    expectedVersion: 7,
+    expectedDigest: plan.textOperations[0].currentDigest,
+    intendedDigest: plan.textOperations[0].intendedDigest,
+    requireClean: false,
+  }]);
+  assert.equal(coordinatorCalls.length, 1);
+  assert.equal(coordinatorCalls[0].origin, "settlement");
+  assert.equal(requests[0].kind, "prepare-settlement");
+  assert.equal(requests[1].kind, "ack-settlement-text");
+  assert.equal(requests[1].textProof.resources[0].intendedDigest, plan.textOperations[0].intendedDigest);
+  assert.equal(leaseCalls.revalidate, 2);
+  assert.equal(leaseCalls.apply, 1);
+  assert.equal(leaseCalls.dispose, 1);
 });

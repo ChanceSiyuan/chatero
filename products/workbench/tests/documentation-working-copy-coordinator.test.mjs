@@ -245,6 +245,30 @@ test("uses one WorkspaceEdit for a multi-document settlement", async () => {
   coordinator.dispose();
 });
 
+test("routes a settlement WorkspaceEdit through its one-shot barrier lease", async () => {
+  const target = uri("/workspace/documentation/barrier.qmd");
+  const workspace = createFakeWorkspace([{ uri: target, version: 5, text: "before" }]);
+  const coordinator = coordinatorFor(workspace);
+  let barrierCalls = 0;
+  const result = await coordinator.applyVersionedTextEdits({
+    operationId: "settle-barrier",
+    origin: "settlement",
+    edits: [{
+      uri: target,
+      baseVersion: 5,
+      changes: withChangeContext("before", [{ from: 0, to: 6, insert: "after" }]),
+    }],
+    async applyWorkspaceEdit(edit) {
+      barrierCalls++;
+      return workspace.applyEdit(edit);
+    },
+  });
+  assert.equal(result.kind, "applied");
+  assert.equal(barrierCalls, 1);
+  assert.equal(workspace.documents.get(target.toString()).getText(), "after");
+  coordinator.dispose();
+});
+
 test("returns authoritative conflicts and never applies stale or invalid ranges", async () => {
   const target = uri("/workspace/documentation/page.qmd");
   const workspace = createFakeWorkspace([{ uri: target, version: 9, text: "authoritative" }]);

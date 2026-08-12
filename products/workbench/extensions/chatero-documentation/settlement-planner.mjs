@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import { documentationPagePath, validateOperationPathSet } from "./documentation-path.mjs";
 import { validateReviewDecisions } from "./review-decisions.mjs";
+import { withChangeContext } from "./text-change-set.mjs";
 import { threeWayReconcile } from "./three-way-reconcile.mjs";
 
 const REVISION_RE = /^(?:sha256:[0-9a-f]{64}|text-document:(?:0|[1-9][0-9]*):sha256:[0-9a-f]{64})$/u;
@@ -159,7 +160,7 @@ export function planSettlement({ snapshot, decisions, currentDocuments, idempote
             currentDigest: textDigest(fresh.text),
             intendedText: intended.text,
             intendedDigest: textDigest(intended.text),
-            changes: frozenChanges(intended.changes),
+            changes: frozenChanges(withChangeContext(fresh.text, intended.changes)),
             dirty: fresh.dirty,
             ...(fresh.version === undefined ? {} : { expectedVersion: fresh.version }),
           }));

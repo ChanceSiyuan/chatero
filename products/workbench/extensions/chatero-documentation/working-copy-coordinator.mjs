@@ -31,9 +31,13 @@ function snapshotInput(input) {
   }
   if (!ORIGINS.has(input.origin)) throw new TypeError("working-copy origin is unsupported");
   if (!Array.isArray(input.edits) || input.edits.length === 0) throw new TypeError("working-copy edits must not be empty");
+  if (input.applyWorkspaceEdit !== undefined && typeof input.applyWorkspaceEdit !== "function") {
+    throw new TypeError("working-copy applyWorkspaceEdit must be a function");
+  }
   return Object.freeze({
     operationId: input.operationId,
     origin: input.origin,
+    ...(input.applyWorkspaceEdit ? { applyWorkspaceEdit: input.applyWorkspaceEdit } : {}),
     edits: Object.freeze(input.edits.map((edit, index) => {
       if (!edit || typeof edit !== "object" || Array.isArray(edit)) throw new TypeError(`working-copy edit ${index} must be an object`);
       uriKey(edit.uri);
@@ -294,7 +298,9 @@ export function createWorkingCopyCoordinator({ workspace, WorkspaceEdit, Positio
 
         let applied;
         try {
-          applied = await workspace.applyEdit(workspaceEdit);
+          applied = input.applyWorkspaceEdit
+            ? await input.applyWorkspaceEdit(workspaceEdit)
+            : await workspace.applyEdit(workspaceEdit);
         }
         catch (error) {
           return Object.freeze({
