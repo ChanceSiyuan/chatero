@@ -5,6 +5,14 @@
       "id": "chatero.documentation",
       "files": [
         {
+          "source": "products/workbench/extensions/chatero-documentation/change-set-model.mjs",
+          "destination": "extensions/chatero-documentation/change-set-model.mjs"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-documentation/change-set-store.mjs",
+          "destination": "extensions/chatero-documentation/change-set-store.mjs"
+        },
+        {
           "source": "products/workbench/extensions/chatero-documentation/documentation-authority-client.mjs",
           "destination": "extensions/chatero-documentation/documentation-authority-client.mjs"
         },
@@ -199,6 +207,10 @@
         {
           "source": "products/workbench/extensions/chatero-documentation/runtime/yaml-LICENSE",
           "destination": "extensions/chatero-documentation/runtime/yaml-LICENSE"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-documentation/stable-hunks.mjs",
+          "destination": "extensions/chatero-documentation/stable-hunks.mjs"
         },
         {
           "source": "products/workbench/extensions/chatero-documentation/text-change-set.mjs",

@@ -252,6 +252,28 @@ export function createWorkspaceTransactionAdapter({ scope, transport, workspaceV
         overlays: [],
       }, evidence);
     }
+    if (request.kind === "load-generation") {
+      if (Object.keys(request).some(key => !new Set(["kind", "ref"]).has(key))) {
+        throw new TypeError("generation snapshot request has unknown field");
+      }
+      const evidence = workspaceView.capture(scope, []);
+      return invoke("snapshot", "snapshot", {
+        kind: "load-generation",
+        ref: request.ref,
+        overlays: [],
+      }, evidence);
+    }
+    if (request.kind === "current-generation") {
+      if (Object.keys(request).some(key => !new Set(["kind", "lineageId"]).has(key))) {
+        throw new TypeError("current generation request has unknown field");
+      }
+      const evidence = workspaceView.capture(scope, []);
+      return invoke("snapshot", "snapshot", {
+        kind: "current-generation",
+        lineageId: request.lineageId,
+        overlays: [],
+      }, evidence);
+    }
     throw new TypeError("snapshot request kind is unsupported");
   };
 

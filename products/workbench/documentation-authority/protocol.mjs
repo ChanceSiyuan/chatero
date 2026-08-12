@@ -9,6 +9,8 @@ const REVISION_RE = /^sha256:([0-9a-f]{64})$/u;
 const OPEN_REVISION_RE = /^text-document:(0|[1-9][0-9]*):sha256:([0-9a-f]{64})$/u;
 const PASSIVE_IMAGE_MIME = Object.freeze(["image/png", "image/jpeg", "image/gif", "image/webp", "image/avif"]);
 const PASSIVE_IMAGE_REASONS = new Set(["missing", "unsafe", "too-large", "mime-mismatch", "unsupported-type", "unavailable"]);
+const CHANGE_SET_GENERATION_ID_RE = /^[0-9a-f]{16}$/u;
+const CHANGE_SET_LINEAGE_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 
 function compareUtf8Bytes(left, right) {
   return Buffer.compare(Buffer.from(left, "utf8"), Buffer.from(right, "utf8"));
@@ -99,6 +101,14 @@ function validateUniquePaths(paths, label) {
   return paths;
 }
 
+function validateChangeSetRef(value, label = "Change Set reference") {
+  exactObject(value, ["lineageId", "generationId"], [], label);
+  if (!CHANGE_SET_LINEAGE_RE.test(value.lineageId) || !CHANGE_SET_GENERATION_ID_RE.test(value.generationId)) {
+    throw new TypeError(`${label} is invalid`);
+  }
+  return value;
+}
+
 function validateOverlay(value) {
   exactObject(value, ["uri", "version", "dirty", "text", "revision"], [], "TextDocument overlay");
   validateWorkspaceUri(value.uri, "overlay URI");
@@ -171,6 +181,14 @@ function validateSnapshotPayload(value, workspace) {
     if (JSON.stringify(value.allowedMime) !== JSON.stringify(PASSIVE_IMAGE_MIME) || !Array.isArray(value.overlays) || value.overlays.length !== 0) {
       throw new TypeError("passive image policy differs from the fixed product policy");
     }
+  }
+  else if (value.kind === "load-generation") {
+    exactObject(value, ["kind", "ref", "overlays"], [], "generation snapshot payload");
+    validateChangeSetRef(value.ref);
+  }
+  else if (value.kind === "current-generation") {
+    exactObject(value, ["kind", "lineageId", "overlays"], [], "current generation snapshot payload");
+    if (!CHANGE_SET_LINEAGE_RE.test(value.lineageId)) throw new TypeError("Change Set lineage is invalid");
   }
   else {
     throw new TypeError("snapshot payload kind is unsupported");

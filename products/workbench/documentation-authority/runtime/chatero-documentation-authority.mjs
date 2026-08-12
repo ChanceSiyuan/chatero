@@ -28,6 +28,11 @@ const PRIVATE_DIRECTORY_MODE = 0o700;
 const PRIVATE_FILE_MODE = 0o600;
 const MIGRATION_ROOTS = Object.freeze(["documentation", "drafts", "knowledge"]);
 const LEGACY_PROPOSAL_ROOT = "work/qlab-zotero/draft-changes";
+const CHANGE_SET_ROOT = "work/qlab-zotero/documentation-changes";
+const CHANGE_SET_GENERATION_ID_RE = /^[0-9a-f]{16}$/u;
+const CHANGE_SET_LINEAGE_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
+const CHANGE_SET_OPERATION_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
+const CHANGE_SET_DIGEST_RE = /^sha256:[0-9a-f]{64}$/u;
 const PASSIVE_IMAGE_MIME = Object.freeze(["image/png", "image/jpeg", "image/gif", "image/webp", "image/avif"]);
 const PASSIVE_IMAGE_EXTENSIONS = Object.freeze(new Map([
   [".png", "image/png"],
@@ -84,6 +89,42 @@ function safeRelativePath(value) {
     throw new TypeError("Documentation authority path is unsafe");
   }
   return parts;
+}
+
+function exactFields(value, required, optional, label) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new TypeError(`${label} is invalid`);
+  const allowed = new Set([...required, ...optional]);
+  if (Object.keys(value).some(key => !allowed.has(key)) || required.some(key => !Object.hasOwn(value, key))) {
+    throw new TypeError(`${label} schema is invalid`);
+  }
+  return value;
+}
+
+function changeSetRef(value, label = "Change Set reference") {
+  exactFields(value, ["lineageId", "generationId"], [], label);
+  if (!CHANGE_SET_LINEAGE_RE.test(value.lineageId) || !CHANGE_SET_GENERATION_ID_RE.test(value.generationId)) {
+    throw new TypeError(`${label} is invalid`);
+  }
+  return Object.freeze({ lineageId: value.lineageId, generationId: value.generationId });
+}
+
+function changeSetPaths(value) {
+  const ref = changeSetRef(value);
+  const directory = `${CHANGE_SET_ROOT}/${ref.lineageId}/${ref.generationId}`;
+  return Object.freeze({
+    ref,
+    lineage: `${CHANGE_SET_ROOT}/${ref.lineageId}`,
+    directory,
+    blobs: `${directory}/blobs`,
+    manifest: `${directory}/manifest.v1.json`,
+    current: `${CHANGE_SET_ROOT}/${ref.lineageId}/current.v1.json`,
+  });
+}
+
+function safePagePath(value) {
+  safeRelativePath(value);
+  if (!value.toLowerCase().endsWith(".qmd")) throw new TypeError("Change Set page path is invalid");
+  return value;
 }
 
 function decodedPathname(uri) {
@@ -831,6 +872,228 @@ async function planMigrationResult(fs, root, request) {
   });
 }
 
+function canonicalGenerationManifest(bytes) {
+  const value = Buffer.from(bytes);
+  if (value.byteLength === 0 || value.byteLength > 8 * 1024 * 1024 || value.at(-1) !== 0x0a) {
+    throw new TypeError("Change Set manifest is invalid");
+  }
+  const text = value.toString("utf8");
+  if (!Buffer.from(text, "utf8").equals(value)) throw new TypeError("Change Set manifest is not UTF-8");
+  const manifest = JSON.parse(text.slice(0, -1));
+  if (!serializedJson(manifest).equals(value)) throw new TypeError("Change Set manifest is not canonical JSON");
+  return manifest;
+}
+
+function changeSetBlobDescriptor(value, expectedPath) {
+  exactFields(value, ["path", "size", "sha256"], [], "Change Set blob descriptor");
+  if (value.path !== expectedPath || !Number.isSafeInteger(value.size) || value.size < 0
+    || value.size > 8 * 1024 * 1024 || !/^[0-9a-f]{64}$/u.test(value.sha256)) {
+    throw new TypeError("Change Set blob descriptor is invalid");
+  }
+  return value;
+}
+
+function decodeUtf8Blob(bytes, descriptor) {
+  const value = Buffer.from(bytes);
+  if (value.byteLength !== descriptor.size || sha256(value) !== descriptor.sha256) {
+    throw new TypeError("Change Set blob digest does not match");
+  }
+  const text = value.toString("utf8");
+  if (!Buffer.from(text, "utf8").equals(value)) throw new TypeError("Change Set blob is not UTF-8");
+  return text;
+}
+
+function boundRevision(text, revision) {
+  const match = typeof revision === "string"
+    ? /^(?:sha256:|text-document:(?:0|[1-9][0-9]*):sha256:)([0-9a-f]{64})$/u.exec(revision)
+    : null;
+  if (!match || match[1] !== sha256(Buffer.from(text, "utf8"))) {
+    throw new TypeError("Change Set base revision does not match");
+  }
+  return revision;
+}
+
+async function validateGenerationBundle({ manifestBytes, expectedRef, readBlob }) {
+  const manifest = canonicalGenerationManifest(manifestBytes);
+  exactFields(manifest, [
+    "schemaVersion", "ref", "repositoryIdentity", "authorityIdentity", "grantDigest",
+    "idempotencyKey", "createdAt", "stateGeneration", "operations", "hunks",
+    "generationDigest", "status",
+  ], ["parentRef"], "Change Set manifest");
+  const ref = changeSetRef(manifest.ref);
+  if (ref.lineageId !== expectedRef.lineageId || ref.generationId !== expectedRef.generationId
+    || manifest.schemaVersion !== 1 || manifest.status !== "open"
+    || !CHANGE_SET_DIGEST_RE.test(manifest.generationDigest)
+    || !/^(?:sha256:)?[0-9a-f]{64}$/u.test(manifest.grantDigest)
+    || !CHANGE_SET_OPERATION_RE.test(manifest.idempotencyKey)
+    || !CHANGE_SET_GENERATION_ID_RE.test(manifest.stateGeneration)
+    || typeof manifest.repositoryIdentity !== "string" || !manifest.repositoryIdentity
+    || typeof manifest.authorityIdentity !== "string" || !manifest.authorityIdentity
+    || typeof manifest.createdAt !== "string" || new Date(manifest.createdAt).toISOString() !== manifest.createdAt
+    || !Array.isArray(manifest.operations) || manifest.operations.length === 0 || manifest.operations.length > 128
+    || !Array.isArray(manifest.hunks) || manifest.hunks.length > 16_384) {
+    throw new TypeError("Change Set manifest identity is invalid");
+  }
+  const parentRef = manifest.parentRef === undefined ? undefined : changeSetRef(manifest.parentRef, "parent reference");
+  if ((ref.generationId === "0000000000000001") !== (parentRef === undefined)
+    || parentRef && (parentRef.lineageId !== ref.lineageId
+      || BigInt(`0x${parentRef.generationId}`) >= BigInt(`0x${ref.generationId}`))) {
+    throw new TypeError("Change Set parent reference is invalid");
+  }
+  const paths = changeSetPaths(ref);
+  const expectedBlobs = [];
+  const operationIds = new Set();
+  const operationPaths = new Set();
+  const operations = [];
+  const read = async descriptor => decodeUtf8Blob(await readBlob(descriptor.path), descriptor);
+  for (const value of manifest.operations) {
+    if (!value || typeof value !== "object" || !CHANGE_SET_OPERATION_RE.test(value.operationId ?? "")
+      || operationIds.has(value.operationId)) throw new TypeError("Change Set operation identity is invalid");
+    operationIds.add(value.operationId);
+    const basePath = `${paths.blobs}/${value.operationId}.base`;
+    const proposedPath = `${paths.blobs}/${value.operationId}.proposed`;
+    let operation;
+    if (value.kind === "create") {
+      exactFields(value, ["kind", "operationId", "path", "targetAbsent", "proposedBlob"], [], "create operation");
+      if (value.targetAbsent !== true) throw new TypeError("create target absence is invalid");
+      const proposedBlob = changeSetBlobDescriptor(value.proposedBlob, proposedPath);
+      expectedBlobs.push(proposedBlob);
+      operation = {
+        kind: "create", operationId: value.operationId,
+        path: { kind: "documentation-page", value: safePagePath(value.path) },
+        targetAbsent: true, proposedText: await read(proposedBlob),
+      };
+    }
+    else if (value.kind === "edit") {
+      exactFields(value, ["kind", "operationId", "path", "baseRevision", "baseBlob", "proposedBlob"], [], "edit operation");
+      const baseBlob = changeSetBlobDescriptor(value.baseBlob, basePath);
+      const proposedBlob = changeSetBlobDescriptor(value.proposedBlob, proposedPath);
+      expectedBlobs.push(baseBlob, proposedBlob);
+      const baseText = await read(baseBlob);
+      const proposedText = await read(proposedBlob);
+      if (baseText === proposedText) throw new TypeError("Change Set edit is empty");
+      operation = {
+        kind: "edit", operationId: value.operationId,
+        path: { kind: "documentation-page", value: safePagePath(value.path) },
+        baseRevision: boundRevision(baseText, value.baseRevision), baseText, proposedText,
+      };
+    }
+    else if (value.kind === "rename") {
+      exactFields(value, [
+        "kind", "operationId", "from", "to", "baseRevision", "targetAbsent", "baseBlob", "proposedBlob",
+      ], [], "rename operation");
+      if (value.targetAbsent !== true) throw new TypeError("rename target absence is invalid");
+      const baseBlob = changeSetBlobDescriptor(value.baseBlob, basePath);
+      const proposedBlob = changeSetBlobDescriptor(value.proposedBlob, proposedPath);
+      expectedBlobs.push(baseBlob, proposedBlob);
+      const baseText = await read(baseBlob);
+      operation = {
+        kind: "rename", operationId: value.operationId,
+        from: { kind: "documentation-page", value: safePagePath(value.from) },
+        to: { kind: "documentation-page", value: safePagePath(value.to) },
+        baseRevision: boundRevision(baseText, value.baseRevision), baseText,
+        targetAbsent: true, proposedText: await read(proposedBlob),
+      };
+    }
+    else if (value.kind === "delete") {
+      exactFields(value, ["kind", "operationId", "path", "baseRevision", "baseBlob"], [], "delete operation");
+      const baseBlob = changeSetBlobDescriptor(value.baseBlob, basePath);
+      expectedBlobs.push(baseBlob);
+      const baseText = await read(baseBlob);
+      operation = {
+        kind: "delete", operationId: value.operationId,
+        path: { kind: "documentation-page", value: safePagePath(value.path) },
+        baseRevision: boundRevision(baseText, value.baseRevision), baseText,
+      };
+    }
+    else throw new TypeError("Change Set operation kind is invalid");
+    const pathsForOperation = operation.kind === "rename" ? [operation.from.value, operation.to.value] : [operation.path.value];
+    if (pathsForOperation.some(path => operationPaths.has(path))) throw new TypeError("Change Set operation paths overlap");
+    pathsForOperation.forEach(path => operationPaths.add(path));
+    operations.push(Object.freeze(operation));
+  }
+  const expectedPathSet = new Set(expectedBlobs.map(value => value.path));
+  if (expectedPathSet.size !== expectedBlobs.length) throw new TypeError("Change Set blob paths overlap");
+  const identity = {
+    schemaVersion: 1,
+    ref,
+    ...(parentRef ? { parentRef } : {}),
+    repositoryIdentity: manifest.repositoryIdentity,
+    authorityIdentity: manifest.authorityIdentity,
+    grantDigest: manifest.grantDigest,
+    idempotencyKey: manifest.idempotencyKey,
+    createdAt: manifest.createdAt,
+    stateGeneration: manifest.stateGeneration,
+    operations,
+    hunks: manifest.hunks,
+  };
+  if (digestValue(identity) !== manifest.generationDigest) throw new TypeError("Change Set generation digest does not match");
+  return Object.freeze({ manifest, paths, expectedBlobs: Object.freeze(expectedBlobs), generationDigest: manifest.generationDigest });
+}
+
+async function generationSnapshotResult(fs, root, request) {
+  const ref = changeSetRef(request.snapshot.ref);
+  const paths = changeSetPaths(ref);
+  const inspected = await inspectRelative(fs, root, paths.manifest);
+  if (!inspected.metadata) return Object.freeze({ kind: "generation-missing", ref });
+  if (!inspected.metadata.isFile() || inspected.metadata.isSymbolicLink() || inspected.metadata.nlink !== 1) {
+    throw new TypeError("Change Set manifest path is unsafe");
+  }
+  const manifestBytes = await readRegularFile(fs, inspected.path, 8 * 1024 * 1024);
+  const bundle = await validateGenerationBundle({
+    manifestBytes,
+    expectedRef: ref,
+    readBlob: async path => {
+      const entry = await inspectRelative(fs, root, path);
+      if (!entry.metadata || !entry.metadata.isFile() || entry.metadata.isSymbolicLink() || entry.metadata.nlink !== 1) {
+        throw new TypeError("Change Set blob path is unsafe");
+      }
+      return readRegularFile(fs, entry.path, 8 * 1024 * 1024);
+    },
+  });
+  const directory = await inspectRelative(fs, root, paths.directory);
+  const blobs = await inspectRelative(fs, root, paths.blobs);
+  if (!directory.metadata?.isDirectory() || directory.metadata.isSymbolicLink()
+    || !blobs.metadata?.isDirectory() || blobs.metadata.isSymbolicLink()) throw new TypeError("Change Set directory is unsafe");
+  const directoryEntries = await directoryNames(fs, directory.path);
+  if (JSON.stringify(directoryEntries) !== JSON.stringify(["blobs", "manifest.v1.json"])) {
+    throw new TypeError("Change Set generation contains an undeclared entry");
+  }
+  const expectedNames = bundle.expectedBlobs.map(value => value.path.slice(`${paths.blobs}/`.length)).sort(compareUtf8Bytes);
+  if (JSON.stringify(await directoryNames(fs, blobs.path)) !== JSON.stringify(expectedNames)) {
+    throw new TypeError("Change Set blob directory differs from its manifest");
+  }
+  const outputs = [];
+  for (const descriptor of bundle.expectedBlobs) {
+    const entry = await inspectRelative(fs, root, descriptor.path);
+    const bytes = await readRegularFile(fs, entry.path, 8 * 1024 * 1024);
+    outputs.push(Object.freeze({ path: descriptor.path, bytes: bytes.toString("base64url") }));
+  }
+  outputs.push(Object.freeze({ path: paths.manifest, bytes: manifestBytes.toString("base64url") }));
+  return Object.freeze({
+    kind: "generation-snapshot",
+    ref,
+    generationDigest: bundle.generationDigest,
+    outputs: Object.freeze(outputs),
+  });
+}
+
+async function currentGenerationResult(fs, root, request) {
+  if (!CHANGE_SET_LINEAGE_RE.test(request.snapshot.lineageId)) throw new TypeError("Change Set lineage is invalid");
+  const paths = changeSetPaths({ lineageId: request.snapshot.lineageId, generationId: "0000000000000001" });
+  const inspected = await inspectRelative(fs, root, paths.current);
+  if (!inspected.metadata) return Object.freeze({ kind: "current-generation-missing", lineageId: request.snapshot.lineageId });
+  if (!inspected.metadata.isFile() || inspected.metadata.isSymbolicLink() || inspected.metadata.nlink !== 1) {
+    throw new TypeError("current Change Set reference is unsafe");
+  }
+  const record = await readCanonicalJson(fs, inspected.path);
+  exactFields(record, ["schemaVersion", "ref", "generationDigest"], [], "current Change Set record");
+  const ref = changeSetRef(record.ref);
+  if (record.schemaVersion !== 1 || ref.lineageId !== request.snapshot.lineageId
+    || !CHANGE_SET_DIGEST_RE.test(record.generationDigest)) throw new TypeError("current Change Set record is invalid");
+  return Object.freeze({ kind: "current-generation", ref, generationDigest: record.generationDigest });
+}
+
 async function snapshotResult(fs, root, request) {
   const overlays = overlayPaths(request);
   if (request.snapshot.kind === "passive-image") return passiveImageResult(fs, root, request);
@@ -871,6 +1134,8 @@ async function snapshotResult(fs, root, request) {
   if (request.snapshot.kind === "plan-migration") {
     return planMigrationResult(fs, root, request);
   }
+  if (request.snapshot.kind === "load-generation") return generationSnapshotResult(fs, root, request);
+  if (request.snapshot.kind === "current-generation") return currentGenerationResult(fs, root, request);
   throw new TypeError("Documentation snapshot operation is not implemented");
 }
 
@@ -945,6 +1210,139 @@ async function readCanonicalJson(fs, path) {
   const value = JSON.parse(text.slice(0, -1));
   if (!serializedJson(value).equals(bytes)) throw new TypeError("authority journal is not canonical JSON");
   return value;
+}
+
+function decodeStageOutput(value) {
+  exactFields(value, ["path", "size", "sha256", "bytes"], [], "staged generation output");
+  safeRelativePath(value.path);
+  if (!Number.isSafeInteger(value.size) || value.size < 0 || value.size > 8 * 1024 * 1024
+    || !/^[0-9a-f]{64}$/u.test(value.sha256) || typeof value.bytes !== "string"
+    || !/^[A-Za-z0-9_-]*$/u.test(value.bytes) || value.bytes.length % 4 === 1) {
+    throw new TypeError("staged generation output is invalid");
+  }
+  const bytes = Buffer.from(value.bytes, "base64url");
+  if (bytes.toString("base64url") !== value.bytes || bytes.byteLength !== value.size || sha256(bytes) !== value.sha256) {
+    throw new TypeError("staged generation output digest does not match");
+  }
+  return Object.freeze({ path: value.path, bytes, sha256: value.sha256 });
+}
+
+async function readCurrentGenerationRecord(fs, root, lineageId) {
+  const paths = changeSetPaths({ lineageId, generationId: "0000000000000001" });
+  const inspected = await inspectRelative(fs, root, paths.current);
+  if (!inspected.metadata) return null;
+  if (!inspected.metadata.isFile() || inspected.metadata.isSymbolicLink() || inspected.metadata.nlink !== 1) {
+    throw new TypeError("current Change Set reference is unsafe");
+  }
+  const record = await readCanonicalJson(fs, inspected.path);
+  exactFields(record, ["schemaVersion", "ref", "generationDigest"], [], "current Change Set record");
+  const ref = changeSetRef(record.ref);
+  if (record.schemaVersion !== 1 || ref.lineageId !== lineageId || !CHANGE_SET_DIGEST_RE.test(record.generationDigest)) {
+    throw new TypeError("current Change Set reference is invalid");
+  }
+  return Object.freeze({ schemaVersion: 1, ref, generationDigest: record.generationDigest });
+}
+
+function sameChangeSetRef(left, right) {
+  return left?.lineageId === right?.lineageId && left?.generationId === right?.generationId;
+}
+
+async function stageGenerationTransaction(fs, root, request) {
+  exactFields(request, ["kind", "schemaVersion", "ref", "generationDigest", "outputs"], ["parentRef"], "stage generation request");
+  if (request.kind !== "stage-generation" || request.schemaVersion !== 1
+    || !CHANGE_SET_DIGEST_RE.test(request.generationDigest) || !Array.isArray(request.outputs)
+    || request.outputs.length < 2 || request.outputs.length > 257) {
+    throw new TypeError("stage generation request is invalid");
+  }
+  const ref = changeSetRef(request.ref);
+  const paths = changeSetPaths(ref);
+  const parentRef = request.parentRef === undefined ? undefined : changeSetRef(request.parentRef, "parent reference");
+  const outputs = request.outputs.map(decodeStageOutput);
+  const outputMap = new Map();
+  const folded = new Set();
+  for (const output of outputs) {
+    const key = output.path.toLowerCase();
+    if (outputMap.has(output.path) || folded.has(key)) throw new TypeError("staged generation outputs overlap");
+    outputMap.set(output.path, output.bytes);
+    folded.add(key);
+  }
+  if (outputs.at(-1).path !== paths.manifest || !outputMap.has(paths.manifest)) {
+    throw new TypeError("Change Set manifest must be published last");
+  }
+  const bundle = await validateGenerationBundle({
+    manifestBytes: outputMap.get(paths.manifest),
+    expectedRef: ref,
+    readBlob: async path => {
+      const bytes = outputMap.get(path);
+      if (!bytes) throw new TypeError("staged Change Set blob is missing");
+      return bytes;
+    },
+  });
+  const expectedPaths = new Set([...bundle.expectedBlobs.map(value => value.path), paths.manifest]);
+  if (expectedPaths.size !== outputs.length || outputs.some(output => !expectedPaths.has(output.path))
+    || bundle.generationDigest !== request.generationDigest
+    || !sameChangeSetRef(bundle.manifest.parentRef, parentRef)) {
+    throw new TypeError("stage generation request differs from its manifest");
+  }
+
+  const existing = await inspectRelative(fs, root, paths.directory);
+  if (existing.metadata) {
+    const snapshot = await generationSnapshotResult(fs, root, {
+      snapshot: { kind: "load-generation", ref, overlays: [] },
+    });
+    if (snapshot.kind !== "generation-snapshot" || snapshot.generationDigest !== request.generationDigest
+      || snapshot.outputs.length !== outputs.length) {
+      return Object.freeze({ kind: "idempotency-conflict", ref });
+    }
+    const stored = new Map(snapshot.outputs.map(output => [output.path, Buffer.from(output.bytes, "base64url")]));
+    if (outputs.some(output => !stored.get(output.path)?.equals(output.bytes))) {
+      return Object.freeze({ kind: "idempotency-conflict", ref });
+    }
+    return Object.freeze({ kind: "generation-staged", ref, generationDigest: request.generationDigest, reused: true });
+  }
+
+  const current = await readCurrentGenerationRecord(fs, root, ref.lineageId);
+  if (!sameChangeSetRef(current?.ref, parentRef)) {
+    return Object.freeze({ kind: "stale-generation", currentRef: current?.ref ?? null });
+  }
+  await ensureDirectory(fs, root, CHANGE_SET_ROOT, { privateMode: true });
+  const lineage = await ensureDirectory(fs, root, paths.lineage, { privateMode: true });
+  const temporary = join(lineage, `.staging-${randomUUID()}`);
+  const finalDirectory = join(root, ...safeRelativePath(paths.directory));
+  try {
+    await fs.mkdir(temporary, { mode: PRIVATE_DIRECTORY_MODE });
+    const blobs = join(temporary, "blobs");
+    await fs.mkdir(blobs, { mode: PRIVATE_DIRECTORY_MODE });
+    for (const descriptor of bundle.expectedBlobs) {
+      const name = descriptor.path.slice(`${paths.blobs}/`.length);
+      if (!CHANGE_SET_OPERATION_RE.test(name.replace(/\.(?:base|proposed)$/u, ""))) {
+        throw new TypeError("Change Set blob filename is invalid");
+      }
+      await exclusiveWrite(fs, join(blobs, name), outputMap.get(descriptor.path));
+    }
+    await syncDirectory(fs, blobs);
+    await exclusiveWrite(fs, join(temporary, "manifest.v1.json"), outputMap.get(paths.manifest));
+    await syncDirectory(fs, temporary);
+    await fs.rename(temporary, finalDirectory);
+    await syncDirectory(fs, lineage);
+
+    const revalidated = await readCurrentGenerationRecord(fs, root, ref.lineageId);
+    if (!sameChangeSetRef(revalidated?.ref, parentRef)) {
+      await fs.rm(finalDirectory, { recursive: true });
+      await syncDirectory(fs, lineage);
+      return Object.freeze({ kind: "stale-generation", currentRef: revalidated?.ref ?? null });
+    }
+    const currentPath = join(root, ...safeRelativePath(paths.current));
+    await atomicWrite(fs, currentPath, serializedJson({
+      schemaVersion: 1,
+      ref,
+      generationDigest: request.generationDigest,
+    }));
+    return Object.freeze({ kind: "generation-staged", ref, generationDigest: request.generationDigest, reused: false });
+  }
+  finally {
+    await fs.rm(temporary, { recursive: true, force: true });
+  }
 }
 
 function processAlive(pid) {
@@ -1040,6 +1438,9 @@ async function dispatch(fs, clock, request) {
   const root = await assertWorkspaceRoot(fs, request.workspace);
   if (request.kind === "snapshot") return snapshotResult(fs, root, request);
   return withLease(fs, root, clock, async () => {
+    if (request.kind === "transact" && request.transaction?.kind === "stage-generation") {
+      return stageGenerationTransaction(fs, root, request.transaction);
+    }
     const authority = await createFilesystemAuthority(fs, root);
     const executor = createStateTransactionExecutor({ authority });
     if (request.kind === "transact") return executor.execute(request.transaction);
