@@ -159,12 +159,13 @@ test("rejects traversal, absolute paths, duplicate files, and unknown fields", a
   }
 });
 
-test("the canonical series pins the native Codex policy patch last", async () => {
+test("the canonical series pins Documentation authority after native Codex", async () => {
   const series = JSON.parse(await readFile(join(canonicalPatchDirectory, "series.json"), "utf8"));
   const entry = series.patches.at(-1);
 
-  assert.equal(entry.file, "0003-chatero-native-codex.patch");
+  assert.equal(entry.file, "0004-chatero-documentation-agent-authority.patch");
+  assert.equal(series.patches.at(-2)?.file, "0003-chatero-native-codex.patch");
   const bytes = await readFile(join(canonicalPatchDirectory, entry.file));
   assert.equal(entry.sha256, sha256(bytes));
-  assert.match(bytes.toString("utf8"), /chatero\.chat\.attachTextContext/);
+  assert.match(bytes.toString("utf8"), /acquireDocumentationWorkingCopyBarrier/);
 });

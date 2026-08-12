@@ -1,0 +1,1558 @@
+diff --git a/src/vs/platform/agentHost/node/codex/chateroCodexPermissions.ts b/src/vs/platform/agentHost/node/codex/chateroCodexPermissions.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..8e66d5c92b0d25bea2f2e93b7ba9cab217209d06
+--- /dev/null
++++ b/src/vs/platform/agentHost/node/codex/chateroCodexPermissions.ts
+@@ -0,0 +1,503 @@
++/*---------------------------------------------------------------------------------------------
++ *  Copyright (c) Chatero contributors. All rights reserved.
++ *  Licensed under the MIT License. See License.txt in the project root for license information.
++ *--------------------------------------------------------------------------------------------*/
++
++import * as fs from 'fs';
++import { isAbsolute, join, normalize, relative, resolve, sep } from '../../../../base/common/path.js';
++import type { SandboxMode } from './protocol/generated/v2/SandboxMode.js';
++import type { ActivePermissionProfile } from './protocol/generated/v2/ActivePermissionProfile.js';
++import type { AdditionalFileSystemPermissions } from './protocol/generated/v2/AdditionalFileSystemPermissions.js';
++import type { ConfigReadResponse } from './protocol/generated/v2/ConfigReadResponse.js';
++import type { ConfigRequirementsReadResponse } from './protocol/generated/v2/ConfigRequirementsReadResponse.js';
++import type { PermissionProfileListResponse } from './protocol/generated/v2/PermissionProfileListResponse.js';
++
++export const CHATERO_RESERVED_WORKSPACE_SUBPATHS = Object.freeze([
++	'documentation',
++	'.chatero',
++	'work/qlab-zotero/documentation-changes',
++	'work/qlab-zotero/documentation-migration',
++	'.codex',
++]);
++
++export const CHATERO_CODEX_PERMISSION_PROFILE_IDS = Object.freeze([
++	'chatero_read_only',
++	'chatero_workspace',
++	'chatero_full_access',
++] as const);
++
++export type ChateroCodexPermissionProfileId = typeof CHATERO_CODEX_PERMISSION_PROFILE_IDS[number];
++
++type JsonObject = Record<string, unknown>;
++
++export interface IChateroProtectedObjectIdentity {
++	readonly path: string;
++	readonly realPath: string;
++	readonly dev: number;
++	readonly ino: number;
++	readonly mode: number;
++	readonly nlink: number;
++	readonly kind: 'directory' | 'file' | 'symlink';
++}
++
++export interface IChateroCodexPermissionContext {
++	readonly codexHome: string;
++	readonly trustedRuntimeRoots: readonly string[];
++	readonly productProfiles: Readonly<Record<ChateroCodexPermissionProfileId, JsonObject>>;
++	readonly launchOverrides: readonly string[];
++	readonly protectedObjects: readonly IChateroProtectedObjectIdentity[];
++}
++
++export interface IChateroCodexPreflightReader {
++	readConfig(cwd: string): Promise<ConfigReadResponse>;
++	readRequirements(): Promise<ConfigRequirementsReadResponse>;
++	listPermissionProfiles(cwd: string): Promise<PermissionProfileListResponse>;
++}
++
++const EXPECTED_PARENT: Readonly<Record<ChateroCodexPermissionProfileId, string | null>> = Object.freeze({
++	chatero_read_only: ':read-only',
++	chatero_workspace: ':workspace',
++	chatero_full_access: null,
++});
++
++export function chateroCodexPermissionProfile(mode: SandboxMode): ChateroCodexPermissionProfileId {
++	switch (mode) {
++		case 'read-only': return 'chatero_read_only';
++		case 'workspace-write': return 'chatero_workspace';
++		case 'danger-full-access': return 'chatero_full_access';
++		default: return assertNever(mode);
++	}
++}
++
++export function chateroCodexLifecyclePermissions(mode: SandboxMode, runtimeWorkspaceRoots: readonly string[]): Readonly<{
++	permissions: ChateroCodexPermissionProfileId;
++	runtimeWorkspaceRoots: string[];
++}> {
++	const roots = runtimeWorkspaceRoots.map(root => requireAbsoluteNormalizedPath(root, 'runtime workspace root'));
++	if (roots.length === 0) {
++		throw new Error('Chatero Codex requires at least one runtime workspace root');
++	}
++	return Object.freeze({ permissions: chateroCodexPermissionProfile(mode), runtimeWorkspaceRoots: roots });
++}
++
++export function createChateroCodexPermissionContext(input: Readonly<{
++	codexHome: string;
++	trustedRuntimeRoots: readonly string[];
++}>): IChateroCodexPermissionContext {
++	const codexHome = canonicalPrivateDirectory(input.codexHome, 'CODEX_HOME');
++	const trustedRuntimeRoots = distinctPaths(input.trustedRuntimeRoots.map(root => canonicalDirectory(root, 'trusted runtime root')));
++	if (trustedRuntimeRoots.length === 0) {
++		throw new Error('Chatero Codex requires at least one trusted runtime root');
++	}
++	for (const runtimeRoot of trustedRuntimeRoots) {
++		if (pathsIntersect(runtimeRoot, codexHome)) {
++			throw new Error(`trusted runtime root overlaps CODEX_HOME: ${runtimeRoot}`);
++		}
++	}
++	const productProfiles = chateroCodexPermissionConfig({ codexHome, trustedRuntimeRoots });
++	const protectedObjects = captureProtectedObjectInventory([codexHome, ...trustedRuntimeRoots]);
++	return Object.freeze({
++		codexHome,
++		trustedRuntimeRoots: Object.freeze(trustedRuntimeRoots),
++		productProfiles,
++		launchOverrides: Object.freeze(chateroCodexPermissionOverrides({ codexHome, trustedRuntimeRoots })),
++		protectedObjects: Object.freeze(protectedObjects),
++	});
++}
++
++export function chateroCodexPermissionConfig(input: Readonly<{
++	codexHome: string;
++	trustedRuntimeRoots: readonly string[];
++}>): Readonly<Record<ChateroCodexPermissionProfileId, JsonObject>> {
++	const codexHome = requireAbsoluteNormalizedPath(input.codexHome, 'CODEX_HOME');
++	const trustedRuntimeRoots = distinctPaths(input.trustedRuntimeRoots.map(root => requireAbsoluteNormalizedPath(root, 'trusted runtime root')));
++	const protectedAbsolutePaths = distinctPaths([codexHome, ...trustedRuntimeRoots]);
++	const workspaceDeny = Object.fromEntries(CHATERO_RESERVED_WORKSPACE_SUBPATHS.map(path => [path, 'deny']));
++	const absoluteDeny = Object.fromEntries(protectedAbsolutePaths.map(path => [path, 'deny']));
++	const filesystem = (base?: Readonly<Record<string, unknown>>): JsonObject => ({
++		...(base ?? {}),
++		...absoluteDeny,
++		':workspace_roots': { ...workspaceDeny },
++	});
++	return deepFreeze({
++		chatero_read_only: {
++			extends: ':read-only',
++			filesystem: filesystem(),
++			network: { enabled: false },
++		},
++		chatero_workspace: {
++			extends: ':workspace',
++			filesystem: filesystem(),
++			network: { enabled: true, mode: 'full' },
++		},
++		chatero_full_access: {
++			filesystem: filesystem({ ':root': 'write' }),
++			network: { enabled: true, mode: 'full' },
++		},
++	});
++}
++
++export function chateroCodexPermissionOverrides(input: Readonly<{
++	codexHome: string;
++	trustedRuntimeRoots: readonly string[];
++}>): string[] {
++	const profiles = chateroCodexPermissionConfig(input);
++	return [
++		'default_permissions="chatero_read_only"',
++		...CHATERO_CODEX_PERMISSION_PROFILE_IDS.map(id => `permissions.${id}=${tomlInline(profiles[id])}`),
++	];
++}
++
++export async function chateroCodexPreflight(input: Readonly<{
++	reader: IChateroCodexPreflightReader;
++	cwd: string;
++	context: IChateroCodexPermissionContext;
++}>): Promise<Readonly<{ epoch: string }>> {
++	const cwd = requireAbsoluteNormalizedPath(input.cwd, 'Codex lifecycle cwd');
++	revalidateProtectedObjectInventory(input.context.protectedObjects);
++	for (const reserved of CHATERO_RESERVED_WORKSPACE_SUBPATHS) {
++		const reservedPath = resolve(cwd, reserved);
++		if (pathsIntersect(reservedPath, input.context.codexHome)) {
++			throw new Error(`CODEX_HOME overlaps a reserved Documentation path: ${reserved}`);
++		}
++		for (const runtimeRoot of input.context.trustedRuntimeRoots) {
++			if (pathsIntersect(reservedPath, runtimeRoot)) {
++				throw new Error(`trusted runtime overlaps a reserved Documentation path: ${reserved}`);
++			}
++		}
++	}
++	const [config, requirements, summaries] = await Promise.all([
++		input.reader.readConfig(cwd),
++		input.reader.readRequirements(),
++		input.reader.listPermissionProfiles(cwd),
++	]);
++	validateConfigurationLayers(config, input.context.productProfiles);
++	validateRequirements(requirements);
++	validateProfileSummaries(summaries);
++	return Object.freeze({ epoch: configurationEpoch(config, requirements, summaries) });
++}
++
++export function assertChateroActivePermissionProfile(
++	active: ActivePermissionProfile | null,
++	expected: ChateroCodexPermissionProfileId,
++	lifecycle: 'thread/start' | 'thread/fork' | 'thread/resume',
++): void {
++	if (!active || active.id !== expected || active.extends !== EXPECTED_PARENT[expected]) {
++		throw new Error(`${lifecycle} did not activate the required Chatero permission profile ${expected}`);
++	}
++}
++
++export function chateroPermissionRequestTouchesReserved(
++	fileSystem: AdditionalFileSystemPermissions | null,
++	runtimeWorkspaceRoots: readonly string[],
++): boolean {
++	if (!fileSystem) {
++		return false;
++	}
++	const roots = runtimeWorkspaceRoots.map(root => requireAbsoluteNormalizedPath(root, 'runtime workspace root'));
++	const reserved = roots.flatMap(root => CHATERO_RESERVED_WORKSPACE_SUBPATHS.map(path => resolve(root, path)));
++	const legacyPaths = [...(fileSystem.read ?? []), ...(fileSystem.write ?? [])];
++	if (legacyPaths.some(path => pathIntersectsAny(path, reserved))) {
++		return true;
++	}
++	for (const entry of fileSystem.entries ?? []) {
++		if (entry.access === 'deny') {
++			continue;
++		}
++		if (entry.path.type === 'glob_pattern') {
++			return true;
++		}
++		if (entry.path.type === 'path') {
++			if (pathIntersectsAny(entry.path.path, reserved)) {
++				return true;
++			}
++			continue;
++		}
++		const special = entry.path.value;
++		if (special.kind !== 'project_roots') {
++			return true;
++		}
++		if (!special.subpath || special.subpath === '.') {
++			return true;
++		}
++		if (CHATERO_RESERVED_WORKSPACE_SUBPATHS.some(path => relativePathsIntersect(path, special.subpath!))) {
++			return true;
++		}
++	}
++	return false;
++}
++
++function validateConfigurationLayers(
++	response: ConfigReadResponse,
++	expectedProfiles: Readonly<Record<ChateroCodexPermissionProfileId, JsonObject>>,
++): void {
++	if (!response.layers) {
++		throw new Error('Codex config/read omitted configuration layers');
++	}
++	const sessionLayers = response.layers.filter(layer => layer.name.type === 'sessionFlags');
++	if (sessionLayers.length !== 1) {
++		throw new Error('Codex configuration must contain exactly one sessionFlags layer');
++	}
++	for (const layer of response.layers) {
++		const config = asObject(layer.config, 'Codex configuration layer');
++		if (layer.name.type === 'sessionFlags') {
++			if (config.default_permissions !== 'chatero_read_only') {
++				throw new Error('Codex sessionFlags must default to chatero_read_only');
++			}
++			const permissions = asObject(config.permissions, 'Codex sessionFlags permissions');
++			if (!deepEqualJson(permissions, expectedProfiles)) {
++				throw new Error('Codex sessionFlags contain unexpected Chatero permission profiles');
++			}
++			continue;
++		}
++		if ('sandbox_mode' in config || 'sandbox_workspace_write' in config || 'sandbox' in config) {
++			throw new Error(`legacy Codex sandbox configuration is forbidden in ${layer.name.type} layer`);
++		}
++		const permissions = isObject(config.permissions) ? config.permissions : undefined;
++		if (permissions && CHATERO_CODEX_PERMISSION_PROFILE_IDS.some(id => id in permissions)) {
++			throw new Error(`Chatero permission profile shadowed by ${layer.name.type} layer`);
++		}
++	}
++}
++
++function validateRequirements(response: ConfigRequirementsReadResponse): void {
++	const requirements = response.requirements;
++	if (!requirements) {
++		return;
++	}
++	const allowed = requirements.allowedPermissionProfiles;
++	if (!allowed || CHATERO_CODEX_PERMISSION_PROFILE_IDS.some(id => allowed[id] !== true)) {
++		throw new Error('managed Codex requirements do not allow every Chatero permission profile');
++	}
++	if (!requirements.defaultPermissions || !CHATERO_CODEX_PERMISSION_PROFILE_IDS.includes(requirements.defaultPermissions as ChateroCodexPermissionProfileId) || allowed[requirements.defaultPermissions] !== true) {
++		throw new Error('managed Codex requirements do not select an allowed Chatero default profile');
++	}
++}
++
++function validateProfileSummaries(response: PermissionProfileListResponse): void {
++	if (response.nextCursor !== null) {
++		throw new Error('Codex permissionProfile/list unexpectedly required pagination');
++	}
++	for (const id of CHATERO_CODEX_PERMISSION_PROFILE_IDS) {
++		const matches = response.data.filter(summary => summary.id === id);
++		if (matches.length !== 1 || matches[0].allowed !== true) {
++			throw new Error(`Codex permission profile ${id} is missing or disallowed`);
++		}
++	}
++}
++
++function captureProtectedObjectInventory(roots: readonly string[]): IChateroProtectedObjectIdentity[] {
++	const result: IChateroProtectedObjectIdentity[] = [];
++	for (const root of distinctPaths(roots)) {
++		walkProtectedTree(root, root, result);
++	}
++	return result.sort((left, right) => Buffer.compare(Buffer.from(left.path), Buffer.from(right.path)));
++}
++
++function walkProtectedTree(path: string, root: string, result: IChateroProtectedObjectIdentity[]): void {
++	const lstat = fs.lstatSync(path);
++	if (lstat.isSymbolicLink()) {
++		const realPath = fs.realpathSync.native(path);
++		if (!isContainedRelative(relative(root, realPath))) {
++			throw new Error(`protected tree contains an escaping symbolic link: ${path}`);
++		}
++		result.push(Object.freeze({
++			path,
++			realPath,
++			dev: lstat.dev,
++			ino: lstat.ino,
++			mode: lstat.mode,
++			nlink: lstat.nlink,
++			kind: 'symlink',
++		}));
++		return;
++	}
++	if (!lstat.isDirectory() && !lstat.isFile()) {
++		throw new Error(`protected tree contains an unsupported object: ${path}`);
++	}
++	if (lstat.isFile() && lstat.nlink !== 1) {
++		throw new Error(`protected file has a hard-link alias: ${path}`);
++	}
++	result.push(Object.freeze({
++		path,
++		realPath: fs.realpathSync.native(path),
++		dev: lstat.dev,
++		ino: lstat.ino,
++		mode: lstat.mode,
++		nlink: lstat.nlink,
++		kind: lstat.isDirectory() ? 'directory' : 'file',
++	}));
++	if (!lstat.isDirectory()) {
++		return;
++	}
++	for (const child of fs.readdirSync(path).sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right)))) {
++		walkProtectedTree(join(path, child), root, result);
++	}
++}
++
++function revalidateProtectedObjectInventory(inventory: readonly IChateroProtectedObjectIdentity[]): void {
++	for (const expected of inventory) {
++		const current = fs.lstatSync(expected.path);
++		if ((current.isSymbolicLink() !== (expected.kind === 'symlink'))
++			|| current.dev !== expected.dev
++			|| current.ino !== expected.ino
++			|| current.nlink !== expected.nlink
++			|| fs.realpathSync.native(expected.path) !== expected.realPath) {
++			throw new Error(`protected Codex object identity changed: ${expected.path}`);
++		}
++		if (expected.kind === 'file' && current.nlink !== 1) {
++			throw new Error(`protected Codex file acquired a hard-link alias: ${expected.path}`);
++		}
++	}
++}
++
++function canonicalPrivateDirectory(path: string, label: string): string {
++	const canonical = canonicalDirectory(path, label);
++	const stat = fs.statSync(canonical);
++	if ((stat.mode & 0o077) !== 0 || (typeof process.getuid === 'function' && stat.uid !== process.getuid())) {
++		throw new Error(`${label} must be owner-private`);
++	}
++	return canonical;
++}
++
++function canonicalDirectory(path: string, label: string): string {
++	const normalized = requireAbsoluteNormalizedPath(path, label);
++	const lstat = fs.lstatSync(normalized);
++	if (lstat.isSymbolicLink() || !lstat.isDirectory()) {
++		throw new Error(`${label} must be a real directory: ${normalized}`);
++	}
++	const real = fs.realpathSync.native(normalized);
++	if (filesystemPathKey(real) !== filesystemPathKey(normalized)) {
++		throw new Error(`${label} must not traverse symbolic links: ${normalized}`);
++	}
++	if ((lstat.mode & 0o022) !== 0) {
++		throw new Error(`${label} must not be group/world writable: ${normalized}`);
++	}
++	return real;
++}
++
++function requireAbsoluteNormalizedPath(path: string, label: string): string {
++	if (!path || path.includes('\0') || !isAbsolute(path)) {
++		throw new Error(`${label} must be a non-empty absolute path`);
++	}
++	const normalized = normalize(path);
++	if (normalized === sep || normalized.endsWith(sep + '..')) {
++		throw new Error(`${label} is too broad: ${path}`);
++	}
++	return normalized;
++}
++
++function distinctPaths(paths: readonly string[]): string[] {
++	const values = new Map<string, string>();
++	for (const path of paths) {
++		const key = filesystemPathKey(path);
++		if (values.has(key)) {
++			throw new Error(`duplicate or aliased protected path: ${path}`);
++		}
++		values.set(key, path);
++	}
++	return [...values.values()].sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right)));
++}
++
++function pathsIntersect(left: string, right: string): boolean {
++	const fromLeft = relative(left, right);
++	const fromRight = relative(right, left);
++	return isContainedRelative(fromLeft) || isContainedRelative(fromRight);
++}
++
++function pathIntersectsAny(path: string, reserved: readonly string[]): boolean {
++	if (!isAbsolute(path)) {
++		return true;
++	}
++	const normalized = normalize(path);
++	return reserved.some(candidate => pathsIntersect(normalized, candidate));
++}
++
++function relativePathsIntersect(left: string, right: string): boolean {
++	const leftParts = normalizeRelative(left);
++	const rightParts = normalizeRelative(right);
++	return startsWithParts(leftParts, rightParts) || startsWithParts(rightParts, leftParts);
++}
++
++function normalizeRelative(path: string): string[] {
++	if (!path || path.includes('\0') || isAbsolute(path)) {
++		return [];
++	}
++	const parts = path.replaceAll('\\', '/').split('/').filter(part => part && part !== '.');
++	if (parts.some(part => part === '..')) {
++		return [];
++	}
++	return parts;
++}
++
++function startsWithParts(value: readonly string[], prefix: readonly string[]): boolean {
++	return prefix.length <= value.length && prefix.every((part, index) => filesystemPathKey(part) === filesystemPathKey(value[index]));
++}
++
++function isContainedRelative(path: string): boolean {
++	return path === '' || (!path.startsWith(`..${sep}`) && path !== '..' && !isAbsolute(path));
++}
++
++function filesystemPathKey(path: string): string {
++	return process.platform === 'linux' ? path : path.toLowerCase();
++}
++
++function configurationEpoch(config: ConfigReadResponse, requirements: ConfigRequirementsReadResponse, profiles: PermissionProfileListResponse): string {
++	return JSON.stringify({
++		layers: config.layers?.map(layer => ({ name: layer.name, version: layer.version })) ?? null,
++		requirements: requirements.requirements,
++		profiles: profiles.data.map(profile => ({ id: profile.id, allowed: profile.allowed })).sort((left, right) => Buffer.compare(Buffer.from(left.id), Buffer.from(right.id))),
++	});
++}
++
++function tomlInline(value: unknown): string {
++	if (typeof value === 'string') {
++		return JSON.stringify(value);
++	}
++	if (typeof value === 'boolean' || typeof value === 'number') {
++		return String(value);
++	}
++	if (!isObject(value)) {
++		throw new Error('unsupported Chatero permission profile value');
++	}
++	return `{${Object.entries(value).map(([key, entry]) => `${JSON.stringify(key)}=${tomlInline(entry)}`).join(',')}}`;
++}
++
++function asObject(value: unknown, label: string): JsonObject {
++	if (!isObject(value)) {
++		throw new Error(`${label} must be an object`);
++	}
++	return value;
++}
++
++function isObject(value: unknown): value is JsonObject {
++	return value !== null && typeof value === 'object' && !Array.isArray(value);
++}
++
++function deepEqualJson(left: unknown, right: unknown): boolean {
++	return canonicalJson(left) === canonicalJson(right);
++}
++
++function canonicalJson(value: unknown): string {
++	if (Array.isArray(value)) {
++		return `[${value.map(canonicalJson).join(',')}]`;
++	}
++	if (isObject(value)) {
++		return `{${Object.keys(value).sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right))).map(key => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`;
++	}
++	return JSON.stringify(value);
++}
++
++function deepFreeze<T>(value: T): T {
++	if (value && typeof value === 'object') {
++		Object.freeze(value);
++		for (const entry of Object.values(value as Record<string, unknown>)) {
++			deepFreeze(entry);
++		}
++	}
++	return value;
++}
++
++function assertNever(value: never): never {
++	throw new Error(`unsupported Codex sandbox mode: ${String(value)}`);
++}
+diff --git a/src/vs/platform/agentHost/node/codex/codexAgent.ts b/src/vs/platform/agentHost/node/codex/codexAgent.ts
+index 4768e6f8cb13db47235fb442074b9c848a8d9266..665617a0d43aae213ca4535188f98bd7538656ce 100644
+--- a/src/vs/platform/agentHost/node/codex/codexAgent.ts
++++ b/src/vs/platform/agentHost/node/codex/codexAgent.ts
+@@ -63,13 +63,12 @@ import { replayThreadToTurns } from './codexReplayMapper.js';
+ import { CodexSessionMetadataStore } from './codexSessionMetadataStore.js';
+ import { buildCodexLaunchConfig, buildCodexResumeParams, isCodexThreadProviderCompatible } from './codexLaunchConfig.js';
+ import { codexAccountStateForUsageSource, codexAccountStateFromResponse, codexProtectedResourcesForUsageSource, type ICodexAccountState } from './codexAccountState.js';
+-import { CodexSessionConfigKey, CODEX_DEFAULT_PERMISSIONS_PRESET, CODEX_PERMISSIONS_PRESETS, collaborationModeKind, migrateCodexPermissionValues, narrowAdditionalDirectories, narrowBoolean, narrowPersonality, narrowReasoningEffort, narrowReasoningSummary, narrowWebSearchMode, resolveCodexPermissions, type CodexApprovalPolicy, type CodexPermissionsPreset, type ICodexResolvedPermissions } from './codexSessionConfigKeys.js';
++import { CodexSessionConfigKey, CODEX_DEFAULT_PERMISSIONS_PRESET, CODEX_PERMISSIONS_PRESETS, collaborationModeKind, migrateCodexPermissionValues, narrowPersonality, narrowReasoningEffort, narrowReasoningSummary, narrowWebSearchMode, resolveCodexPermissions, type CodexApprovalPolicy, type CodexPermissionsPreset, type ICodexResolvedPermissions } from './codexSessionConfigKeys.js';
+ import type { ReasoningEffort } from './protocol/generated/ReasoningEffort.js';
+ import type { ReasoningSummary } from './protocol/generated/ReasoningSummary.js';
+ import type { Personality } from './protocol/generated/Personality.js';
+ import type { WebSearchMode } from './protocol/generated/WebSearchMode.js';
+ import type { SandboxMode } from './protocol/generated/v2/SandboxMode.js';
+-import type { SandboxPolicy } from './protocol/generated/v2/SandboxPolicy.js';
+ import type { CommandExecutionApprovalDecision } from './protocol/generated/v2/CommandExecutionApprovalDecision.js';
+ import type { CommandExecutionRequestApprovalParams } from './protocol/generated/v2/CommandExecutionRequestApprovalParams.js';
+ import type { CommandExecutionRequestApprovalResponse } from './protocol/generated/v2/CommandExecutionRequestApprovalResponse.js';
+@@ -112,8 +111,11 @@ import type { ItemGuardianApprovalReviewCompletedNotification } from './protocol
+ import type { GuardianWarningNotification } from './protocol/generated/v2/GuardianWarningNotification.js';
+ import type { ThreadApproveGuardianDeniedActionResponse } from './protocol/generated/v2/ThreadApproveGuardianDeniedActionResponse.js';
+ import type { ConfigReadResponse } from './protocol/generated/v2/ConfigReadResponse.js';
++import type { ConfigRequirementsReadResponse } from './protocol/generated/v2/ConfigRequirementsReadResponse.js';
++import type { PermissionProfileListResponse } from './protocol/generated/v2/PermissionProfileListResponse.js';
+ import type { ConfigWriteResponse } from './protocol/generated/v2/ConfigWriteResponse.js';
+ import { formatGuardianDenialNotification, summarizeGuardianReviewAction, toGuardianAssessmentEventJson } from './codexGuardianReview.js';
++import { assertChateroActivePermissionProfile, chateroCodexLifecyclePermissions, chateroCodexPreflight, chateroPermissionRequestTouchesReserved, createChateroCodexPermissionContext, type IChateroCodexPermissionContext } from './chateroCodexPermissions.js';
+ 
+ const CLIENT_INFO = {
+ 	name: 'vscode_agent_host',
+@@ -616,6 +618,7 @@ interface IConnectionReady {
+ 	readonly usageSource: CodexUsageSource;
+ 	readonly proxyHandle?: ICodexProxyHandle;
+ 	readonly child: ChildProcessWithoutNullStreams;
++	readonly chateroPermissions: IChateroCodexPermissionContext;
+ }
+ 
+ /**
+@@ -1183,40 +1186,10 @@ export class CodexAgent extends Disposable implements IAgent {
+ 		return resolveCodexPermissions(migrateCodexPermissionValues(rawValues, defaults), defaults);
+ 	}
+ 
+-	private _sandboxPolicy(session: ICodexSession, config: ReturnType<typeof codexSessionConfigSchema.validateOrDefault>, mode: SandboxMode): SandboxPolicy {
+-		if (mode === 'danger-full-access') {
+-			return { type: 'dangerFullAccess' };
+-		}
+-		const networkAccess = narrowBoolean(config[CodexSessionConfigKey.NetworkAccessEnabled]) ?? codexSessionConfigDefaults[CodexSessionConfigKey.NetworkAccessEnabled];
+-		if (mode === 'read-only') {
+-			return { type: 'readOnly', networkAccess: false };
+-		}
+-		const additionalDirectories = narrowAdditionalDirectories(config[CodexSessionConfigKey.AdditionalDirectories]) ?? [];
+-		const writableRoots = this._isMultiRootActive(session)
+-			? distinctAbsolutePaths([
+-				...this._runtimeWorkspaceRoots(session),
+-				...additionalDirectories,
+-			])
+-			: [
+-				...(session.workingDirectory ? [session.workingDirectory.fsPath] : []),
+-				...additionalDirectories,
+-			];
+-		return {
+-			type: 'workspaceWrite',
+-			writableRoots,
+-			networkAccess,
+-			excludeTmpdirEnvVar: false,
+-			excludeSlashTmp: false,
+-		};
+-	}
+-
+-	private _turnStartOptions(session: ICodexSession, modelId: string): Pick<TurnStartParams, 'approvalPolicy' | 'sandboxPolicy' | 'approvalsReviewer' | 'effort' | 'runtimeWorkspaceRoots' | 'personality' | 'summary' | 'collaborationMode'> {
++	private _turnStartOptions(session: ICodexSession, modelId: string): Pick<TurnStartParams, 'approvalPolicy' | 'permissions' | 'approvalsReviewer' | 'effort' | 'runtimeWorkspaceRoots' | 'personality' | 'summary' | 'collaborationMode'> {
+ 		const config = this._readSessionConfig(session);
+ 		const { approvalPolicy, sandboxMode, approvalsReviewer } = this._resolveSessionPermissions(session);
+-		const sandboxPolicy = this._sandboxPolicy(session, config, sandboxMode);
+-		const runtimeWorkspaceRoots = this._isMultiRootActive(session)
+-			? this._runtimeWorkspaceRoots(session)
+-			: (sandboxPolicy.type === 'workspaceWrite' ? sandboxPolicy.writableRoots : undefined);
++		const lifecyclePermissions = chateroCodexLifecyclePermissions(sandboxMode, this._runtimeWorkspaceRoots(session));
+ 		const effort = this._getReasoningEffort(session);
+ 		const personality = narrowPersonality(config[CodexSessionConfigKey.Personality]) ?? codexSessionConfigDefaults[CodexSessionConfigKey.Personality];
+ 		const summary = narrowReasoningSummary(config[CodexSessionConfigKey.ReasoningSummary]) ?? codexSessionConfigDefaults[CodexSessionConfigKey.ReasoningSummary];
+@@ -1232,13 +1205,12 @@ export class CodexAgent extends Disposable implements IAgent {
+ 		};
+ 		return {
+ 			approvalPolicy,
+-			sandboxPolicy,
++			...lifecyclePermissions,
+ 			approvalsReviewer,
+ 			effort,
+ 			personality,
+ 			summary,
+ 			collaborationMode,
+-			...(runtimeWorkspaceRoots ? { runtimeWorkspaceRoots } : {}),
+ 		};
+ 	}
+ 
+@@ -1248,6 +1220,18 @@ export class CodexAgent extends Disposable implements IAgent {
+ 		return distinctAbsolutePaths(workingDirectories.map(directory => directory.fsPath));
+ 	}
+ 
++	private _chateroCodexPreflight(connection: IConnectionReady, cwd: string): Promise<Readonly<{ epoch: string }>> {
++		return chateroCodexPreflight({
++			cwd,
++			context: connection.chateroPermissions,
++			reader: {
++				readConfig: value => connection.client.request<'config/read', ConfigReadResponse>('config/read', { includeLayers: true, cwd: value }),
++				readRequirements: () => connection.client.request<'configRequirements/read', ConfigRequirementsReadResponse>('configRequirements/read', undefined as never),
++				listPermissionProfiles: value => connection.client.request<'permissionProfile/list', PermissionProfileListResponse>('permissionProfile/list', { cwd: value }),
++			},
++		});
++	}
++
+ 	private _isMultiRootActive(session: ICodexSession): boolean {
+ 		return session.multiRootEnabled && (session.workingDirectories?.length ?? 0) > 1;
+ 	}
+@@ -1452,12 +1436,15 @@ export class CodexAgent extends Disposable implements IAgent {
+ 		}
+ 
+ 		const extraArgs = parseBinaryArgs(process.env[AgentHostCodexAgentBinaryArgsEnvVar]);
+-		const launchConfig = buildCodexLaunchConfig(usageSource, process.env, proxyHandle, extraArgs);
++		const requestedCodexHome = process.env[AgentHostCodexAgentCodexHomeEnvVar] || join(os.homedir(), '.codex');
++		fs.mkdirSync(requestedCodexHome, { recursive: true, mode: 0o700 });
++		const chateroPermissions = createChateroCodexPermissionContext({
++			codexHome: requestedCodexHome,
++			trustedRuntimeRoots: [dirname(binaryPath)],
++		});
++		const launchConfig = buildCodexLaunchConfig(usageSource, process.env, proxyHandle, extraArgs, chateroPermissions.launchOverrides);
+ 		const env = launchConfig.env;
+-		const userCodexHome = process.env[AgentHostCodexAgentCodexHomeEnvVar];
+-		if (userCodexHome) {
+-			env.CODEX_HOME = userCodexHome;
+-		}
++		env.CODEX_HOME = chateroPermissions.codexHome;
+ 
+ 		const args = [...launchConfig.args];
+ 
+@@ -1494,7 +1481,7 @@ export class CodexAgent extends Disposable implements IAgent {
+ 			// With `requires_openai_auth = false` on the proxy provider,
+ 			// codex does not require a separate login step — the proxy
+ 			// nonce is read from OPENAI_API_KEY by the provider's env_key.
+-			if (userCodexHome && proxyHandle) {
++			if (process.env[AgentHostCodexAgentCodexHomeEnvVar] && proxyHandle) {
+ 				// User-provided CODEX_HOME may target a provider that
+ 				// still requires auth; preserve the apiKey login path.
+ 				await client.request<'account/login/start'>('account/login/start', {
+@@ -1599,7 +1586,7 @@ export class CodexAgent extends Disposable implements IAgent {
+ 		// until the next `mcpServer/startupStatus/updated` notification.
+ 		void this._refreshMcpInventory(client);
+ 
+-		return { client, usageSource, proxyHandle, child };
++		return { client, usageSource, proxyHandle, child, chateroPermissions };
+ 	}
+ 
+ 	/**
+@@ -2364,6 +2351,12 @@ export class CodexAgent extends Disposable implements IAgent {
+ 	}
+ 
+ 	private async _handlePermissionsApprovalRequestRpc(params: PermissionsRequestApprovalParams): Promise<{ readonly result: PermissionsRequestApprovalResponse }> {
++		const target = this._resolveApprovalTarget(params.threadId);
++		const runtimeWorkspaceRoots = target ? this._runtimeWorkspaceRoots(target.session) : [];
++		if (!target || chateroPermissionRequestTouchesReserved(params.permissions.fileSystem, runtimeWorkspaceRoots)) {
++			this._logService.warn(`[Codex] rejected a filesystem permission request that intersects a Chatero authority root`);
++			return { result: { permissions: {}, scope: 'turn' } };
++		}
+ 		const decision = await this._requestItemApproval(params.threadId, params.itemId, params.reason ?? 'Grant elevated permissions');
+ 		const granted = decision === 'accept' || decision === 'acceptForSession';
+ 		return {
+@@ -2901,9 +2894,9 @@ export class CodexAgent extends Disposable implements IAgent {
+ 			? distinctWorkingDirectories([sourcePrimary, ...(sourceStoredWorkingDirectories?.slice(1) ?? [])])
+ 			: undefined;
+ 		const multiRootEnabled = sourceSession?.multiRootEnabled ?? (inheritedWorkingDirectories?.length ?? 0) > 1;
+-		const runtimeWorkspaceRoots = multiRootEnabled && inheritedWorkingDirectories && inheritedWorkingDirectories.length > 1
++		const runtimeWorkspaceRoots = inheritedWorkingDirectories?.length
+ 			? distinctAbsolutePaths(inheritedWorkingDirectories.map(directory => directory.fsPath))
+-			: undefined;
++			: (sourcePrimary ? [sourcePrimary.fsPath] : []);
+ 
+ 		// Resolve how many trailing turns to drop so the fork keeps turns up to
+ 		// and including `fork.turnId`. A live source maps host turn ids to codex
+@@ -2935,17 +2928,17 @@ export class CodexAgent extends Disposable implements IAgent {
+ 			migrateCodexPermissionValues({ ...sourceConfigValues, ...config.config }, forkDefaults),
+ 			forkDefaults,
+ 		);
++		const lifecyclePermissions = chateroCodexLifecyclePermissions(sandboxMode, runtimeWorkspaceRoots);
++		await this._chateroCodexPreflight(conn, lifecyclePermissions.runtimeWorkspaceRoots[0]);
+ 		const forkResult = await conn.client.request<'thread/fork', ThreadForkResponse>('thread/fork', {
+ 			threadId: sourceThreadId,
+-			...(runtimeWorkspaceRoots?.length ? {
+-				cwd: runtimeWorkspaceRoots[0],
+-				runtimeWorkspaceRoots,
+-			} : {}),
++			cwd: lifecyclePermissions.runtimeWorkspaceRoots[0],
++			...lifecyclePermissions,
+ 			...(model ? { model: model.id } : {}),
+ 			approvalPolicy,
+-			sandbox: sandboxMode,
+ 			approvalsReviewer,
+ 		});
++		assertChateroActivePermissionProfile(forkResult.activePermissionProfile, lifecyclePermissions.permissions, 'thread/fork');
+ 		const newThreadId = forkResult.thread.id;
+ 
+ 		// The fork copies the full source history; drop the trailing turns so
+@@ -3090,17 +3083,19 @@ export class CodexAgent extends Disposable implements IAgent {
+ 			this._logService.info(`[Codex] thread/start for session=${session.sessionUri.toString()} with ${mcpServerNames.length} MCP server(s): ${mcpServerNames.join(', ')}`);
+ 		}
+ 		const multiRootActive = this._isMultiRootActive(session);
+-		const runtimeWorkspaceRoots = multiRootActive ? this._runtimeWorkspaceRoots(session) : undefined;
++		const runtimeWorkspaceRoots = this._runtimeWorkspaceRoots(session);
++		const lifecyclePermissions = chateroCodexLifecyclePermissions(sandboxMode, runtimeWorkspaceRoots);
++		await this._chateroCodexPreflight(conn, session.workingDirectory.fsPath);
+ 		const startResult = await conn.client.request<'thread/start', ThreadStartResponse>('thread/start', {
+ 			cwd: session.workingDirectory.fsPath,
+-			...(runtimeWorkspaceRoots?.length ? { runtimeWorkspaceRoots } : {}),
++			...lifecyclePermissions,
+ 			model: model.id,
+ 			approvalPolicy,
+-			sandbox: sandboxMode,
+ 			approvalsReviewer,
+ 			config: threadConfig,
+ 			dynamicTools: this._buildDynamicTools(session),
+ 		});
++		assertChateroActivePermissionProfile(startResult.activePermissionProfile, lifecyclePermissions.permissions, 'thread/start');
+ 		const threadId = startResult.thread.id;
+ 		if (multiRootActive && !session.workingDirectories && startResult.runtimeWorkspaceRoots?.length) {
+ 			session.workingDirectories = startResult.runtimeWorkspaceRoots.map(path => URI.file(path));
+@@ -3390,11 +3385,15 @@ export class CodexAgent extends Disposable implements IAgent {
+ 				// the config a fresh `thread/start` would apply.
+ 				const mcpServers = this._buildSessionMcpServers(session);
+ 				const multiRootActive = this._isMultiRootActive(session);
+-				const runtimeWorkspaceRoots = multiRootActive ? this._runtimeWorkspaceRoots(session) : undefined;
++				const runtimeWorkspaceRoots = this._runtimeWorkspaceRoots(session);
++				const { sandboxMode } = this._resolveSessionPermissions(session);
++				const lifecyclePermissions = chateroCodexLifecyclePermissions(sandboxMode, runtimeWorkspaceRoots);
++				await this._chateroCodexPreflight(conn, lifecyclePermissions.runtimeWorkspaceRoots[0]);
+ 				const resumeResult = await conn.client.request<'thread/resume', ThreadResumeResponse>(
+ 					'thread/resume',
+-					buildCodexResumeParams(this._usageSource, threadId, mcpServers, runtimeWorkspaceRoots),
++					buildCodexResumeParams(this._usageSource, threadId, mcpServers, lifecyclePermissions.permissions, lifecyclePermissions.runtimeWorkspaceRoots),
+ 				);
++				assertChateroActivePermissionProfile(resumeResult.activePermissionProfile, lifecyclePermissions.permissions, 'thread/resume');
+ 				if (multiRootActive && !session.workingDirectories && resumeResult.runtimeWorkspaceRoots?.length) {
+ 					session.workingDirectories = resumeResult.runtimeWorkspaceRoots.map(path => URI.file(path));
+ 					session.workingDirectory = session.workingDirectories[0];
+@@ -3425,6 +3424,11 @@ export class CodexAgent extends Disposable implements IAgent {
+ 		try {
+ 			const model = await this._resolveModel(session);
+ 			const turnOptions = this._turnStartOptions(session, model.id);
++			const turnCwd = turnOptions.runtimeWorkspaceRoots?.[0];
++			if (!turnCwd) {
++				throw new Error('Chatero Codex turn has no runtime workspace root');
++			}
++			await this._chateroCodexPreflight(conn, turnCwd);
+ 			await conn.client.request<'turn/start'>('turn/start', {
+ 				threadId,
+ 				input: input.slice(),
+diff --git a/src/vs/platform/agentHost/node/codex/codexLaunchConfig.ts b/src/vs/platform/agentHost/node/codex/codexLaunchConfig.ts
+index ef84bbadde588f381ade69d40bf11b5ff802919b..444f26f5221ea8d361c460f1e2639e9ddf0b7db1 100644
+--- a/src/vs/platform/agentHost/node/codex/codexLaunchConfig.ts
++++ b/src/vs/platform/agentHost/node/codex/codexLaunchConfig.ts
+@@ -7,6 +7,7 @@ import { AiAgentEnvValue, AiAgentEnvVar } from '../../../chat/common/aiAgentEnv.
+ import type { CodexUsageSource } from '../../common/agentHostCustomizationConfig.js';
+ import type { ThreadResumeParams } from './protocol/generated/v2/ThreadResumeParams.js';
+ import type { JsonValue } from './protocol/generated/serde_json/JsonValue.js';
++import type { ChateroCodexPermissionProfileId } from './chateroCodexPermissions.js';
+ 
+ export interface ICodexLaunchProxy {
+ 	readonly baseUrl: string;
+@@ -23,10 +24,17 @@ export function isCodexThreadProviderCompatible(usageSource: CodexUsageSource, m
+ }
+ 
+ /** Explicitly bind a compatible resumed thread to the current global usage source. */
+-export function buildCodexResumeParams(usageSource: CodexUsageSource, threadId: string, mcpServers: Readonly<Record<string, unknown>>, workingDirectories?: readonly string[]): ThreadResumeParams {
++export function buildCodexResumeParams(
++	usageSource: CodexUsageSource,
++	threadId: string,
++	mcpServers: Readonly<Record<string, unknown>>,
++	permissions: ChateroCodexPermissionProfileId,
++	workingDirectories?: readonly string[],
++): ThreadResumeParams {
+ 	return {
+ 		threadId,
+ 		modelProvider: usageSource === 'copilot' ? 'vscode-proxy' : 'openai',
++		permissions,
+ 		...(workingDirectories?.length ? {
+ 			cwd: workingDirectories[0],
+ 			runtimeWorkspaceRoots: [...workingDirectories],
+@@ -40,10 +48,14 @@ export function buildCodexLaunchConfig(
+ 	inheritedEnv: NodeJS.ProcessEnv,
+ 	proxy: ICodexLaunchProxy | undefined,
+ 	extraArgs: readonly string[],
++	productPermissionOverrides: readonly string[],
+ ): ICodexLaunchConfig {
+ 	if ((usageSource === 'copilot') !== (proxy !== undefined)) {
+ 		throw new Error(`Codex ${usageSource} launch received an invalid proxy configuration`);
+ 	}
++	if (extraArgs.length > 0) {
++		throw new Error('Chatero does not allow user-provided Codex app-server binaryArgs');
++	}
+ 	const env: NodeJS.ProcessEnv = { ...inheritedEnv, [AiAgentEnvVar]: AiAgentEnvValue };
+ 	if (proxy) {
+ 		env.OPENAI_API_KEY = proxy.nonce;
+@@ -64,9 +76,10 @@ export function buildCodexLaunchConfig(
+ 		`shell_environment_policy.set.${AiAgentEnvVar}="${AiAgentEnvValue}"`,
+ 		`features.tool_call_mcp_elicitation=false`,
+ 		...(proxy ? [`features.image_generation=false`] : []),
++		...productPermissionOverrides,
+ 	];
+ 	return {
+ 		env,
+-		args: ['app-server', ...overrides.flatMap(value => ['-c', value]), ...extraArgs],
++		args: ['app-server', ...overrides.flatMap(value => ['-c', value])],
+ 	};
+ }
+diff --git a/src/vs/platform/agentHost/test/node/codex/chateroCodexPermissions.test.ts b/src/vs/platform/agentHost/test/node/codex/chateroCodexPermissions.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..278dab4348c5ae333e56d194231248618488b4f8
+--- /dev/null
++++ b/src/vs/platform/agentHost/test/node/codex/chateroCodexPermissions.test.ts
+@@ -0,0 +1,231 @@
++/*---------------------------------------------------------------------------------------------
++ *  Copyright (c) Chatero contributors. All rights reserved.
++ *  Licensed under the MIT License. See License.txt in the project root for license information.
++ *--------------------------------------------------------------------------------------------*/
++
++import * as assert from 'assert';
++import * as fs from 'fs';
++import * as os from 'os';
++import * as path from 'path';
++import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
++import {
++	CHATERO_CODEX_PERMISSION_PROFILE_IDS,
++	CHATERO_RESERVED_WORKSPACE_SUBPATHS,
++	assertChateroActivePermissionProfile,
++	chateroCodexLifecyclePermissions,
++	chateroCodexPermissionOverrides,
++	chateroCodexPermissionProfile,
++	chateroCodexPreflight,
++	chateroPermissionRequestTouchesReserved,
++	createChateroCodexPermissionContext,
++} from '../../../node/codex/chateroCodexPermissions.js';
++import type { ConfigReadResponse } from '../../../node/codex/protocol/generated/v2/ConfigReadResponse.js';
++import type { ConfigRequirementsReadResponse } from '../../../node/codex/protocol/generated/v2/ConfigRequirementsReadResponse.js';
++import type { PermissionProfileListResponse } from '../../../node/codex/protocol/generated/v2/PermissionProfileListResponse.js';
++
++suite('ChateroCodexPermissions', () => {
++	ensureNoDisposablesAreLeakedInTestSuite();
++	const temporaryDirectories: string[] = [];
++
++	teardown(() => {
++		for (const directory of temporaryDirectories.splice(0)) {
++			fs.rmSync(directory, { recursive: true, force: true });
++		}
++	});
++
++	function fixture() {
++		const root = fs.mkdtempSync(path.join(os.tmpdir(), 'chatero-codex-permissions-'));
++		temporaryDirectories.push(root);
++		const codexHome = path.join(root, 'codex-home');
++		const runtime = path.join(root, 'runtime');
++		fs.mkdirSync(codexHome, { mode: 0o700 });
++		fs.mkdirSync(runtime, { mode: 0o755 });
++		fs.writeFileSync(path.join(codexHome, 'config.toml'), '', { mode: 0o600 });
++		fs.writeFileSync(path.join(runtime, 'codex'), 'binary', { mode: 0o755 });
++		const context = createChateroCodexPermissionContext({ codexHome, trustedRuntimeRoots: [runtime] });
++		return { root, codexHome, runtime, context };
++	}
++
++	function successfulResponses(context: ReturnType<typeof createChateroCodexPermissionContext>): {
++		config: ConfigReadResponse;
++		requirements: ConfigRequirementsReadResponse;
++		profiles: PermissionProfileListResponse;
++	} {
++		return {
++			config: {
++				config: {} as ConfigReadResponse['config'],
++				origins: {},
++				layers: [{
++					name: { type: 'sessionFlags' },
++					version: 'session-v1',
++					config: { default_permissions: 'chatero_read_only', permissions: context.productProfiles },
++					disabledReason: null,
++				}, {
++					name: { type: 'user', file: '/tmp/config.toml', profile: null },
++					version: 'user-v1',
++					config: {},
++					disabledReason: null,
++				}],
++			},
++			requirements: { requirements: null },
++			profiles: {
++				data: CHATERO_CODEX_PERMISSION_PROFILE_IDS.map(id => ({ id, description: null, allowed: true })),
++				nextCursor: null,
++			},
++		};
++	}
++
++	test('maps every legacy mode to one product profile and lifecycle object', () => {
++		assert.strictEqual(chateroCodexPermissionProfile('read-only'), 'chatero_read_only');
++		assert.strictEqual(chateroCodexPermissionProfile('workspace-write'), 'chatero_workspace');
++		assert.strictEqual(chateroCodexPermissionProfile('danger-full-access'), 'chatero_full_access');
++		assert.deepStrictEqual(chateroCodexLifecyclePermissions('workspace-write', ['/repo-a', '/repo-b']), {
++			permissions: 'chatero_workspace',
++			runtimeWorkspaceRoots: ['/repo-a', '/repo-b'],
++		});
++		assert.throws(() => chateroCodexLifecyclePermissions('workspace-write', []), /at least one runtime workspace root/);
++	});
++
++	test('emits fixed profiles with every reserved and trusted path denied', () => {
++		const { codexHome, runtime } = fixture();
++		const overrides = chateroCodexPermissionOverrides({ codexHome, trustedRuntimeRoots: [runtime] });
++		const joined = overrides.join('\n');
++		assert.match(joined, /default_permissions="chatero_read_only"/);
++		for (const id of CHATERO_CODEX_PERMISSION_PROFILE_IDS) {
++			assert.match(joined, new RegExp(`permissions\\.${id}=`));
++		}
++		for (const reserved of CHATERO_RESERVED_WORKSPACE_SUBPATHS) {
++			assert.ok(joined.includes(JSON.stringify(reserved)), reserved);
++		}
++		assert.ok(joined.includes(JSON.stringify(codexHome)));
++		assert.ok(joined.includes(JSON.stringify(runtime)));
++		assert.doesNotMatch(joined, /chatero_full_access[^\n]*extends/);
++		assert.match(joined, /chatero_full_access[^\n]*":root"="write"/);
++	});
++
++	test('rejects protected symlinks and hard-link aliases', () => {
++		if (process.platform === 'win32') {
++			return;
++		}
++		const { root, codexHome, runtime } = fixture();
++		const target = path.join(runtime, 'target');
++		fs.writeFileSync(target, 'secret');
++		fs.linkSync(target, path.join(root, 'alias'));
++		assert.throws(
++			() => createChateroCodexPermissionContext({ codexHome, trustedRuntimeRoots: [runtime] }),
++			/hard-link alias/,
++		);
++		fs.rmSync(path.join(root, 'alias'));
++		const outside = path.join(root, 'outside');
++		fs.writeFileSync(outside, 'outside');
++		fs.symlinkSync(outside, path.join(runtime, 'link'));
++		assert.throws(
++			() => createChateroCodexPermissionContext({ codexHome, trustedRuntimeRoots: [runtime] }),
++			/escaping symbolic link/,
++		);
++	});
++
++	test('preflight accepts only exact session profiles and produces a stable epoch', async () => {
++		const { root, context } = fixture();
++		const responses = successfulResponses(context);
++		const result = await chateroCodexPreflight({
++			cwd: root,
++			context,
++			reader: {
++				readConfig: async () => responses.config,
++				readRequirements: async () => responses.requirements,
++				listPermissionProfiles: async () => responses.profiles,
++			},
++		});
++		assert.match(result.epoch, /session-v1/);
++		assert.match(result.epoch, /chatero_workspace/);
++	});
++
++	test('preflight rejects legacy sandbox and profile shadowing before lifecycle', async () => {
++		const { root, context } = fixture();
++		const responses = successfulResponses(context);
++		responses.config.layers!.push({
++			name: { type: 'project', dotCodexFolder: path.join(root, '.codex') },
++			version: 'hostile',
++			config: { sandbox_mode: 'danger-full-access', permissions: { chatero_workspace: { extends: ':danger-full-access' } } },
++			disabledReason: null,
++		});
++		await assert.rejects(chateroCodexPreflight({
++			cwd: root,
++			context,
++			reader: {
++				readConfig: async () => responses.config,
++				readRequirements: async () => responses.requirements,
++				listPermissionProfiles: async () => responses.profiles,
++			},
++		}), /legacy Codex sandbox configuration/);
++	});
++
++	test('preflight rejects managed requirements or missing profile summaries', async () => {
++		const { root, context } = fixture();
++		const responses = successfulResponses(context);
++		responses.requirements.requirements = {
++			allowedApprovalPolicies: null,
++			allowedApprovalsReviewers: null,
++			allowedSandboxModes: null,
++			allowedWindowsSandboxImplementations: null,
++			allowedPermissionProfiles: { chatero_read_only: true },
++			defaultPermissions: 'chatero_read_only',
++			allowedWebSearchModes: null,
++			allowManagedHooksOnly: null,
++			allowAppshots: null,
++			allowRemoteControl: null,
++			computerUse: null,
++			featureRequirements: null,
++			hooks: null,
++			enforceResidency: null,
++			network: null,
++		};
++		await assert.rejects(chateroCodexPreflight({
++			cwd: root,
++			context,
++			reader: {
++				readConfig: async () => responses.config,
++				readRequirements: async () => responses.requirements,
++				listPermissionProfiles: async () => responses.profiles,
++			},
++		}), /do not allow every Chatero permission profile/);
++		responses.requirements.requirements = null;
++		responses.profiles.data = responses.profiles.data.filter(value => value.id !== 'chatero_full_access');
++		await assert.rejects(chateroCodexPreflight({
++			cwd: root,
++			context,
++			reader: {
++				readConfig: async () => responses.config,
++				readRequirements: async () => responses.requirements,
++				listPermissionProfiles: async () => responses.profiles,
++			},
++		}), /chatero_full_access is missing or disallowed/);
++	});
++
++	test('validates lifecycle provenance and rejects reserved permission escalation', () => {
++		assert.doesNotThrow(() => assertChateroActivePermissionProfile(
++			{ id: 'chatero_workspace', extends: ':workspace' },
++			'chatero_workspace',
++			'thread/start',
++		));
++		assert.throws(() => assertChateroActivePermissionProfile(
++			{ id: ':workspace', extends: null },
++			'chatero_workspace',
++			'thread/start',
++		), /did not activate/);
++		assert.strictEqual(chateroPermissionRequestTouchesReserved({
++			read: ['/repo/documentation/private.qmd'],
++			write: null,
++		}, ['/repo']), true);
++		assert.strictEqual(chateroPermissionRequestTouchesReserved({
++			read: ['/repo/src/main.ts'],
++			write: null,
++		}, ['/repo']), false);
++		assert.strictEqual(chateroPermissionRequestTouchesReserved({
++			read: null,
++			write: null,
++			entries: [{ path: { type: 'special', value: { kind: 'project_roots', subpath: null } }, access: 'write' }],
++		}, ['/repo']), true);
++	});
++});
+diff --git a/src/vs/platform/agentHost/test/node/codex/codexLaunchConfig.test.ts b/src/vs/platform/agentHost/test/node/codex/codexLaunchConfig.test.ts
+index d5969c3bf13456e7ccc90ccccb5b32902294761f..0ef4958a7b01edf9c2bf5ea615f3db9e612851e2 100644
+--- a/src/vs/platform/agentHost/test/node/codex/codexLaunchConfig.test.ts
++++ b/src/vs/platform/agentHost/test/node/codex/codexLaunchConfig.test.ts
+@@ -10,16 +10,16 @@ import { buildCodexLaunchConfig, buildCodexResumeParams, isCodexThreadProviderCo
+ suite('CodexLaunchConfig', () => {
+ 	ensureNoDisposablesAreLeakedInTestSuite();
+ 	test('copilot config injects proxy credentials and provider overrides', () => {
+-		const config = buildCodexLaunchConfig('copilot', { PATH: '/bin', OPENAI_API_KEY: 'personal' }, { baseUrl: 'http://127.0.0.1:1234', nonce: 'nonce' }, ['--log-level=debug']);
++		const config = buildCodexLaunchConfig('copilot', { PATH: '/bin', OPENAI_API_KEY: 'personal' }, { baseUrl: 'http://127.0.0.1:1234', nonce: 'nonce' }, [], ['permissions.chatero_workspace={extends=":workspace"}']);
+ 		assert.deepStrictEqual(config.env, { PATH: '/bin', OPENAI_API_KEY: 'nonce', AI_AGENT: 'github_copilot_vscode_agent' });
+ 		assert.ok(config.args.includes('model_provider="vscode-proxy"'));
+ 		assert.ok(config.args.includes('features.image_generation=false'));
+ 		assert.ok(config.args.includes('shell_environment_policy.set.AI_AGENT="github_copilot_vscode_agent"'));
+-		assert.strictEqual(config.args.at(-1), '--log-level=debug');
++		assert.strictEqual(config.args.at(-1), 'permissions.chatero_workspace={extends=":workspace"}');
+ 	});
+ 
+ 	test('openai config preserves user credentials and omits proxy overrides', () => {
+-		const config = buildCodexLaunchConfig('openai', { PATH: '/bin', OPENAI_API_KEY: 'personal', CODEX_HOME: '/codex' }, undefined, []);
++		const config = buildCodexLaunchConfig('openai', { PATH: '/bin', OPENAI_API_KEY: 'personal', CODEX_HOME: '/codex' }, undefined, [], []);
+ 		assert.deepStrictEqual(config.env, { PATH: '/bin', OPENAI_API_KEY: 'personal', CODEX_HOME: '/codex', AI_AGENT: 'github_copilot_vscode_agent' });
+ 		assert.deepStrictEqual(config.args, [
+ 			'app-server',
+@@ -28,6 +28,12 @@ suite('CodexLaunchConfig', () => {
+ 		]);
+ 	});
+ 
++	test('rejects every non-empty production binaryArgs list', () => {
++		for (const args of [['--sandbox', 'danger-full-access'], ['-c', 'sandbox_mode="danger-full-access"'], ['--listen', '0.0.0.0:1'], ['--stdio']]) {
++			assert.throws(() => buildCodexLaunchConfig('openai', {}, undefined, args, []), /does not allow.*binaryArgs/);
++		}
++	});
++
+ 	test('identifies provider-compatible threads', () => {
+ 		assert.deepStrictEqual({
+ 			copilotProxy: isCodexThreadProviderCompatible('copilot', 'vscode-proxy'),
+@@ -45,18 +51,21 @@ suite('CodexLaunchConfig', () => {
+ 	});
+ 
+ 	test('resume explicitly binds the compatible provider', () => {
+-		assert.deepStrictEqual(buildCodexResumeParams('openai', 'thread-a', {}), {
++		assert.deepStrictEqual(buildCodexResumeParams('openai', 'thread-a', {}, 'chatero_read_only'), {
+ 			threadId: 'thread-a',
+ 			modelProvider: 'openai',
++			permissions: 'chatero_read_only',
+ 		});
+-		assert.deepStrictEqual(buildCodexResumeParams('copilot', 'thread-b', { GitHub: { url: 'https://api.githubcopilot.com/mcp/' } }), {
++		assert.deepStrictEqual(buildCodexResumeParams('copilot', 'thread-b', { GitHub: { url: 'https://api.githubcopilot.com/mcp/' } }, 'chatero_workspace'), {
+ 			threadId: 'thread-b',
+ 			modelProvider: 'vscode-proxy',
++			permissions: 'chatero_workspace',
+ 			config: { mcp_servers: { GitHub: { url: 'https://api.githubcopilot.com/mcp/' } } },
+ 		});
+-		assert.deepStrictEqual(buildCodexResumeParams('openai', 'thread-c', {}, ['/repo-a', '/repo-b']), {
++		assert.deepStrictEqual(buildCodexResumeParams('openai', 'thread-c', {}, 'chatero_full_access', ['/repo-a', '/repo-b']), {
+ 			threadId: 'thread-c',
+ 			modelProvider: 'openai',
++			permissions: 'chatero_full_access',
+ 			cwd: '/repo-a',
+ 			runtimeWorkspaceRoots: ['/repo-a', '/repo-b'],
+ 		});
+diff --git a/src/vs/workbench/api/common/chateroDocumentationBarrier.ts b/src/vs/workbench/api/common/chateroDocumentationBarrier.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..b1921c624901eb2b1a2b498abddf186452c625b0
+--- /dev/null
++++ b/src/vs/workbench/api/common/chateroDocumentationBarrier.ts
+@@ -0,0 +1,306 @@
++/*---------------------------------------------------------------------------------------------
++ *  Copyright (c) Chatero contributors. All rights reserved.
++ *  Licensed under the MIT License. See License.txt in the project root for license information.
++ *--------------------------------------------------------------------------------------------*/
++
++import type * as vscode from 'vscode';
++import { DisposableStore } from '../../../base/common/lifecycle.js';
++import { URI } from '../../../base/common/uri.js';
++import * as files from '../../../platform/files/common/files.js';
++import type { IExtensionDescription } from '../../../platform/extensions/common/extensions.js';
++import { ExtHostBulkEdits } from './extHostBulkEdits.js';
++import { ExtHostDocuments } from './extHostDocuments.js';
++import type { IExtHostConsumerFileSystem } from './extHostFileSystemConsumer.js';
++import { FileEditType, WorkspaceEdit } from './extHostTypes/workspaceEdit.js';
++
++const CHATERO_DOCUMENTATION_EXTENSION = 'chatero.chatero-documentation';
++const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/;
++const activeResources = new Map<string, DocumentationBarrier>();
++
++interface IBarrierServices {
++	readonly documents: ExtHostDocuments;
++	readonly bulkEdits: ExtHostBulkEdits;
++	readonly fileSystem: IExtHostConsumerFileSystem;
++}
++
++export async function acquireDocumentationWorkingCopyBarrier(
++	extension: IExtensionDescription,
++	services: IBarrierServices,
++	input: Readonly<{
++		operationId: string;
++		resources: readonly vscode.DocumentationWorkingCopyBarrierResource[];
++		reason: 'human-transaction' | 'settlement' | 'migration' | 'recovery';
++	}>,
++): Promise<vscode.DocumentationWorkingCopyBarrierLease | vscode.DocumentationWorkingCopyDirty | vscode.DocumentationWorkingCopyBarrierConflict> {
++	if (extension.identifier.value.toLowerCase() !== CHATERO_DOCUMENTATION_EXTENSION) {
++		throw new Error('Documentation Working Copy Barrier is product-private');
++	}
++	if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(input.operationId) || input.resources.length === 0) {
++		throw new Error('invalid Documentation Working Copy Barrier request');
++	}
++	const resources = normalizeResources(input.resources);
++	for (const resource of resources) {
++		if (activeResources.has(resource.key)) {
++			return conflict('resource is already protected by another Documentation operation', resource.uri);
++		}
++	}
++	const barrier = new DocumentationBarrier(extension, services, input.operationId, resources);
++	for (const resource of resources) {
++		activeResources.set(resource.key, barrier);
++	}
++	barrier.installObservers();
++	const validation = await barrier.revalidate();
++	if (validation.kind !== 'valid') {
++		barrier.release();
++		return validation;
++	}
++	return barrier;
++}
++
++interface INormalizedResource extends vscode.DocumentationWorkingCopyBarrierResource {
++	readonly uri: URI;
++	readonly key: string;
++}
++
++class DocumentationBarrier implements vscode.DocumentationWorkingCopyBarrierLease {
++	private readonly disposables = new DisposableStore();
++	private conflictReason: string | undefined;
++	private ownerApplying = false;
++	private applied = false;
++	private finalized = false;
++	private disposed = false;
++
++	constructor(
++		private readonly extension: IExtensionDescription,
++		private readonly services: IBarrierServices,
++		readonly operationId: string,
++		private readonly resources: readonly INormalizedResource[],
++	) { }
++
++	installObservers(): void {
++		const observe = (document: vscode.TextDocument) => {
++			if (!this.ownerApplying && !this.applied && this.resources.some(resource => resource.key === document.uri.toString())) {
++				this.conflictReason = 'working copy changed while the Documentation barrier was active';
++			}
++		};
++		this.disposables.add(this.services.documents.onDidAddDocument(observe));
++		this.disposables.add(this.services.documents.onDidChangeDocument(event => observe(event.document)));
++		this.disposables.add(this.services.documents.onDidSaveDocument(observe));
++	}
++
++	async revalidate(): Promise<vscode.DocumentationWorkingCopyBarrierValidation> {
++		if (this.disposed) {
++			return conflict('Documentation barrier lease is disposed');
++		}
++		if (this.conflictReason) {
++			return conflict(this.conflictReason);
++		}
++		for (const resource of this.resources) {
++			const document = this.services.documents.getDocumentData(resource.uri)?.document;
++			if (document) {
++				if (resource.targetAbsent) {
++					return conflict('target resource is already open', resource.uri);
++				}
++				if (resource.requireClean && document.isDirty) {
++					return { kind: 'dirty-working-copy', uri: resource.uri };
++				}
++				if (resource.expectedVersion !== undefined && document.version !== resource.expectedVersion) {
++					return conflict('TextDocument version changed', resource.uri);
++				}
++				if (resource.expectedDigest && await sha256Text(document.getText()) !== resource.expectedDigest) {
++					return conflict('TextDocument digest changed', resource.uri);
++				}
++				continue;
++			}
++			if (resource.expectedVersion !== undefined) {
++				return conflict('expected TextDocument is not open', resource.uri);
++			}
++			const stat = await tryStat(this.services.fileSystem.value, resource.uri);
++			if (resource.targetAbsent) {
++				if (stat) {
++					return conflict('target resource exists', resource.uri);
++				}
++				continue;
++			}
++			if (!stat) {
++				return conflict('bound resource is missing', resource.uri);
++			}
++			if (resource.expectedDirectoryGeneration !== undefined) {
++				return conflict('directory generation requires the authority-side verifier', resource.uri);
++			}
++			if (resource.expectedDigest) {
++				const bytes = await this.services.fileSystem.value.readFile(resource.uri);
++				if (await sha256Bytes(bytes) !== resource.expectedDigest) {
++					return conflict('resource digest changed', resource.uri);
++				}
++			}
++		}
++		return { kind: 'valid' };
++	}
++
++	async applyWorkspaceEdit(edit: vscode.WorkspaceEdit): Promise<boolean> {
++		if (this.applied || this.disposed || !(edit instanceof WorkspaceEdit)) {
++			return false;
++		}
++		const validation = await this.revalidate();
++		if (validation.kind !== 'valid' || !await this.validateEdit(edit)) {
++			return false;
++		}
++		this.ownerApplying = true;
++		try {
++			this.applied = await this.services.bulkEdits.applyWorkspaceEdit(edit, this.extension, { isRefactoring: false });
++			return this.applied;
++		} finally {
++			this.ownerApplying = false;
++		}
++	}
++
++	async finalizeResourceOutcomes(outcomes: readonly vscode.DocumentationResourceOutcome[]): Promise<boolean> {
++		if (!this.applied || this.finalized || this.disposed) {
++			return false;
++		}
++		const normalized = outcomes.map(outcome => ({
++			kind: outcome.kind,
++			uri: URI.revive(outcome.uri).toString(),
++			targetUri: outcome.targetUri ? URI.revive(outcome.targetUri).toString() : undefined,
++			digest: outcome.digest,
++		})).sort((left, right) => compareBytes(`${left.kind}:${left.uri}`, `${right.kind}:${right.uri}`));
++		const structural = this.resources.filter(resource => resource.targetAbsent || (resource.requireClean && resource.expectedVersion === undefined));
++		if (normalized.length !== structural.length || normalized.some(outcome => {
++			if (outcome.digest && !DIGEST_PATTERN.test(outcome.digest)) {
++				return true;
++			}
++			return !this.resources.some(resource => resource.key === outcome.uri || resource.key === outcome.targetUri);
++		})) {
++			return false;
++		}
++		this.finalized = true;
++		return true;
++	}
++
++	dispose(): void {
++		if (this.applied && this.resources.some(resource => resource.targetAbsent || resource.expectedDirectoryGeneration) && !this.finalized) {
++			this.conflictReason = 'structural Documentation outcomes were not finalized';
++			return;
++		}
++		this.release();
++	}
++
++	release(): void {
++		if (this.disposed) {
++			return;
++		}
++		this.disposed = true;
++		this.disposables.dispose();
++		for (const resource of this.resources) {
++			if (activeResources.get(resource.key) === this) {
++				activeResources.delete(resource.key);
++			}
++		}
++	}
++
++	private async validateEdit(edit: WorkspaceEdit): Promise<boolean> {
++		const touched = new Set<string>();
++		for (const entry of edit._allEntries()) {
++			if (entry._type === FileEditType.Cell || entry._type === FileEditType.CellReplace || entry._type === FileEditType.Snippet) {
++				return false;
++			}
++			if (entry._type === FileEditType.File) {
++				for (const uri of [entry.from, entry.to]) {
++					if (uri) {
++						touched.add(uri.toString());
++					}
++				}
++			} else {
++				touched.add(entry.uri.toString());
++			}
++		}
++		if ([...touched].some(key => !this.resources.some(resource => resource.key === key))) {
++			return false;
++		}
++		for (const resource of this.resources) {
++			if (!resource.intendedDigest || !touched.has(resource.key)) {
++				continue;
++			}
++			const document = this.services.documents.getDocumentData(resource.uri)?.document;
++			if (!document) {
++				continue;
++			}
++			const edits = edit.get(resource.uri);
++			const replacements = edits.map(value => ({
++				start: document.offsetAt(value.range.start),
++				end: document.offsetAt(value.range.end),
++				text: value.newText,
++			})).sort((left, right) => right.start - left.start || right.end - left.end);
++			let text = document.getText();
++			let nextStart = text.length;
++			for (const replacement of replacements) {
++				if (replacement.start < 0 || replacement.end < replacement.start || replacement.end > nextStart) {
++					return false;
++				}
++				text = `${text.slice(0, replacement.start)}${replacement.text}${text.slice(replacement.end)}`;
++				nextStart = replacement.start;
++			}
++			if (await sha256Text(text) !== resource.intendedDigest) {
++				return false;
++			}
++		}
++		return true;
++	}
++}
++
++function normalizeResources(resources: readonly vscode.DocumentationWorkingCopyBarrierResource[]): INormalizedResource[] {
++	const result = resources.map(resource => {
++		const uri = URI.revive(resource.uri);
++		if (uri.scheme !== 'file' && uri.scheme !== 'vscode-remote') {
++			throw new Error(`unsupported Documentation barrier URI scheme: ${uri.scheme}`);
++		}
++		if ((resource.expectedDigest && !DIGEST_PATTERN.test(resource.expectedDigest))
++			|| (resource.intendedDigest && !DIGEST_PATTERN.test(resource.intendedDigest))
++			|| (resource.expectedDirectoryGeneration && !DIGEST_PATTERN.test(resource.expectedDirectoryGeneration))) {
++			throw new Error('invalid Documentation barrier digest');
++		}
++		return Object.freeze({ ...resource, uri, key: uri.toString() });
++	}).sort((left, right) => compareBytes(left.key, right.key));
++	for (let index = 1; index < result.length; index++) {
++		if (result[index - 1].key === result[index].key) {
++			throw new Error('duplicate Documentation barrier resource');
++		}
++	}
++	return result;
++}
++
++async function tryStat(fileSystem: vscode.FileSystem, uri: URI): Promise<vscode.FileStat | undefined> {
++	try {
++		return await fileSystem.stat(uri);
++	} catch (error) {
++		if (files.toFileSystemProviderErrorCode(error) === files.FileSystemProviderErrorCode.FileNotFound) {
++			return undefined;
++		}
++		throw error;
++	}
++}
++
++async function sha256Text(value: string): Promise<string> {
++	return sha256Bytes(new TextEncoder().encode(value));
++}
++
++async function sha256Bytes(value: Uint8Array): Promise<string> {
++	const digest = new Uint8Array(await globalThis.crypto.subtle.digest('SHA-256', value));
++	return `sha256:${[...digest].map(byte => byte.toString(16).padStart(2, '0')).join('')}`;
++}
++
++function conflict(reason: string, uri?: URI): vscode.DocumentationWorkingCopyBarrierConflict {
++	return { kind: 'barrier-conflict', reason, ...(uri ? { uri } : {}) };
++}
++
++function compareBytes(left: string, right: string): number {
++	const leftBytes = new TextEncoder().encode(left);
++	const rightBytes = new TextEncoder().encode(right);
++	for (let index = 0; index < Math.min(leftBytes.length, rightBytes.length); index++) {
++		if (leftBytes[index] !== rightBytes[index]) {
++			return leftBytes[index] - rightBytes[index];
++		}
++	}
++	return leftBytes.length - rightBytes.length;
++}
+diff --git a/src/vs/workbench/api/common/extHost.api.impl.ts b/src/vs/workbench/api/common/extHost.api.impl.ts
+index 93b1b4f31a20d48037dc3aa955ba0770c11f6c2c..d5482df2a15a089a440fd33998c4c52ab1a71579 100644
+--- a/src/vs/workbench/api/common/extHost.api.impl.ts
++++ b/src/vs/workbench/api/common/extHost.api.impl.ts
+@@ -126,6 +126,7 @@ import { ExtHostChatContext } from './extHostChatContext.js';
+ import { ExtHostChatDebug } from './extHostChatDebug.js';
+ import { IExtHostMeteredConnection } from './extHostMeteredConnection.js';
+ import { IExtHostGitExtensionService } from './extHostGitExtensionService.js';
++import { acquireDocumentationWorkingCopyBarrier } from './chateroDocumentationBarrier.js';
+ 
+ export interface IExtensionRegistries {
+ 	mine: ExtensionDescriptionRegistry;
+@@ -1119,6 +1120,13 @@ export function createApiFactoryAndRegisterActors(accessor: ServicesAccessor): I
+ 		// namespace: workspace
+ 
+ 		const workspace: typeof vscode.workspace = {
++			acquireDocumentationWorkingCopyBarrier(input) {
++				return acquireDocumentationWorkingCopyBarrier(extension, {
++					documents: extHostDocuments,
++					bulkEdits: extHostBulkEdits,
++					fileSystem: extHostConsumerFileSystem,
++				}, input);
++			},
+ 			get rootPath() {
+ 				extHostApiDeprecation.report('workspace.rootPath', extension,
+ 					`Please use 'workspace.workspaceFolders' instead. More details: https://aka.ms/vscode-eliminating-rootpath`);
+diff --git a/src/vs/workbench/api/test/common/chateroDocumentationBarrier.test.ts b/src/vs/workbench/api/test/common/chateroDocumentationBarrier.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..39d0ade075d325e0c21c735aeb1e86d0bcd476a7
+--- /dev/null
++++ b/src/vs/workbench/api/test/common/chateroDocumentationBarrier.test.ts
+@@ -0,0 +1,33 @@
++/*---------------------------------------------------------------------------------------------
++ *  Copyright (c) Chatero contributors. All rights reserved.
++ *  Licensed under the MIT License. See License.txt in the project root for license information.
++ *--------------------------------------------------------------------------------------------*/
++
++import * as assert from 'assert';
++import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
++import { URI } from '../../../../base/common/uri.js';
++import { acquireDocumentationWorkingCopyBarrier } from '../../common/chateroDocumentationBarrier.js';
++
++suite('ChateroDocumentationBarrier', () => {
++	ensureNoDisposablesAreLeakedInTestSuite();
++
++	test('is unavailable to non-product extensions', async () => {
++		await assert.rejects(acquireDocumentationWorkingCopyBarrier(
++			{ identifier: { value: 'example.untrusted' } } as never,
++			{} as never,
++			{
++				operationId: 'operation-1',
++				reason: 'settlement',
++				resources: [{ uri: URI.file('/workspace/documentation/note.qmd'), requireClean: true }],
++			},
++		), /product-private/);
++	});
++
++	test('rejects malformed or empty acquisitions before installing state', async () => {
++		await assert.rejects(acquireDocumentationWorkingCopyBarrier(
++			{ identifier: { value: 'chatero.chatero-documentation' } } as never,
++			{} as never,
++			{ operationId: '../escape', reason: 'settlement', resources: [] },
++		), /invalid Documentation Working Copy Barrier request/);
++	});
++});
+diff --git a/src/vscode-dts/vscode.proposed.chateroDocumentation.d.ts b/src/vscode-dts/vscode.proposed.chateroDocumentation.d.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..218cb00a404fd7f8043f35d6f76227f2554c9368
+--- /dev/null
++++ b/src/vscode-dts/vscode.proposed.chateroDocumentation.d.ts
+@@ -0,0 +1,53 @@
++/*---------------------------------------------------------------------------------------------
++ *  Copyright (c) Chatero contributors. All rights reserved.
++ *  Licensed under the MIT License. See License.txt in the project root for license information.
++ *--------------------------------------------------------------------------------------------*/
++
++declare module 'vscode' {
++	export interface DocumentationWorkingCopyBarrierResource {
++		readonly uri: Uri;
++		readonly expectedVersion?: number;
++		readonly expectedDigest?: string;
++		readonly intendedDigest?: string;
++		readonly expectedDirectoryGeneration?: string;
++		readonly requireClean: boolean;
++		readonly targetAbsent?: boolean;
++	}
++
++	export interface DocumentationWorkingCopyDirty {
++		readonly kind: 'dirty-working-copy';
++		readonly uri: Uri;
++	}
++
++	export interface DocumentationWorkingCopyBarrierConflict {
++		readonly kind: 'barrier-conflict';
++		readonly uri?: Uri;
++		readonly reason: string;
++	}
++
++	export type DocumentationWorkingCopyBarrierValidation =
++		| { readonly kind: 'valid' }
++		| DocumentationWorkingCopyDirty
++		| DocumentationWorkingCopyBarrierConflict;
++
++	export interface DocumentationResourceOutcome {
++		readonly kind: 'create' | 'rename' | 'delete';
++		readonly uri: Uri;
++		readonly targetUri?: Uri;
++		readonly digest?: string;
++	}
++
++	export interface DocumentationWorkingCopyBarrierLease extends Disposable {
++		revalidate(): Thenable<DocumentationWorkingCopyBarrierValidation>;
++		applyWorkspaceEdit(edit: WorkspaceEdit): Thenable<boolean>;
++		finalizeResourceOutcomes(outcomes: readonly DocumentationResourceOutcome[]): Thenable<boolean>;
++	}
++
++	export namespace workspace {
++		export function acquireDocumentationWorkingCopyBarrier(input: Readonly<{
++			operationId: string;
++			resources: readonly DocumentationWorkingCopyBarrierResource[];
++			reason: 'human-transaction' | 'settlement' | 'migration' | 'recovery';
++		}>): Thenable<DocumentationWorkingCopyBarrierLease | DocumentationWorkingCopyDirty | DocumentationWorkingCopyBarrierConflict>;
++	}
++}
