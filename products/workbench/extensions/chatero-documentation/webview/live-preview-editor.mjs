@@ -9,6 +9,7 @@ import {
   parsePersistedState,
   parseViewMessage,
 } from "../live-preview-protocol.mjs";
+import { formatPendingConflict, rebasePendingOperations } from "../pending-edit-rebase.mjs";
 import { applyOffsetChanges, withChangeContext } from "../text-change-set.mjs";
 
 export const hostSync = Annotation.define();
@@ -283,10 +284,36 @@ export async function createLivePreviewEditor({
       authoritativeSource = message.source;
       authoritativeVersion = message.version;
       authoritativeDigest = message.digest;
+      const rebased = rebasePendingOperations({
+        authoritativeText: message.source,
+        authoritativeVersion: message.version,
+        pendingOperations: [...pendingOperations.values()],
+      });
+      let display = message.source;
+      let replayVersion = message.version;
+      for (const replay of rebased.replayable) {
+        display = applyOffsetChanges(display, replay.changes);
+        const operation = Object.freeze({
+          opId: replay.opId,
+          baseVersion: replayVersion,
+          changes: replay.changes,
+        });
+        replayVersion += 1;
+        pendingOperations.set(replay.opId, operation);
+        const descriptor = await createPendingDescriptor(operation, subtle);
+        pendingMetadata.set(replay.opId, { descriptor, shape: descriptor.shape });
+      }
+      for (const panel of conflictPanels) panel.remove();
+      conflictPanels.clear();
+      for (const conflict of rebased.conflicts) {
+        const panel = createConflictElement(parent, formatPendingConflict(conflict));
+        conflictPanels.add(panel);
+      }
       view.dispatch({
-        changes: { from: 0, to: view.state.doc.length, insert: message.source },
+        changes: { from: 0, to: view.state.doc.length, insert: display },
         annotations: hostSync.of(true),
       });
+      persist();
       return;
     }
     if (message.type === "pendingConflict") {

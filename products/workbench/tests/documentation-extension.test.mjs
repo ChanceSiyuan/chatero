@@ -101,6 +101,7 @@ test("first-party materialization declares the complete Documentation authority"
     "extensions/chatero-documentation/migration-planner.mjs",
     "extensions/chatero-documentation/migration-rewrite.mjs",
     "extensions/chatero-documentation/package.json",
+    "extensions/chatero-documentation/pending-edit-rebase.mjs",
     "extensions/chatero-documentation/runtime/chatero-documentation-authority.mjs",
     "extensions/chatero-documentation/runtime/protocol.mjs",
     "extensions/chatero-documentation/runtime/yaml-2.9.0.mjs",
