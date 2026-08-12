@@ -193,18 +193,53 @@ test("rejects traversal, absolute paths, duplicate files, and unknown fields", a
   }
 });
 
-test("the canonical series pins Documentation authority and its compatibility patch after native Codex", async () => {
+test("the canonical series pins Chatero startup compatibility after native Codex and Documentation authority", async () => {
   const series = JSON.parse(await readFile(join(canonicalPatchDirectory, "series.json"), "utf8"));
-  const entry = series.patches.at(-2);
-  const compatibilityEntry = series.patches.at(-1);
+  const entry = series.patches.at(-7);
+  const compatibilityEntry = series.patches.at(-6);
+  const startupEntry = series.patches.at(-5);
+  const bundledSdkEntry = series.patches.at(-4);
+  const optionalCopilotEntry = series.patches.at(-3);
+  const codexIpcEntry = series.patches.at(-2);
+  const liveCodexHomeEntry = series.patches.at(-1);
 
   assert.equal(entry.file, "0004-chatero-documentation-agent-authority.patch");
-  assert.equal(series.patches.at(-3)?.file, "0003-chatero-native-codex.patch");
+  assert.equal(series.patches.at(-8)?.file, "0003-chatero-native-codex.patch");
   assert.equal(compatibilityEntry.file, "0005-fix-chatero-codex-tests.patch");
+  assert.equal(startupEntry.file, "0006-disable-copilot-onboarding-without-agent.patch");
+  assert.equal(bundledSdkEntry.file, "0007-bundle-chatero-codex-sdk.patch");
+  assert.equal(optionalCopilotEntry.file, "0008-lazy-load-optional-copilot-api.patch");
+  assert.equal(codexIpcEntry.file, "0009-allow-ephemeral-codex-ipc-sockets.patch");
+  assert.equal(liveCodexHomeEntry.file, "0010-shallow-pin-live-codex-home.patch");
   const bytes = await readFile(join(canonicalPatchDirectory, entry.file));
   const compatibilityBytes = await readFile(join(canonicalPatchDirectory, compatibilityEntry.file));
+  const startupBytes = await readFile(join(canonicalPatchDirectory, startupEntry.file));
+  const bundledSdkBytes = await readFile(join(canonicalPatchDirectory, bundledSdkEntry.file));
+  const optionalCopilotBytes = await readFile(join(canonicalPatchDirectory, optionalCopilotEntry.file));
+  const codexIpcBytes = await readFile(join(canonicalPatchDirectory, codexIpcEntry.file));
+  const liveCodexHomeBytes = await readFile(join(canonicalPatchDirectory, liveCodexHomeEntry.file));
   assert.equal(entry.sha256, sha256(bytes));
   assert.equal(compatibilityEntry.sha256, sha256(compatibilityBytes));
+  assert.equal(startupEntry.sha256, sha256(startupBytes));
+  assert.equal(bundledSdkEntry.sha256, sha256(bundledSdkBytes));
+  assert.equal(optionalCopilotEntry.sha256, sha256(optionalCopilotBytes));
+  assert.equal(codexIpcEntry.sha256, sha256(codexIpcBytes));
+  assert.equal(liveCodexHomeEntry.sha256, sha256(liveCodexHomeBytes));
   assert.match(bytes.toString("utf8"), /acquireDocumentationWorkingCopyBarrier/);
   assert.match(compatibilityBytes.toString("utf8"), /chatero_workspace/);
+  assert.match(startupBytes.toString("utf8"), /product\.defaultChatAgent \? OnboardingVariationA : DisabledOnboardingService/);
+  assert.match(startupBytes.toString("utf8"), /if \(!productService\.defaultChatAgent\)/);
+  assert.match(startupBytes.toString("utf8"), /this\.initBarrier\.open\(\)/);
+  assert.doesNotMatch(startupBytes.toString("utf8"), /^\+.*Onboarding requires a default chat agent product configuration\./m);
+  assert.match(bundledSdkBytes.toString("utf8"), /agent-sdk\/codex/);
+  assert.match(bundledSdkBytes.toString("utf8"), /configuredCodexSdkRoot \|\| \(existsSync\(bundledCodexSdkRoot\)/);
+  assert.match(bundledSdkBytes.toString("utf8"), /@openai\/codex-\$\{platform\}-\$\{arch\}/);
+  assert.match(optionalCopilotBytes.toString("utf8"), /import type \{ CAPIClient, CCAModel, IExtensionInformation, RequestType as CopilotRequestType \} from '@vscode\/copilot-api'/);
+  assert.match(optionalCopilotBytes.toString("utf8"), /await import\('@vscode\/copilot-api'\)/);
+  assert.doesNotMatch(optionalCopilotBytes.toString("utf8"), /^\+import \{[^\n]*\} from '@vscode\/copilot-api'/m);
+  assert.match(codexIpcBytes.toString("utf8"), /if \(lstat\.isSocket\(\)\) \{/);
+  assert.match(codexIpcBytes.toString("utf8"), /allows an ephemeral Unix socket inside CODEX_HOME/);
+  assert.match(liveCodexHomeBytes.toString("utf8"), /captureProtectedObjectInventory\(\[codexHome\], false\)/);
+  assert.match(liveCodexHomeBytes.toString("utf8"), /allows ephemeral runtime links below a direct CODEX_HOME directory/);
+  assert.match(liveCodexHomeBytes.toString("utf8"), /typeof fs\.realpathSync\.native === 'function'/);
 });

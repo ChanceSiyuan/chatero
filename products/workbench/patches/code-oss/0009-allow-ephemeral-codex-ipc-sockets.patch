@@ -1,0 +1,64 @@
+diff --git a/src/vs/platform/agentHost/node/codex/chateroCodexPermissions.ts b/src/vs/platform/agentHost/node/codex/chateroCodexPermissions.ts
+index 8e66d5c92b0..47ed97982db 100644
+--- a/src/vs/platform/agentHost/node/codex/chateroCodexPermissions.ts
++++ b/src/vs/platform/agentHost/node/codex/chateroCodexPermissions.ts
+@@ -296,6 +296,14 @@ function captureProtectedObjectInventory(roots: readonly string[]): IChateroProt
+ 
+ function walkProtectedTree(path: string, root: string, result: IChateroProtectedObjectIdentity[]): void {
+ 	const lstat = fs.lstatSync(path);
++	// Codex Desktop creates transient Unix-domain sockets under CODEX_HOME/ipc.
++	// They contain no durable configuration or credentials, cannot be hard-linked,
++	// and their identity is expected to change while the desktop app is running.
++	// Exclude them from the immutable inventory while keeping every enclosing
++	// directory, regular file, and symlink protected as before.
++	if (lstat.isSocket()) {
++		return;
++	}
+ 	if (lstat.isSymbolicLink()) {
+ 		const realPath = fs.realpathSync.native(path);
+ 		if (!isContainedRelative(relative(root, realPath))) {
+diff --git a/src/vs/platform/agentHost/test/node/codex/chateroCodexPermissions.test.ts b/src/vs/platform/agentHost/test/node/codex/chateroCodexPermissions.test.ts
+index 78c511285dd..ff2aa7eaf82 100644
+--- a/src/vs/platform/agentHost/test/node/codex/chateroCodexPermissions.test.ts
++++ b/src/vs/platform/agentHost/test/node/codex/chateroCodexPermissions.test.ts
+@@ -5,6 +5,7 @@
+ 
+ import * as assert from 'assert';
+ import * as fs from 'fs';
++import * as net from 'net';
+ import * as os from 'os';
+ import * as path from 'path';
+ import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
+@@ -125,6 +126,32 @@ suite('ChateroCodexPermissions', () => {
+ 		);
+ 	});
+ 
++	test('allows an ephemeral Unix socket inside CODEX_HOME', async () => {
++		if (process.platform === 'win32') {
++			return;
++		}
++		const root = fs.mkdtempSync(path.join(os.tmpdir(), 'chatero-codex-socket-'));
++		temporaryDirectories.push(root);
++		const codexHome = path.join(root, 'codex-home');
++		const runtime = path.join(root, 'runtime');
++		const ipc = path.join(codexHome, 'ipc');
++		fs.mkdirSync(ipc, { recursive: true, mode: 0o700 });
++		fs.mkdirSync(runtime, { mode: 0o755 });
++		fs.writeFileSync(path.join(codexHome, 'config.toml'), '', { mode: 0o600 });
++		fs.writeFileSync(path.join(runtime, 'codex'), 'binary', { mode: 0o755 });
++		const socket = path.join(ipc, 'ipc.sock');
++		const server = net.createServer();
++		await new Promise<void>((resolve, reject) => {
++			server.once('error', reject);
++			server.listen(socket, resolve);
++		});
++		try {
++			assert.doesNotThrow(() => createChateroCodexPermissionContext({ codexHome, trustedRuntimeRoots: [runtime] }));
++		} finally {
++			await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
++		}
++	});
++
+ 	test('preflight accepts only exact session profiles and produces a stable epoch', async () => {
+ 		const { root, context } = fixture();
+ 		const responses = successfulResponses(context);

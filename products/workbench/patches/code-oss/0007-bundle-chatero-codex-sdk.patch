@@ -1,0 +1,61 @@
+diff --git a/build/gulpfile.vscode.ts b/build/gulpfile.vscode.ts
+index 5803621572c..1c5c02d277c 100644
+--- a/build/gulpfile.vscode.ts
++++ b/build/gulpfile.vscode.ts
+@@ -292,6 +292,23 @@ function packageTask(platform: string, arch: string, sourceFolderName: string, d
+ 
+ 		const extensions = gulp.src(['.build/extensions/**', ...platformSpecificBuiltInExtensionsExclusions], { base: '.build', dot: true });
+ 
++		// Chatero ships the pinned Codex SDK next to the application rather than
++		// relying on Microsoft's private CDN. The agent host receives this root as
++		// a local override at runtime, so a Finder launch works offline after the
++		// application has been built and installed.
++		const bundledCodexSdk = gulp.src([
++			'node_modules/@openai/codex/**',
++			`node_modules/@openai/codex-${platform}-${arch}/**`,
++		], { base: '.', dot: true, allowEmpty: false })
++			.pipe(rename(file => {
++				file.dirname = file.dirname!.replace(/^node_modules/, 'agent-sdk/codex/node_modules');
++			}))
++			.pipe(util.setExecutableBit([
++				'**/vendor/**/bin/codex',
++				'**/vendor/**/codex-path/rg',
++				'**/vendor/**/zsh/bin/zsh',
++			]));
++
+ 		const sourceFilterPattern = stripSourceMapsInPackagingTasks
+ 			? ['**', '!**/*.{js,css}.map']
+ 			: ['**'];
+@@ -417,6 +434,7 @@ function packageTask(platform: string, arch: string, sourceFolderName: string, d
+ 			api,
+ 			telemetry,
+ 			sources,
++			bundledCodexSdk,
+ 			deps
+ 		];
+ 		let all = es.merge(...mergeStreams);
+diff --git a/src/vs/platform/agentHost/electron-main/electronAgentHostStarter.ts b/src/vs/platform/agentHost/electron-main/electronAgentHostStarter.ts
+index 7b0fa023210..f38aac1cee4 100644
+--- a/src/vs/platform/agentHost/electron-main/electronAgentHostStarter.ts
++++ b/src/vs/platform/agentHost/electron-main/electronAgentHostStarter.ts
+@@ -7,6 +7,8 @@ import { Disposable, DisposableStore, toDisposable } from '../../../base/common/
+ import { DeferredPromise } from '../../../base/common/async.js';
+ import { Emitter } from '../../../base/common/event.js';
+ import { IpcMainEvent } from 'electron';
++import { existsSync } from 'node:fs';
++import { join } from 'node:path';
+ import { validatedIpcMain } from '../../../base/parts/ipc/electron-main/ipcMain.js';
+ import { Client as MessagePortClient } from '../../../base/parts/ipc/electron-main/ipc.mp.js';
+ import { AiAgentEnvValue, AiAgentEnvVar } from '../../chat/common/aiAgentEnv.js';
+@@ -91,8 +93,10 @@ export class ElectronAgentHostStarter extends Disposable implements IAgentHostSt
+ 		// Forward the Claude/Codex SDK overrides + codex home/args from
+ 		// workbench settings to the agent host process. Parent env wins on
+ 		// collision — see `buildAgentSdkEnv` for the precedence rule.
++		const configuredCodexSdkRoot = this._configurationService.getValue<string>(AgentHostCodexAgentSdkRootSettingId);
++		const bundledCodexSdkRoot = join(this._environmentMainService.appRoot, 'agent-sdk', 'codex');
+ 		const sdkEnv = buildAgentSdkEnv({
+-			codexSdkRoot: this._configurationService.getValue<string>(AgentHostCodexAgentSdkRootSettingId),
++			codexSdkRoot: configuredCodexSdkRoot || (existsSync(bundledCodexSdkRoot) ? bundledCodexSdkRoot : undefined),
+ 			codexHome: this._configurationService.getValue<string>(AgentHostCodexAgentCodexHomeSettingId),
+ 			codexBinaryArgs: this._configurationService.getValue<readonly string[]>(AgentHostCodexAgentBinaryArgsSettingId),
+ 			claudeAgentEnabled: this._configurationService.getValue<boolean>(AgentHostClaudeAgentEnabledSettingId),

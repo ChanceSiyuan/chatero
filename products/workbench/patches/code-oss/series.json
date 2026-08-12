@@ -20,6 +20,26 @@
     {
       "file": "0005-fix-chatero-codex-tests.patch",
       "sha256": "628d1d9d18f79507a4c01a5fd56d0c61bb12a43e45ff78e26f392eef37146ae9"
+    },
+    {
+      "file": "0006-disable-copilot-onboarding-without-agent.patch",
+      "sha256": "9b60f63d5a9801942c5ace0f0276f09f6007e33ca18604e97ef5bb95582081a2"
+    },
+    {
+      "file": "0007-bundle-chatero-codex-sdk.patch",
+      "sha256": "646a6741bd316e393971fbeb680d615b8483865025bfd4e43bbf49c39f4543a6"
+    },
+    {
+      "file": "0008-lazy-load-optional-copilot-api.patch",
+      "sha256": "0712ea67fb4ab55b484a773bb7774f74966d8afe7a9fe051b147e5f61b3e60c7"
+    },
+    {
+      "file": "0009-allow-ephemeral-codex-ipc-sockets.patch",
+      "sha256": "5133959b69f559d2749e4643e83b25f625e7ad43ef43535949fd04f5047bfad1"
+    },
+    {
+      "file": "0010-shallow-pin-live-codex-home.patch",
+      "sha256": "bed28447470853311fe3738ebf03cb72106a18cabbaafb99b7e22b23298f1085"
     }
   ]
 }

@@ -1,0 +1,100 @@
+diff --git a/src/vs/workbench/contrib/welcomeOnboarding/browser/onboardingVariationA.ts b/src/vs/workbench/contrib/welcomeOnboarding/browser/onboardingVariationA.ts
+index c1fb3e12ab4..ffc83867479 100644
+--- a/src/vs/workbench/contrib/welcomeOnboarding/browser/onboardingVariationA.ts
++++ b/src/vs/workbench/contrib/welcomeOnboarding/browser/onboardingVariationA.ts
+@@ -10,7 +10,6 @@ import { isCancellationError } from '../../../../base/common/errors.js';
+ import { StopWatch } from '../../../../base/common/stopwatch.js';
+ import { URI } from '../../../../base/common/uri.js';
+ import { isWindows, isMacintosh, isLinux } from '../../../../base/common/platform.js';
+-import { assertDefined } from '../../../../base/common/types.js';
+ import { FileAccess } from '../../../../base/common/network.js';
+ import { ILayoutService } from '../../../../platform/layout/browser/layoutService.js';
+ import { KeyCode } from '../../../../base/common/keyCodes.js';
+@@ -77,7 +76,6 @@ type OnboardingActionEvent = {
+ 
+ type EnterpriseSignInUiState = 'options' | 'instance' | 'progress';
+ 
+-assertDefined(product.defaultChatAgent, 'Onboarding requires a default chat agent product configuration.');
+ const defaultChat = product.defaultChatAgent;
+ 
+ /**
+diff --git a/src/vs/workbench/contrib/welcomeOnboarding/browser/welcomeOnboarding.contribution.ts b/src/vs/workbench/contrib/welcomeOnboarding/browser/welcomeOnboarding.contribution.ts
+index d725507e825..176b56cfec1 100644
+--- a/src/vs/workbench/contrib/welcomeOnboarding/browser/welcomeOnboarding.contribution.ts
++++ b/src/vs/workbench/contrib/welcomeOnboarding/browser/welcomeOnboarding.contribution.ts
+@@ -7,14 +7,22 @@
+ import './media/variationA.css';
+ 
+ import { localize2 } from '../../../../nls.js';
++import { Event } from '../../../../base/common/event.js';
+ import { Categories } from '../../../../platform/action/common/actionCommonCategories.js';
+ import { Action2, registerAction2 } from '../../../../platform/actions/common/actions.js';
+ import { InstantiationType, registerSingleton } from '../../../../platform/instantiation/common/extensions.js';
+ import { ServicesAccessor } from '../../../../platform/instantiation/common/instantiation.js';
++import product from '../../../../platform/product/common/product.js';
+ import { IOnboardingService } from '../common/onboardingService.js';
+ import { OnboardingVariationA } from './onboardingVariationA.js';
+ 
+-registerSingleton(IOnboardingService, OnboardingVariationA, InstantiationType.Delayed);
++class DisabledOnboardingService implements IOnboardingService {
++	declare readonly _serviceBrand: undefined;
++	readonly onDidDismiss = Event.None;
++	show(): void { }
++}
++
++registerSingleton(IOnboardingService, product.defaultChatAgent ? OnboardingVariationA : DisabledOnboardingService, InstantiationType.Delayed);
+ 
+ registerAction2(class extends Action2 {
+ 	constructor() {
+diff --git a/src/vs/workbench/services/accounts/browser/defaultAccount.ts b/src/vs/workbench/services/accounts/browser/defaultAccount.ts
+index b267dcbd4f7..6e294410af2 100644
+--- a/src/vs/workbench/services/accounts/browser/defaultAccount.ts
++++ b/src/vs/workbench/services/accounts/browser/defaultAccount.ts
+@@ -88,7 +88,23 @@ interface IMcpRegistryResponse {
+ 	readonly mcp_registries: ReadonlyArray<IMcpRegistryProvider>;
+ }
+ 
+-function toDefaultAccountConfig(defaultChatAgent: IDefaultChatAgent): IDefaultAccountConfig {
++function toDefaultAccountConfig(defaultChatAgent: IDefaultChatAgent | null): IDefaultAccountConfig {
++	if (!defaultChatAgent) {
++		return {
++			preferredExtensions: [],
++			authenticationProvider: {
++				default: { id: '', name: '' },
++				enterprise: { id: '', name: '' },
++				enterpriseProviderConfig: '',
++				enterpriseProviderUriSetting: '',
++				scopes: [[]],
++			},
++			entitlementUrl: '',
++			tokenEntitlementUrl: '',
++			mcpRegistryDataUrl: '',
++			managedSettingsUrl: '',
++		};
++	}
+ 	return {
+ 		preferredExtensions: [
+ 			defaultChatAgent.chatExtensionId,
+@@ -145,6 +161,9 @@ export class DefaultAccountService extends Disposable implements IDefaultAccount
+ 	) {
+ 		super();
+ 		this.defaultAccountConfig = toDefaultAccountConfig(productService.defaultChatAgent);
++		if (!productService.defaultChatAgent) {
++			this.initBarrier.open();
++		}
+ 	}
+ 
+ 	async getDefaultAccount(): Promise<IDefaultAccount | null> {
+@@ -1175,8 +1194,10 @@ class DefaultAccountProviderContribution extends Disposable implements IWorkbenc
+ 		@IDefaultAccountService defaultAccountService: IDefaultAccountService,
+ 	) {
+ 		super();
+-		const defaultAccountProvider = this._register(instantiationService.createInstance(DefaultAccountProvider, toDefaultAccountConfig(productService.defaultChatAgent)));
+-		defaultAccountService.setDefaultAccountProvider(defaultAccountProvider);
++		if (productService.defaultChatAgent) {
++			const defaultAccountProvider = this._register(instantiationService.createInstance(DefaultAccountProvider, toDefaultAccountConfig(productService.defaultChatAgent)));
++			defaultAccountService.setDefaultAccountProvider(defaultAccountProvider);
++		}
+ 	}
+ }
+ 

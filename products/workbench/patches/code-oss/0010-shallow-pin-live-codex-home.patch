@@ -1,0 +1,139 @@
+diff --git a/src/vs/platform/agentHost/node/codex/chateroCodexPermissions.ts b/src/vs/platform/agentHost/node/codex/chateroCodexPermissions.ts
+index 47ed97982db55bbdaf90d0d132afdcf4e1a7c8f2..a6310778d9300c86fe86a1c03123b9868b018e91 100644
+--- a/src/vs/platform/agentHost/node/codex/chateroCodexPermissions.ts
++++ b/src/vs/platform/agentHost/node/codex/chateroCodexPermissions.ts
+@@ -95,7 +95,15 @@ export function createChateroCodexPermissionContext(input: Readonly<{
+ 		}
+ 	}
+ 	const productProfiles = chateroCodexPermissionConfig({ codexHome, trustedRuntimeRoots });
+-	const protectedObjects = captureProtectedObjectInventory([codexHome, ...trustedRuntimeRoots]);
++	// CODEX_HOME contains live session state (IPC sockets, temporary executable
++	// links, locks, and conversation databases) whose descendants legitimately
++	// change while Codex is running. Protect the directory itself and each of its
++	// direct entries, while the permission profile denies the whole tree. Runtime
++	// package roots are immutable product inputs and remain recursively pinned.
++	const protectedObjects = [
++		...captureProtectedObjectInventory([codexHome], false),
++		...captureProtectedObjectInventory(trustedRuntimeRoots),
++	];
+ 	return Object.freeze({
+ 		codexHome,
+ 		trustedRuntimeRoots: Object.freeze(trustedRuntimeRoots),
+@@ -286,15 +294,15 @@ function validateProfileSummaries(response: PermissionProfileListResponse): void
+ 	}
+ }
+ 
+-function captureProtectedObjectInventory(roots: readonly string[]): IChateroProtectedObjectIdentity[] {
++function captureProtectedObjectInventory(roots: readonly string[], recursive = true): IChateroProtectedObjectIdentity[] {
+ 	const result: IChateroProtectedObjectIdentity[] = [];
+ 	for (const root of distinctPaths(roots)) {
+-		walkProtectedTree(root, root, result);
++		walkProtectedTree(root, root, result, recursive);
+ 	}
+ 	return result.sort((left, right) => Buffer.compare(Buffer.from(left.path), Buffer.from(right.path)));
+ }
+ 
+-function walkProtectedTree(path: string, root: string, result: IChateroProtectedObjectIdentity[]): void {
++function walkProtectedTree(path: string, root: string, result: IChateroProtectedObjectIdentity[], recursive: boolean): void {
+ 	const lstat = fs.lstatSync(path);
+ 	// Codex Desktop creates transient Unix-domain sockets under CODEX_HOME/ipc.
+ 	// They contain no durable configuration or credentials, cannot be hard-linked,
+@@ -305,7 +313,7 @@ function walkProtectedTree(path: string, root: string, result: IChateroProtected
+ 		return;
+ 	}
+ 	if (lstat.isSymbolicLink()) {
+-		const realPath = fs.realpathSync.native(path);
++		const realPath = realpathSync(path);
+ 		if (!isContainedRelative(relative(root, realPath))) {
+ 			throw new Error(`protected tree contains an escaping symbolic link: ${path}`);
+ 		}
+@@ -328,18 +336,18 @@ function walkProtectedTree(path: string, root: string, result: IChateroProtected
+ 	}
+ 	result.push(Object.freeze({
+ 		path,
+-		realPath: fs.realpathSync.native(path),
++		realPath: realpathSync(path),
+ 		dev: lstat.dev,
+ 		ino: lstat.ino,
+ 		mode: lstat.mode,
+ 		nlink: lstat.nlink,
+ 		kind: lstat.isDirectory() ? 'directory' : 'file',
+ 	}));
+-	if (!lstat.isDirectory()) {
++	if (!lstat.isDirectory() || (!recursive && path !== root)) {
+ 		return;
+ 	}
+ 	for (const child of fs.readdirSync(path).sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right)))) {
+-		walkProtectedTree(join(path, child), root, result);
++		walkProtectedTree(join(path, child), root, result, recursive);
+ 	}
+ }
+ 
+@@ -350,7 +358,7 @@ function revalidateProtectedObjectInventory(inventory: readonly IChateroProtecte
+ 			|| current.dev !== expected.dev
+ 			|| current.ino !== expected.ino
+ 			|| current.nlink !== expected.nlink
+-			|| fs.realpathSync.native(expected.path) !== expected.realPath) {
++			|| realpathSync(expected.path) !== expected.realPath) {
+ 			throw new Error(`protected Codex object identity changed: ${expected.path}`);
+ 		}
+ 		if (expected.kind === 'file' && current.nlink !== 1) {
+@@ -374,7 +382,7 @@ function canonicalDirectory(path: string, label: string): string {
+ 	if (lstat.isSymbolicLink() || !lstat.isDirectory()) {
+ 		throw new Error(`${label} must be a real directory: ${normalized}`);
+ 	}
+-	const real = fs.realpathSync.native(normalized);
++	const real = realpathSync(normalized);
+ 	if (filesystemPathKey(real) !== filesystemPathKey(normalized)) {
+ 		throw new Error(`${label} must not traverse symbolic links: ${normalized}`);
+ 	}
+@@ -384,6 +392,10 @@ function canonicalDirectory(path: string, label: string): string {
+ 	return real;
+ }
+ 
++function realpathSync(path: string): string {
++	return typeof fs.realpathSync.native === 'function' ? fs.realpathSync.native(path) : fs.realpathSync(path);
++}
++
+ function requireAbsoluteNormalizedPath(path: string, label: string): string {
+ 	if (!path || path.includes('\0') || !isAbsolute(path)) {
+ 		throw new Error(`${label} must be a non-empty absolute path`);
+diff --git a/src/vs/platform/agentHost/test/node/codex/chateroCodexPermissions.test.ts b/src/vs/platform/agentHost/test/node/codex/chateroCodexPermissions.test.ts
+index ff2aa7eaf82f184ebb2692a84210509e8aae0e2c..83252ea065db47b4a122790613cbe27bdbec44ff 100644
+--- a/src/vs/platform/agentHost/test/node/codex/chateroCodexPermissions.test.ts
++++ b/src/vs/platform/agentHost/test/node/codex/chateroCodexPermissions.test.ts
+@@ -152,6 +152,33 @@ suite('ChateroCodexPermissions', () => {
+ 		}
+ 	});
+ 
++	test('allows ephemeral runtime links below a direct CODEX_HOME directory', () => {
++		if (process.platform === 'win32') {
++			return;
++		}
++		const { root, codexHome, runtime } = fixture();
++		const transientDirectory = path.join(codexHome, 'tmp', 'arg0');
++		fs.mkdirSync(transientDirectory, { recursive: true });
++		const externalExecutable = path.join(root, 'external-codex');
++		fs.writeFileSync(externalExecutable, 'binary', { mode: 0o755 });
++		fs.symlinkSync(externalExecutable, path.join(transientDirectory, 'codex'));
++		assert.doesNotThrow(() => createChateroCodexPermissionContext({ codexHome, trustedRuntimeRoots: [runtime] }));
++	});
++
++	test('still rejects an escaping link directly inside CODEX_HOME', () => {
++		if (process.platform === 'win32') {
++			return;
++		}
++		const { root, codexHome, runtime } = fixture();
++		const externalFile = path.join(root, 'external-config');
++		fs.writeFileSync(externalFile, 'secret', { mode: 0o600 });
++		fs.symlinkSync(externalFile, path.join(codexHome, 'linked-config'));
++		assert.throws(
++			() => createChateroCodexPermissionContext({ codexHome, trustedRuntimeRoots: [runtime] }),
++			/escaping symbolic link/,
++		);
++	});
++
+ 	test('preflight accepts only exact session profiles and produces a stable epoch', async () => {
+ 		const { root, context } = fixture();
+ 		const responses = successfulResponses(context);
+

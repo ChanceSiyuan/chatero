@@ -108,6 +108,7 @@
     "languageModelTools": [
       {
         "name": "chatero_documentation_retrieve",
+        "toolReferenceName": "reviewedDocumentation",
         "displayName": "Retrieve Reviewed Documentation",
         "modelDescription": "Retrieve bounded passages from reviewed Chatero Documentation. This tool does not provide generic workspace file access.",
         "canBeReferencedInPrompt": true,
@@ -135,6 +136,7 @@
       },
       {
         "name": "chatero_documentation_stage",
+        "toolReferenceName": "stageDocumentation",
         "displayName": "Stage Documentation Change Set",
         "modelDescription": "Stage a bounded, immutable Documentation proposal for explicit human review. This tool cannot modify canonical Documentation.",
         "canBeReferencedInPrompt": true,

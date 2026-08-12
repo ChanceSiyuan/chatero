@@ -1,0 +1,40 @@
+diff --git a/src/vs/platform/agentHost/node/shared/copilotApiService.ts b/src/vs/platform/agentHost/node/shared/copilotApiService.ts
+index bef54a9162f..edc7540c0e9 100644
+--- a/src/vs/platform/agentHost/node/shared/copilotApiService.ts
++++ b/src/vs/platform/agentHost/node/shared/copilotApiService.ts
+@@ -4,7 +4,7 @@
+  *--------------------------------------------------------------------------------------------*/
+ 
+ import type Anthropic from '@anthropic-ai/sdk';
+-import { CAPIClient, RequestType, type CCAModel, type IExtensionInformation } from '@vscode/copilot-api';
++import type { CAPIClient, CCAModel, IExtensionInformation, RequestType as CopilotRequestType } from '@vscode/copilot-api';
+ import { generateUuid } from '../../../../base/common/uuid.js';
+ import { getDevDeviceId, getMachineId } from '../../../../base/node/id.js';
+ import { createDecorator } from '../../../instantiation/common/instantiation.js';
+@@ -240,6 +240,18 @@ const UTILITY_DEFAULT_TOP_P = 1;
+  */
+ const UTILITY_INTENT = 'conversation-background';
+ 
++// Chatero uses the OpenAI-backed Codex provider and does not ship the optional
++// Copilot API package. Keep request metadata local so importing the Agent Host
++// does not eagerly resolve that package. The client itself is loaded only if a
++// GitHub-token-backed CAPI path is actually invoked.
++const RequestType = {
++	CopilotToken: 'CopilotToken' as CopilotRequestType.CopilotToken,
++	ChatCompletions: 'ChatCompletions' as CopilotRequestType.ChatCompletions,
++	ChatResponses: 'ChatResponses' as CopilotRequestType.ChatResponses,
++	ChatMessages: 'ChatMessages' as CopilotRequestType.ChatMessages,
++	Models: 'Models' as CopilotRequestType.Models,
++} as const;
++
+ const INTERNAL_COPILOT_ORGANIZATIONS = new Set([
+ 	'4535c7beffc844b46bb1ed4aa04d759a',
+ 	'a5db0bcaae94032fe715fb34a5e4bce2',
+@@ -958,6 +970,7 @@ export class CopilotApiService implements ICopilotApiService {
+ 	private async _buildClientForToken(githubToken: string): Promise<ICachedClient> {
+ 		const { extensionInfo, userUrl } = await this._getCapiBase();
+ 		const fetch = this._fetch;
++		const { CAPIClient } = await import('@vscode/copilot-api');
+ 		const capiClient = new CAPIClient(extensionInfo, COPILOT_LICENSE_AGREEMENT, {
+ 			fetch: (url, options) => fetch(url, {
+ 				method: options.method ?? 'GET',
