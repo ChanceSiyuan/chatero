@@ -46,6 +46,7 @@ const DEFAULT_CHECKOUT = fileURLToPath(new URL("../../../../vendor/code-oss/", i
 const DEFAULT_DIST = fileURLToPath(new URL("../dist/", import.meta.url));
 const BRIDGE_PATH = new URL("../runtime/chatero-process-bridge.mjs", import.meta.url);
 const EVIDENCE_HELPER_PATH = new URL("../runtime/chatero-evidence-cache.mjs", import.meta.url);
+const INTEGRITY_VERIFIER_PATH = new URL("../runtime/chatero-install-integrity.mjs", import.meta.url);
 const NOTICE_SOURCE_DIRECTORY = fileURLToPath(new URL("../licenses/", import.meta.url));
 
 export const REMOTE_AGENT_NOTICE_FILES = Object.freeze([
@@ -408,6 +409,9 @@ async function main() {
     const evidenceHelperDestination = join(bin, "chatero-evidence-cache.mjs");
     await copyFile(EVIDENCE_HELPER_PATH, evidenceHelperDestination);
     await chmod(evidenceHelperDestination, 0o755);
+    const integrityVerifierDestination = join(bin, "chatero-install-integrity.mjs");
+    await copyFile(INTEGRITY_VERIFIER_PATH, integrityVerifierDestination);
+    await chmod(integrityVerifierDestination, 0o755);
 
     await mkdir(dirname(plan.output), { recursive: true });
     await packDeterministically(workDirectory, plan.rootName, plan.output);

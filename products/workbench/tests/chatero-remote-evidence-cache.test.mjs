@@ -40,6 +40,9 @@ import {
   RemoteAgentInstaller,
 } from "../extensions/chatero-remote/remote-agent-installer.mjs";
 import { decodeAuthority, encodeAuthority } from "../extensions/chatero-remote/authority.mjs";
+import {
+  writeInstallTreeManifest,
+} from "../remote-agent/runtime/chatero-install-integrity.mjs";
 
 const TARGET_ID = "profile:lab-a";
 const OTHER_TARGET_ID = "profile:lab-b";
@@ -47,6 +50,10 @@ const FINGERPRINT = `SHA256:${"A".repeat(43)}`;
 const OTHER_FINGERPRINT = `SHA256:${"B".repeat(43)}`;
 const DIGEST = createHash("sha256").update("paper").digest("hex");
 const HELPER_PATH = fileURLToPath(new URL("../remote-agent/runtime/chatero-evidence-cache.mjs", import.meta.url));
+const INSTALL_INTEGRITY_HELPER_PATH = fileURLToPath(new URL(
+  "../remote-agent/runtime/chatero-install-integrity.mjs",
+  import.meta.url,
+));
 
 function runShell(script, args, { home, env = {}, input = null } = {}) {
   const child = spawn("sh", ["-c", script, "chatero", ...args], {
@@ -78,6 +85,40 @@ function runLocal(command, args, options = {}) {
   });
 }
 
+async function sha256File(path) {
+  return createHash("sha256").update(await readFile(path)).digest("hex");
+}
+
+async function refreshInstallIntegrity(root) {
+  const rootMode = (await lstat(root)).mode & 0o7777;
+  const markerPath = join(root, ".chatero-release-sha256");
+  let markerBytes = null;
+  try {
+    markerBytes = await readFile(markerPath);
+    await rm(markerPath);
+  }
+  catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+  await rm(join(root, "integrity"), { recursive: true, force: true });
+  const manifest = await writeInstallTreeManifest({ root });
+  await chmod(root, rootMode);
+  if (markerBytes !== null) await writeFile(markerPath, markerBytes, { mode: 0o600 });
+  return Object.freeze({
+    treeManifestSha256: manifest.treeManifestSha256,
+    nodeSha256: await sha256File(join(root, "node")),
+    integrityVerifierSha256: await sha256File(join(root, "bin", "chatero-install-integrity.mjs")),
+  });
+}
+
+function integrityArguments(fixture) {
+  return [
+    fixture.treeManifestSha256,
+    fixture.nodeSha256,
+    fixture.integrityVerifierSha256,
+  ];
+}
+
 async function makeInstallArchive(home, {
   commit = "a".repeat(40),
   transactionId = "1".repeat(24),
@@ -104,7 +145,6 @@ async function makeInstallArchive(home, {
   ];
   for (const directory of directories) await mkdir(directory, { recursive: true, mode: 0o755 });
   for (const file of [
-    join(root, "node"),
     join(root, "bin", "chatero-server"),
     join(root, "bin", "chatero-process-bridge.mjs"),
     join(root, "bin", "chatero-evidence-cache.mjs"),
@@ -114,11 +154,18 @@ async function makeInstallArchive(home, {
   ]) {
     await writeFile(file, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
   }
+  await writeFile(join(root, "node"), `#!/bin/sh\nexec "${process.execPath}" "$@"\n`, { mode: 0o755 });
+  await writeFile(
+    join(root, "bin", "chatero-install-integrity.mjs"),
+    await readFile(INSTALL_INTEGRITY_HELPER_PATH),
+    { mode: 0o755 },
+  );
   await symlink(
     "../@openai/codex/bin/codex.js",
     join(root, "agent-sdk", "codex", "node_modules", ".bin", "codex"),
   );
   if (markerSymlink) await symlink(markerSymlink, join(root, ".chatero-release-sha256"));
+  const integrity = await refreshInstallIntegrity(root);
   const archive = join(home, `archive-${transactionId}.tar.gz`);
   await runLocal("tar", ["-czf", archive, "-C", source, rootName]);
   const archiveBytes = await readFile(archive);
@@ -142,6 +189,7 @@ async function makeInstallArchive(home, {
     partRelativePath,
     rootName,
     tuple,
+    ...integrity,
   });
 }
 
@@ -503,7 +551,6 @@ test("real install probe rejects symlinked executables and hardlinked fixed help
     await chmod(directory, 0o700);
   }
   const executables = [
-    join(root, "node"),
     join(root, "bin", "chatero-server"),
     join(root, "bin", "chatero-process-bridge.mjs"),
     join(root, "bin", "chatero-evidence-cache.mjs"),
@@ -511,15 +558,32 @@ test("real install probe rejects symlinked executables and hardlinked fixed help
     join(native, "codex-path", "rg"),
   ];
   for (const path of executables) await writeFile(path, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  const nodeBytes = Buffer.from(`#!/bin/sh\nexec "${process.execPath}" "$@"\n`);
+  await writeFile(join(root, "node"), nodeBytes, { mode: 0o755 });
+  await writeFile(
+    join(root, "bin", "chatero-install-integrity.mjs"),
+    await readFile(INSTALL_INTEGRITY_HELPER_PATH),
+    { mode: 0o755 },
+  );
   const launcher = join(root, "agent-sdk", "codex", "node_modules", "@openai", "codex", "bin", "codex.js");
   await writeFile(launcher, "#!/usr/bin/env node\n", { mode: 0o755 });
   await symlink("../@openai/codex/bin/codex.js", join(root, "agent-sdk", "codex", "node_modules", ".bin", "codex"));
+  const integrity = await refreshInstallIntegrity(root);
+  await chmod(root, 0o700);
   await writeFile(join(root, ".chatero-release-sha256"), `${digest}\n`, { mode: 0o600 });
-  const probe = () => runShell(REMOTE_AGENT_SCRIPTS.probeInstalled, [relative, digest], { home });
+  const probe = () => runShell(REMOTE_AGENT_SCRIPTS.probeInstalled, [
+    relative,
+    digest,
+    ...integrityArguments(integrity),
+  ], { home });
   assert.equal((await probe()).stdout.trim(), "ready");
   const linkedHome = join(home, "linked-home");
   await symlink(".", linkedHome);
-  assert.equal((await runShell(REMOTE_AGENT_SCRIPTS.probeInstalled, [relative, digest], {
+  assert.equal((await runShell(REMOTE_AGENT_SCRIPTS.probeInstalled, [
+    relative,
+    digest,
+    ...integrityArguments(integrity),
+  ], {
     home: linkedHome,
   })).stdout.trim(), "ready");
 
@@ -527,7 +591,7 @@ test("real install probe rejects symlinked executables and hardlinked fixed help
   await symlink("/bin/true", join(root, "node"));
   assert.equal((await probe()).stdout.trim(), "missing");
   await unlink(join(root, "node"));
-  await writeFile(join(root, "node"), "#!/bin/sh\n", { mode: 0o755 });
+  await writeFile(join(root, "node"), nodeBytes, { mode: 0o755 });
 
   await chmod(join(root, "node"), 0o777);
   assert.equal((await probe()).stdout.trim(), "missing");
@@ -556,6 +620,7 @@ test("real finalize installs into a disjoint digest root and leaves a legacy ins
     fixture.installRelativePath,
     fixture.rootName,
     fixture.digest,
+    ...integrityArguments(fixture),
   ], { home });
   assert.equal(finalized.code, 0, finalized.stderr);
   assert.equal(await readFile(sentinel, "utf8"), "legacy unchanged\n");
@@ -565,8 +630,42 @@ test("real finalize installs into a disjoint digest root and leaves a legacy ins
   assert.equal((await runShell(REMOTE_AGENT_SCRIPTS.probeInstalled, [
     fixture.installRelativePath,
     fixture.digest,
+    ...integrityArguments(fixture),
   ], { home })).stdout.trim(), "ready");
   await assert.rejects(lstat(join(home, fixture.partRelativePath)), error => error?.code === "ENOENT");
+});
+
+test("real finalize replaces a tampered immutable cache only from the signed archive", async t => {
+  const home = await mkdtemp(join(tmpdir(), "chatero-install-repair-"));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const fixture = await makeInstallArchive(home);
+  const args = [
+    fixture.partRelativePath,
+    fixture.installRelativePath,
+    fixture.rootName,
+    fixture.digest,
+    ...integrityArguments(fixture),
+  ];
+  const first = await runShell(REMOTE_AGENT_SCRIPTS.finalize, args, { home });
+  assert.equal(first.code, 0, first.stderr);
+
+  const installedServer = join(home, fixture.installRelativePath, "bin", "chatero-server");
+  await writeFile(installedServer, "#!/bin/sh\nexit 97\n", { mode: 0o755 });
+  assert.equal((await runShell(REMOTE_AGENT_SCRIPTS.probeInstalled, [
+    fixture.installRelativePath,
+    fixture.digest,
+    ...integrityArguments(fixture),
+  ], { home })).stdout.trim(), "missing");
+
+  await writeFile(join(home, fixture.partRelativePath), fixture.archiveBytes, { mode: 0o600 });
+  const repaired = await runShell(REMOTE_AGENT_SCRIPTS.finalize, args, { home });
+  assert.equal(repaired.code, 0, repaired.stderr);
+  assert.equal(await readFile(installedServer, "utf8"), "#!/bin/sh\nexit 0\n");
+  assert.equal((await runShell(REMOTE_AGENT_SCRIPTS.probeInstalled, [
+    fixture.installRelativePath,
+    fixture.digest,
+    ...integrityArguments(fixture),
+  ], { home })).stdout.trim(), "ready");
 });
 
 test("real finalize rejects an artifact-ancestor symlink without writing or chmodding outside HOME", async t => {
@@ -583,6 +682,7 @@ test("real finalize rejects an artifact-ancestor symlink without writing or chmo
     fixture.installRelativePath,
     fixture.rootName,
     fixture.digest,
+    ...integrityArguments(fixture),
   ], { home });
   assert.notEqual(result.code, 0);
   assert.equal(await readFile(sentinel, "utf8"), "outside unchanged\n");
@@ -611,6 +711,7 @@ test("real finalize never replaces a destination inserted at its publish boundar
     fixture.installRelativePath,
     fixture.rootName,
     fixture.digest,
+    ...integrityArguments(fixture),
   ], { home, env: { PATH: `${wrappers}:/usr/bin:/bin` } });
   assert.notEqual(result.code, 0);
   const destination = join(home, fixture.installRelativePath);
@@ -637,6 +738,7 @@ test("the next finalize recovers an installing directory left by a killed owner"
     fixture.installRelativePath,
     fixture.rootName,
     fixture.digest,
+    ...integrityArguments(fixture),
   ], { home, env: { PATH: `${wrappers}:/usr/bin:/bin` } });
   assert.notEqual(killed.code, 0);
   const parent = join(home, fixture.installRelativePath, "..");
@@ -647,12 +749,14 @@ test("the next finalize recovers an installing directory left by a killed owner"
     fixture.installRelativePath,
     fixture.rootName,
     fixture.digest,
+    ...integrityArguments(fixture),
   ], { home });
   assert.equal(recovered.code, 0, recovered.stderr);
   assert.equal((await readdir(parent)).some(name => name.startsWith(".installing.")), false);
   assert.equal((await runShell(REMOTE_AGENT_SCRIPTS.probeInstalled, [
     fixture.installRelativePath,
     fixture.digest,
+    ...integrityArguments(fixture),
   ], { home })).stdout.trim(), "ready");
 });
 
@@ -673,6 +777,7 @@ test("finalize rejects a same-second archive mutation across extraction", async 
     fixture.installRelativePath,
     fixture.rootName,
     fixture.digest,
+    ...integrityArguments(fixture),
   ], { home, env: { PATH: `${wrappers}:/usr/bin:/bin` } });
   assert.equal(result.code, 76, result.stderr);
   await assert.rejects(lstat(join(home, fixture.installRelativePath)), error => error?.code === "ENOENT");
@@ -750,6 +855,7 @@ test("remote finalize refuses an archive-provided release marker symlink", async
     fixture.installRelativePath,
     fixture.rootName,
     fixture.digest,
+    ...integrityArguments(fixture),
   ], { home });
   assert.notEqual(result.code, 0);
   assert.equal(await readFile(sentinel, "utf8"), "do not overwrite\n");
@@ -766,6 +872,7 @@ test("remote finalize refuses to publish an archive under a different architectu
     mismatched,
     fixture.rootName,
     fixture.digest,
+    ...integrityArguments(fixture),
   ], { home });
   assert.notEqual(result.code, 0);
   await assert.rejects(lstat(join(home, mismatched)), error => error?.code === "ENOENT");
@@ -780,11 +887,13 @@ test("createRuntime kills an unready server and removes transaction secrets on f
     fixture.installRelativePath,
     fixture.rootName,
     fixture.digest,
+    ...integrityArguments(fixture),
   ], { home });
   assert.equal(finalized.code, 0, finalized.stderr);
   const runtimeBase = join(home, "runtime-base");
   await mkdir(runtimeBase, { mode: 0o700 });
-  const server = join(home, fixture.installRelativePath, "bin", "chatero-server");
+  const installedRoot = join(home, fixture.installRelativePath);
+  const server = join(installedRoot, "bin", "chatero-server");
   const pidFile = join(home, "delayed-server.pid");
   await writeFile(server, [
     "#!/bin/sh",
@@ -793,9 +902,10 @@ test("createRuntime kills an unready server and removes transaction secrets on f
     "while :; do sleep 1; done",
     "",
   ].join("\n"), { mode: 0o755 });
+  let runtimeIntegrity = await refreshInstallIntegrity(installedRoot);
   const child = spawn("sh", [
     "-c", REMOTE_AGENT_SCRIPTS.createRuntime, "chatero",
-    fixture.installRelativePath, fixture.tuple,
+    fixture.installRelativePath, fixture.tuple, ...integrityArguments(runtimeIntegrity),
   ], {
     env: {
       ...process.env,
@@ -836,10 +946,11 @@ test("createRuntime kills an unready server and removes transaction secrets on f
     "while :; do sleep 1; done",
     "",
   ].join("\n"), { mode: 0o755 });
+  runtimeIntegrity = await refreshInstallIntegrity(installedRoot);
   const longRuntime = join(home, "x".repeat(90));
   const ready = await runShell(
     REMOTE_AGENT_SCRIPTS.createRuntime,
-    [fixture.installRelativePath, fixture.tuple],
+    [fixture.installRelativePath, fixture.tuple, ...integrityArguments(runtimeIntegrity)],
     {
       home,
       env: { XDG_RUNTIME_DIR: longRuntime, CHATERO_TEST_PID_FILE: readyPidFile },
@@ -856,9 +967,10 @@ test("createRuntime kills an unready server and removes transaction secrets on f
   process.kill(readyPid, "SIGTERM");
 
   await writeFile(server, "#!/bin/sh\nexit 9\n", { mode: 0o755 });
+  runtimeIntegrity = await refreshInstallIntegrity(installedRoot);
   const failed = await runShell(
     REMOTE_AGENT_SCRIPTS.createRuntime,
-    [fixture.installRelativePath, fixture.tuple],
+    [fixture.installRelativePath, fixture.tuple, ...integrityArguments(runtimeIntegrity)],
     { home, env: { XDG_RUNTIME_DIR: runtimeBase }, input: Buffer.from("temporary-token\n") },
   );
   assert.notEqual(failed.code, 0);
@@ -4538,7 +4650,15 @@ test("two signed artifacts for one commit and tuple install into distinct immuta
       release: {
         manifest: {
           codeOssCommit: "a".repeat(40),
-          artifacts: [{ tuple: "linux-x86_64", filename: "agent.tar.gz", sha256: digest, size: 1 }],
+          artifacts: [{
+            tuple: "linux-x86_64",
+            filename: "agent.tar.gz",
+            sha256: digest,
+            size: 1,
+            treeManifestSha256: "d".repeat(64),
+            nodeSha256: "e".repeat(64),
+            integrityVerifierSha256: "f".repeat(64),
+          }],
         },
       },
     });

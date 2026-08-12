@@ -98,33 +98,27 @@ const SAFE_REMOTE_FS = [
   "  [ \"$1\" != Z ] && [ \"$2\" = \"$expected_start\" ] && kill -0 \"$expected_pid\" 2>/dev/null",
   "}",
   "verify_install() {",
-  "  install=$1; expected=$2",
+  "  install=$1; expected=$2; tuple=$3; tree_digest=$4; node_digest=$5; verifier_digest=$6",
+  "  for signed_digest in \"$expected\" \"$tree_digest\" \"$node_digest\" \"$verifier_digest\"; do",
+  "    printf '%s\\n' \"$signed_digest\" | grep -Eq '^[0-9a-f]{64}$' || return 1",
+  "  done",
+  "  case \"$tuple\" in linux-x86_64|linux-aarch64) ;; *) return 1;; esac",
+  "  case \"${install##*/}\" in \"$tuple\"|\"chatero-agent-$tuple\") ;; *) return 1;; esac",
   "  safe_chain \"$install\" || return 1",
   "  marker=$install/.chatero-release-sha256",
   "  safe_marker \"$marker\" && [ \"$(cat \"$marker\")\" = \"$expected\" ] || return 1",
-  "  safe_dir \"$install/bin\" || return 1",
-  "  safe_executable \"$install/node\" || return 1",
-  "  safe_executable \"$install/bin/chatero-server\" || return 1",
-  "  safe_executable \"$install/bin/chatero-process-bridge.mjs\" || return 1",
-  "  safe_executable \"$install/bin/chatero-evidence-cache.mjs\" || return 1",
-  "  launcher=$install/agent-sdk/codex/node_modules/@openai/codex/bin/codex.js",
-  "  safe_internal_chain \"$install\" \"$(dirname \"$launcher\")\" || return 1",
-  "  safe_executable \"$launcher\" || return 1",
-  "  shim=$install/agent-sdk/codex/node_modules/.bin/codex",
-  "  safe_internal_chain \"$install\" \"$(dirname \"$shim\")\" || return 1",
-  "  [ -L \"$shim\" ] && [ \"$(readlink \"$shim\")\" = '../@openai/codex/bin/codex.js' ] || return 1",
-  "  [ \"$(readlink -f \"$shim\")\" = \"$launcher\" ] || return 1",
-  "  tuple=${3:-${install##*/}}",
-  "  case \"$tuple\" in",
-  "    linux-x86_64) native=codex-linux-x64; triple=x86_64-unknown-linux-musl;;",
-  "    linux-aarch64) native=codex-linux-arm64; triple=aarch64-unknown-linux-musl;;",
-  "    *) return 1;;",
-  "  esac",
-  "  vendor=$install/agent-sdk/codex/node_modules/@openai/$native/vendor/$triple",
-  "  safe_internal_chain \"$install\" \"$vendor/bin\" || return 1",
-  "  safe_internal_chain \"$install\" \"$vendor/codex-path\" || return 1",
-  "  safe_executable \"$vendor/bin/codex\" || return 1",
-  "  safe_executable \"$vendor/codex-path/rg\" || return 1",
+  "  manifest=$install/integrity/tree.v1.json",
+  "  verifier=$install/bin/chatero-install-integrity.mjs",
+  "  node=$install/node",
+  "  safe_internal_chain \"$install\" \"$(dirname \"$manifest\")\" || return 1",
+  "  safe_internal_chain \"$install\" \"$(dirname \"$verifier\")\" || return 1",
+  "  safe_file \"$manifest\" && [ \"$(stat -c %a \"$manifest\")\" = 644 ] || return 1",
+  "  safe_executable \"$node\" && safe_executable \"$verifier\" || return 1",
+  "  [ \"$(sha256sum \"$manifest\" | awk '{print $1}')\" = \"$tree_digest\" ] || return 1",
+  "  [ \"$(sha256sum \"$node\" | awk '{print $1}')\" = \"$node_digest\" ] || return 1",
+  "  [ \"$(sha256sum \"$verifier\" | awk '{print $1}')\" = \"$verifier_digest\" ] || return 1",
+  "  result=$(\"$node\" \"$verifier\" verify \"$install\" \"$manifest\" \"$tree_digest\") || return 1",
+  "  [ \"$result\" = \"{\\\"kind\\\":\\\"verified\\\",\\\"treeManifestSha256\\\":\\\"$tree_digest\\\"}\" ]",
   "}",
 ].join("\n");
 
@@ -176,7 +170,7 @@ const PROBE_INSTALLED_SCRIPT = [
   SAFE_REMOTE_FS,
   "destination=\"$home/$1\"",
   "digest=$2",
-  "if ! verify_install \"$destination\" \"$digest\"; then printf 'missing\\n'; exit 0; fi",
+  "if ! verify_install \"$destination\" \"$digest\" \"${destination##*/}\" \"$3\" \"$4\" \"$5\"; then printf 'missing\\n'; exit 0; fi",
   "printf 'ready\\n'",
 ].join("\n");
 
@@ -201,6 +195,7 @@ const FINALIZE_SCRIPT = [
   "destination=\"$home/$2\"",
   "root=$3",
   "digest=$4",
+  "tree_digest=$5; node_digest=$6; verifier_digest=$7",
   "case \"$root\" in chatero-agent-linux-x86_64) tuple=linux-x86_64;; chatero-agent-linux-aarch64) tuple=linux-aarch64;; *) exit 79;; esac",
   "[ \"${destination##*/}\" = \"$tuple\" ] || exit 79",
   "[ \"$digest\" = \"$(printf '%s\\n' \"$2\" | cut -d/ -f3)\" ] || exit 79",
@@ -210,9 +205,13 @@ const FINALIZE_SCRIPT = [
   "parent=$(dirname \"$destination\")",
   "ensure_chain \"$parent\"",
   "if [ -e \"$destination\" ] || [ -L \"$destination\" ]; then",
-  "  verify_install \"$destination\" \"$digest\" \"$tuple\" || exit 75",
-  "  safe_part \"$part\" && [ \"$(stat -Lc '%d:%i' \"$part\")\" = \"$part_identity\" ] && rm -f -- \"$part\"",
-  "  exit 0",
+  "  if verify_install \"$destination\" \"$digest\" \"$tuple\" \"$tree_digest\" \"$node_digest\" \"$verifier_digest\"; then",
+  "    safe_part \"$part\" && [ \"$(stat -Lc '%d:%i' \"$part\")\" = \"$part_identity\" ] && rm -f -- \"$part\"",
+  "    exit 0",
+  "  fi",
+  "  safe_owner_dir \"$destination\" || exit 75",
+  "  rm -rf -- \"$destination\"",
+  "  [ ! -e \"$destination\" ] && [ ! -L \"$destination\" ] || exit 75",
   "fi",
   "boot_id=$(cat /proc/sys/kernel/random/boot_id)",
   "printf '%s\\n' \"$boot_id\" | grep -Eq '^[0-9a-f-]{36}$'",
@@ -240,7 +239,7 @@ const FINALIZE_SCRIPT = [
   "actual=$(sha256sum \"$archive_copy\" | awk '{print $1}')",
   "after=$(file_snapshot \"$archive_copy\")",
   "[ \"$before\" = \"$after\" ] && [ \"$actual\" = \"$digest\" ] || exit 76",
-  "tar -xzf \"$archive_copy\" -C \"$tmp\"",
+  "tar -xzpf \"$archive_copy\" -C \"$tmp\"",
   "safe_part \"$archive_copy\"",
   "[ \"$(file_snapshot \"$archive_copy\")\" = \"$after\" ] || exit 76",
   "[ \"$(sha256sum \"$archive_copy\" | awk '{print $1}')\" = \"$digest\" ] || exit 76",
@@ -252,14 +251,14 @@ const FINALIZE_SCRIPT = [
   "[ ! -e \"$marker\" ] && [ ! -L \"$marker\" ] || exit 75",
   "(set -C; printf '%s\\n' \"$digest\" >\"$marker\")",
   "safe_marker \"$marker\"",
-  "verify_install \"$candidate\" \"$digest\" \"$tuple\"",
+  "verify_install \"$candidate\" \"$digest\" \"$tuple\" \"$tree_digest\" \"$node_digest\" \"$verifier_digest\"",
   "mv -T -n \"$candidate\" \"$destination\"",
   "if [ -e \"$candidate\" ] || [ -L \"$candidate\" ]; then",
-  "  verify_install \"$destination\" \"$digest\" \"$tuple\" || exit 75",
+  "  verify_install \"$destination\" \"$digest\" \"$tuple\" \"$tree_digest\" \"$node_digest\" \"$verifier_digest\" || exit 75",
   "  diff -qr --no-dereference \"$candidate\" \"$destination\" >/dev/null || exit 75",
   "  rm -rf -- \"$candidate\"",
   "fi",
-  "verify_install \"$destination\" \"$digest\" \"$tuple\"",
+  "verify_install \"$destination\" \"$digest\" \"$tuple\" \"$tree_digest\" \"$node_digest\" \"$verifier_digest\"",
   "safe_part \"$archive_copy\" && rm -f -- \"$archive_copy\"",
   "rmdir \"$tmp\"",
   "if safe_part \"$part\" && [ \"$(stat -Lc '%d:%i' \"$part\")\" = \"$part_identity\" ]; then rm -f -- \"$part\"; fi",
@@ -279,7 +278,7 @@ const CREATE_RUNTIME_SCRIPT = [
   "  *) exit 86;;",
   "esac",
   "[ \"${install##*/}\" = \"$2\" ]",
-  "verify_install \"$install\" \"$digest\" \"$2\"",
+  "verify_install \"$install\" \"$digest\" \"$2\" \"$3\" \"$4\" \"$5\"",
   "if [ -n \"${XDG_RUNTIME_DIR:-}\" ]; then",
   "  case \"$XDG_RUNTIME_DIR\" in /*) ;; *) exit 81;; esac",
   "  [ \"$(printf '%s' \"$XDG_RUNTIME_DIR\" | tr -d '\\r\\n')\" = \"$XDG_RUNTIME_DIR\" ] || exit 82",
@@ -329,6 +328,7 @@ const CREATE_RUNTIME_SCRIPT = [
   "[ -n \"$token\" ]",
   "printf '%s' \"$token\" | dd of=\"$token_file\" oflag=nofollow conv=nocreat status=none",
   "safe_marker \"$token_file\"",
+  "verify_install \"$install\" \"$digest\" \"$2\" \"$3\" \"$4\" \"$5\"",
   "VSCODE_AGENT_HOST_CODEX_AGENT_ENABLED=true VSCODE_AGENT_HOST_CODEX_SDK_ROOT=\"$install/agent-sdk/codex\" VSCODE_AGENT_HOST_CLAUDE_AGENT_ENABLED=false VSCODE_AGENT_HOST_BYOK_MODELS_ENABLED=false nohup \"$install/bin/chatero-server\" --host=127.0.0.1 --port=0 --connection-token-file=\"$token_file\" --agent-host-path=\"$agent_socket\" >\"$server_log\" 2>&1 </dev/null &",
   "server_pid=$!",
   "port=''",
@@ -547,8 +547,21 @@ export class SshRemoteAgentRuntime {
     return this.#exec(REMOTE_PLATFORM_PROBE, [], { signal });
   }
 
-  async probeInstalled({ installRelativePath, sha256, signal }) {
-    const output = await this.#exec(PROBE_INSTALLED_SCRIPT, [installRelativePath, sha256], { signal });
+  async probeInstalled({
+    installRelativePath,
+    sha256,
+    treeManifestSha256,
+    nodeSha256,
+    integrityVerifierSha256,
+    signal,
+  }) {
+    const output = await this.#exec(PROBE_INSTALLED_SCRIPT, [
+      installRelativePath,
+      sha256,
+      treeManifestSha256,
+      nodeSha256,
+      integrityVerifierSha256,
+    ], { signal });
     const state = output.trim();
     if (state !== "ready" && state !== "missing") {
       throw new Error("remote install probe returned an invalid state");
@@ -582,6 +595,9 @@ export class SshRemoteAgentRuntime {
     installRelativePath,
     archiveRoot,
     sha256,
+    treeManifestSha256,
+    nodeSha256,
+    integrityVerifierSha256,
     signal,
   }) {
     await this.#exec(FINALIZE_SCRIPT, [
@@ -589,11 +605,28 @@ export class SshRemoteAgentRuntime {
       installRelativePath,
       archiveRoot,
       sha256,
+      treeManifestSha256,
+      nodeSha256,
+      integrityVerifierSha256,
     ], { signal });
   }
 
-  async createRuntime({ installRelativePath, tuple, connectionToken, signal }) {
-    const output = await this.#exec(CREATE_RUNTIME_SCRIPT, [installRelativePath, tuple], {
+  async createRuntime({
+    installRelativePath,
+    tuple,
+    treeManifestSha256,
+    nodeSha256,
+    integrityVerifierSha256,
+    connectionToken,
+    signal,
+  }) {
+    const output = await this.#exec(CREATE_RUNTIME_SCRIPT, [
+      installRelativePath,
+      tuple,
+      treeManifestSha256,
+      nodeSha256,
+      integrityVerifierSha256,
+    ], {
       input: Buffer.from(`${connectionToken}\n`, "utf8"),
       signal,
     });
@@ -646,7 +679,10 @@ export class RemoteAgentInstaller {
     assertReleaseToken(manifest.codeOssCommit, "Code-OSS commit");
     assertReleaseToken(hostPlatform.tuple, "remote tuple");
     assertReleaseToken(artifact.filename, "artifact filename");
-    if (!SHA256.test(artifact.sha256) || !Number.isSafeInteger(artifact.size) || artifact.size < 1) {
+    if (!SHA256.test(artifact.sha256) || !Number.isSafeInteger(artifact.size) || artifact.size < 1
+      || !SHA256.test(artifact.treeManifestSha256)
+      || !SHA256.test(artifact.nodeSha256)
+      || !SHA256.test(artifact.integrityVerifierSha256)) {
       throw new TypeError("verified artifact metadata is malformed");
     }
     const installRelativePath = makeRemoteInstallRelativePath(
@@ -661,6 +697,9 @@ export class RemoteAgentInstaller {
       controlPath,
       installRelativePath,
       sha256: artifact.sha256,
+      treeManifestSha256: artifact.treeManifestSha256,
+      nodeSha256: artifact.nodeSha256,
+      integrityVerifierSha256: artifact.integrityVerifierSha256,
       signal,
     });
     if (installed) {
@@ -707,6 +746,9 @@ export class RemoteAgentInstaller {
               installRelativePath,
               archiveRoot,
               sha256: artifact.sha256,
+              treeManifestSha256: artifact.treeManifestSha256,
+              nodeSha256: artifact.nodeSha256,
+              integrityVerifierSha256: artifact.integrityVerifierSha256,
               signal,
             });
             completed = true;
@@ -747,6 +789,9 @@ export class RemoteAgentInstaller {
       controlPath,
       installRelativePath,
       tuple: hostPlatform.tuple,
+      treeManifestSha256: artifact.treeManifestSha256,
+      nodeSha256: artifact.nodeSha256,
+      integrityVerifierSha256: artifact.integrityVerifierSha256,
       connectionToken,
       signal,
     });
@@ -757,6 +802,9 @@ export class RemoteAgentInstaller {
       installRelativePath,
       codeOssCommit: manifest.codeOssCommit,
       artifactSha256: artifact.sha256,
+      treeManifestSha256: artifact.treeManifestSha256,
+      nodeSha256: artifact.nodeSha256,
+      integrityVerifierSha256: artifact.integrityVerifierSha256,
       tuple: hostPlatform.tuple,
       hostPlatform,
     });

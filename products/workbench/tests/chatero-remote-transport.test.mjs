@@ -20,6 +20,12 @@ import {
 import { SshSession } from "../extensions/chatero-remote/ssh-session.mjs";
 import { parseAuthenticatedFingerprint } from "../extensions/chatero-remote/ssh-session.mjs";
 
+const INSTALL_INTEGRITY = Object.freeze({
+  treeManifestSha256: "c".repeat(64),
+  nodeSha256: "d".repeat(64),
+  integrityVerifierSha256: "e".repeat(64),
+});
+
 class FakeStream extends EventEmitter {
   constructor() {
     super();
@@ -404,7 +410,13 @@ test("installer verifies the signed release before upload and keeps installation
     readArtifact: async () => Buffer.from("artifact"),
     manifest: {
       codeOssCommit: "a".repeat(40),
-      artifacts: [{ tuple: "linux-x86_64", filename: "chatero-agent-linux-x86_64.tar.gz", sha256: "b".repeat(64), size: 8 }],
+      artifacts: [{
+        tuple: "linux-x86_64",
+        filename: "chatero-agent-linux-x86_64.tar.gz",
+        sha256: "b".repeat(64),
+        size: 8,
+        ...INSTALL_INTEGRITY,
+      }],
     },
   };
 
@@ -425,6 +437,7 @@ test("installer verifies the signed release before upload and keeps installation
     installPath: `/home/alice/.chatero-server/artifacts-v1/${"b".repeat(64)}/${"a".repeat(40)}/linux-x86_64`,
     installRelativePath: `.chatero-server/artifacts-v1/${"b".repeat(64)}/${"a".repeat(40)}/linux-x86_64`,
     artifactSha256: "b".repeat(64),
+    ...INSTALL_INTEGRITY,
     codeOssCommit: "a".repeat(40),
     tuple: "linux-x86_64",
     hostPlatform: { os: "linux", arch: "x86_64", kernel: "6.8", tuple: "linux-x86_64" },
@@ -446,6 +459,7 @@ function releaseFixture() {
         filename: "chatero-agent-linux-x86_64.tar.gz",
         sha256: "b".repeat(64),
         size: 8,
+        ...INSTALL_INTEGRITY,
       }],
     },
   };

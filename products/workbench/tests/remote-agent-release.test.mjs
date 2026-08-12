@@ -4,6 +4,8 @@ import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { createReadStream } from "node:fs";
 import {
+  chmod,
+  link,
   mkdir,
   mkdtemp,
   lstat,
@@ -65,6 +67,9 @@ function makeManifest(artifacts, tuples = REMOTE_AGENT_TUPLES) {
         filename: `chatero-agent-${tuple}.tar.gz`,
         sha256: createHash("sha256").update(bytes).digest("hex"),
         size: bytes.length,
+        treeManifestSha256: createHash("sha256").update(`${tuple}:tree`).digest("hex"),
+        nodeSha256: createHash("sha256").update(`${tuple}:node`).digest("hex"),
+        integrityVerifierSha256: createHash("sha256").update(`${tuple}:verifier`).digest("hex"),
       };
     }),
   };
@@ -172,6 +177,7 @@ async function createRemoteAgentFixture(source, root, tuple, {
   await mkdir(join(nodeModules, ".bin"), { recursive: true });
   await mkdir(join(source, root, "licenses"), { recursive: true });
   await mkdir(bin, { recursive: true });
+  await writeFile(join(source, root, "node"), "#!/bin/sh\n", { mode: 0o755 });
   await writeFile(join(bin, "chatero-server"), `${tuple}\n`, { mode: 0o755 });
   await writeFile(join(source, root, "product.json"), JSON.stringify({ agentSdks }), "utf8");
   await writeFile(join(openAi, "codex", "package.json"), JSON.stringify({ version: "0.142.0" }));
@@ -298,17 +304,79 @@ test("release verification rejects bad artifact sizes and digests", async () => 
   await assert.rejects(() => verifyRelease(badDigest), /digest/);
 });
 
+test("release verification requires every signed installed-tree digest", async () => {
+  for (const field of ["treeManifestSha256", "nodeSha256", "integrityVerifierSha256"]) {
+    const signed = await signedFixture({
+      mutateManifest(manifest) { delete manifest.artifacts[0][field]; },
+    });
+    await assert.rejects(() => verifyRelease(signed), new RegExp(field));
+  }
+});
+
+test("installed-tree verification rejects changed bytes, modes, links, and entries", async () => {
+  const {
+    verifyInstallTree,
+    writeInstallTreeManifest,
+  } = await import("../remote-agent/runtime/chatero-install-integrity.mjs");
+  const directory = await mkdtemp(join(tmpdir(), "chatero-install-tree-"));
+  temporaryDirectories.push(directory);
+  const root = join(directory, "agent");
+  const launcherDirectory = join(root, "agent-sdk", "codex", "node_modules", "@openai", "codex", "bin");
+  const shimDirectory = join(root, "agent-sdk", "codex", "node_modules", ".bin");
+  await mkdir(join(root, "bin"), { recursive: true });
+  await mkdir(launcherDirectory, { recursive: true });
+  await mkdir(shimDirectory, { recursive: true });
+  await writeFile(join(root, "node"), "node\n", { mode: 0o755 });
+  await writeFile(join(root, "bin", "chatero-server"), "server\n", { mode: 0o755 });
+  await writeFile(join(root, "bin", "chatero-install-integrity.mjs"), "verifier\n", { mode: 0o755 });
+  await writeFile(join(launcherDirectory, "codex.js"), "launcher\n", { mode: 0o755 });
+  await symlink("../@openai/codex/bin/codex.js", join(shimDirectory, "codex"));
+  const written = await writeInstallTreeManifest({ root });
+  const verify = () => verifyInstallTree({
+    root,
+    manifestBytes: written.manifestBytes,
+    expectedTreeDigest: written.treeManifestSha256,
+  });
+  assert.deepEqual(await verify(), {
+    kind: "verified",
+    treeManifestSha256: written.treeManifestSha256,
+  });
+
+  const server = join(root, "bin", "chatero-server");
+  await writeFile(server, "changed\n", { mode: 0o755 });
+  assert.equal((await verify()).kind, "integrity-failure");
+  await writeFile(server, "server\n", { mode: 0o755 });
+  await chmod(server, 0o700);
+  assert.equal((await verify()).kind, "integrity-failure");
+  await chmod(server, 0o755);
+  await writeFile(join(root, "extra"), "extra\n");
+  assert.equal((await verify()).kind, "integrity-failure");
+  await rm(join(root, "extra"));
+  await rm(server);
+  assert.equal((await verify()).kind, "integrity-failure");
+  await writeFile(server, "server\n", { mode: 0o755 });
+  await rm(join(shimDirectory, "codex"));
+  await symlink("../../../../../../bin/chatero-server", join(shimDirectory, "codex"));
+  assert.equal((await verify()).kind, "integrity-failure");
+
+  await rm(join(shimDirectory, "codex"));
+  await symlink("../@openai/codex/bin/codex.js", join(shimDirectory, "codex"));
+  await link(server, join(root, "hardlink"));
+  assert.equal((await verify()).kind, "integrity-failure");
+});
+
 test("artifact selection requires the pinned commit and a supported tuple", async () => {
   const signed = await signedFixture();
   const manifest = await verifyRelease(signed);
 
-  assert.equal(
-    selectArtifact(manifest, {
+  const selected = selectArtifact(manifest, {
       commit: CODE_OSS_COMMIT,
       tuple: "linux-aarch64",
-    }).filename,
-    "chatero-agent-linux-aarch64.tar.gz"
-  );
+    });
+  assert.equal(selected.filename, "chatero-agent-linux-aarch64.tar.gz");
+  assert.match(selected.treeManifestSha256, /^[0-9a-f]{64}$/);
+  assert.match(selected.nodeSha256, /^[0-9a-f]{64}$/);
+  assert.match(selected.integrityVerifierSha256, /^[0-9a-f]{64}$/);
   assert.throws(
     () => selectArtifact(manifest, { commit: "0".repeat(40), tuple: "linux-aarch64" }),
     /commit/
@@ -389,7 +457,7 @@ test("process bridge rejects unknown request keys and oversized environment entr
   assert.match(oversizedEnv.frames[0].message, /environment entry.*64 KiB/);
 });
 
-test("release staging injects both fixed helpers and signs the final archive bytes", async () => {
+test("release staging injects fixed helpers and signs the exact install tree", async () => {
   const directory = await mkdtemp(join(tmpdir(), "chatero-stage-release-"));
   temporaryDirectories.push(directory);
   const inputs = join(directory, "inputs");
@@ -440,6 +508,14 @@ test("release staging injects both fixed helpers and signs the final archive byt
       listed.stdout,
       new RegExp(`^chatero-agent-${artifact.tuple}/bin/chatero-evidence-cache\\.mjs$`, "m")
     );
+    assert.match(
+      listed.stdout,
+      new RegExp(`^chatero-agent-${artifact.tuple}/bin/chatero-install-integrity\\.mjs$`, "m")
+    );
+    assert.match(
+      listed.stdout,
+      new RegExp(`^chatero-agent-${artifact.tuple}/integrity/tree\\.v1\\.json$`, "m")
+    );
     const extracted = join(directory, `extracted-${artifact.tuple}`);
     await mkdir(extracted);
     const unpacked = await run("tar", ["-xzf", join(output, artifact.filename), "-C", extracted]);
@@ -450,6 +526,19 @@ test("release staging injects both fixed helpers and signs the final archive byt
     assert.equal(metadata.nlink, 1);
     assert.notEqual(metadata.mode & 0o111, 0);
     assert.deepEqual(await readFile(helper), await readFile(EVIDENCE_HELPER_PATH));
+    const root = join(extracted, `chatero-agent-${artifact.tuple}`);
+    const manifestBytes = await readFile(join(root, "integrity", "tree.v1.json"));
+    const verifierBytes = await readFile(join(root, "bin", "chatero-install-integrity.mjs"));
+    const nodeBytes = await readFile(join(root, "node"));
+    assert.equal(createHash("sha256").update(manifestBytes).digest("hex"), artifact.treeManifestSha256);
+    assert.equal(createHash("sha256").update(verifierBytes).digest("hex"), artifact.integrityVerifierSha256);
+    assert.equal(createHash("sha256").update(nodeBytes).digest("hex"), artifact.nodeSha256);
+    const { verifyInstallTree } = await import("../remote-agent/runtime/chatero-install-integrity.mjs");
+    assert.equal((await verifyInstallTree({
+      root,
+      manifestBytes,
+      expectedTreeDigest: artifact.treeManifestSha256,
+    })).kind, "verified");
   }
 });
 

@@ -27,11 +27,13 @@ import {
   canonicalManifestBytes,
 } from "../release-contract.mjs";
 import { REMOTE_AGENT_NOTICE_FILES } from "./build-linux-agent.mjs";
+import { writeInstallTreeManifest } from "../runtime/chatero-install-integrity.mjs";
 
 const RELEASE_VERSION = "1.132.0";
 const CODE_OSS_COMMIT = "df53daabb18cd157bdb08c7f01c34df936cf12f4";
 const BRIDGE_PATH = new URL("../runtime/chatero-process-bridge.mjs", import.meta.url);
 const EVIDENCE_HELPER_PATH = new URL("../runtime/chatero-evidence-cache.mjs", import.meta.url);
+const INTEGRITY_VERIFIER_PATH = new URL("../runtime/chatero-install-integrity.mjs", import.meta.url);
 const CODEX_SDK_VERSION = "0.142.0";
 const ARCHIVE_ARCHITECTURES = Object.freeze({
   "linux-x86_64": {
@@ -244,10 +246,23 @@ async function assertAgentPayload(root, tuple) {
   await assertRegularPayloadFile(root, "bin/chatero-server", "chatero-server", {
     executable: true,
   });
+  await assertRegularPayloadFile(root, "node", "bundled Node", { executable: true });
+  await assertRegularPayloadFile(
+    root,
+    "bin/chatero-process-bridge.mjs",
+    "chatero-process-bridge.mjs",
+    { executable: true },
+  );
   await assertRegularPayloadFile(
     root,
     "bin/chatero-evidence-cache.mjs",
     "chatero-evidence-cache.mjs",
+    { executable: true },
+  );
+  await assertRegularPayloadFile(
+    root,
+    "bin/chatero-install-integrity.mjs",
+    "chatero-install-integrity.mjs",
     { executable: true },
   );
   for (const relativePath of REMOTE_AGENT_NOTICE_FILES) {
@@ -408,13 +423,43 @@ async function stageArchive({ archive, tuple, workDirectory }) {
   finally {
     await rm(temporaryEvidenceHelper, { force: true });
   }
+  const integrityVerifierDestination = join(bin, "chatero-install-integrity.mjs");
+  try {
+    const destinationStat = await lstat(integrityVerifierDestination);
+    if (!destinationStat.isFile() || destinationStat.isSymbolicLink()
+        || destinationStat.nlink !== 1) {
+      throw new Error("integrity verifier destination must be a regular file when it already exists");
+    }
+  }
+  catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+  const temporaryIntegrityVerifier = join(bin, `.chatero-install-integrity.${process.pid}.tmp`);
+  try {
+    await copyFile(INTEGRITY_VERIFIER_PATH, temporaryIntegrityVerifier, constants.COPYFILE_EXCL);
+    await chmod(temporaryIntegrityVerifier, 0o755);
+    await rename(temporaryIntegrityVerifier, integrityVerifierDestination);
+  }
+  finally {
+    await rm(temporaryIntegrityVerifier, { force: true });
+  }
 
   await assertAgentPayload(root, tuple);
+  const tree = await writeInstallTreeManifest({ root });
+  const node = await hashFile(join(root, "node"));
+  const integrityVerifier = await hashFile(integrityVerifierDestination);
 
   const filename = `${expectedRoot}.tar.gz`;
   const destination = join(workDirectory, filename);
   await packDeterministically(extractDirectory, expectedRoot, destination);
-  return { filename, tuple, ...await hashFile(destination) };
+  return {
+    filename,
+    tuple,
+    ...await hashFile(destination),
+    treeManifestSha256: tree.treeManifestSha256,
+    nodeSha256: node.sha256,
+    integrityVerifierSha256: integrityVerifier.sha256,
+  };
 }
 
 async function main() {

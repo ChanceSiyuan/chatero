@@ -17,6 +17,9 @@ const ARTIFACT_FIELDS = Object.freeze([
   "filename",
   "sha256",
   "size",
+  "treeManifestSha256",
+  "nodeSha256",
+  "integrityVerifierSha256",
 ]);
 const CODE_OSS_COMMIT = "df53daabb18cd157bdb08c7f01c34df936cf12f4";
 const RELEASE_VERSION = "1.132.0";
@@ -235,6 +238,15 @@ function validateManifest(manifest) {
 
     if (typeof artifact.sha256 !== "string" || !LOWERCASE_SHA256.test(artifact.sha256)) {
       throw new TypeError(`${field}.sha256 must be 64 lowercase hexadecimal characters`);
+    }
+    for (const digestField of [
+      "treeManifestSha256",
+      "nodeSha256",
+      "integrityVerifierSha256",
+    ]) {
+      if (typeof artifact[digestField] !== "string" || !LOWERCASE_SHA256.test(artifact[digestField])) {
+        throw new TypeError(`${field}.${digestField} must be 64 lowercase hexadecimal characters`);
+      }
     }
     if (!Number.isSafeInteger(artifact.size) || artifact.size < 1) {
       throw new TypeError(`${field}.size must be a positive safe integer`);
