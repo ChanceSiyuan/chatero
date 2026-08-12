@@ -162,6 +162,19 @@ export function createReviewSnapshot({
     current.set(value.path.value, value);
   }
   const documents = Object.freeze(generation.operations.map(operation => operationDocument(operation, current)));
+  const hunks = Object.freeze(generation.hunks.map(hunk => Object.freeze({
+    id: hunk.id,
+    operationId: hunk.operationId,
+    beforeStart: hunk.beforeStart,
+    beforeEnd: hunk.beforeEnd,
+    afterStart: hunk.afterStart,
+    afterEnd: hunk.afterEnd,
+    beforeText: hunk.beforeText,
+    afterText: hunk.afterText,
+    contextBefore: hunk.contextBefore,
+    contextAfter: hunk.contextAfter,
+    dependsOn: Object.freeze([...hunk.dependsOn]),
+  })));
   const leaves = Object.freeze(generation.operations.flatMap(operation => operationLeaves(operation, generation.hunks)));
   if (new Set(leaves.map(leaf => leaf.id)).size !== leaves.length) throw new TypeError("review leaves contain a duplicate identity");
   const identity = Object.freeze({
@@ -169,6 +182,7 @@ export function createReviewSnapshot({
     generationDigest: generation.generationDigest,
     stateGeneration,
     documents,
+    hunks,
     leaves,
   });
   return registry.register(Object.freeze({ ...identity, reviewDigest: digest(identity) }), expiresInMs);
