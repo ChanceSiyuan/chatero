@@ -93,6 +93,7 @@ test("first-party materialization declares the complete Documentation authority"
     "extensions/chatero-documentation/documentation-workspace.mjs",
     "extensions/chatero-documentation/extension.cjs",
     "extensions/chatero-documentation/licenses/CodeMirror-MIT.txt",
+    "extensions/chatero-documentation/live-preview-protocol.mjs",
     "extensions/chatero-documentation/media/documentation.svg",
     "extensions/chatero-documentation/media/documentation-webview/live-preview.css",
     "extensions/chatero-documentation/media/documentation-webview/live-preview.js",
