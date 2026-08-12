@@ -3,10 +3,39 @@ import Module, { createRequire } from "node:module";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
+import { parse } from "yaml";
 
 import { createDocumentationCapabilityIssuer } from "../extensions/chatero-documentation/documentation-capabilities.mjs";
 
 const extensionRoot = new URL("../extensions/chatero-documentation/", import.meta.url);
+
+test("isolated Workbench CI gates Documentation and exact Code-OSS provenance", async () => {
+  const source = await readFile(new URL("../../../.github/workflows/workbench.yml", import.meta.url), "utf8");
+  const workflow = parse(source);
+  assert.equal(workflow.name, "Workbench");
+  assert.deepEqual(workflow.on, ["push", "pull_request"]);
+  assert.deepEqual(Object.keys(workflow.jobs), ["workbench"]);
+  const job = workflow.jobs.workbench;
+  assert.equal(job["runs-on"], "ubuntu-24.04");
+  assert.deepEqual(job.steps.map(step => step.run ?? step.uses), [
+    "actions/checkout@v4",
+    "actions/setup-node@v4",
+    "npm ci",
+    "npm run test:documentation",
+    "npm run test:workbench-bootstrap",
+    "actions/cache@v4",
+    "npm run workbench:verify",
+    "npm run workbench:bootstrap",
+    "npm run workbench:verify",
+  ]);
+  assert.equal(job.steps[1].with["node-version"], "24.18.0");
+  assert.equal(job.steps[1].with.cache, "npm");
+  assert.equal(job.steps[5].id, "code-oss-cache");
+  assert.equal(job.steps[5].with.path, "vendor/code-oss");
+  assert.equal(job.steps[5].with.key,
+    "workbench-${{ runner.os }}-${{ hashFiles('products/workbench/upstreams.json', 'products/workbench/patches/code-oss/**', 'products/workbench/first-party-extensions.json', 'package-lock.json') }}");
+  assert.equal(job.steps[6].if, "steps.code-oss-cache.outputs.cache-hit == 'true'");
+});
 
 test("Documentation is a disabled workspace extension with only Phase 1 surfaces", async () => {
   const manifest = JSON.parse(await readFile(new URL("package.json", extensionRoot), "utf8"));

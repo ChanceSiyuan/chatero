@@ -911,12 +911,12 @@ git commit -m "feat(documentation): add read-only migration dry run"
 - Consumes: root scripts and provenance inputs produced by Tasks 1–9.
 - Produces: one isolated `workbench` CI job and the recorded Phase 1 review/rollback evidence; no runtime API.
 
-- [ ] **Step 1: Add a failing workflow-structure assertion** to `documentation-extension.test.mjs` that parses `.github/workflows/workbench.yml` and requires `ubuntu-24.04`, Node `24.18.0`, `npm ci`, Documentation tests, bootstrap tests, bootstrap, and verify.
-- [ ] Run `node --test products/workbench/tests/documentation-extension.test.mjs`.
+- [x] **Step 1: Add a failing workflow-structure assertion** to `documentation-extension.test.mjs` that parses `.github/workflows/workbench.yml` and requires `ubuntu-24.04`, Node `24.18.0`, `npm ci`, Documentation tests, bootstrap tests, bootstrap, and verify.
+- [x] Run `node --test products/workbench/tests/documentation-extension.test.mjs`.
 
 Expected: FAIL with `ENOENT` for `.github/workflows/workbench.yml`.
 
-- [ ] **Step 2: Create the isolated workflow.** Use these exact gate commands in order while keeping it separate from inherited Node 18 Zotero shards:
+- [x] **Step 2: Create the isolated workflow.** Use these exact gate commands in order while keeping it separate from inherited Node 18 Zotero shards:
 
 ```yaml
 name: Workbench
@@ -944,11 +944,11 @@ jobs:
       - run: npm run workbench:verify
 ```
 
-- [ ] Keep the bootstrap cache key exactly scoped to `products/workbench/upstreams.json`, Code-OSS patch files, the first-party manifest, and the package lock; the cache-hit verification must precede bootstrap reuse.
-- [ ] Update `parity-checklist.md` to label Gecko Draft/Knowledge as the active parity oracle and Documentation Phase 1 as disabled-by-default Workbench code. Do not claim cutover.
-- [ ] **Step 3: Run the complete phase gate.** Run `npm run test:documentation`.
-- [ ] Run `npm run test:workbench-bootstrap`.
-- [ ] Bootstrap and verify a fresh temporary checkout with these exact commands:
+- [x] Keep the bootstrap cache key exactly scoped to `products/workbench/upstreams.json`, Code-OSS patch files, the first-party manifest, and the package lock; the cache-hit verification must precede bootstrap reuse.
+- [x] Update `parity-checklist.md` to label Gecko Draft/Knowledge as the active parity oracle and Documentation Phase 1 as disabled-by-default Workbench code. Do not claim cutover.
+- [x] **Step 3: Run the complete phase gate.** Run `npm run test:documentation`.
+- [x] Run `npm run test:workbench-bootstrap`.
+- [x] Bootstrap and verify a fresh temporary checkout with these exact commands:
 
 ```bash
 documentation_verify_parent=$(mktemp -d)
@@ -957,9 +957,9 @@ CHATERO_CODE_OSS_DIR="$documentation_verify_parent/code-oss" npm run workbench:v
 ```
 
 Expected: all three phase gates exit `0`; verification reports Code-OSS commit `df53daabb18cd157bdb08c7f01c34df936cf12f4`, Node `24.18.0`, Electron `42.7.1`, the ordered patch digest set, and the complete first-party extension provenance.
-- [ ] Run `git diff --check` and inspect that no fixture contains a personal path/profile/workspace and no generated checkout/bundle is tracked.
-- [ ] Record the commands and passing result under the checkpoint below.
-- [ ] **Step 4: Commit the gate and recorded evidence.**
+- [x] Run `git diff --check` and inspect that no fixture contains a personal path/profile/workspace and no generated checkout/bundle is tracked.
+- [x] Record the commands and passing result under the checkpoint below.
+- [x] **Step 4: Commit the gate and recorded evidence.**
 
 ```bash
 git add .github/workflows/workbench.yml docs/chatero/parity-checklist.md docs/superpowers/plans/2026-08-12-documentation-phase-1-authority.md products/workbench/tests/documentation-extension.test.mjs
@@ -968,11 +968,19 @@ git commit -m "test(documentation): gate authority phase"
 
 ## Phase 1 Review Checkpoint
 
-- [ ] Product flag remains off by default, and standard Text Editor QMD opening works with the extension disabled or failed.
-- [ ] Capability forgery/reuse, path traversal/alias/symlink, stale revision, corrupt state, crash recovery, and idempotency tests pass.
-- [ ] A marker-preserving mutation anywhere in a cached Remote Agent tree is detected before execution and causes verified reinstall or a closed connection failure.
-- [ ] Replacing a local or SSH authority helper or any trusted runtime-tree entry after one successful request makes the next request fail before spawn; the extension cannot reuse an activation-time or connection-time integrity result.
-- [ ] Local and SSH adapters pass the same state transaction and migration-plan conformance cases.
-- [ ] A migration dry run is exactly one high-level adapter request with two matching helper-internal snapshots; it proves zero workspace writes, returns no raw legacy bodies, creates the opaque token only in the extension's private registry, and exposes no migration execution affordance.
-- [ ] `npm run test:documentation`, `npm run test:workbench-bootstrap`, and `npm run workbench:verify` pass on Node 24.18.0.
-- [ ] Rollback boundary is documented: disable/remove the extension and its manifest entry; no legacy data moved, and any explicitly created Documentation state remains an ordinary user workspace file.
+- [x] Product flag remains off by default, and standard Text Editor QMD opening works with the extension disabled or failed.
+- [x] Capability forgery/reuse, path traversal/alias/symlink, stale revision, corrupt state, crash recovery, and idempotency tests pass.
+- [x] A marker-preserving mutation anywhere in a cached Remote Agent tree is detected before execution and causes verified reinstall or a closed connection failure.
+- [x] Replacing a local or SSH authority helper or any trusted runtime-tree entry after one successful request makes the next request fail before spawn; the extension cannot reuse an activation-time or connection-time integrity result.
+- [x] Local and SSH adapters pass the same state transaction and migration-plan conformance cases.
+- [x] A migration dry run is exactly one high-level adapter request with two matching helper-internal snapshots; it proves zero workspace writes, returns no raw legacy bodies, creates the opaque token only in the extension's private registry, and exposes no migration execution affordance.
+- [x] `npm run test:documentation`, `npm run test:workbench-bootstrap`, and `npm run workbench:verify` pass on Node 24.18.0.
+- [x] Rollback boundary is documented: disable/remove the extension and its manifest entry; no legacy data moved, and any explicitly created Documentation state remains an ordinary user workspace file.
+
+Recorded 2026-08-12 phase-gate evidence (isolated Node `24.18.0`):
+
+- `npm run test:documentation`: 43 passed, 0 failed.
+- `npm run test:workbench-bootstrap`: 336 passed, 0 failed, 1 platform-dependent skip.
+- Fresh temporary `CHATERO_CODE_OSS_DIR` bootstrap and standalone verification both exited `0` at Code-OSS commit `df53daabb18cd157bdb08c7f01c34df936cf12f4`.
+- Provenance validation matched Node `24.18.0`, Electron `42.7.1`, the ordered `0001`–`0003` patch pins, and all three complete first-party extension trees. The Documentation tree digest was `05747bbdd7e7b028b134d4f1ba0e59f491de1d627550f44f5b14ed6020ffa281`.
+- The temporary generated checkout was moved to trash after verification; no personal profile/workspace fixture or generated Code-OSS checkout/application bundle was added to Git. The provenance-pinned YAML runtime is a deliberately packaged dependency with its license, not a generated Chatero application bundle.
