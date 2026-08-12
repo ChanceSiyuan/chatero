@@ -17,6 +17,9 @@ import {
 } from "../extensions/chatero-documentation/change-set-model.mjs";
 import { documentationPagePath } from "../extensions/chatero-documentation/documentation-path.mjs";
 import { createChangeSetStore } from "../extensions/chatero-documentation/change-set-store.mjs";
+import { registerDocumentationAgentTools } from "../extensions/chatero-documentation/documentation-agent-tools.mjs";
+import { createDocumentationCapabilityIssuer } from "../extensions/chatero-documentation/documentation-capabilities.mjs";
+import { createDocumentationTransactions } from "../extensions/chatero-documentation/documentation-transactions.mjs";
 import { deriveStableHunks } from "../extensions/chatero-documentation/stable-hunks.mjs";
 import { decodeAuthorityResponse, encodeAuthorityRequest } from "../documentation-authority/protocol.mjs";
 import { runDocumentationAuthority } from "../documentation-authority/runtime/chatero-documentation-authority.mjs";
@@ -254,4 +257,105 @@ test("rejects stale lineage publication without writing a child generation", asy
   finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("stages an Agent edit from the exact open-document snapshot without canonical writes", async () => {
+  let sequence = 0;
+  const capabilities = createDocumentationCapabilityIssuer({
+    clock: { now: () => 1_000 },
+    randomUUID: () => `capability-${++sequence}`,
+  });
+  const scope = capabilities.issueScope({ uri: "file:///workspace", authority: "local", epoch: "epoch-a" });
+  const page = documentationPagePath("topic.qmd");
+  const openText = "human dirty\n";
+  const openRevision = `text-document:9:sha256:${sha256(openText)}`;
+  const staged = [];
+  const adapter = {
+    async snapshot(request) {
+      if (request.kind === "paths") return {
+        kind: "snapshot", epoch: "epoch-a", entries: [{
+          path: "documentation/topic.qmd", type: "file", bytes: Buffer.from(openText).toString("base64url"),
+          sha256: sha256(openText), revision: openRevision,
+        }],
+      };
+      if (request.kind === "documentation-state") return {
+        kind: "documentation-state", epoch: "epoch-a",
+        pages: [{ path: "topic.qmd", revision: openRevision }], state: { kind: "missing" },
+      };
+      throw new Error("unexpected snapshot");
+    },
+    async transact() { throw new Error("stage must not write canonical files"); },
+  };
+  const store = {
+    async loadCurrentRef() { return { kind: "current-generation-missing" }; },
+    async stageGeneration(built) {
+      staged.push(built);
+      return { kind: "generation-staged", ref: built.generation.ref, generationDigest: built.generation.generationDigest, reused: false };
+    },
+  };
+  const transactions = createDocumentationTransactions({
+    adapter,
+    capabilities,
+    workspaceView: { capture() {}, revalidate() {} },
+    changeSetStore: store,
+    clock: { now: () => Date.parse("2026-08-12T00:00:00.000Z") },
+  });
+  const grant = capabilities.issueAgentProposalGrant(scope, {
+    paths: [page], operationKinds: ["edit"], maximumOperationCount: 1,
+    maximumProposedBytes: 1024, expiresInMs: 30_000,
+  });
+  const result = await transactions.stage(grant, {
+    idempotencyKey: "turn-1",
+    operations: [{ kind: "edit", path: "topic.qmd", baseRevision: openRevision, proposedText: "agent proposal\n" }],
+  });
+  assert.equal(result.kind, "generation-staged");
+  assert.equal(staged[0].generation.operations[0].baseText, openText);
+  assert.equal(staged[0].generation.operations[0].baseRevision, openRevision);
+  assert.equal(staged[0].generation.operations[0].proposedText, "agent proposal\n");
+});
+
+test("registers only bounded retrieve and stage tools and keeps private authority data out of results", async () => {
+  let sequence = 0;
+  const capabilities = createDocumentationCapabilityIssuer({
+    clock: { now: () => 1_000 }, randomUUID: () => `tool-${++sequence}`,
+  });
+  const scope = capabilities.issueScope({ uri: "file:///workspace", authority: "local", epoch: "epoch-a" });
+  const tools = new Map();
+  const vscode = {
+    workspace: { isTrusted: true },
+    lm: {
+      registerTool(name, implementation) {
+        tools.set(name, implementation);
+        return { dispose: () => tools.delete(name) };
+      },
+    },
+  };
+  const generation = build().generation;
+  const registrations = registerDocumentationAgentTools({
+    vscode, capabilities, scope,
+    transactions: { async stage() { return { kind: "generation-staged", ref: generation.ref, generationDigest: generation.generationDigest }; } },
+    retrieval: { async retrieve() { return { kind: "feature-unavailable", message: "Reviewed retrieval is not ready." }; } },
+  });
+  assert.deepEqual([...tools.keys()], ["chatero_documentation_retrieve", "chatero_documentation_stage"]);
+  const result = await tools.get("chatero_documentation_stage").invoke({ input: {
+    idempotencyKey: "turn-2",
+    operations: [{ kind: "create", path: "new.qmd", proposedText: "# New\n" }],
+  } }, { isCancellationRequested: false });
+  assert.deepEqual(result.metadata, {
+    changeSetRef: generation.ref,
+    generationDigest: generation.generationDigest,
+    reviewCommand: "chatero.documentation.reviewChangeSet",
+  });
+  assert.doesNotMatch(JSON.stringify(result), /documentation-changes|\.chatero|privatePath|approval|token/iu);
+  assert.equal(registrations.length, 2);
+
+  vscode.workspace.isTrusted = false;
+  await assert.rejects(
+    tools.get("chatero_documentation_stage").invoke({ input: {
+      idempotencyKey: "turn-3", operations: [{ kind: "create", path: "other.qmd", proposedText: "x" }],
+    } }, { isCancellationRequested: false }),
+    /trusted/u,
+  );
+  registrations.forEach(value => value.dispose());
+  assert.equal(tools.size, 0);
 });

@@ -94,6 +94,132 @@
         "priority": "option"
       }
     ],
+    "languageModelTools": [
+      {
+        "name": "chatero_documentation_retrieve",
+        "displayName": "Retrieve Reviewed Documentation",
+        "modelDescription": "Retrieve bounded passages from reviewed Chatero Documentation. This tool does not provide generic workspace file access.",
+        "canBeReferencedInPrompt": true,
+        "icon": "$(search)",
+        "inputSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "query"
+          ],
+          "properties": {
+            "query": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            },
+            "maximumResults": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50,
+              "default": 12
+            }
+          }
+        }
+      },
+      {
+        "name": "chatero_documentation_stage",
+        "displayName": "Stage Documentation Change Set",
+        "modelDescription": "Stage a bounded, immutable Documentation proposal for explicit human review. This tool cannot modify canonical Documentation.",
+        "canBeReferencedInPrompt": true,
+        "icon": "$(diff-added)",
+        "inputSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "idempotencyKey",
+            "operations"
+          ],
+          "properties": {
+            "idempotencyKey": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+            },
+            "parentRef": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "lineageId",
+                "generationId"
+              ],
+              "properties": {
+                "lineageId": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+                },
+                "generationId": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{16}$"
+                }
+              }
+            },
+            "expectedGeneration": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{16}$"
+            },
+            "operations": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 128,
+              "items": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["kind", "path", "proposedText"],
+                    "properties": {
+                      "kind": { "const": "create" },
+                      "path": { "type": "string", "maxLength": 4096, "pattern": "^[^\\\\/:?#%]+(?:/[^\\\\/:?#%]+)*\\.qmd$" },
+                      "proposedText": { "type": "string", "maxLength": 8388608 }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["kind", "path", "baseRevision", "proposedText"],
+                    "properties": {
+                      "kind": { "const": "edit" },
+                      "path": { "type": "string", "maxLength": 4096, "pattern": "^[^\\\\/:?#%]+(?:/[^\\\\/:?#%]+)*\\.qmd$" },
+                      "baseRevision": { "type": "string", "pattern": "^(?:sha256:[0-9a-f]{64}|text-document:(?:0|[1-9][0-9]*):sha256:[0-9a-f]{64})$" },
+                      "proposedText": { "type": "string", "maxLength": 8388608 }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["kind", "from", "to", "baseRevision"],
+                    "properties": {
+                      "kind": { "const": "rename" },
+                      "from": { "type": "string", "maxLength": 4096, "pattern": "^[^\\\\/:?#%]+(?:/[^\\\\/:?#%]+)*\\.qmd$" },
+                      "to": { "type": "string", "maxLength": 4096, "pattern": "^[^\\\\/:?#%]+(?:/[^\\\\/:?#%]+)*\\.qmd$" },
+                      "baseRevision": { "type": "string", "pattern": "^(?:sha256:[0-9a-f]{64}|text-document:(?:0|[1-9][0-9]*):sha256:[0-9a-f]{64})$" },
+                      "proposedText": { "type": "string", "maxLength": 8388608 }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["kind", "path", "baseRevision"],
+                    "properties": {
+                      "kind": { "const": "delete" },
+                      "path": { "type": "string", "maxLength": 4096, "pattern": "^[^\\\\/:?#%]+(?:/[^\\\\/:?#%]+)*\\.qmd$" },
+                      "baseRevision": { "type": "string", "pattern": "^(?:sha256:[0-9a-f]{64}|text-document:(?:0|[1-9][0-9]*):sha256:[0-9a-f]{64})$" }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    ],
     "views": {
       "explorer": [
         {

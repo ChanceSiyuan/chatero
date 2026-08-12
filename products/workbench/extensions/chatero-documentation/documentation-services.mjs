@@ -8,6 +8,7 @@ import {
   createFixedAuthorityTransport,
 } from "./documentation-authority-client.mjs";
 import { createDocumentationCapabilityIssuer } from "./documentation-capabilities.mjs";
+import { createChangeSetStore } from "./change-set-store.mjs";
 import { createDocumentationTransactions } from "./documentation-transactions.mjs";
 import { createDocumentationWorkspaceView } from "./documentation-workspace.mjs";
 import {
@@ -257,6 +258,7 @@ export async function createProductionDocumentationServices({
     }),
   });
   const adapter = createDocumentationAuthorityClient({ scope: scopeRecord, workspaceView, fixedTransport });
+  const changeSetStore = createChangeSetStore({ adapter, scope });
   const migrationPlanner = createMigrationPlanner({
     adapter,
     capabilities,
@@ -269,6 +271,8 @@ export async function createProductionDocumentationServices({
     capabilities,
     workspaceView,
     migrationPlanner,
+    changeSetStore,
+    clock,
   });
   return Object.freeze({
     adapter,
@@ -278,5 +282,13 @@ export async function createProductionDocumentationServices({
     workspaceFolderUri: folder.uri,
     randomUUID: uuid,
     snapshotPassiveImage: request => adapter.snapshot(request),
+    retrieval: Object.freeze({
+      async retrieve() {
+        return Object.freeze({
+          kind: "feature-unavailable",
+          message: "Reviewed Documentation retrieval is not available until the review index is ready.",
+        });
+      },
+    }),
   });
 }

@@ -66,7 +66,21 @@ async function activate(context) {
       );
       registrationServices = Object.freeze({ ...services, migrationReports });
     }
-    return registerDocumentation(vscode, context, registrationServices);
+    const registrations = [];
+    if (typeof vscode.lm?.registerTool === "function"
+      && typeof services.transactions?.stage === "function"
+      && typeof services.retrieval?.retrieve === "function") {
+      const { registerDocumentationAgentTools } = await import("./documentation-agent-tools.mjs");
+      registrations.push(...registerDocumentationAgentTools({
+        vscode,
+        transactions: services.transactions,
+        retrieval: services.retrieval,
+        capabilities: services.capabilities,
+        scope: services.scope,
+      }));
+    }
+    registrations.push(...await registerDocumentation(vscode, context, registrationServices));
+    return registrations;
   });
   context.subscriptions.push(...documentation);
 }

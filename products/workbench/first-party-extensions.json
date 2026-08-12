@@ -13,6 +13,10 @@
           "destination": "extensions/chatero-documentation/change-set-store.mjs"
         },
         {
+          "source": "products/workbench/extensions/chatero-documentation/documentation-agent-tools.mjs",
+          "destination": "extensions/chatero-documentation/documentation-agent-tools.mjs"
+        },
+        {
           "source": "products/workbench/extensions/chatero-documentation/documentation-authority-client.mjs",
           "destination": "extensions/chatero-documentation/documentation-authority-client.mjs"
         },

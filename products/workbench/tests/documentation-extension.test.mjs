@@ -72,9 +72,19 @@ test("Documentation remains a disabled workspace extension with an optional Live
   ]);
   assert.ok(commandIds.every(command => command.startsWith("chatero.documentation.")));
 
-  for (const forbiddenContribution of ["languageModelTools", "webviewPanel"]) {
-    assert.equal(Object.hasOwn(manifest.contributes, forbiddenContribution), false);
-  }
+  assert.equal(Object.hasOwn(manifest.contributes, "webviewPanel"), false);
+  assert.deepEqual(manifest.contributes.languageModelTools.map(tool => tool.name), [
+    "chatero_documentation_retrieve",
+    "chatero_documentation_stage",
+  ]);
+  assert.ok(manifest.contributes.languageModelTools.every(tool =>
+    tool.inputSchema.additionalProperties === false));
+  const stageSchema = manifest.contributes.languageModelTools[1].inputSchema;
+  assert.equal(stageSchema.properties.operations.maxItems, 128);
+  assert.deepEqual(stageSchema.properties.operations.items.oneOf.map(schema => schema.properties.kind.const), [
+    "create", "edit", "rename", "delete",
+  ]);
+  assert.doesNotMatch(JSON.stringify(manifest.contributes.languageModelTools), /settle|accept|migrate|recover|writeCanonical/iu);
   assert.deepEqual(manifest.contributes.customEditors, [{
     viewType: "chatero.documentation.livePreview",
     displayName: "Chatero Live Preview",
@@ -93,6 +103,9 @@ test("first-party materialization declares the complete Documentation authority"
   ]);
   const documentation = firstParty.extensions[0];
   assert.deepEqual(documentation.files.map(file => file.destination), [
+    "extensions/chatero-documentation/change-set-model.mjs",
+    "extensions/chatero-documentation/change-set-store.mjs",
+    "extensions/chatero-documentation/documentation-agent-tools.mjs",
     "extensions/chatero-documentation/documentation-authority-client.mjs",
     "extensions/chatero-documentation/documentation-capabilities.mjs",
     "extensions/chatero-documentation/documentation-image-resolver.mjs",
@@ -142,6 +155,7 @@ test("first-party materialization declares the complete Documentation authority"
     "extensions/chatero-documentation/runtime/protocol.mjs",
     "extensions/chatero-documentation/runtime/yaml-2.9.0.mjs",
     "extensions/chatero-documentation/runtime/yaml-LICENSE",
+    "extensions/chatero-documentation/stable-hunks.mjs",
     "extensions/chatero-documentation/text-change-set.mjs",
     "extensions/chatero-documentation/webview/formal-block-decorations.mjs",
     "extensions/chatero-documentation/webview/formal-block-parser.mjs",
