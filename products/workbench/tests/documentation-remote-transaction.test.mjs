@@ -405,6 +405,28 @@ test("settlement prepare is durable before text ack and never writes QMD bytes",
   const journalPath = join(root, ".chatero", "documentation-operations", `${operationId}.json`);
   assert.equal(JSON.parse(await readFile(journalPath, "utf8")).phase, "awaiting-text");
   assert.deepEqual(await transact("settlement-prepare-2", prepare), prepared);
+  const inspected = (await invokeHelper({
+    protocolVersion: 1,
+    requestId: "settlement-inspect-1",
+    kind: "recover",
+    workspace: pathToFileURL(root).href,
+    epoch: "epoch-1",
+    recovery: { kind: "inspect-settlement", schemaVersion: 1 },
+  })).result;
+  assert.deepEqual(inspected, prepared);
+  const markerPath = join(root, ".chatero", "documentation-operation-active.v1.json");
+  const markerBytes = await readFile(markerPath);
+  await rm(markerPath);
+  const missingMarker = (await invokeHelper({
+    protocolVersion: 1,
+    requestId: "settlement-inspect-missing-marker",
+    kind: "recover",
+    workspace: pathToFileURL(root).href,
+    epoch: "epoch-1",
+    recovery: { kind: "inspect-settlement", schemaVersion: 1 },
+  })).result;
+  assert.equal(missingMarker.kind, "documentation-tamper");
+  await writeFile(markerPath, markerBytes, { mode: 0o600 });
 
   const textProof = {
     kind: "settlement-text-proof",

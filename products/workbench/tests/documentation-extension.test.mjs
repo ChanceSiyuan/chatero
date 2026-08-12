@@ -43,6 +43,7 @@ test("Documentation remains a disabled workspace extension with an optional Live
   assert.equal(`${manifest.publisher}.${manifest.name}`, "chatero.chatero-documentation");
   assert.equal(manifest.engines.vscode, "^1.132.0");
   assert.deepEqual(manifest.extensionKind, ["workspace"]);
+  assert.equal(manifest.activationEvents.includes("*"), true);
   assert.equal(
     manifest.contributes.configuration.properties["chatero.documentation.enabled"].default,
     false,
@@ -157,6 +158,7 @@ test("first-party materialization declares the complete Documentation authority"
     "extensions/chatero-documentation/review-snapshot.mjs",
     "extensions/chatero-documentation/settlement-planner.mjs",
     "extensions/chatero-documentation/settlement-protocol.mjs",
+    "extensions/chatero-documentation/settlement-recovery.mjs",
     "extensions/chatero-documentation/settlement-operations.mjs",
     "extensions/chatero-documentation/settlement-executor.mjs",
     "extensions/chatero-documentation/runtime/chatero-documentation-authority.mjs",

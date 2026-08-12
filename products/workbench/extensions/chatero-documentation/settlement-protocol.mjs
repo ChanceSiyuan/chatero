@@ -64,7 +64,7 @@ export function settlementOperationDigest(value) {
 
 export function settlementTextProofDigest(value) {
   return digestSettlementValue({
-    kind: "settlement-text-proof",
+    kind: value.kind,
     operationId: value.operationId,
     operationDigest: value.operationDigest,
     resources: value.resources,

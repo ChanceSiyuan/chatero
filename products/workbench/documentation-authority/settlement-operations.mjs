@@ -281,7 +281,8 @@ function resourceUri(workspace, path) {
 
 function textProof(value, record, workspace) {
   exactObject(value, ["kind", "operationId", "operationDigest", "resources", "proofDigest"], "settlement text proof");
-  if (value.kind !== "settlement-text-proof" || value.operationId !== record.operationId
+  if (!new Set(["settlement-text-proof", "settlement-recovery-text-proof"]).has(value.kind)
+    || value.operationId !== record.operationId
     || value.operationDigest !== record.operationDigest || !Array.isArray(value.resources)
     || value.resources.length !== record.request.textOverlay.length
     || settlementTextProofDigest(value) !== value.proofDigest) {
@@ -290,13 +291,30 @@ function textProof(value, record, workspace) {
   for (let index = 0; index < value.resources.length; index++) {
     const proof = value.resources[index];
     const overlay = record.request.textOverlay[index];
-    exactObject(proof, [
-      "uri", "beforeVersion", "afterVersion", "beforeDigest", "intendedDigest",
-    ], "settlement text proof resource");
-    if (proof.uri !== resourceUri(workspace, overlay.path)
-      || proof.beforeVersion !== overlay.expectedVersion || proof.afterVersion !== overlay.expectedVersion + 1
-      || proof.beforeDigest !== overlay.beforeDigest || proof.intendedDigest !== overlay.intendedDigest) {
-      throw new TypeError("settlement text proof resource does not match its overlay");
+    if (value.kind === "settlement-text-proof") {
+      exactObject(proof, [
+        "uri", "beforeVersion", "afterVersion", "beforeDigest", "intendedDigest",
+      ], "settlement text proof resource");
+      if (proof.uri !== resourceUri(workspace, overlay.path)
+        || proof.beforeVersion !== overlay.expectedVersion || proof.afterVersion !== overlay.expectedVersion + 1
+        || proof.beforeDigest !== overlay.beforeDigest || proof.intendedDigest !== overlay.intendedDigest) {
+        throw new TypeError("settlement text proof resource does not match its overlay");
+      }
+    }
+    else {
+      exactObject(proof, [
+        "uri", "action", "observedVersion", "afterVersion", "observedDigest", "intendedDigest",
+      ], "settlement recovery text proof resource");
+      if (proof.uri !== resourceUri(workspace, overlay.path)
+        || !Number.isSafeInteger(proof.observedVersion) || proof.observedVersion < 0
+        || proof.intendedDigest !== overlay.intendedDigest
+        || (proof.action === "apply-intended"
+          ? proof.observedDigest !== overlay.beforeDigest || proof.afterVersion !== proof.observedVersion + 1
+          : proof.action === "already-intended"
+            ? proof.observedDigest !== overlay.intendedDigest || proof.afterVersion !== proof.observedVersion
+            : true)) {
+        throw new TypeError("settlement recovery text proof resource does not match its overlay");
+      }
     }
   }
   return Object.freeze({ ...value, resources: Object.freeze(value.resources.map(item => Object.freeze({ ...item }))) });
@@ -322,6 +340,7 @@ function assertAuthority(authority) {
   for (const method of [
     "readOperation", "createOperation", "updateOperation", "readReceipt", "writeReceipt",
     "readState", "writeState", "readActiveMarker", "createActiveMarker", "removeActiveMarker",
+    "listOperations",
   ]) {
     if (typeof authority?.[method] !== "function") throw new TypeError(`settlement authority is missing ${method}`);
   }
@@ -422,5 +441,55 @@ export function createSettlementTransactionExecutor({ authority, workspace } = {
     return expectedResult;
   };
 
-  return Object.freeze({ prepare, ack });
+  const inspect = async input => {
+    exactObject(input, ["kind", "schemaVersion"], "inspect settlement request");
+    if (input.kind !== "inspect-settlement" || input.schemaVersion !== 1) {
+      throw new TypeError("inspect settlement request is invalid");
+    }
+    const active = await authority.readActiveMarker();
+    if (active === null) {
+      const suspicious = (await authority.listOperations()).filter(record => record?.kind === "settlement"
+        && record.markerCommitted === true && record.phase !== "committed");
+      if (suspicious.length > 0) {
+        return Object.freeze({
+          kind: "documentation-tamper",
+          reason: "post-marker settlement journal is missing its active marker",
+        });
+      }
+      return Object.freeze({ kind: "no-active-settlement" });
+    }
+    let record;
+    try { record = await authority.readOperation(active.operationId); }
+    catch { record = null; }
+    if (!record || record.kind !== "settlement" || !sameMarker(active, markerFor(record))) {
+      return Object.freeze({ kind: "documentation-tamper", reason: "active marker does not match a durable settlement journal" });
+    }
+    if (record.phase === "committed") {
+      const result = record.result ?? committedResult(record);
+      await authority.removeActiveMarker(active);
+      return result;
+    }
+    if (record.phase === "private-staged") {
+      return Object.freeze({ kind: "documentation-tamper", reason: "active marker precedes its durable marker-committed journal phase" });
+    }
+    if (record.phase === "marker-committed") record = await persist(record, { phase: "awaiting-text" });
+    if (record.phase === "awaiting-text") return awaitingResult(record);
+    if ((record.phase === "text-proved" || record.phase === "metadata-applied") && record.textProof) {
+      return ack({
+        kind: "ack-settlement-text",
+        schemaVersion: 1,
+        operationId: record.operationId,
+        operationDigest: record.operationDigest,
+        affectedResourceDigest: record.affectedResourceDigest,
+        textProof: record.textProof,
+      });
+    }
+    return Object.freeze({
+      kind: "recovery-conflict",
+      operationId: record.operationId,
+      evidenceRef: `documentation-operation:${record.operationId}`,
+    });
+  };
+
+  return Object.freeze({ prepare, ack, inspect });
 }

@@ -12,6 +12,7 @@ import { createChangeSetStore } from "./change-set-store.mjs";
 import { createDocumentationTransactions } from "./documentation-transactions.mjs";
 import { createReviewSnapshotRegistry } from "./review-snapshot.mjs";
 import { documentationWorkspaceUri } from "./documentation-path.mjs";
+import { recoverSettlement } from "./settlement-recovery.mjs";
 import { createDocumentationWorkspaceView } from "./documentation-workspace.mjs";
 import { createWorkingCopyCoordinator } from "./working-copy-coordinator.mjs";
 import {
@@ -294,6 +295,15 @@ export async function createProductionDocumentationServices({
         vscode.workspace.openTextDocument(documentationWorkspaceUri(folder.uri, path)))),
     });
   }
+  const recoveryStatus = settlement
+    ? await recoverSettlement({
+        adapter,
+        barrier: settlement.barrier,
+        coordinator: settlement.coordinator,
+        uriFor: settlement.uriFor,
+        openDocuments: settlement.openDocuments,
+      })
+    : Object.freeze({ kind: "settlement-recovery-unavailable" });
   const transactions = createDocumentationTransactions({
     adapter,
     capabilities,
@@ -321,5 +331,6 @@ export async function createProductionDocumentationServices({
         });
       },
     }),
+    recoveryStatus,
   });
 }

@@ -54,6 +54,16 @@ async function activate(context) {
       ?? await import("./documentation-services.mjs").then(module =>
         module.createProductionDocumentationServices({ vscode, context }));
     let registrationServices = services;
+    if (services.recoveryStatus?.kind === "documentation-tamper") {
+      await vscode.window.showErrorMessage?.(
+        "Documentation recovery detected inconsistent operation evidence. Documentation remains isolated; unrelated workbench and Zotero features are still available.",
+      );
+    }
+    else if (services.recoveryStatus?.kind === "recovery-conflict") {
+      await vscode.window.showWarningMessage?.(
+        "Documentation recovery preserved newer human bytes and kept the affected page isolated for explicit resolution.",
+      );
+    }
     if (typeof services.transactions?.planMigration === "function") {
       const { MigrationReportContentProvider } = await import("./migration-planner.mjs");
       const migrationReports = new MigrationReportContentProvider();

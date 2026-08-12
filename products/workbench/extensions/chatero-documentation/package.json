@@ -17,6 +17,7 @@
   ],
   "main": "./extension.cjs",
   "activationEvents": [
+    "*",
     "onStartupFinished",
     "onCustomEditor:chatero.documentation.livePreview"
   ],

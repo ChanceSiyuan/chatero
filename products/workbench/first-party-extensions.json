@@ -217,6 +217,10 @@
           "destination": "extensions/chatero-documentation/settlement-protocol.mjs"
         },
         {
+          "source": "products/workbench/extensions/chatero-documentation/settlement-recovery.mjs",
+          "destination": "extensions/chatero-documentation/settlement-recovery.mjs"
+        },
+        {
           "source": "products/workbench/documentation-authority/settlement-operations.mjs",
           "destination": "extensions/chatero-documentation/settlement-operations.mjs"
         },

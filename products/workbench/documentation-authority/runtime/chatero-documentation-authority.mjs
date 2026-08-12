@@ -1434,6 +1434,17 @@ async function createFilesystemAuthority(fs, root) {
       await fs.rm(activeOperationPath);
       await syncDirectory(fs, dirname(activeOperationPath));
     },
+    async listOperations() {
+      const names = await directoryNames(fs, operations);
+      const records = [];
+      for (const name of names) {
+        if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.json$/u.test(name)) {
+          throw new TypeError("Documentation operation journal name is unsafe");
+        }
+        records.push(await readCanonicalJson(fs, join(operations, name)));
+      }
+      return Object.freeze(records);
+    },
     async readPageRevision(path, workingCopy) {
       const entry = await inspectRelative(fs, root, `documentation/${path}`);
       if (!entry.metadata) return null;
@@ -1451,13 +1462,30 @@ async function createFilesystemAuthority(fs, root) {
 
 async function dispatch(fs, clock, request) {
   const root = await assertWorkspaceRoot(fs, request.workspace);
-  if (request.kind === "snapshot") return snapshotResult(fs, root, request);
+  const activeOperationPath = join(root, ...safeRelativePath(ACTIVE_OPERATION_PATH));
+  const active = await readCanonicalJson(fs, activeOperationPath);
+  if (request.kind === "snapshot") {
+    if (active !== null) {
+      return Object.freeze({ kind: "documentation-operation-active", operationId: active.operationId ?? null });
+    }
+    return snapshotResult(fs, root, request);
+  }
   return withLease(fs, root, clock, async () => {
+    const authority = await createFilesystemAuthority(fs, root);
+    const settlement = createSettlementTransactionExecutor({ authority, workspace: request.workspace });
+    if (request.kind === "recover" && request.recovery?.kind === "inspect-settlement") {
+      return settlement.inspect(request.recovery);
+    }
+    const currentActive = await authority.readActiveMarker();
+    const isSettlementContinuation = request.kind === "transact"
+      && new Set(["prepare-settlement", "ack-settlement-text"]).has(request.transaction?.kind)
+      && (currentActive === null || currentActive.operationId === request.transaction.operationId);
+    if (currentActive !== null && !isSettlementContinuation) {
+      return Object.freeze({ kind: "documentation-operation-active", operationId: currentActive.operationId ?? null });
+    }
     if (request.kind === "transact" && request.transaction?.kind === "stage-generation") {
       return stageGenerationTransaction(fs, root, request.transaction);
     }
-    const authority = await createFilesystemAuthority(fs, root);
-    const settlement = createSettlementTransactionExecutor({ authority, workspace: request.workspace });
     if (request.kind === "transact" && request.transaction?.kind === "prepare-settlement") {
       return settlement.prepare(request.transaction);
     }
