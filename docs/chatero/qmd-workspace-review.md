@@ -1,9 +1,15 @@
 # Chatero QMD Workspace Review
 
-Use this checklist against a personal-development Chatero build. It describes
-the approved three-surface, source-driven Draft workflow. The unchecked manual
-steps are review instructions, not a record that a particular build or DMG has
-already passed them.
+Use this checklist only as the frozen Gecko parity oracle. The Workbench now
+uses one `documentation/` tree: standard Text Editor and
+`chatero.documentation.livePreview` share the same QMD `TextDocument`, while
+Agent changes remain private Change Sets until explicit human review. Existing
+`drafts/` and `knowledge/` trees are brought across with the separate Plan and
+Migrate commands; their original bytes remain in place.
+
+The unchecked manual steps below document the former three-surface behavior
+that the Workbench must preserve where applicable; they are not a record that a
+particular build or DMG has passed review.
 
 ## Test fixture
 

@@ -15,17 +15,20 @@ Legend: `P0` required for daily path · `P1` Phase 4 RC · `P2` polish
 ## Workbench Documentation transition status
 
 The Gecko `drafts/` and `knowledge/` implementation remains the active parity
-oracle. No data cutover has occurred. The Workbench
-`chatero.documentation` extension is disabled by default and currently provides
-only the Phase 1 authority foundation: standard Text Editor QMD opening,
-workflow state, local/SSH authority transactions, and a read-only migration dry
-run. It does not expose migration execution, Agent promotion, or Live Preview
-yet.
+oracle, but no longer owns the Workbench's visible research-writing surface.
+The `chatero.documentation` workspace extension is enabled by default and owns
+standard Text Editor QMD opening, editable Live Preview, workflow state,
+reviewed-only Agent retrieval, immutable Agent Change Sets, explicit human
+review, and local/SSH authority transactions.
 
-Phase 1 rollback is non-destructive: disable or remove the extension and its
-first-party manifest entry. Legacy data remains in place because the dry run
-performs no writes; any explicitly created Documentation state remains an
-ordinary user-workspace file.
+Existing repositories use an explicit two-command cutover: **Plan
+Documentation Migration** opens a content-free, digest-bound report, and
+**Migrate Drafts and Knowledge to Documentation** requires a separate modal
+human approval. The authority copies every Knowledge page as Reviewed, every
+Draft as Working, preserves collisions under `_migrated/drafts/`, rewrites only
+proven local references, and leaves the legacy source directories intact.
+Interrupted publication resumes from owner-private durable evidence while the
+affected resources remain gated.
 
 ---
 

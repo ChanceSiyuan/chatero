@@ -33,7 +33,7 @@
       "properties": {
         "chatero.documentation.enabled": {
           "type": "boolean",
-          "default": false,
+          "default": true,
           "scope": "resource",
           "description": "Enable Chatero Documentation routes and commands for this workspace."
         },

@@ -39,7 +39,7 @@ async function activate(context) {
   try {
     enabled = vscode.workspace
       .getConfiguration("chatero.documentation")
-      .get("enabled", false) === true;
+      .get("enabled", true) === true;
     await vscode.commands.executeCommand("setContext", "chatero.documentation.enabled", enabled);
   }
   catch (error) {

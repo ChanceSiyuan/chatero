@@ -37,7 +37,7 @@ test("isolated Workbench CI gates Documentation and exact Code-OSS provenance", 
   assert.equal(job.steps[6].if, "steps.code-oss-cache.outputs.cache-hit == 'true'");
 });
 
-test("Documentation remains a disabled workspace extension with an optional Live Preview", async () => {
+test("Documentation is the default workspace surface with optional Live Preview", async () => {
   const manifest = JSON.parse(await readFile(new URL("package.json", extensionRoot), "utf8"));
 
   assert.equal(`${manifest.publisher}.${manifest.name}`, "chatero.chatero-documentation");
@@ -46,7 +46,7 @@ test("Documentation remains a disabled workspace extension with an optional Live
   assert.equal(manifest.activationEvents.includes("*"), true);
   assert.equal(
     manifest.contributes.configuration.properties["chatero.documentation.enabled"].default,
-    false,
+    true,
   );
   assert.equal(
     manifest.contributes.configuration.properties["chatero.documentation.livePreview"].default,
@@ -211,7 +211,7 @@ async function activateWith({ enabled, registerDocumentation, registerLivePrevie
         return {
           get(key, fallback) {
             assert.equal(key, "enabled");
-            assert.equal(fallback, false);
+            assert.equal(fallback, true);
             return enabled;
           },
         };
