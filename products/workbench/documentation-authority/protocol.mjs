@@ -165,6 +165,13 @@ function validateSnapshotPayload(value, workspace) {
     exactObject(value, ["kind", "limits", "overlays"], [], "migration snapshot payload");
     validateLimits(value.limits);
   }
+  else if (value.kind === "plan-migration-v2") {
+    exactObject(value, ["kind", "limits", "plannerVersion", "overlays"], [], "migration V2 snapshot payload");
+    validateLimits(value.limits);
+    if (value.plannerVersion !== "documentation-migration-v2") {
+      throw new TypeError("migration planner version is unsupported");
+    }
+  }
   else if (value.kind === "documentation-state") {
     exactObject(value, ["kind", "overlays"], [], "Documentation state snapshot payload");
   }

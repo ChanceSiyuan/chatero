@@ -219,14 +219,18 @@ export function createWorkspaceTransactionAdapter({ scope, transport, workspaceV
         overlays: includeOpenBuffers ? evidence.overlays : [],
       }, evidence);
     }
-    if (request.kind === "plan-migration") {
-      if (Object.keys(request).some(key => !new Set(["kind", "limits"]).has(key))) {
+    if (request.kind === "plan-migration" || request.kind === "plan-migration-v2") {
+      const v2 = request.kind === "plan-migration-v2";
+      const allowed = v2 ? new Set(["kind", "limits", "plannerVersion"]) : new Set(["kind", "limits"]);
+      if (Object.keys(request).some(key => !allowed.has(key))
+        || (v2 && request.plannerVersion !== "documentation-migration-v2")) {
         throw new TypeError("migration snapshot request has unknown field");
       }
       const evidence = workspaceView.capture(scope, null);
       const result = await invoke("snapshot", "snapshot", {
-        kind: "plan-migration",
+        kind: request.kind,
         limits: request.limits,
+        ...(v2 ? { plannerVersion: request.plannerVersion } : {}),
         overlays: evidence.overlays.filter(overlay => migrationOverlay(scope.uri, overlay)),
       }, evidence);
       planningEvidence.set(result, Object.freeze(evidence.proofs.map(proof => Object.freeze({ ...proof }))));

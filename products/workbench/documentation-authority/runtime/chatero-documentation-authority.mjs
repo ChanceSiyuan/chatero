@@ -44,6 +44,7 @@ const PASSIVE_IMAGE_EXTENSIONS = Object.freeze(new Map([
   [".webp", "image/webp"],
   [".avif", "image/avif"],
 ]));
+const MIGRATION_PLANNER_VERSION = "documentation-migration-v2";
 
 class MigrationLimitError extends Error {
   constructor(code) {
@@ -705,6 +706,40 @@ function migrationPathProofs(snapshot, mapping, outputDigests, stateOutput) {
   return Object.freeze([...proofs.values()].sort((left, right) => compareUtf8Bytes(left.path, right.path)));
 }
 
+function migrationIntendedOutputManifest(snapshot, mapping, stateOutput) {
+  const outputs = [];
+  for (const entry of [...mapping.pages, ...mapping.assets]) {
+    const sourcePath = `${entry.sourceRoot}/${entry.sourcePath}`;
+    const source = migrationRecord(snapshot, sourcePath);
+    if (!source || source.type !== "file") {
+      throw new MigrationSnapshotChangedError("migration source disappeared");
+    }
+    const bytes = entry.kind === "page"
+      ? Buffer.from(rewriteLegacyReferences({
+          sourcePath,
+          destinationPath: entry.destination,
+          bytes: source.bytes,
+          mapping,
+        }).bytes)
+      : Buffer.from(source.bytes);
+    outputs.push(Object.freeze({
+      path: `documentation/${entry.destination.value}`,
+      kind: entry.kind === "page" ? "canonical-page" : "canonical-asset",
+      size: bytes.byteLength,
+      sha256: `sha256:${sha256(bytes)}`,
+    }));
+  }
+  const stateBytes = stateOutputBytes(stateOutput);
+  outputs.push(Object.freeze({
+    path: STATE_PATH,
+    kind: "workflow-state",
+    size: stateBytes.byteLength,
+    sha256: `sha256:${sha256(stateBytes)}`,
+  }));
+  outputs.sort((left, right) => compareUtf8Bytes(left.path, right.path));
+  return Object.freeze(outputs);
+}
+
 function migrationDiagnostics(rewrites, proposalDiagnostics) {
   const values = proposalDiagnostics.map(value => Object.freeze({
     code: value.code,
@@ -750,8 +785,12 @@ function migrationReportModel({ mappings, collisions, proposals, rewrites, diagn
   });
 }
 
-async function planMigrationResult(fs, root, request) {
+async function planMigrationResult(fs, root, request, clock) {
   const limits = migrationLimits(request.snapshot.limits);
+  if (request.snapshot.kind !== "plan-migration-v2"
+    || request.snapshot.plannerVersion !== MIGRATION_PLANNER_VERSION) {
+    throw new TypeError("migration planner version is unsupported");
+  }
   let source;
   try { source = await collectMigrationSnapshot(fs, root, request); }
   catch (error) {
@@ -813,6 +852,7 @@ async function planMigrationResult(fs, root, request) {
   const stateOutput = migrationStateOutput(mapping);
   const pathProofs = migrationPathProofs(source, mapping, rewrites.outputDigests, stateOutput);
   const affectedPaths = Object.freeze(pathProofs.map(value => value.path));
+  const intendedOutputManifest = migrationIntendedOutputManifest(source, mapping, stateOutput);
   const diagnostics = migrationDiagnostics(rewrites.summaries, classified.diagnostics);
   let verification;
   try { verification = await collectMigrationSnapshot(fs, root, request); }
@@ -834,7 +874,10 @@ async function planMigrationResult(fs, root, request) {
   }
 
   const planRecord = Object.freeze({
-    schemaVersion: 1,
+    schemaVersion: 2,
+    plannerVersion: MIGRATION_PLANNER_VERSION,
+    operationId: `migration-${sha256(Buffer.from(`chatero:migration-v2\0${source.digest}`, "utf8")).slice(0, 32)}`,
+    createdAt: new Date(clock.now()).toISOString(),
     sourceSnapshotDigest: source.digest,
     verificationSnapshotDigest: verification.digest,
     affectedPaths,
@@ -845,6 +888,7 @@ async function planMigrationResult(fs, root, request) {
     rewrites: rewrites.summaries,
     proposals: classified.proposals,
     diagnostics,
+    intendedOutputManifest,
   });
   if (Buffer.byteLength(canonicalJson(planRecord), "utf8") > MAX_FILE_BYTES) {
     return Object.freeze({
@@ -868,7 +912,9 @@ async function planMigrationResult(fs, root, request) {
     });
   }
   return Object.freeze({
-    kind: "migration-plan",
+    kind: "migration-plan-v2",
+    schemaVersion: 2,
+    plannerVersion: MIGRATION_PLANNER_VERSION,
     workspaceEpoch: request.epoch,
     planDigest: digestValue(planRecord),
     planRecord,
@@ -1098,7 +1144,7 @@ async function currentGenerationResult(fs, root, request) {
   return Object.freeze({ kind: "current-generation", ref, generationDigest: record.generationDigest });
 }
 
-async function snapshotResult(fs, root, request) {
+async function snapshotResult(fs, root, request, clock) {
   const overlays = overlayPaths(request);
   if (request.snapshot.kind === "passive-image") return passiveImageResult(fs, root, request);
   if (request.snapshot.kind === "paths") {
@@ -1136,7 +1182,14 @@ async function snapshotResult(fs, root, request) {
     });
   }
   if (request.snapshot.kind === "plan-migration") {
-    return planMigrationResult(fs, root, request);
+    return Object.freeze({
+      kind: "stale-plan-evidence",
+      workspaceEpoch: request.epoch,
+      code: "migration-plan-v1-retired",
+    });
+  }
+  if (request.snapshot.kind === "plan-migration-v2") {
+    return planMigrationResult(fs, root, request, clock);
   }
   if (request.snapshot.kind === "load-generation") return generationSnapshotResult(fs, root, request);
   if (request.snapshot.kind === "current-generation") return currentGenerationResult(fs, root, request);
@@ -1468,7 +1521,7 @@ async function dispatch(fs, clock, request) {
     if (active !== null) {
       return Object.freeze({ kind: "documentation-operation-active", operationId: active.operationId ?? null });
     }
-    return snapshotResult(fs, root, request);
+    return snapshotResult(fs, root, request, clock);
   }
   return withLease(fs, root, clock, async () => {
     const authority = await createFilesystemAuthority(fs, root);

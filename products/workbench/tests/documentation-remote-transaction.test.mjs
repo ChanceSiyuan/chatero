@@ -166,7 +166,7 @@ test("production local composition revalidates materialized provenance before ev
   assert.equal(state.generation, "0000000000000000");
   const migration = await services.transactions.planMigration(services.scope);
   assert.equal(migration.kind, "planned");
-  assert.equal(migration.plan.schemaVersion, 1);
+  assert.equal(migration.plan.schemaVersion, 2);
   assert.equal(JSON.stringify(migration).includes(workspace), false);
 
   await writeFile(join(extensionRoot, "runtime", "protocol.mjs"), "tampered\n");
@@ -231,7 +231,7 @@ test("production SSH composition revalidates the complete signed install tree be
   assert.equal((await services.transactions.state(services.scope)).generation, "0000000000000000");
   const migration = await services.transactions.planMigration(services.scope);
   assert.equal(migration.kind, "planned");
-  assert.equal(migration.plan.schemaVersion, 1);
+  assert.equal(migration.plan.schemaVersion, 2);
   assert.equal(JSON.stringify(migration).includes(workspace), false);
 
   await writeFile(unrelated, "tampered\n");

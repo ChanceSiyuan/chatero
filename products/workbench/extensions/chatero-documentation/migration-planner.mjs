@@ -6,12 +6,20 @@ const DIGEST = /^sha256:[0-9a-f]{64}$/u;
 const GENERATION = /^[0-9a-f]{16}$/u;
 const PLAN_TOKEN = /^mp_[A-Za-z0-9_-]{43}$/u;
 const TOKEN_LIFETIME_MS = 5 * 60 * 1000;
+export const MIGRATION_PLANNER_VERSION = "documentation-migration-v2";
+const OUTPUT_KINDS = new Set([
+  "canonical-page",
+  "canonical-asset",
+  "workflow-state",
+  "change-set-manifest",
+  "change-set-blob",
+  "quarantine-evidence",
+]);
 const FORBIDDEN_FIELDS = new Set([
   "body",
   "bytes",
   "content",
   "dirty",
-  "intendedOutputManifest",
   "text",
   "version",
   "workingCopyProofs",
@@ -298,12 +306,17 @@ function validateCollisions(values) {
 
 function validatePlanRecord(value) {
   exactKeys(value, [
-    "schemaVersion", "sourceSnapshotDigest", "verificationSnapshotDigest", "affectedPaths",
+    "schemaVersion", "plannerVersion", "operationId", "createdAt",
+    "sourceSnapshotDigest", "verificationSnapshotDigest", "affectedPaths",
     "pathProofs", "mappings", "stateOutput", "collisions", "rewrites", "proposals", "diagnostics",
-  ], [], "MigrationPlanV1");
-  if (value.schemaVersion !== 1 || !DIGEST.test(value.sourceSnapshotDigest)
+    "intendedOutputManifest",
+  ], [], "MigrationPlanV2");
+  if (value.schemaVersion !== 2 || value.plannerVersion !== MIGRATION_PLANNER_VERSION
+    || !/^migration-[0-9a-f]{32}$/u.test(value.operationId)
+    || typeof value.createdAt !== "string" || new Date(value.createdAt).toISOString() !== value.createdAt
+    || !DIGEST.test(value.sourceSnapshotDigest)
     || value.sourceSnapshotDigest !== value.verificationSnapshotDigest) {
-    throw new TypeError("MigrationPlanV1 snapshot evidence is stale or invalid");
+    throw new TypeError("MigrationPlanV2 snapshot evidence is stale or invalid");
   }
   validatePathProofs(value.pathProofs, value.affectedPaths);
   validateMappings(value.mappings);
@@ -312,8 +325,34 @@ function validatePlanRecord(value) {
   validateRewrites(value.rewrites);
   validateProposalSummaries(value.proposals);
   validateDiagnostics(value.diagnostics);
+  validateIntendedOutputManifest(value.intendedOutputManifest, value.pathProofs);
   validateNoBodies(value);
   return value;
+}
+
+function validateIntendedOutputManifest(values, pathProofs) {
+  if (!Array.isArray(values) || values.length === 0 || values.length > MIGRATION_PLAN_LIMITS.maximumEntries) {
+    throw new TypeError("migration intended output manifest is invalid");
+  }
+  const targets = new Map(pathProofs.filter(value => value.role === "target")
+    .map(value => [value.path, value]));
+  let previous = null;
+  for (const value of values) {
+    exactKeys(value, ["path", "kind", "size", "sha256"], [], "migration intended output");
+    safePath(value.path, "migration intended output path");
+    if (!OUTPUT_KINDS.has(value.kind) || !Number.isSafeInteger(value.size) || value.size < 0
+      || value.size > MIGRATION_PLAN_LIMITS.maximumBlobBytes || !DIGEST.test(value.sha256)) {
+      throw new TypeError("migration intended output is invalid");
+    }
+    if (previous !== null && compareUtf8Bytes(previous, value.path) >= 0) {
+      throw new TypeError("migration intended outputs must be unique and bytewise sorted");
+    }
+    const proof = targets.get(value.path);
+    if (!proof || proof.intendedDigest !== value.sha256) {
+      throw new TypeError("migration intended output is not bound to its target proof");
+    }
+    previous = value.path;
+  }
 }
 
 function validateReportModel(value, maximumBytes) {
@@ -381,8 +420,11 @@ function immutableClone(value) {
 }
 
 function validateAuthorityPlan(result, scope, limits) {
-  exactKeys(result, ["kind", "workspaceEpoch", "planDigest", "planRecord", "reportModel"], [], "migration authority result");
-  if (result.kind !== "migration-plan" || result.workspaceEpoch !== scope.epoch
+  exactKeys(result, [
+    "kind", "schemaVersion", "plannerVersion", "workspaceEpoch", "planDigest", "planRecord", "reportModel",
+  ], [], "migration authority result");
+  if (result.kind !== "migration-plan-v2" || result.schemaVersion !== 2
+    || result.plannerVersion !== MIGRATION_PLANNER_VERSION || result.workspaceEpoch !== scope.epoch
     || !DIGEST.test(result.planDigest)) {
     throw new TypeError("migration authority result identity is invalid");
   }
@@ -473,7 +515,11 @@ export function createMigrationPlanner({
   const planMigration = async scope => {
     if (isWorkspaceTrusted() !== true) return Object.freeze({ kind: "workspace-untrusted" });
     const scopeRecord = capabilities.consumeScope(scope);
-    const result = await adapter.snapshot({ kind: "plan-migration", limits });
+    const result = await adapter.snapshot({
+      kind: "plan-migration-v2",
+      limits,
+      plannerVersion: MIGRATION_PLANNER_VERSION,
+    });
     if (isWorkspaceTrusted() !== true) return Object.freeze({ kind: "workspace-untrusted" });
     if (new Set(["migration-limit", "migration-conflict", "stale-plan-evidence"]).has(result?.kind)) {
       return immutableClone(validateReadOnlyFailure(result, scopeRecord));

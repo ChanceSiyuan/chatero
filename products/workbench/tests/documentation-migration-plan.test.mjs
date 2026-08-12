@@ -276,17 +276,29 @@ test("legacy proposal classification is deterministic and never returns proposal
 });
 
 function planRecordFixture() {
-  const pathProofs = [{
-    path: "knowledge/topic.qmd",
-    role: "source",
-    expectedDigest: revision("topic"),
-    requireClean: true,
-  }];
+  const pathProofs = [
+    {
+      path: "documentation/topic.qmd",
+      role: "target",
+      intendedDigest: revision("topic"),
+      targetAbsent: true,
+      requireClean: true,
+    },
+    {
+      path: "knowledge/topic.qmd",
+      role: "source",
+      expectedDigest: revision("topic"),
+      requireClean: true,
+    },
+  ];
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
+    plannerVersion: "documentation-migration-v2",
+    operationId: "migration-11111111111111111111111111111111",
+    createdAt: "2026-08-12T00:00:00.000Z",
     sourceSnapshotDigest: revision("snapshot"),
     verificationSnapshotDigest: revision("snapshot"),
-    affectedPaths: ["knowledge/topic.qmd"],
+    affectedPaths: ["documentation/topic.qmd", "knowledge/topic.qmd"],
     pathProofs,
     mappings: [{
       kind: "page",
@@ -302,13 +314,21 @@ function planRecordFixture() {
     rewrites: [],
     proposals: [],
     diagnostics: [],
+    intendedOutputManifest: [{
+      path: "documentation/topic.qmd",
+      kind: "canonical-page",
+      size: Buffer.byteLength("topic"),
+      sha256: revision("topic"),
+    }],
   };
 }
 
 function authorityPlanFixture() {
   const planRecord = planRecordFixture();
   return {
-    kind: "migration-plan",
+    kind: "migration-plan-v2",
+    schemaVersion: 2,
+    plannerVersion: "documentation-migration-v2",
     workspaceEpoch: "epoch-1",
     planDigest: canonicalMigrationPlanDigest(planRecord),
     planRecord,
@@ -327,7 +347,7 @@ function authorityPlanFixture() {
   };
 }
 
-test("migration planner performs one read-only request and keeps its token extension-private", async () => {
+test("migration planner performs one V2 read-only request and keeps its token extension-private", async () => {
   const requests = [];
   let trusted = true;
   let entropy = 0xaa;
@@ -359,12 +379,16 @@ test("migration planner performs one read-only request and keeps its token exten
   const firstScope = Object.freeze({ kind: "scope" });
   const planned = await planner.planMigration(firstScope);
   assert.equal(planned.kind, "planned");
-  assert.deepEqual(requests, [{ kind: "plan-migration", limits: MIGRATION_PLAN_LIMITS }]);
+  assert.deepEqual(requests, [{
+    kind: "plan-migration-v2",
+    limits: MIGRATION_PLAN_LIMITS,
+    plannerVersion: "documentation-migration-v2",
+  }]);
   assert.match(planned.planToken, /^mp_[A-Za-z0-9_-]{43}$/u);
   assert.equal(planned.report.includes(planned.planToken), false);
   assert.equal(JSON.stringify(planned).includes("file:///workspace"), false);
-  assert.equal(planned.plan.schemaVersion, 1);
-  assert.equal("intendedOutputManifest" in planned.plan, false);
+  assert.equal(planned.plan.schemaVersion, 2);
+  assert.deepEqual(planned.plan.intendedOutputManifest, result.planRecord.intendedOutputManifest);
   assert.equal(planner.consumePlanToken(planned.planToken, Object.freeze({ kind: "clone" })).kind, "invalid-plan-token");
   const secondScope = Object.freeze({ kind: "scope-2" });
   const second = await planner.planMigration(secondScope);
@@ -455,7 +479,12 @@ async function invokePlanningHelper(workspace, filesystem) {
     kind: "snapshot",
     workspace: new URL(`file://${workspace}`).href,
     epoch: "epoch-1",
-    snapshot: { kind: "plan-migration", limits: MIGRATION_PLAN_LIMITS, overlays: [] },
+    snapshot: {
+      kind: "plan-migration-v2",
+      limits: MIGRATION_PLAN_LIMITS,
+      plannerVersion: "documentation-migration-v2",
+      overlays: [],
+    },
   };
   await runDocumentationAuthority({
     stdin: Readable.from([`${encodeAuthorityRequest(request)}\n`]),
@@ -492,7 +521,9 @@ test("authority helper plans from two matching private snapshots without writing
   const result = await invokePlanningHelper(workspace, filesystem);
   const after = await stat(join(workspace, "knowledge", "topic.qmd"));
 
-  assert.equal(result.kind, "migration-plan");
+  assert.equal(result.kind, "migration-plan-v2");
+  assert.equal(result.schemaVersion, 2);
+  assert.equal(result.plannerVersion, "documentation-migration-v2");
   assert.equal(result.planRecord.sourceSnapshotDigest, result.planRecord.verificationSnapshotDigest);
   assert.equal(result.planDigest, canonicalMigrationPlanDigest(result.planRecord));
   assert.deepEqual(result.planRecord.affectedPaths, [
@@ -503,6 +534,10 @@ test("authority helper plans from two matching private snapshots without writing
   assert.equal(JSON.stringify(result).includes("# Topic"), false);
   assert.equal(JSON.stringify(result).includes("AQID"), false);
   assert.equal(JSON.stringify(result).includes(workspace), false);
+  assert.deepEqual(
+    result.planRecord.intendedOutputManifest.map(value => value.kind),
+    ["workflow-state", "canonical-page", "canonical-asset", "canonical-page"],
+  );
   assert.deepEqual(mutations, []);
   assert.equal(after.mtimeMs, before.mtimeMs);
   assert.equal(await readFile(join(workspace, "drafts", "topic.qmd"), "utf8"), "# Draft\n");
