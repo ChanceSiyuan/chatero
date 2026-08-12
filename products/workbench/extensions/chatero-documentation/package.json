@@ -17,7 +17,8 @@
   ],
   "main": "./extension.cjs",
   "activationEvents": [
-    "onStartupFinished"
+    "onStartupFinished",
+    "onCustomEditor:chatero.documentation.livePreview"
   ],
   "capabilities": {
     "untrustedWorkspaces": {
@@ -34,10 +35,21 @@
           "default": false,
           "scope": "resource",
           "description": "Enable Chatero Documentation routes and commands for this workspace."
+        },
+        "chatero.documentation.livePreview": {
+          "type": "boolean",
+          "default": true,
+          "scope": "resource",
+          "description": "Open Documentation pages in Chatero Live Preview from Chatero commands."
         }
       }
     },
     "commands": [
+      {
+        "command": "chatero.documentation.open",
+        "title": "Open Documentation",
+        "category": "Chatero"
+      },
       {
         "command": "chatero.documentation.newPage",
         "title": "New Documentation Page",
@@ -68,6 +80,18 @@
         "title": "Refresh Documentation",
         "category": "Chatero",
         "icon": "$(refresh)"
+      }
+    ],
+    "customEditors": [
+      {
+        "viewType": "chatero.documentation.livePreview",
+        "displayName": "Chatero Live Preview",
+        "selector": [
+          {
+            "filenamePattern": "**/documentation/**/*.qmd"
+          }
+        ],
+        "priority": "option"
       }
     ],
     "views": {

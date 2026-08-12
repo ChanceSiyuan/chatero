@@ -2,11 +2,53 @@ async function activate(context) {
   let vscode;
   try {
     vscode = require("vscode");
-    const enabled = vscode.workspace
+  }
+  catch {
+    return;
+  }
+
+  let output;
+  const report = (label, error) => {
+    if (!output) {
+      output = vscode.window.createOutputChannel("Documentation");
+      context.subscriptions.push(output);
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    output.appendLine(`${label} registration failed: ${message}`);
+  };
+
+  async function registerSafely(label, register) {
+    try {
+      const registrations = await register();
+      if (!Array.isArray(registrations)) throw new TypeError(`${label} registration did not return an array`);
+      return registrations;
+    }
+    catch (error) {
+      report(label, error);
+      return [];
+    }
+  }
+
+  const livePreview = await registerSafely("Documentation Live Preview", async () => {
+    const { registerLivePreview } = require("./live-preview-provider.cjs");
+    return registerLivePreview({ vscode, context });
+  });
+  context.subscriptions.push(...livePreview);
+
+  let enabled = false;
+  try {
+    enabled = vscode.workspace
       .getConfiguration("chatero.documentation")
       .get("enabled", false) === true;
     await vscode.commands.executeCommand("setContext", "chatero.documentation.enabled", enabled);
-    if (!enabled) return;
+  }
+  catch (error) {
+    report("Documentation routing", error);
+    return;
+  }
+  if (!enabled) return;
+
+  const documentation = await registerSafely("Documentation", async () => {
     const { registerDocumentation } = require("./documentation-tree.cjs");
     const services = context.documentationServices
       ?? await import("./documentation-services.mjs").then(module =>
@@ -24,15 +66,9 @@ async function activate(context) {
       );
       registrationServices = Object.freeze({ ...services, migrationReports });
     }
-    context.subscriptions.push(...await registerDocumentation(vscode, context, registrationServices));
-  }
-  catch (error) {
-    if (!vscode) return;
-    const output = vscode.window.createOutputChannel("Documentation");
-    context.subscriptions.push(output);
-    const message = error instanceof Error ? error.message : String(error);
-    output.appendLine(`Documentation registration failed: ${message}`);
-  }
+    return registerDocumentation(vscode, context, registrationServices);
+  });
+  context.subscriptions.push(...documentation);
 }
 
 module.exports = { activate };

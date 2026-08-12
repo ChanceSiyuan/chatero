@@ -53,8 +53,16 @@
           "destination": "extensions/chatero-documentation/live-preview-bridge.mjs"
         },
         {
+          "source": "products/workbench/extensions/chatero-documentation/live-preview-html.mjs",
+          "destination": "extensions/chatero-documentation/live-preview-html.mjs"
+        },
+        {
           "source": "products/workbench/extensions/chatero-documentation/live-preview-protocol.mjs",
           "destination": "extensions/chatero-documentation/live-preview-protocol.mjs"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-documentation/live-preview-provider.cjs",
+          "destination": "extensions/chatero-documentation/live-preview-provider.cjs"
         },
         {
           "source": "products/workbench/extensions/chatero-documentation/media/documentation.svg",

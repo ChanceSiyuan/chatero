@@ -37,7 +37,7 @@ test("isolated Workbench CI gates Documentation and exact Code-OSS provenance", 
   assert.equal(job.steps[6].if, "steps.code-oss-cache.outputs.cache-hit == 'true'");
 });
 
-test("Documentation is a disabled workspace extension with only Phase 1 surfaces", async () => {
+test("Documentation remains a disabled workspace extension with an optional Live Preview", async () => {
   const manifest = JSON.parse(await readFile(new URL("package.json", extensionRoot), "utf8"));
 
   assert.equal(`${manifest.publisher}.${manifest.name}`, "chatero.chatero-documentation");
@@ -46,6 +46,10 @@ test("Documentation is a disabled workspace extension with only Phase 1 surfaces
   assert.equal(
     manifest.contributes.configuration.properties["chatero.documentation.enabled"].default,
     false,
+  );
+  assert.equal(
+    manifest.contributes.configuration.properties["chatero.documentation.livePreview"].default,
+    true,
   );
   assert.deepEqual(manifest.capabilities, {
     untrustedWorkspaces: { supported: true },
@@ -58,6 +62,7 @@ test("Documentation is a disabled workspace extension with only Phase 1 surfaces
 
   const commandIds = manifest.contributes.commands.map(command => command.command);
   assert.deepEqual(commandIds, [
+    "chatero.documentation.open",
     "chatero.documentation.newPage",
     "chatero.documentation.openSource",
     "chatero.documentation.markWorking",
@@ -67,9 +72,15 @@ test("Documentation is a disabled workspace extension with only Phase 1 surfaces
   ]);
   assert.ok(commandIds.every(command => command.startsWith("chatero.documentation.")));
 
-  for (const forbiddenContribution of ["customEditors", "languageModelTools", "webviewPanel"]) {
+  for (const forbiddenContribution of ["languageModelTools", "webviewPanel"]) {
     assert.equal(Object.hasOwn(manifest.contributes, forbiddenContribution), false);
   }
+  assert.deepEqual(manifest.contributes.customEditors, [{
+    viewType: "chatero.documentation.livePreview",
+    displayName: "Chatero Live Preview",
+    selector: [{ filenamePattern: "**/documentation/**/*.qmd" }],
+    priority: "option",
+  }]);
   assert.equal(commandIds.some(command => /executeMigration/i.test(command)), false);
 });
 
@@ -94,7 +105,9 @@ test("first-party materialization declares the complete Documentation authority"
     "extensions/chatero-documentation/extension.cjs",
     "extensions/chatero-documentation/licenses/CodeMirror-MIT.txt",
     "extensions/chatero-documentation/live-preview-bridge.mjs",
+    "extensions/chatero-documentation/live-preview-html.mjs",
     "extensions/chatero-documentation/live-preview-protocol.mjs",
+    "extensions/chatero-documentation/live-preview-provider.cjs",
     "extensions/chatero-documentation/media/documentation.svg",
     "extensions/chatero-documentation/media/documentation-webview/live-preview.css",
     "extensions/chatero-documentation/media/documentation-webview/live-preview.js",
@@ -112,7 +125,7 @@ test("first-party materialization declares the complete Documentation authority"
   ]);
 });
 
-async function activateWith({ enabled, registerDocumentation }) {
+async function activateWith({ enabled, registerDocumentation, registerLivePreview = async () => [] }) {
   const commands = [];
   const outputLines = [];
   const output = {
@@ -150,6 +163,7 @@ async function activateWith({ enabled, registerDocumentation }) {
   Module._load = function load(request, parent, isMain) {
     if (request === "vscode") return vscode;
     if (request === "./documentation-tree.cjs") return { registerDocumentation };
+    if (request === "./live-preview-provider.cjs") return { registerLivePreview };
     return originalLoad.call(this, request, parent, isMain);
   };
   try {
@@ -166,8 +180,13 @@ async function activateWith({ enabled, registerDocumentation }) {
 
 test("disabled activation sets context without registering Documentation", async () => {
   let registrations = 0;
+  let livePreviewRegistrations = 0;
   const result = await activateWith({
     enabled: false,
+    registerLivePreview: async () => {
+      livePreviewRegistrations++;
+      return [];
+    },
     registerDocumentation: async () => {
       registrations++;
       return [];
@@ -176,6 +195,7 @@ test("disabled activation sets context without registering Documentation", async
 
   assert.deepEqual(result.commands, [["setContext", "chatero.documentation.enabled", false]]);
   assert.equal(registrations, 0);
+  assert.equal(livePreviewRegistrations, 1);
   assert.deepEqual(result.context.subscriptions, []);
   assert.deepEqual(result.outputLines, []);
 });
@@ -194,6 +214,23 @@ test("enabled activation contains registration failure in one Documentation outp
   assert.match(result.outputLines[0], /registration failed/);
 });
 
+test("Live Preview activation failure does not block the enabled Documentation tree", async () => {
+  const treeDisposable = { dispose() {} };
+  let treeRegistrations = 0;
+  const result = await activateWith({
+    enabled: true,
+    registerLivePreview: async () => { throw new Error("preview unavailable"); },
+    registerDocumentation: async () => {
+      treeRegistrations++;
+      return [treeDisposable];
+    },
+  });
+  assert.equal(treeRegistrations, 1);
+  assert.ok(result.context.subscriptions.includes(treeDisposable));
+  assert.equal(result.outputLines.length, 1);
+  assert.match(result.outputLines[0], /Documentation Live Preview.*preview unavailable/);
+});
+
 class ExtensionTestUri {
   constructor({ scheme = "file", authority = "", path, query = "", fragment = "" }) {
     Object.assign(this, { scheme, authority, path, query, fragment });
@@ -203,7 +240,7 @@ class ExtensionTestUri {
   toString() { return `${this.scheme}://${this.authority}${this.path}`; }
 }
 
-function createDocumentationHarness({ trusted = true, input = undefined, warning = undefined } = {}) {
+function createDocumentationHarness({ trusted = true, input = undefined, warning = undefined, livePreview = true } = {}) {
   const registeredCommands = new Map();
   const executed = [];
   const diagnostics = [];
@@ -267,6 +304,10 @@ function createDocumentationHarness({ trusted = true, input = undefined, warning
     workspace: {
       isTrusted: trusted,
       textDocuments: [],
+      getConfiguration(section) {
+        assert.equal(section, "chatero.documentation");
+        return { get: (key, fallback) => key === "livePreview" ? livePreview : fallback };
+      },
       async applyEdit(edit) { workspaceEdits.push(edit); return true; },
       async openTextDocument(uri) {
         return vscode.workspace.textDocuments.find(document => document.uri.toString() === uri.toString());
@@ -323,7 +364,7 @@ function createDocumentationServices(overrides = {}) {
   };
 }
 
-test("Documentation Explorer opens QMD through the standard Text Editor", async () => {
+test("Documentation Explorer follows Live Preview preference while Open Source stays standard", async () => {
   const harness = createDocumentationHarness();
   const services = createDocumentationServices();
   harness.context.documentationServices = services;
@@ -337,9 +378,18 @@ test("Documentation Explorer opens QMD through the standard Text Editor", async 
     "documentation.page.working",
   ]);
   const pageUri = services.workspaceFolderUri.with({ path: "/srv/research/documentation/index.qmd" });
+  assert.equal(harness.provider.getTreeItem(children[0]).command.command, "chatero.documentation.open");
+  await harness.commands.run("chatero.documentation.open", pageUri);
+  assert.deepEqual(harness.commands.executed.at(-1), ["vscode.openWith", pageUri, "chatero.documentation.livePreview"]);
   await harness.commands.run("chatero.documentation.openSource", pageUri);
   assert.deepEqual(harness.commands.executed.at(-1), ["vscode.openWith", pageUri, "default"]);
   assert.ok(disposables.every(value => typeof value.dispose === "function"));
+
+  const standardHarness = createDocumentationHarness({ livePreview: false });
+  standardHarness.context.documentationServices = services;
+  await registerDocumentation(standardHarness.vscode, standardHarness.context);
+  await standardHarness.commands.run("chatero.documentation.open", pageUri);
+  assert.deepEqual(standardHarness.commands.executed.at(-1), ["vscode.openWith", pageUri, "default"]);
 });
 
 test("untrusted workspaces keep read-only Documentation routes but issue no mutation capability", async () => {
@@ -413,7 +463,7 @@ test("Mark Reviewed waits for explicit Save and New Page uses one WorkspaceEdit"
   assert.deepEqual(harness.workspaceEdits[0].operations.map(operation => operation[0]), ["createFile", "insert"]);
   assert.equal(harness.workspaceEdits[0].operations[1][3], "# New\n");
   assert.equal(harness.commands.executed.at(-1)[0], "vscode.openWith");
-  assert.equal(harness.commands.executed.at(-1)[2], "default");
+  assert.equal(harness.commands.executed.at(-1)[2], "chatero.documentation.livePreview");
 });
 
 test("migration planning opens only a read-only virtual report", async () => {

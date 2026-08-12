@@ -98,8 +98,8 @@ class DocumentationTreeProvider {
         : element.state === "reviewed" ? "pass-filled" : "edit",
     );
     item.command = {
-      command: "chatero.documentation.openSource",
-      title: "Open Documentation Source",
+      command: "chatero.documentation.open",
+      title: "Open Documentation",
       arguments: [uri],
     };
     return item;
@@ -126,6 +126,7 @@ class DocumentationTreeProvider {
 }
 
 async function registerDocumentation(vscode, context, injectedServices) {
+  const { openDocumentation } = require("./live-preview-provider.cjs");
   const [paths, operations] = await Promise.all([
     import("./documentation-path.mjs"),
     import("./documentation-operations.mjs"),
@@ -184,6 +185,11 @@ async function registerDocumentation(vscode, context, injectedServices) {
     return vscode.commands.executeCommand("vscode.openWith", uriFor(page), "default");
   }));
 
+  registrations.push(vscode.commands.registerCommand("chatero.documentation.open", async value => {
+    const page = pageFrom(value);
+    return openDocumentation(vscode, uriFor(page));
+  }));
+
   registrations.push(vscode.commands.registerCommand("chatero.documentation.refresh", () => provider.refresh()));
 
   registrations.push(vscode.commands.registerCommand("chatero.documentation.newPage", async request => {
@@ -209,7 +215,7 @@ async function registerDocumentation(vscode, context, injectedServices) {
     edit.insert(uri, new vscode.Position(0, 0), initialText);
     if (!await vscode.workspace.applyEdit(edit)) throw new Error("Could not create Documentation page");
     provider.refresh();
-    await vscode.commands.executeCommand("vscode.openWith", uri, "default");
+    await openDocumentation(vscode, uri);
     return Object.freeze({ kind: "created", path: page });
   }));
 
