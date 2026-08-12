@@ -91,6 +91,10 @@
         {
           "source": "products/workbench/extensions/chatero-documentation/runtime/yaml-LICENSE",
           "destination": "extensions/chatero-documentation/runtime/yaml-LICENSE"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-documentation/text-change-set.mjs",
+          "destination": "extensions/chatero-documentation/text-change-set.mjs"
         }
       ]
     },
