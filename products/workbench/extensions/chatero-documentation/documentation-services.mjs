@@ -13,6 +13,7 @@ import { createDocumentationTransactions } from "./documentation-transactions.mj
 import { createReviewSnapshotRegistry } from "./review-snapshot.mjs";
 import { documentationWorkspaceUri } from "./documentation-path.mjs";
 import { recoverSettlement } from "./settlement-recovery.mjs";
+import { createDocumentationRetrieval } from "./documentation-retrieval.mjs";
 import { createDocumentationWorkspaceView } from "./documentation-workspace.mjs";
 import { createWorkingCopyCoordinator } from "./working-copy-coordinator.mjs";
 import {
@@ -315,6 +316,7 @@ export async function createProductionDocumentationServices({
     scope,
     clock,
   });
+  const retrieval = createDocumentationRetrieval({ adapter, capabilities, scope });
   return Object.freeze({
     adapter,
     capabilities,
@@ -323,14 +325,7 @@ export async function createProductionDocumentationServices({
     workspaceFolderUri: folder.uri,
     randomUUID: uuid,
     snapshotPassiveImage: request => adapter.snapshot(request),
-    retrieval: Object.freeze({
-      async retrieve() {
-        return Object.freeze({
-          kind: "feature-unavailable",
-          message: "Reviewed Documentation retrieval is not available until the review index is ready.",
-        });
-      },
-    }),
+    retrieval,
     recoveryStatus,
   });
 }

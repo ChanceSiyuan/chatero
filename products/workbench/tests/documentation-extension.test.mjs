@@ -114,6 +114,7 @@ test("first-party materialization declares the complete Documentation authority"
     "extensions/chatero-documentation/documentation-operations.mjs",
     "extensions/chatero-documentation/documentation-path.mjs",
     "extensions/chatero-documentation/documentation-review.cjs",
+    "extensions/chatero-documentation/documentation-retrieval.mjs",
     "extensions/chatero-documentation/documentation-services.mjs",
     "extensions/chatero-documentation/documentation-state.mjs",
     "extensions/chatero-documentation/documentation-transactions.mjs",

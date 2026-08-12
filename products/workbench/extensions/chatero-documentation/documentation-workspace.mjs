@@ -109,9 +109,11 @@ export function createDocumentationWorkspaceView({ workspaceFolders, textDocumen
     return folder;
   };
 
-  const capture = (scope, paths) => {
+  const capture = (scope, paths, { includeOpenBuffers = true } = {}) => {
     const folder = findFolder(scope);
-    const allDocuments = currentValues(textDocuments).filter(document => document?.uri && withinUri(folder.uri, document.uri));
+    const allDocuments = includeOpenBuffers
+      ? currentValues(textDocuments).filter(document => document?.uri && withinUri(folder.uri, document.uri))
+      : [];
     let targets;
     let mode;
     if (paths === null) {
@@ -146,11 +148,12 @@ export function createDocumentationWorkspaceView({ workspaceFolders, textDocumen
       targetUris: Object.freeze(targetStrings),
       overlays: Object.freeze(overlays),
       proofs: Object.freeze(proofs),
+      includeOpenBuffers,
     });
   };
 
   const revalidate = evidence => {
-    const next = capture(evidence.scope, evidence.paths);
+    const next = capture(evidence.scope, evidence.paths, { includeOpenBuffers: evidence.includeOpenBuffers });
     if (next.folderUri !== evidence.folderUri || next.folderEpoch !== evidence.folderEpoch) {
       throw new TypeError("workspace epoch changed");
     }
@@ -204,14 +207,16 @@ export function createWorkspaceTransactionAdapter({ scope, transport, workspaceV
       throw new TypeError("snapshot request is invalid");
     }
     if (request.kind === "paths") {
-      if (Object.keys(request).some(key => !new Set(["kind", "paths"]).has(key)) || !Array.isArray(request.paths)) {
+      if (Object.keys(request).some(key => !new Set(["kind", "paths", "includeOpenBuffers"]).has(key)) || !Array.isArray(request.paths)
+        || (request.includeOpenBuffers !== undefined && typeof request.includeOpenBuffers !== "boolean")) {
         throw new TypeError("path snapshot request has unknown field");
       }
-      const evidence = workspaceView.capture(scope, request.paths);
+      const includeOpenBuffers = request.includeOpenBuffers !== false;
+      const evidence = workspaceView.capture(scope, request.paths, { includeOpenBuffers });
       return invoke("snapshot", "snapshot", {
         kind: "paths",
         paths: request.paths.map(path => `documentation/${path.value}`),
-        overlays: evidence.overlays,
+        overlays: includeOpenBuffers ? evidence.overlays : [],
       }, evidence);
     }
     if (request.kind === "plan-migration") {
@@ -228,14 +233,16 @@ export function createWorkspaceTransactionAdapter({ scope, transport, workspaceV
       return result;
     }
     if (request.kind === "documentation-state") {
-      if (Object.keys(request).some(key => !new Set(["kind", "workspaceScopeDigest"]).has(key))
+      if (Object.keys(request).some(key => !new Set(["kind", "workspaceScopeDigest", "includeOpenBuffers"]).has(key))
+        || (request.includeOpenBuffers !== undefined && typeof request.includeOpenBuffers !== "boolean")
         || request.workspaceScopeDigest !== scope.workspaceScopeDigest) {
         throw new TypeError("Documentation state snapshot scope does not match");
       }
-      const evidence = workspaceView.capture(scope, null);
+      const includeOpenBuffers = request.includeOpenBuffers !== false;
+      const evidence = workspaceView.capture(scope, null, { includeOpenBuffers });
       return invoke("snapshot", "snapshot", {
         kind: "documentation-state",
-        overlays: evidence.overlays,
+        overlays: includeOpenBuffers ? evidence.overlays : [],
       }, evidence);
     }
     if (request.kind === "passive-image") {

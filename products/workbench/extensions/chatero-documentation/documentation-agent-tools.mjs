@@ -1,4 +1,5 @@
 import { validateAgentStageInput } from "./documentation-transactions.mjs";
+import { formatRetrievedPassage } from "./documentation-retrieval.mjs";
 
 const MAX_TOOL_RESULT_BYTES = 256 * 1024;
 const FORBIDDEN_RESULT_KEYS = new Set(["root", "token", "approval", "privatePath", "evidencePath"]);
@@ -48,7 +49,7 @@ function retrievalInput(value) {
     || typeof value.query !== "string" || value.query.length === 0
     || Buffer.byteLength(value.query, "utf8") > 4096
     || (value.maximumResults !== undefined
-      && (!Number.isSafeInteger(value.maximumResults) || value.maximumResults < 1 || value.maximumResults > 50))) {
+      && (!Number.isSafeInteger(value.maximumResults) || value.maximumResults < 1 || value.maximumResults > 32))) {
     throw new TypeError("retrieval input is invalid");
   }
   return Object.freeze({ query: value.query, maximumResults: value.maximumResults ?? 12 });
@@ -98,10 +99,16 @@ export function registerDocumentationAgentTools({
       const input = retrievalInput(options?.input);
       const result = await retrieval.retrieve(input, token);
       assertNotCancelled(token);
+      const passages = Array.isArray(result) ? result : null;
       return boundedAgentToolResult({
-        content: typeof result?.text === "string" ? result.text : result?.message ?? "Reviewed Documentation retrieval is unavailable.",
+        content: passages
+          ? passages.length > 0
+            ? passages.map(formatRetrievedPassage).join("\n\n---\n\n")
+            : "No reviewed Documentation passages matched the query."
+          : typeof result?.text === "string" ? result.text : result?.message ?? "Reviewed Documentation retrieval is unavailable.",
         metadata: {
-          kind: result?.kind ?? "feature-unavailable",
+          kind: passages ? "retrieved" : result?.kind ?? "feature-unavailable",
+          ...(passages ? { count: passages.length } : {}),
           ...(typeof result?.state === "string" ? { state: result.state } : {}),
           ...(typeof result?.revision === "string" ? { revision: result.revision } : {}),
         },

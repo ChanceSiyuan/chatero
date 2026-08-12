@@ -41,6 +41,10 @@
           "destination": "extensions/chatero-documentation/documentation-review.cjs"
         },
         {
+          "source": "products/workbench/extensions/chatero-documentation/documentation-retrieval.mjs",
+          "destination": "extensions/chatero-documentation/documentation-retrieval.mjs"
+        },
+        {
           "source": "products/workbench/extensions/chatero-documentation/documentation-services.mjs",
           "destination": "extensions/chatero-documentation/documentation-services.mjs"
         },

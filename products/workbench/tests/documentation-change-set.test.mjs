@@ -334,7 +334,15 @@ test("registers only bounded retrieve and stage tools and keeps private authorit
   const registrations = registerDocumentationAgentTools({
     vscode, capabilities, scope,
     transactions: { async stage() { return { kind: "generation-staged", ref: generation.ref, generationDigest: generation.generationDigest }; } },
-    retrieval: { async retrieve() { return { kind: "feature-unavailable", message: "Reviewed retrieval is not ready." }; } },
+    retrieval: { async retrieve() { return [{
+      path: documentationPagePath("reviewed.qmd"),
+      state: "reviewed",
+      dirty: false,
+      revision: `sha256:${"a".repeat(64)}`,
+      score: 1,
+      offset: 0,
+      text: "A reviewed lemma.",
+    }]; } },
   });
   assert.deepEqual([...tools.keys()], ["chatero_documentation_retrieve", "chatero_documentation_stage"]);
   const result = await tools.get("chatero_documentation_stage").invoke({ input: {
@@ -347,6 +355,12 @@ test("registers only bounded retrieve and stage tools and keeps private authorit
     reviewCommand: "chatero.documentation.reviewChangeSet",
   });
   assert.doesNotMatch(JSON.stringify(result), /documentation-changes|\.chatero|privatePath|approval|token/iu);
+  const retrieved = await tools.get("chatero_documentation_retrieve").invoke({
+    input: { query: "lemma", maximumResults: 1 },
+  }, { isCancellationRequested: false });
+  assert.equal(retrieved.metadata.kind, "retrieved");
+  assert.equal(retrieved.metadata.count, 1);
+  assert.match(retrieved.content[0].value, /reviewed\.qmd.*Reviewed.*reviewed lemma/s);
   assert.equal(registrations.length, 2);
 
   vscode.workspace.isTrusted = false;
