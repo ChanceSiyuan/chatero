@@ -197,6 +197,10 @@
           "destination": "extensions/chatero-documentation/migration-planner.mjs"
         },
         {
+          "source": "products/workbench/extensions/chatero-documentation/migration-recovery.mjs",
+          "destination": "extensions/chatero-documentation/migration-recovery.mjs"
+        },
+        {
           "source": "products/workbench/extensions/chatero-documentation/migration-rewrite.mjs",
           "destination": "extensions/chatero-documentation/migration-rewrite.mjs"
         },

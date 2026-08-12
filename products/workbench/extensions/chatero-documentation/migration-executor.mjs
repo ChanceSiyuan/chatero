@@ -21,6 +21,16 @@ function resourceForProof(proof, uriFor) {
   });
 }
 
+export function migrationBarrierResources(plan, uriFor) {
+  if (!plan || !Array.isArray(plan.pathProofs) || !Array.isArray(plan.affectedPaths)
+    || plan.pathProofs.length !== plan.affectedPaths.length
+    || plan.pathProofs.some((proof, index) => proof.path !== plan.affectedPaths[index])
+    || typeof uriFor !== "function") {
+    throw new TypeError("migration plan path proofs are incomplete");
+  }
+  return Object.freeze(plan.pathProofs.map(proof => resourceForProof(proof, uriFor)));
+}
+
 export function migrationApprovalRequest({ planToken, idempotencyKey, planner, scope } = {}) {
   if (!ID_RE.test(idempotencyKey ?? "") || typeof planner?.inspectPlanToken !== "function") {
     throw new TypeError("migration approval request is invalid");
@@ -61,12 +71,7 @@ export async function executeMigration({
   const inspected = planner.inspectPlanToken(planToken, scope);
   if (inspected?.kind !== "planned-token") return inspected;
   const { plan, planDigest } = inspected;
-  if (!Array.isArray(plan.pathProofs) || !Array.isArray(plan.affectedPaths)
-    || plan.pathProofs.length !== plan.affectedPaths.length
-    || plan.pathProofs.some((proof, index) => proof.path !== plan.affectedPaths[index])) {
-    throw new TypeError("migration plan path proofs are incomplete");
-  }
-  const resources = Object.freeze(plan.pathProofs.map(proof => resourceForProof(proof, uriFor)));
+  const resources = migrationBarrierResources(plan, uriFor);
   const acquired = await barrier.acquire(Object.freeze({
     operationId: plan.operationId,
     resources,
@@ -101,7 +106,7 @@ export async function executeMigration({
       throw new TypeError("migration plan token changed before execution");
     }
     dispatched = true;
-    const result = await adapter.transact(Object.freeze({
+    const transaction = Object.freeze({
       kind: "execute-migration",
       schemaVersion: 1,
       operationId: plan.operationId,
@@ -110,7 +115,10 @@ export async function executeMigration({
       planRecord: consumed.planRecord,
       approvalDigest,
       idempotencyKey,
-    }));
+    });
+    let result;
+    try { result = await adapter.transact(transaction); }
+    catch { result = await adapter.transact(transaction); }
     if (result?.kind === "migration-committed" || result?.kind === "stale-plan"
       || result?.kind === "idempotency-conflict") lease.dispose();
     return result;

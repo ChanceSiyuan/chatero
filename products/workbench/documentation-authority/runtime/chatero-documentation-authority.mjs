@@ -869,11 +869,15 @@ async function planMigrationResult(fs, root, request, clock) {
     });
   }
 
+  const createdAt = new Date(clock.now()).toISOString();
   const planRecord = Object.freeze({
     schemaVersion: 2,
     plannerVersion: MIGRATION_PLANNER_VERSION,
-    operationId: `migration-${sha256(Buffer.from(`chatero:migration-v2\0${source.digest}`, "utf8")).slice(0, 32)}`,
-    createdAt: new Date(clock.now()).toISOString(),
+    operationId: `migration-${sha256(Buffer.from(
+      `chatero:migration-v2\0${source.digest}\0${createdAt}`,
+      "utf8",
+    )).slice(0, 32)}`,
+    createdAt,
     sourceSnapshotDigest: source.digest,
     verificationSnapshotDigest: verification.digest,
     affectedPaths,
@@ -1778,6 +1782,135 @@ async function executeMigrationTransaction(fs, root, workspace, authority, input
   return continueMigration(fs, root, authority, record);
 }
 
+async function migrationObservedProof(fs, root, proof, output) {
+  const inspected = await inspectRelative(fs, root, proof.path);
+  if (!inspected.metadata) {
+    if (proof.role === "source") return null;
+    return Object.freeze({
+      path: proof.path,
+      role: proof.role,
+      requireClean: true,
+      targetAbsent: true,
+      ...(output ? { intendedDigest: output.sha256 } : {}),
+    });
+  }
+  if (inspected.metadata.isDirectory() && !inspected.metadata.isSymbolicLink()) {
+    if (proof.expectedDigest || output) return null;
+    const generation = await directoryGeneration(fs, inspected.path);
+    if (proof.role === "source" && generation !== proof.directoryGeneration) return null;
+    return Object.freeze({
+      path: proof.path,
+      role: proof.role,
+      requireClean: true,
+      directoryGeneration: generation,
+    });
+  }
+  if (!inspected.metadata.isFile() || inspected.metadata.isSymbolicLink() || inspected.metadata.nlink !== 1) {
+    return null;
+  }
+  const bytes = await readRegularFile(fs, inspected.path, MIGRATION_LIMITS.maximumBlobBytes);
+  const observed = `sha256:${sha256(bytes)}`;
+  const expected = output?.sha256 ?? proof.expectedDigest;
+  if (!expected || observed !== expected) return null;
+  return Object.freeze({
+    path: proof.path,
+    role: proof.role,
+    requireClean: true,
+    expectedDigest: observed,
+    ...(output ? { intendedDigest: output.sha256 } : {}),
+  });
+}
+
+async function migrationRecoveryProofs(fs, root, record) {
+  const outputs = new Map(record.outputs.map(value => [value.path, value]));
+  const proofs = [];
+  for (const proof of record.request.planRecord.pathProofs) {
+    const observed = await migrationObservedProof(fs, root, proof, outputs.get(proof.path));
+    if (!observed) return null;
+    proofs.push(observed);
+  }
+  return Object.freeze(proofs);
+}
+
+async function inspectMigrationTransaction(fs, root, authority, input) {
+  exactFields(input, ["kind", "schemaVersion"], [], "inspect migration request");
+  if (input.kind !== "inspect-migration" || input.schemaVersion !== 1) {
+    throw new TypeError("inspect migration request is invalid");
+  }
+  const active = await authority.readActiveMarker();
+  if (active === null) {
+    const suspicious = (await authority.listOperations()).filter(record => record?.kind === "migration"
+      && record.markerCommitted === true && record.phase !== "committed");
+    if (suspicious.length > 0) {
+      return Object.freeze({
+        kind: "documentation-tamper",
+        reason: "post-marker migration journal is missing its active marker",
+      });
+    }
+    return Object.freeze({ kind: "no-active-migration" });
+  }
+  if (active.kind !== "migration") return Object.freeze({ kind: "no-active-migration" });
+  const record = await authority.readOperation(active.operationId);
+  if (!record || record.kind !== "migration" || !sameCanonicalValue(active, migrationMarker(record))) {
+    return Object.freeze({
+      kind: "documentation-tamper",
+      reason: "active migration marker does not match its durable journal",
+    });
+  }
+  if (record.phase === "committed") {
+    const result = record.result ?? migrationCommittedResult(record);
+    await authority.removeActiveMarker(active);
+    return result;
+  }
+  if (record.phase === "private-staged" || record.markerCommitted !== true) {
+    return Object.freeze({
+      kind: "documentation-tamper",
+      reason: "active migration marker precedes its durable marker-committed phase",
+    });
+  }
+  if (record.phase === "recovery-conflict") return migrationConflictResult(record);
+  const pathProofs = await migrationRecoveryProofs(fs, root, record);
+  if (pathProofs === null) {
+    record = Object.freeze({ ...record, phase: "recovery-conflict" });
+    await authority.updateOperation(record);
+    return migrationConflictResult(record);
+  }
+  return Object.freeze({
+    kind: "migration-recovery-required",
+    operationId: record.operationId,
+    planDigest: record.planDigest,
+    workspaceEpoch: record.workspaceEpoch,
+    approvalAcceptanceProof: migrationAcceptanceProof(record),
+    affectedPaths: record.request.planRecord.affectedPaths,
+    pathProofs,
+  });
+}
+
+async function resolveMigrationTransaction(fs, root, authority, input) {
+  exactFields(input, ["kind", "schemaVersion", "operationId", "planDigest", "resolution"], [], "resolve migration request");
+  if (input.kind !== "resolve-migration" || input.schemaVersion !== 1
+    || !/^migration-[0-9a-f]{32}$/u.test(input.operationId)
+    || !CHANGE_SET_DIGEST_RE.test(input.planDigest) || input.resolution !== "continue") {
+    throw new TypeError("resolve migration request is invalid");
+  }
+  const active = await authority.readActiveMarker();
+  let record = await authority.readOperation(input.operationId);
+  if (!record || record.kind !== "migration" || record.planDigest !== input.planDigest
+    || !sameCanonicalValue(active, migrationMarker(record))) {
+    return Object.freeze({
+      kind: "documentation-tamper",
+      reason: "migration recovery request does not match its durable evidence",
+    });
+  }
+  const proof = await migrationRecoveryProofs(fs, root, record);
+  if (proof === null) {
+    record = Object.freeze({ ...record, phase: "recovery-conflict" });
+    await authority.updateOperation(record);
+    return migrationConflictResult(record);
+  }
+  return continueMigration(fs, root, authority, record);
+}
+
 async function dispatch(fs, clock, request) {
   const root = await assertWorkspaceRoot(fs, request.workspace);
   const activeOperationPath = join(root, ...safeRelativePath(ACTIVE_OPERATION_PATH));
@@ -1791,14 +1924,21 @@ async function dispatch(fs, clock, request) {
   return withLease(fs, root, clock, async () => {
     const authority = await createFilesystemAuthority(fs, root);
     const settlement = createSettlementTransactionExecutor({ authority, workspace: request.workspace });
+    if (request.kind === "recover" && request.recovery?.kind === "inspect-migration") {
+      return inspectMigrationTransaction(fs, root, authority, request.recovery);
+    }
+    if (request.kind === "recover" && request.recovery?.kind === "resolve-migration") {
+      return resolveMigrationTransaction(fs, root, authority, request.recovery);
+    }
     if (request.kind === "recover" && request.recovery?.kind === "inspect-settlement") {
       return settlement.inspect(request.recovery);
     }
     const currentActive = await authority.readActiveMarker();
-    const isSettlementContinuation = request.kind === "transact"
-      && new Set(["prepare-settlement", "ack-settlement-text"]).has(request.transaction?.kind)
+    const isOperationContinuation = request.kind === "transact"
+      && (new Set(["prepare-settlement", "ack-settlement-text"]).has(request.transaction?.kind)
+        || request.transaction?.kind === "execute-migration")
       && (currentActive === null || currentActive.operationId === request.transaction.operationId);
-    if (currentActive !== null && !isSettlementContinuation) {
+    if (currentActive !== null && !isOperationContinuation) {
       return Object.freeze({ kind: "documentation-operation-active", operationId: currentActive.operationId ?? null });
     }
     if (request.kind === "transact" && request.transaction?.kind === "stage-generation") {

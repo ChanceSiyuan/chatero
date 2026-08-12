@@ -13,6 +13,7 @@ import { createDocumentationTransactions } from "./documentation-transactions.mj
 import { createReviewSnapshotRegistry } from "./review-snapshot.mjs";
 import { documentationWorkspaceUri } from "./documentation-path.mjs";
 import { recoverSettlement } from "./settlement-recovery.mjs";
+import { recoverMigration } from "./migration-recovery.mjs";
 import { createDocumentationRetrieval } from "./documentation-retrieval.mjs";
 import { createDocumentationWorkspaceView } from "./documentation-workspace.mjs";
 import { createWorkingCopyCoordinator } from "./working-copy-coordinator.mjs";
@@ -314,7 +315,16 @@ export async function createProductionDocumentationServices({
       uriFor: path => workspaceRelativeUri(folder.uri, path),
     });
   }
-  const recoveryStatus = settlement
+  const migrationRecoveryStatus = migration
+    ? await recoverMigration({
+        adapter,
+        barrier: migration.barrier,
+        uriFor: migration.uriFor,
+      })
+    : Object.freeze({ kind: "migration-recovery-unavailable" });
+  const recoveryStatus = settlement && new Set([
+    "no-active-migration", "migration-committed",
+  ]).has(migrationRecoveryStatus.kind)
     ? await recoverSettlement({
         adapter,
         barrier: settlement.barrier,
@@ -322,7 +332,7 @@ export async function createProductionDocumentationServices({
         uriFor: settlement.uriFor,
         openDocuments: settlement.openDocuments,
       })
-    : Object.freeze({ kind: "settlement-recovery-unavailable" });
+    : migrationRecoveryStatus;
   const transactions = createDocumentationTransactions({
     adapter,
     capabilities,

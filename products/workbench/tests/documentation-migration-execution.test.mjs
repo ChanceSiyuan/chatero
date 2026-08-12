@@ -11,6 +11,7 @@ import {
   migrationApprovalDigest,
 } from "../extensions/chatero-documentation/migration-planner.mjs";
 import { executeMigration } from "../extensions/chatero-documentation/migration-executor.mjs";
+import { recoverMigration } from "../extensions/chatero-documentation/migration-recovery.mjs";
 import { decodeAuthorityResponse, encodeAuthorityRequest } from "../documentation-authority/protocol.mjs";
 import { runDocumentationAuthority } from "../documentation-authority/runtime/chatero-documentation-authority.mjs";
 
@@ -18,7 +19,7 @@ function digest(value) {
   return `sha256:${createHash("sha256").update(value).digest("hex")}`;
 }
 
-async function invoke(workspace, kind, payloadName, payload) {
+async function invoke(workspace, kind, payloadName, payload, filesystem) {
   const chunks = [];
   const stdout = new Writable({
     write(chunk, _encoding, callback) { chunks.push(Buffer.from(chunk)); callback(); },
@@ -34,6 +35,7 @@ async function invoke(workspace, kind, payloadName, payload) {
   await runDocumentationAuthority({
     stdin: Readable.from([`${encodeAuthorityRequest(request)}\n`]),
     stdout,
+    ...(filesystem ? { filesystem } : {}),
     clock: { now: () => Date.parse("2026-08-12T00:00:00.000Z") },
   });
   return Object.freeze({
@@ -214,4 +216,103 @@ test("extension executes a reviewed token only inside the complete migration bar
   assert.equal(transaction.kind, "execute-migration");
   assert.equal(transaction.planRecord, plan);
   assert.equal(transaction.approvalDigest, expectedApproval);
+});
+
+test("a helper interruption resumes from durable migration evidence without a new plan", async t => {
+  const workspace = await mkdtemp(join(tmpdir(), "chatero-migration-recover-"));
+  t.after(() => rm(workspace, { recursive: true, force: true }));
+  await mkdir(join(workspace, "knowledge"));
+  await writeFile(join(workspace, "knowledge", "one.qmd"), "# One\n");
+  await writeFile(join(workspace, "knowledge", "two.qmd"), "# Two\n");
+  const planned = await plan(workspace);
+  const transaction = executeRequest(planned);
+  const nodeFilesystem = await import("node:fs/promises");
+  let copies = 0;
+  const interrupted = new Proxy(nodeFilesystem, {
+    get(target, property) {
+      if (property === "copyFile") {
+        return async (...args) => {
+          copies++;
+          if (copies === 2) throw Object.assign(new Error("simulated disconnect"), { code: "EIO" });
+          return target.copyFile(...args);
+        };
+      }
+      return Reflect.get(target, property);
+    },
+  });
+  await assert.rejects(
+    invoke(workspace, "transact", "transaction", transaction, interrupted),
+    /simulated disconnect/,
+  );
+
+  const inspected = await invoke(workspace, "recover", "recovery", {
+    kind: "inspect-migration",
+    schemaVersion: 1,
+  });
+  assert.equal(inspected.result.kind, "migration-recovery-required");
+  assert.equal(inspected.result.operationId, planned.planRecord.operationId);
+  assert.deepEqual(inspected.result.affectedPaths,
+    inspected.result.pathProofs.map(value => value.path));
+  assert.equal(JSON.stringify(inspected.result).includes("# One"), false);
+
+  const resolved = await invoke(workspace, "recover", "recovery", {
+    kind: "resolve-migration",
+    schemaVersion: 1,
+    operationId: inspected.result.operationId,
+    planDigest: inspected.result.planDigest,
+    resolution: "continue",
+  });
+  assert.equal(resolved.result.kind, "migration-committed");
+  assert.equal(await readFile(join(workspace, "documentation", "one.qmd"), "utf8"), "# One\n");
+  assert.equal(await readFile(join(workspace, "documentation", "two.qmd"), "utf8"), "# Two\n");
+  const after = await invoke(workspace, "recover", "recovery", {
+    kind: "inspect-migration",
+    schemaVersion: 1,
+  });
+  assert.deepEqual(after.result, { kind: "no-active-migration" });
+});
+
+test("startup migration recovery acquires the inspected proof set before continuing", async () => {
+  const calls = [];
+  const pathProofs = [{
+    path: "documentation/topic.qmd",
+    role: "target",
+    expectedDigest: digest("intended"),
+    intendedDigest: digest("intended"),
+    requireClean: true,
+  }];
+  const lease = {
+    async revalidate() { calls.push("revalidate"); return { kind: "valid" }; },
+    dispose() { calls.push("dispose"); },
+  };
+  const requests = [];
+  const result = await recoverMigration({
+    adapter: {
+      async recover(request) {
+        requests.push(request);
+        if (request.kind === "inspect-migration") {
+          return {
+            kind: "migration-recovery-required",
+            operationId: `migration-${"2".repeat(32)}`,
+            planDigest: digest("plan"),
+            affectedPaths: ["documentation/topic.qmd"],
+            pathProofs,
+          };
+        }
+        calls.push("resolve");
+        return { kind: "migration-committed" };
+      },
+    },
+    barrier: {
+      async acquire(request) {
+        calls.push(request.reason);
+        assert.equal(request.resources[0].expectedDigest, digest("intended"));
+        return lease;
+      },
+    },
+    uriFor: path => new URL(`file:///workspace/${path}`),
+  });
+  assert.equal(result.kind, "migration-committed");
+  assert.deepEqual(calls, ["recovery", "revalidate", "resolve", "dispose"]);
+  assert.deepEqual(requests.map(value => value.kind), ["inspect-migration", "resolve-migration"]);
 });
