@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import { documentationPagePath, validateOperationPathSet } from "./documentation-path.mjs";
 import { buildChangeSetGeneration, changeSetGenerationId } from "./change-set-model.mjs";
+import { createReviewSnapshot } from "./review-snapshot.mjs";
 import {
   canonicalOperationDigest,
   stateOperationId,
@@ -261,6 +262,51 @@ async function stageAgentGeneration({ adapter, capabilities, store, clock, grant
   return store.stageGeneration(built);
 }
 
+function reviewPathValues(operation) {
+  return operation.kind === "rename" ? [operation.from, operation.to] : [operation.path];
+}
+
+async function createBoundReview({ adapter, capabilities, scope, store, registry, ref }) {
+  const generation = await store.loadGeneration(ref);
+  if (generation?.kind === "generation-missing") return generation;
+  const paths = [];
+  const seen = new Set();
+  for (const operation of generation.operations) {
+    for (const path of reviewPathValues(operation)) {
+      if (!seen.has(path.value)) { seen.add(path.value); paths.push(path); }
+    }
+  }
+  const [snapshot, state] = await Promise.all([
+    adapter.snapshot({ kind: "paths", paths }),
+    adapter.snapshot({
+      kind: "documentation-state",
+      workspaceScopeDigest: capabilities.consumeScope(scope).workspaceScopeDigest,
+    }),
+  ]);
+  if (snapshot?.kind !== "snapshot") throw new TypeError("review source snapshot is invalid");
+  const documents = snapshot.entries.map(entry => {
+    const path = entry.path.replace(/^documentation\//u, "");
+    if (entry.type === "absent") return Object.freeze({ path, absent: true });
+    if (entry.type !== "file") throw new TypeError("review path is not a regular file");
+    const bytes = Buffer.from(entry.bytes, "base64url");
+    const text = bytes.toString("utf8");
+    if (bytes.toString("base64url") !== entry.bytes || !Buffer.from(text, "utf8").equals(bytes)
+      || sha256Bytes(bytes) !== entry.sha256) throw new TypeError("review source bytes are invalid");
+    return Object.freeze({
+      path,
+      text,
+      revision: entry.revision,
+      dirty: entry.dirty ?? entry.revision.startsWith("text-document:"),
+    });
+  });
+  return createReviewSnapshot({
+    registry,
+    generation,
+    currentDocuments: documents,
+    stateGeneration: stateGenerationFromSnapshot(state),
+  });
+}
+
 function decodeStateEvidence(evidence) {
   if (evidence?.kind === "missing") return null;
   if (!evidence || evidence.kind !== "file" || typeof evidence.bytes !== "string"
@@ -346,6 +392,8 @@ export function createDocumentationTransactions({
   workspaceView,
   migrationPlanner,
   changeSetStore,
+  reviewRegistry,
+  scope,
   clock = Date,
 }) {
   if (!adapter || typeof adapter.snapshot !== "function" || typeof adapter.transact !== "function"
@@ -361,6 +409,9 @@ export function createDocumentationTransactions({
   if (changeSetStore !== undefined && (typeof changeSetStore?.stageGeneration !== "function"
     || typeof changeSetStore?.loadCurrentRef !== "function") || typeof clock?.now !== "function") {
     throw new TypeError("Documentation Change Set dependencies are invalid");
+  }
+  if (reviewRegistry !== undefined && (typeof reviewRegistry?.register !== "function" || !scope)) {
+    throw new TypeError("Documentation review registry is invalid");
   }
   return Object.freeze({
     state: scope => readProjectedState({ adapter, capabilities, workspaceView, scope }),
@@ -383,6 +434,16 @@ export function createDocumentationTransactions({
         grant,
         input,
       }),
+      ...(reviewRegistry && typeof changeSetStore.loadGeneration === "function" ? {
+        review: ref => createBoundReview({
+          adapter,
+          capabilities,
+          scope,
+          store: changeSetStore,
+          registry: reviewRegistry,
+          ref,
+        }),
+      } : {}),
     } : {}),
   });
 }

@@ -348,6 +348,7 @@ async function snapshotEntry(fs, root, relativePath, overlay) {
       bytes: bytes.toString("base64url"),
       sha256: sha256(bytes),
       revision: overlay.revision,
+      dirty: overlay.dirty,
     });
   }
   if (inspected.metadata.isSymbolicLink()) {
@@ -373,6 +374,7 @@ async function snapshotEntry(fs, root, relativePath, overlay) {
     bytes: bytes.toString("base64url"),
     sha256: digest,
     revision: overlay?.revision ?? `sha256:${digest}`,
+    dirty: overlay?.dirty ?? false,
   });
 }
 

@@ -290,7 +290,7 @@ export function buildChangeSetGeneration(input) {
     const operations = validatedOperations(input.operations);
     const hunks = [];
     for (const operation of operations) {
-      if (operation.kind !== "edit") continue;
+      if (operation.kind !== "edit" && operation.kind !== "rename") continue;
       for (const hunk of deriveStableHunks({
         operationId: operation.operationId,
         baseText: operation.baseText,

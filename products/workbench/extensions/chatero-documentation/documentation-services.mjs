@@ -10,6 +10,7 @@ import {
 import { createDocumentationCapabilityIssuer } from "./documentation-capabilities.mjs";
 import { createChangeSetStore } from "./change-set-store.mjs";
 import { createDocumentationTransactions } from "./documentation-transactions.mjs";
+import { createReviewSnapshotRegistry } from "./review-snapshot.mjs";
 import { createDocumentationWorkspaceView } from "./documentation-workspace.mjs";
 import {
   createMigrationPlanner,
@@ -259,6 +260,7 @@ export async function createProductionDocumentationServices({
   });
   const adapter = createDocumentationAuthorityClient({ scope: scopeRecord, workspaceView, fixedTransport });
   const changeSetStore = createChangeSetStore({ adapter, scope });
+  const reviewRegistry = createReviewSnapshotRegistry({ clock, randomUUID: uuid });
   const migrationPlanner = createMigrationPlanner({
     adapter,
     capabilities,
@@ -272,6 +274,8 @@ export async function createProductionDocumentationServices({
     workspaceView,
     migrationPlanner,
     changeSetStore,
+    reviewRegistry,
+    scope,
     clock,
   });
   return Object.freeze({

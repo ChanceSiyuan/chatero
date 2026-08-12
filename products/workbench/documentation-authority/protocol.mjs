@@ -245,7 +245,10 @@ function validateSnapshotEntry(value) {
     if (!REVISION_RE.test(value.directoryGeneration)) throw new TypeError("directory generation is invalid");
   }
   else if (value.type === "file") {
-    exactObject(value, ["path", "type", "bytes", "sha256", "revision"], [], "file snapshot entry");
+    exactObject(value, ["path", "type", "bytes", "sha256", "revision"], ["dirty"], "file snapshot entry");
+    if (value.dirty !== undefined && typeof value.dirty !== "boolean") {
+      throw new TypeError("file snapshot dirty state is invalid");
+    }
     if (!DIGEST_RE.test(value.sha256)) throw new TypeError("file snapshot digest is invalid");
     const bytes = assertBase64url(value.bytes, "file snapshot bytes", { allowEmpty: true });
     const actual = createHash("sha256").update(bytes).digest("hex");

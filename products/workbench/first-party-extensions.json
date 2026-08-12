@@ -197,6 +197,14 @@
           "destination": "extensions/chatero-documentation/pending-edit-rebase.mjs"
         },
         {
+          "source": "products/workbench/extensions/chatero-documentation/review-decisions.mjs",
+          "destination": "extensions/chatero-documentation/review-decisions.mjs"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-documentation/review-snapshot.mjs",
+          "destination": "extensions/chatero-documentation/review-snapshot.mjs"
+        },
+        {
           "source": "products/workbench/documentation-authority/runtime/chatero-documentation-authority.mjs",
           "destination": "extensions/chatero-documentation/runtime/chatero-documentation-authority.mjs"
         },
@@ -219,6 +227,10 @@
         {
           "source": "products/workbench/extensions/chatero-documentation/text-change-set.mjs",
           "destination": "extensions/chatero-documentation/text-change-set.mjs"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-documentation/three-way-reconcile.mjs",
+          "destination": "extensions/chatero-documentation/three-way-reconcile.mjs"
         },
         {
           "source": "products/workbench/extensions/chatero-documentation/webview/formal-block-decorations.mjs",
