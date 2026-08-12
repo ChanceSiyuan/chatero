@@ -24,13 +24,13 @@ async function createFixture() {
   const manifestPath = join(root, "first-party-extensions.json");
   await writeFile(manifestPath, `${JSON.stringify({
     schemaVersion: 1,
-    extensions: [{
-      id: "chatero.zotero",
+    extensions: ["remote", "documentation", "zotero"].map(id => ({
+      id: `chatero.${id}`,
       files: [
-        { source: "source/package.json", destination: "extensions/chatero-zotero/package.json" },
-        { source: "source/extension.mjs", destination: "extensions/chatero-zotero/extension.mjs" },
+        { source: "source/package.json", destination: `extensions/chatero-${id}/package.json` },
+        { source: "source/extension.mjs", destination: `extensions/chatero-${id}/extension.mjs` },
       ],
-    }],
+    })),
   })}\n`);
   return { checkout, manifestPath, root };
 }
@@ -41,13 +41,17 @@ test("materializes declared regular files with deterministic provenance", async 
 
   const result = await materializeFirstPartyExtensions(input);
 
-  assert.equal(result.extensions.length, 1);
-  assert.equal(result.extensions[0].id, "chatero.zotero");
-  assert.deepEqual(result.extensions[0].files.map(value => value.path), [
-    "extensions/chatero-zotero/extension.mjs",
-    "extensions/chatero-zotero/package.json",
+  assert.deepEqual(result.extensions.map(value => value.id), [
+    "chatero.remote",
+    "chatero.documentation",
+    "chatero.zotero",
   ]);
-  assert.match(result.extensions[0].treeSha256, /^[0-9a-f]{64}$/);
+  const documentation = result.extensions.find(value => value.id === "chatero.documentation");
+  assert.deepEqual(documentation.files.map(value => value.path), [
+    "extensions/chatero-documentation/extension.mjs",
+    "extensions/chatero-documentation/package.json",
+  ]);
+  assert.match(documentation.treeSha256, /^[0-9a-f]{64}$/);
   assert.equal(await readFile(join(input.checkout, "extensions", "chatero-zotero", "extension.mjs"), "utf8"), 'export const activate = () => {};\n');
   assert.deepEqual(await verifyFirstPartyExtensions({
     checkout: input.checkout,

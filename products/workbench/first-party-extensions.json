@@ -2,6 +2,23 @@
   "schemaVersion": 1,
   "extensions": [
     {
+      "id": "chatero.documentation",
+      "files": [
+        {
+          "source": "products/workbench/extensions/chatero-documentation/extension.cjs",
+          "destination": "extensions/chatero-documentation/extension.cjs"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-documentation/media/documentation.svg",
+          "destination": "extensions/chatero-documentation/media/documentation.svg"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-documentation/package.json",
+          "destination": "extensions/chatero-documentation/package.json"
+        }
+      ]
+    },
+    {
       "id": "chatero.remote",
       "files": [
         {

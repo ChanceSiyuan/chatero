@@ -17,6 +17,7 @@
     "build:qlab-starter": "node ./scripts/chatero/build-qlab-starter.mjs",
     "test:chatero": "node --test scripts/chatero/tests/*.test.mjs",
     "test:workbench-bootstrap": "node --test products/workbench/tests/*.test.mjs",
+    "test:documentation": "node --test products/workbench/tests/documentation-*.test.mjs",
     "test:remote-agent": "node --test products/workbench/tests/remote-agent-*.test.mjs",
     "core:generate": "node services/zotero-core/scripts/generate-protocol.mjs",
     "core:check": "node services/zotero-core/scripts/generate-protocol.mjs --check",

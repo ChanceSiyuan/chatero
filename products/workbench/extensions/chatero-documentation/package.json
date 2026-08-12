@@ -1,0 +1,84 @@
+{
+  "name": "chatero-documentation",
+  "displayName": "Chatero Documentation",
+  "description": "Unified human and Agent-authored research documentation for Chatero workspaces.",
+  "version": "0.1.0",
+  "publisher": "chatero",
+  "license": "MIT",
+  "private": true,
+  "engines": {
+    "vscode": "^1.132.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "extensionKind": [
+    "workspace"
+  ],
+  "main": "./extension.cjs",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": true
+    },
+    "virtualWorkspaces": false
+  },
+  "contributes": {
+    "configuration": {
+      "title": "Chatero Documentation",
+      "properties": {
+        "chatero.documentation.enabled": {
+          "type": "boolean",
+          "default": false,
+          "scope": "resource",
+          "description": "Enable Chatero Documentation routes and commands for this workspace."
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "chatero.documentation.newPage",
+        "title": "New Documentation Page",
+        "category": "Chatero"
+      },
+      {
+        "command": "chatero.documentation.openSource",
+        "title": "Open Documentation Source",
+        "category": "Chatero"
+      },
+      {
+        "command": "chatero.documentation.markWorking",
+        "title": "Mark Documentation as Working",
+        "category": "Chatero"
+      },
+      {
+        "command": "chatero.documentation.markReviewed",
+        "title": "Mark Documentation as Reviewed",
+        "category": "Chatero"
+      },
+      {
+        "command": "chatero.documentation.planMigration",
+        "title": "Plan Documentation Migration",
+        "category": "Chatero"
+      },
+      {
+        "command": "chatero.documentation.refresh",
+        "title": "Refresh Documentation",
+        "category": "Chatero",
+        "icon": "$(refresh)"
+      }
+    ],
+    "views": {
+      "explorer": [
+        {
+          "id": "chatero.documentation.pages",
+          "name": "Documentation",
+          "icon": "media/documentation.svg",
+          "when": "chatero.documentation.enabled"
+        }
+      ]
+    }
+  }
+}
