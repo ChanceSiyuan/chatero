@@ -30,6 +30,11 @@ import {
 } from "../extensions/chatero-documentation/documentation-operations.mjs";
 import { documentationPagePath } from "../extensions/chatero-documentation/documentation-path.mjs";
 import { parseDocumentationState } from "../extensions/chatero-documentation/documentation-state.mjs";
+import {
+  settlementAffectedResourceDigest,
+  settlementOperationDigest,
+  settlementTextProofDigest,
+} from "../extensions/chatero-documentation/settlement-protocol.mjs";
 import { materializeFirstPartyExtensions } from "../scripts/lib/first-party-extensions.mjs";
 import { writeInstallTreeManifest } from "../remote-agent/runtime/chatero-install-integrity.mjs";
 
@@ -332,6 +337,109 @@ test("one transaction frame durably commits and idempotently replays workflow st
     "utf8",
   ));
   assert.equal(journal.phase, "committed");
+});
+
+test("settlement prepare is durable before text ack and never writes QMD bytes", async t => {
+  const root = await mkdtemp(join(tmpdir(), "chatero-documentation-settlement-helper-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(join(root, "documentation"), { recursive: true });
+  await mkdir(join(root, ".chatero"), { mode: 0o755 });
+  const before = "human preface\none\ntwo\n";
+  const intended = "human preface\none\nTWO\n";
+  await writeFile(join(root, "documentation", "topic.qmd"), before);
+  await writeFile(
+    join(root, ".chatero", "documentation-state.v1.json"),
+    '{"schemaVersion":1,"generation":"0000000000000002","documents":{"topic.qmd":{"state":"reviewed"}}}\n',
+  );
+  const beforeDigest = `sha256:${createHash("sha256").update(before).digest("hex")}`;
+  const intendedDigest = `sha256:${createHash("sha256").update(intended).digest("hex")}`;
+  const operationId = "settle-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  const prepare = {
+    kind: "prepare-settlement",
+    schemaVersion: 1,
+    operationId,
+    idempotencyKey: "settlement-helper-a",
+    operationDigest: "pending",
+    affectedResourceDigest: "pending",
+    reviewDigest: `sha256:${"c".repeat(64)}`,
+    generationDigest: `sha256:${"d".repeat(64)}`,
+    expectedStateGeneration: "0000000000000002",
+    decisions: [{ id: "hunk-a", decision: "accept" }],
+    textOverlay: [{
+      operationId: "edit-topic",
+      path: "topic.qmd",
+      expectedVersion: 7,
+      currentRevision: `text-document:7:${beforeDigest}`,
+      beforeDigest,
+      intendedText: intended,
+      intendedDigest,
+    }],
+    resourceOperations: [],
+    stateChanges: [{ kind: "set", path: "topic.qmd", state: "working" }],
+    deferredOperations: [],
+  };
+  prepare.affectedResourceDigest = settlementAffectedResourceDigest(prepare);
+  prepare.operationDigest = settlementOperationDigest(prepare);
+  const { operationDigest, affectedResourceDigest } = prepare;
+  const transact = async (requestId, transaction) => (await invokeHelper({
+    protocolVersion: 1,
+    requestId,
+    kind: "transact",
+    workspace: pathToFileURL(root).href,
+    epoch: "epoch-1",
+    transaction,
+  })).result;
+
+  const prepared = await transact("settlement-prepare-1", prepare);
+  assert.equal(prepared.kind, "awaiting-text");
+  assert.equal(prepared.operationDigest, operationDigest);
+  assert.match(prepared.approvalAcceptanceProof, /^sha256:[0-9a-f]{64}$/u);
+  assert.equal(await readFile(join(root, "documentation", "topic.qmd"), "utf8"), before);
+  const marker = JSON.parse(await readFile(
+    join(root, ".chatero", "documentation-operation-active.v1.json"),
+    "utf8",
+  ));
+  assert.equal(marker.operationId, operationId);
+  assert.equal(marker.operationDigest, operationDigest);
+  const journalPath = join(root, ".chatero", "documentation-operations", `${operationId}.json`);
+  assert.equal(JSON.parse(await readFile(journalPath, "utf8")).phase, "awaiting-text");
+  assert.deepEqual(await transact("settlement-prepare-2", prepare), prepared);
+
+  const textProof = {
+    kind: "settlement-text-proof",
+    operationId,
+    operationDigest,
+    resources: [{
+      uri: `${pathToFileURL(root).href.replace(/\/$/u, "")}/documentation/topic.qmd`,
+      beforeVersion: 7,
+      afterVersion: 8,
+      beforeDigest,
+      intendedDigest,
+    }],
+  };
+  textProof.proofDigest = settlementTextProofDigest(textProof);
+  const committed = await transact("settlement-ack-1", {
+    kind: "ack-settlement-text",
+    schemaVersion: 1,
+    operationId,
+    operationDigest,
+    affectedResourceDigest,
+    textProof,
+  });
+  assert.deepEqual(committed, {
+    kind: "settlement-committed",
+    operationId,
+    receipt: "settlement-helper-a",
+  });
+  assert.equal(await readFile(join(root, "documentation", "topic.qmd"), "utf8"), before);
+  await assert.rejects(
+    readFile(join(root, ".chatero", "documentation-operation-active.v1.json")),
+    error => error?.code === "ENOENT",
+  );
+  const state = parseDocumentationState(await readFile(join(root, ".chatero", "documentation-state.v1.json")));
+  assert.equal(state.kind, "valid");
+  assert.equal(state.state.documents["topic.qmd"].state, "working");
+  assert.equal(JSON.parse(await readFile(journalPath, "utf8")).phase, "committed");
 });
 
 test("helper never follows a Documentation symlink and rejects case aliases", async t => {

@@ -2,6 +2,10 @@ import { createHash } from "node:crypto";
 
 import { documentationPagePath, validateOperationPathSet } from "./documentation-path.mjs";
 import { validateReviewDecisions } from "./review-decisions.mjs";
+import {
+  settlementAffectedResourceDigest,
+  settlementOperationDigest,
+} from "./settlement-protocol.mjs";
 import { withChangeContext } from "./text-change-set.mjs";
 import { threeWayReconcile } from "./three-way-reconcile.mjs";
 
@@ -10,19 +14,6 @@ const IDEMPOTENCY_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 
 function compareUtf8Bytes(left, right) {
   return Buffer.compare(Buffer.from(left, "utf8"), Buffer.from(right, "utf8"));
-}
-
-function canonicalJson(value) {
-  if (value === null || typeof value === "boolean" || typeof value === "string") return JSON.stringify(value);
-  if (typeof value === "number" && Number.isSafeInteger(value)) return String(value);
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
-  if (!value || typeof value !== "object") throw new TypeError("settlement identity is not canonical JSON");
-  const keys = Object.keys(value).sort(compareUtf8Bytes);
-  return `{${keys.map(key => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
-}
-
-function digestValue(value) {
-  return `sha256:${createHash("sha256").update(canonicalJson(value), "utf8").digest("hex")}`;
 }
 
 function textDigest(value) {
@@ -261,11 +252,8 @@ export function planSettlement({ snapshot, decisions, currentDocuments, idempote
         proposedDigest: textDigest(value.proposedText ?? ""), deferredLeaves: value.deferredLeaves,
       })),
     };
-    const affectedResourceDigest = digestValue({
-      text: identity.textOperations,
-      resources: identity.resourceOperations,
-    });
-    const operationDigest = digestValue({ ...identity, affectedResourceDigest });
+    const affectedResourceDigest = settlementAffectedResourceDigest(identity);
+    const operationDigest = settlementOperationDigest({ ...identity, affectedResourceDigest });
     return Object.freeze({
       kind: "settlement-plan",
       ...identity,

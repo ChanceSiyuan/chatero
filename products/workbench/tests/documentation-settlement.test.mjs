@@ -77,7 +77,7 @@ test("plans an accepted hunk over the exact human working copy and leaves reject
     idempotencyKey: "settle-review-a",
   });
 
-  assert.equal(result.kind, "settlement-plan");
+  assert.equal(result.kind, "settlement-plan", result.message);
   assert.equal(result.textOperations.length, 1);
   assert.equal(
     result.textOperations[0].intendedText,
@@ -126,7 +126,7 @@ test("executes one barrier-bound WorkspaceEdit and acknowledges its exact text p
     }],
     idempotencyKey: "settle-review-execute",
   });
-  assert.equal(plan.kind, "settlement-plan");
+  assert.equal(plan.kind, "settlement-plan", plan.message);
 
   const uri = Object.freeze({
     value: "file:///workspace/documentation/topic.qmd",

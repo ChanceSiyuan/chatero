@@ -1,23 +1,8 @@
-import { createHash } from "node:crypto";
-
 import { documentationPagePath } from "./documentation-path.mjs";
-
-function compareUtf8Bytes(left, right) {
-  return Buffer.compare(Buffer.from(left, "utf8"), Buffer.from(right, "utf8"));
-}
-
-function canonicalJson(value) {
-  if (value === null || typeof value === "boolean" || typeof value === "string") return JSON.stringify(value);
-  if (typeof value === "number" && Number.isSafeInteger(value)) return String(value);
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
-  if (!value || typeof value !== "object") throw new TypeError("settlement continuation is not canonical JSON");
-  const keys = Object.keys(value).sort(compareUtf8Bytes);
-  return `{${keys.map(key => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
-}
-
-function digestValue(value) {
-  return `sha256:${createHash("sha256").update(canonicalJson(value), "utf8").digest("hex")}`;
-}
+import {
+  canonicalSettlementJson,
+  settlementTextProofDigest,
+} from "./settlement-protocol.mjs";
 
 function validateDependencies({ plan, adapter, barrier, coordinator, uriFor }) {
   if (!plan || plan.kind !== "settlement-plan" || !Array.isArray(plan.textOperations)
@@ -72,7 +57,7 @@ function validatePrepared(value, plan, expectedOverlay) {
     || value.operationDigest !== plan.operationDigest
     || value.affectedResourceDigest !== plan.affectedResourceDigest
     || typeof value.approvalAcceptanceProof !== "string"
-    || canonicalJson(value.textOverlay) !== canonicalJson(expectedOverlay)) {
+    || canonicalSettlementJson(value.textOverlay) !== canonicalSettlementJson(expectedOverlay)) {
     throw new TypeError("authority returned an invalid prepared settlement");
   }
   return value;
@@ -104,7 +89,7 @@ function makeTextProof(plan, overlay, applied) {
     operationDigest: plan.operationDigest,
     resources: Object.freeze(resources),
   });
-  return Object.freeze({ ...identity, proofDigest: digestValue(identity) });
+  return Object.freeze({ ...identity, proofDigest: settlementTextProofDigest(identity) });
 }
 
 function validationFailure(value) {

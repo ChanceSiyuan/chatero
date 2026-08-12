@@ -7,6 +7,7 @@ import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { createStateTransactionExecutor } from "../documentation-operations.mjs";
+import { createSettlementTransactionExecutor } from "../settlement-operations.mjs";
 import { buildLegacyMigrationMapping } from "../migration-model.mjs";
 import {
   classifyLegacyProposals,
@@ -24,6 +25,7 @@ const STATE_PATH = ".chatero/documentation-state.v1.json";
 const OPERATIONS_PATH = ".chatero/documentation-operations";
 const RECEIPTS_PATH = ".chatero/documentation-receipts";
 const LEASE_PATH = ".chatero/documentation-authority.lock";
+const ACTIVE_OPERATION_PATH = ".chatero/documentation-operation-active.v1.json";
 const PRIVATE_DIRECTORY_MODE = 0o700;
 const PRIVATE_FILE_MODE = 0o600;
 const MIGRATION_ROOTS = Object.freeze(["documentation", "drafts", "knowledge"]);
@@ -1398,6 +1400,7 @@ async function createFilesystemAuthority(fs, root) {
   const operations = await ensureDirectory(fs, root, OPERATIONS_PATH, { privateMode: true });
   const receipts = await ensureDirectory(fs, root, RECEIPTS_PATH, { privateMode: true });
   const statePath = join(root, ...safeRelativePath(STATE_PATH));
+  const activeOperationPath = join(root, ...safeRelativePath(ACTIVE_OPERATION_PATH));
   const operationPath = operationId => join(operations, `${operationId}.json`);
   const receiptPath = operationId => join(receipts, `${operationId}.json`);
   return Object.freeze({
@@ -1421,6 +1424,16 @@ async function createFilesystemAuthority(fs, root) {
     },
     readState: () => readOptional(fs, statePath, 4 * 1024 * 1024),
     writeState: bytes => atomicWrite(fs, statePath, Buffer.from(bytes)),
+    readActiveMarker: () => readCanonicalJson(fs, activeOperationPath),
+    createActiveMarker: record => exclusiveWrite(fs, activeOperationPath, serializedJson(record)),
+    async removeActiveMarker(expected) {
+      const current = await readCanonicalJson(fs, activeOperationPath);
+      if (current === null || canonicalJson(current) !== canonicalJson(expected)) {
+        throw new Error("Documentation active operation marker changed");
+      }
+      await fs.rm(activeOperationPath);
+      await syncDirectory(fs, dirname(activeOperationPath));
+    },
     async readPageRevision(path, workingCopy) {
       const entry = await inspectRelative(fs, root, `documentation/${path}`);
       if (!entry.metadata) return null;
@@ -1444,6 +1457,13 @@ async function dispatch(fs, clock, request) {
       return stageGenerationTransaction(fs, root, request.transaction);
     }
     const authority = await createFilesystemAuthority(fs, root);
+    const settlement = createSettlementTransactionExecutor({ authority, workspace: request.workspace });
+    if (request.kind === "transact" && request.transaction?.kind === "prepare-settlement") {
+      return settlement.prepare(request.transaction);
+    }
+    if (request.kind === "transact" && request.transaction?.kind === "ack-settlement-text") {
+      return settlement.ack(request.transaction);
+    }
     const executor = createStateTransactionExecutor({ authority });
     if (request.kind === "transact") return executor.execute(request.transaction);
     if (request.kind === "recover") return executor.recover(request.recovery);

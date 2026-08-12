@@ -209,6 +209,14 @@
           "destination": "extensions/chatero-documentation/settlement-planner.mjs"
         },
         {
+          "source": "products/workbench/extensions/chatero-documentation/settlement-protocol.mjs",
+          "destination": "extensions/chatero-documentation/settlement-protocol.mjs"
+        },
+        {
+          "source": "products/workbench/documentation-authority/settlement-operations.mjs",
+          "destination": "extensions/chatero-documentation/settlement-operations.mjs"
+        },
+        {
           "source": "products/workbench/extensions/chatero-documentation/settlement-executor.mjs",
           "destination": "extensions/chatero-documentation/settlement-executor.mjs"
         },
