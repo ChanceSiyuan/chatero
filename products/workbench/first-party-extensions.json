@@ -5,6 +5,42 @@
       "id": "chatero.documentation",
       "files": [
         {
+          "source": "products/workbench/extensions/chatero-documentation/documentation-authority-client.mjs",
+          "destination": "extensions/chatero-documentation/documentation-authority-client.mjs"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-documentation/documentation-capabilities.mjs",
+          "destination": "extensions/chatero-documentation/documentation-capabilities.mjs"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-documentation/documentation-operations.mjs",
+          "destination": "extensions/chatero-documentation/documentation-operations.mjs"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-documentation/documentation-path.mjs",
+          "destination": "extensions/chatero-documentation/documentation-path.mjs"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-documentation/documentation-services.mjs",
+          "destination": "extensions/chatero-documentation/documentation-services.mjs"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-documentation/documentation-state.mjs",
+          "destination": "extensions/chatero-documentation/documentation-state.mjs"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-documentation/documentation-transactions.mjs",
+          "destination": "extensions/chatero-documentation/documentation-transactions.mjs"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-documentation/documentation-tree.cjs",
+          "destination": "extensions/chatero-documentation/documentation-tree.cjs"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-documentation/documentation-workspace.mjs",
+          "destination": "extensions/chatero-documentation/documentation-workspace.mjs"
+        },
+        {
           "source": "products/workbench/extensions/chatero-documentation/extension.cjs",
           "destination": "extensions/chatero-documentation/extension.cjs"
         },
@@ -15,6 +51,14 @@
         {
           "source": "products/workbench/extensions/chatero-documentation/package.json",
           "destination": "extensions/chatero-documentation/package.json"
+        },
+        {
+          "source": "products/workbench/documentation-authority/runtime/chatero-documentation-authority.mjs",
+          "destination": "extensions/chatero-documentation/runtime/chatero-documentation-authority.mjs"
+        },
+        {
+          "source": "products/workbench/documentation-authority/protocol.mjs",
+          "destination": "extensions/chatero-documentation/runtime/protocol.mjs"
         }
       ]
     },

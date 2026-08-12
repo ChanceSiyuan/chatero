@@ -20,6 +20,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { verifyCodeOss } from "../../scripts/verify-code-oss.mjs";
+import { assertDocumentationPayload } from "../documentation-payload.mjs";
 
 const CODE_OSS_COMMIT = "df53daabb18cd157bdb08c7f01c34df936cf12f4";
 const REQUIRED_NODE_VERSION = "24.18.0";
@@ -412,6 +413,7 @@ async function main() {
     const integrityVerifierDestination = join(bin, "chatero-install-integrity.mjs");
     await copyFile(INTEGRITY_VERIFIER_PATH, integrityVerifierDestination);
     await chmod(integrityVerifierDestination, 0o755);
+    await assertDocumentationPayload(root);
 
     await mkdir(dirname(plan.output), { recursive: true });
     await packDeterministically(workDirectory, plan.rootName, plan.output);

@@ -28,6 +28,7 @@ import {
 } from "../release-contract.mjs";
 import { REMOTE_AGENT_NOTICE_FILES } from "./build-linux-agent.mjs";
 import { writeInstallTreeManifest } from "../runtime/chatero-install-integrity.mjs";
+import { assertDocumentationPayload } from "../documentation-payload.mjs";
 
 const RELEASE_VERSION = "1.132.0";
 const CODE_OSS_COMMIT = "df53daabb18cd157bdb08c7f01c34df936cf12f4";
@@ -445,6 +446,7 @@ async function stageArchive({ archive, tuple, workDirectory }) {
   }
 
   await assertAgentPayload(root, tuple);
+  await assertDocumentationPayload(root);
   const tree = await writeInstallTreeManifest({ root });
   const node = await hashFile(join(root, "node"));
   const integrityVerifier = await hashFile(integrityVerifierDestination);

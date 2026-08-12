@@ -11,6 +11,10 @@ function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
+function compareUtf8Bytes(left, right) {
+  return Buffer.compare(Buffer.from(left, "utf8"), Buffer.from(right, "utf8"));
+}
+
 function exactObject(value, fields, label) {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${label} must be an object`);
   for (const field of Object.keys(value)) {
@@ -134,7 +138,7 @@ export async function materializeFirstPartyExtensions({ root, checkout, manifest
         size: bytes.length,
       });
     }
-    files.sort((left, right) => left.path.localeCompare(right.path));
+    files.sort((left, right) => compareUtf8Bytes(left.path, right.path));
     prepared.push({
       id: extension.id,
       destinationRoot: extension.destinationRootUnix,
@@ -160,7 +164,7 @@ export async function materializeFirstPartyExtensions({ root, checkout, manifest
 async function collectFiles(root, directory, files) {
   const metadata = await lstat(directory);
   if (!metadata.isDirectory() || metadata.isSymbolicLink()) throw new Error(`extension tree contains an unsafe directory: ${directory}`);
-  for (const entry of (await readdir(directory)).sort()) {
+  for (const entry of (await readdir(directory)).sort(compareUtf8Bytes)) {
     const path = join(directory, entry);
     const value = await lstat(path);
     if (value.isSymbolicLink()) throw new Error(`extension tree contains a symbolic link: ${path}`);
@@ -185,7 +189,7 @@ export async function verifyFirstPartyExtensions({ checkout, expected }) {
       const bytes = await readFile(path);
       files.push({ path: relativePath, sha256: sha256(bytes), size: bytes.length });
     }
-    files.sort((left, right) => left.path.localeCompare(right.path));
+    files.sort((left, right) => compareUtf8Bytes(left.path, right.path));
     if (JSON.stringify(files) !== JSON.stringify(extension.files)) {
       throw new Error(`first-party extension ${extension.id} file digest set does not match provenance`);
     }

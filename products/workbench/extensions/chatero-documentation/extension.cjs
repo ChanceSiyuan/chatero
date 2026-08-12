@@ -8,7 +8,10 @@ async function activate(context) {
     await vscode.commands.executeCommand("setContext", "chatero.documentation.enabled", enabled);
     if (!enabled) return;
     const { registerDocumentation } = require("./documentation-tree.cjs");
-    context.subscriptions.push(...await registerDocumentation(vscode, context));
+    const services = context.documentationServices
+      ?? await import("./documentation-services.mjs").then(module =>
+        module.createProductionDocumentationServices({ vscode, context }));
+    context.subscriptions.push(...await registerDocumentation(vscode, context, services));
   }
   catch (error) {
     if (!vscode) return;

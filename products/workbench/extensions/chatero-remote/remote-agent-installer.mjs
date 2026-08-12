@@ -329,7 +329,7 @@ const CREATE_RUNTIME_SCRIPT = [
   "printf '%s' \"$token\" | dd of=\"$token_file\" oflag=nofollow conv=nocreat status=none",
   "safe_marker \"$token_file\"",
   "verify_install \"$install\" \"$digest\" \"$2\" \"$3\" \"$4\" \"$5\"",
-  "VSCODE_AGENT_HOST_CODEX_AGENT_ENABLED=true VSCODE_AGENT_HOST_CODEX_SDK_ROOT=\"$install/agent-sdk/codex\" VSCODE_AGENT_HOST_CLAUDE_AGENT_ENABLED=false VSCODE_AGENT_HOST_BYOK_MODELS_ENABLED=false nohup \"$install/bin/chatero-server\" --host=127.0.0.1 --port=0 --connection-token-file=\"$token_file\" --agent-host-path=\"$agent_socket\" >\"$server_log\" 2>&1 </dev/null &",
+  "CHATERO_AGENT_INSTALL_ROOT=\"$install\" CHATERO_AGENT_TREE_MANIFEST_SHA256=\"$3\" CHATERO_AGENT_NODE_SHA256=\"$4\" CHATERO_AGENT_INTEGRITY_VERIFIER_SHA256=\"$5\" VSCODE_AGENT_HOST_CODEX_AGENT_ENABLED=true VSCODE_AGENT_HOST_CODEX_SDK_ROOT=\"$install/agent-sdk/codex\" VSCODE_AGENT_HOST_CLAUDE_AGENT_ENABLED=false VSCODE_AGENT_HOST_BYOK_MODELS_ENABLED=false nohup \"$install/bin/chatero-server\" --host=127.0.0.1 --port=0 --connection-token-file=\"$token_file\" --agent-host-path=\"$agent_socket\" >\"$server_log\" 2>&1 </dev/null &",
   "server_pid=$!",
   "port=''",
   "tries=0",

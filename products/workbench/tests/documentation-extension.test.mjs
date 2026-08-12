@@ -44,7 +44,7 @@ test("Documentation is a disabled workspace extension with only Phase 1 surfaces
   assert.equal(commandIds.some(command => /executeMigration/i.test(command)), false);
 });
 
-test("first-party materialization declares only the existing Documentation scaffold", async () => {
+test("first-party materialization declares the complete Documentation authority", async () => {
   const firstParty = JSON.parse(await readFile(new URL("../first-party-extensions.json", import.meta.url), "utf8"));
   assert.deepEqual(firstParty.extensions.map(extension => extension.id), [
     "chatero.documentation",
@@ -53,9 +53,20 @@ test("first-party materialization declares only the existing Documentation scaff
   ]);
   const documentation = firstParty.extensions[0];
   assert.deepEqual(documentation.files.map(file => file.destination), [
+    "extensions/chatero-documentation/documentation-authority-client.mjs",
+    "extensions/chatero-documentation/documentation-capabilities.mjs",
+    "extensions/chatero-documentation/documentation-operations.mjs",
+    "extensions/chatero-documentation/documentation-path.mjs",
+    "extensions/chatero-documentation/documentation-services.mjs",
+    "extensions/chatero-documentation/documentation-state.mjs",
+    "extensions/chatero-documentation/documentation-transactions.mjs",
+    "extensions/chatero-documentation/documentation-tree.cjs",
+    "extensions/chatero-documentation/documentation-workspace.mjs",
     "extensions/chatero-documentation/extension.cjs",
     "extensions/chatero-documentation/media/documentation.svg",
     "extensions/chatero-documentation/package.json",
+    "extensions/chatero-documentation/runtime/chatero-documentation-authority.mjs",
+    "extensions/chatero-documentation/runtime/protocol.mjs",
   ]);
 });
 
@@ -89,7 +100,7 @@ async function activateWith({ enabled, registerDocumentation }) {
       },
     },
   };
-  const context = { subscriptions: [] };
+  const context = { subscriptions: [], documentationServices: Object.freeze({ test: true }) };
   const require = createRequire(import.meta.url);
   const extensionPath = fileURLToPath(new URL("extension.cjs", extensionRoot));
   delete require.cache[require.resolve(extensionPath)];

@@ -3,7 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import {
   decodeAuthorityResponse,
   encodeAuthorityRequest,
-} from "../../documentation-authority/protocol.mjs";
+} from "./runtime/protocol.mjs";
 import { documentationWorkspaceUri } from "./documentation-path.mjs";
 
 function uriString(uri) {

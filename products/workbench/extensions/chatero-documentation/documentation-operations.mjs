@@ -213,6 +213,15 @@ function committedResult(record) {
   });
 }
 
+function matchesCommittedResult(value, record) {
+  const expected = committedResult(record);
+  return value && typeof value === "object" && !Array.isArray(value)
+    && Object.keys(value).length === 3
+    && value.kind === expected.kind
+    && value.generation === expected.generation
+    && value.receipt === expected.receipt;
+}
+
 function recoveryConflict(operationId) {
   return Object.freeze({
     kind: "recovery-conflict",
@@ -269,7 +278,7 @@ export function createStateTransactionExecutor({ authority, afterPhase = async (
   const resume = async (record, workingCopy = null) => {
     const receipt = await authority.readReceipt(record.operationId);
     if (receipt) {
-      if (JSON.stringify(receipt) !== JSON.stringify(committedResult(record))) {
+      if (!matchesCommittedResult(receipt, record)) {
         return recoveryConflict(record.operationId);
       }
       if (record.phase !== "committed") await persistPhase(record, "committed", receipt);

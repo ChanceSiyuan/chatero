@@ -15,7 +15,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { Readable } from "node:stream";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, test } from "node:test";
@@ -44,6 +44,11 @@ const STAGE_PATH = fileURLToPath(new URL(
 const BUILD_PATH = fileURLToPath(new URL(
   "../remote-agent/scripts/build-linux-agent.mjs",
   import.meta.url
+));
+const REPOSITORY_ROOT = fileURLToPath(new URL("../../../", import.meta.url));
+const FIRST_PARTY_MANIFEST_PATH = fileURLToPath(new URL(
+  "../first-party-extensions.json",
+  import.meta.url,
 ));
 const temporaryDirectories = [];
 
@@ -149,6 +154,17 @@ function elfFixture(machine) {
   return header;
 }
 
+async function addDocumentationExtensionFixture(source, root) {
+  const manifest = JSON.parse(await readFile(FIRST_PARTY_MANIFEST_PATH, "utf8"));
+  const extension = manifest.extensions.find(value => value.id === "chatero.documentation");
+  assert.ok(extension);
+  for (const record of extension.files) {
+    const destination = join(source, root, record.destination);
+    await mkdir(dirname(destination), { recursive: true });
+    await writeFile(destination, await readFile(join(REPOSITORY_ROOT, record.source)), { mode: 0o644 });
+  }
+}
+
 async function createRemoteAgentFixture(source, root, tuple, {
   agentSdks = {},
   omitNotice,
@@ -177,6 +193,7 @@ async function createRemoteAgentFixture(source, root, tuple, {
   await mkdir(join(nodeModules, ".bin"), { recursive: true });
   await mkdir(join(source, root, "licenses"), { recursive: true });
   await mkdir(bin, { recursive: true });
+  await addDocumentationExtensionFixture(source, root);
   await writeFile(join(source, root, "node"), "#!/bin/sh\n", { mode: 0o755 });
   await writeFile(join(bin, "chatero-server"), `${tuple}\n`, { mode: 0o755 });
   await writeFile(join(source, root, "product.json"), JSON.stringify({ agentSdks }), "utf8");
@@ -516,6 +533,10 @@ test("release staging injects fixed helpers and signs the exact install tree", a
       listed.stdout,
       new RegExp(`^chatero-agent-${artifact.tuple}/integrity/tree\\.v1\\.json$`, "m")
     );
+    assert.match(
+      listed.stdout,
+      new RegExp(`^chatero-agent-${artifact.tuple}/extensions/chatero-documentation/runtime/chatero-documentation-authority\\.mjs$`, "m")
+    );
     const extracted = join(directory, `extracted-${artifact.tuple}`);
     await mkdir(extracted);
     const unpacked = await run("tar", ["-xzf", join(output, artifact.filename), "-C", extracted]);
@@ -657,7 +678,7 @@ test("release staging rejects a required payload behind an intermediate symlink"
   assert.match(staged.stderr, /licenses.*ancestors must be real directories/i);
 });
 
-test("release staging rejects non-OpenAI providers and extra OpenAI packages", async t => {
+test("release staging rejects unpinned Documentation and Agent SDK payloads", async t => {
   for (const [name, addForbiddenPayload, expected] of [
     ["install marker symlink", async root => {
       await symlink("product.json", join(root, ".chatero-release-sha256"));
@@ -670,6 +691,12 @@ test("release staging rejects non-OpenAI providers and extra OpenAI packages", a
       await mkdir(join(root, "agent-sdk", "codex", "node_modules", "@openai", "foo"), { recursive: true });
       await writeFile(join(root, "agent-sdk", "codex", "node_modules", "@openai", "foo", "payload"), "forbidden\n", "utf8");
     }, /@openai.*exactly.*codex/i],
+    ["changed Documentation helper", async root => {
+      await writeFile(
+        join(root, "extensions", "chatero-documentation", "runtime", "chatero-documentation-authority.mjs"),
+        "tampered\n",
+      );
+    }, /Documentation extension.*first-party provenance/i],
   ]) {
     await t.test(name, async () => {
       const directory = await mkdtemp(join(tmpdir(), "chatero-stage-provider-"));
