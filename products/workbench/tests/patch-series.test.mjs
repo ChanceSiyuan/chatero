@@ -78,6 +78,30 @@ async function createPatchFixture({ invalidSecond = false } = {}) {
   return { checkout, root, seriesPath };
 }
 
+async function createDependentPatchFixture() {
+  const fixture = await createPatchFixture();
+  const patches = join(fixture.root, "patches");
+  const first = await readFile(join(patches, "0001-a.patch"), "utf8");
+  const second = [
+    "diff --git a/a.txt b/a.txt",
+    "--- a/a.txt",
+    "+++ b/a.txt",
+    "@@ -1 +1 @@",
+    "-two",
+    "+three",
+    "",
+  ].join("\n");
+  await writeFile(join(patches, "0002-b.patch"), second);
+  await writeFile(fixture.seriesPath, `${JSON.stringify({
+    schemaVersion: 1,
+    patches: [
+      { file: "0001-a.patch", sha256: sha256(first) },
+      { file: "0002-b.patch", sha256: sha256(second) },
+    ],
+  }, null, 2)}\n`);
+  return fixture;
+}
+
 test("accepts the deliberate empty initial patch series without touching Git", async () => {
   const { applyPatchSeries } = await import("../scripts/lib/patch-series.mjs");
   const directory = await mkdtemp(join(tmpdir(), "chatero-empty-patches-"));
@@ -102,6 +126,16 @@ test("applies a verified series in declared order", async () => {
   assert.deepEqual(result, { applied: ["0001-a.patch", "0002-b.patch"] });
   assert.equal(await readFile(join(checkout, "a.txt"), "utf8"), "two\n");
   assert.equal(await readFile(join(checkout, "b.txt"), "utf8"), "three\n");
+});
+
+test("preflights ordered patch dependencies without a temporary worktree", async () => {
+  const { applyPatchSeries } = await import("../scripts/lib/patch-series.mjs");
+  const { checkout, seriesPath } = await createDependentPatchFixture();
+
+  const result = await applyPatchSeries({ checkout, seriesPath });
+
+  assert.deepEqual(result, { applied: ["0001-a.patch", "0002-b.patch"] });
+  assert.equal(await readFile(join(checkout, "a.txt"), "utf8"), "three\n");
 });
 
 test("checks every patch before applying the first one", async () => {

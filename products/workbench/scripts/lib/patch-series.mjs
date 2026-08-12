@@ -1,15 +1,17 @@
 import { execFile as execFileCallback } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, posix } from "node:path";
 import { promisify } from "node:util";
 
 const execFile = promisify(execFileCallback);
 const SHA256 = /^[0-9a-f]{64}$/;
 
-async function defaultRunGit({ args, cwd }) {
+async function defaultRunGit({ args, cwd, env }) {
   const { stdout } = await execFile("git", args, {
     cwd,
+    env: env ? { ...process.env, ...env } : process.env,
     encoding: "utf8",
     maxBuffer: 16 * 1024 * 1024,
   });
@@ -128,16 +130,30 @@ export async function applyPatchSeries({
 
   await assertCleanCheckout(checkout, runGit);
 
-  for (const patch of verified) {
-    try {
-      await runGit({
-        args: ["apply", "--check", "--whitespace=error", patch.path],
-        cwd: checkout,
-      });
+  const preflightDirectory = await mkdtemp(join(tmpdir(), "chatero-patch-index-"));
+  const preflightEnv = { GIT_INDEX_FILE: join(preflightDirectory, "index") };
+  try {
+    await runGit({ args: ["read-tree", "HEAD"], cwd: checkout, env: preflightEnv });
+    for (const patch of verified) {
+      try {
+        await runGit({
+          args: ["apply", "--cached", "--check", "--whitespace=error", patch.path],
+          cwd: checkout,
+          env: preflightEnv,
+        });
+        await runGit({
+          args: ["apply", "--cached", "--whitespace=error", patch.path],
+          cwd: checkout,
+          env: preflightEnv,
+        });
+      }
+      catch (error) {
+        throw new Error(`${patch.file} failed git apply preflight`, { cause: error });
+      }
     }
-    catch (error) {
-      throw new Error(`${patch.file} failed git apply preflight`, { cause: error });
-    }
+  }
+  finally {
+    await rm(preflightDirectory, { recursive: true, force: true });
   }
 
   for (const patch of verified) {
