@@ -516,17 +516,6 @@ async function collectMigrationSnapshot(fs, root, request) {
   for (const relativePath of MIGRATION_ROOTS) await collectRoot(relativePath);
   await collectRoot(LEGACY_PROPOSAL_ROOT);
 
-  const privateRoot = await inspectRelative(fs, root, ".chatero");
-  if (!privateRoot.metadata) add({ path: ".chatero", type: "absent" });
-  else if (privateRoot.metadata.isDirectory() && !privateRoot.metadata.isSymbolicLink()) {
-    add({
-      path: ".chatero",
-      type: "directory",
-      directoryGeneration: await directoryGeneration(fs, privateRoot.path),
-    });
-  }
-  else throw new TypeError("Documentation private root is unsafe");
-
   const state = await inspectRelative(fs, root, STATE_PATH);
   if (!state.metadata) add({ path: STATE_PATH, type: "absent" });
   else if (state.metadata.isFile() && !state.metadata.isSymbolicLink() && state.metadata.nlink === 1) {
@@ -675,7 +664,7 @@ function migrationPathProofs(snapshot, mapping, outputDigests, stateOutput) {
           requireClean: true,
         });
   }
-  for (const rootPath of [".chatero", "documentation"]) {
+  for (const rootPath of ["documentation"]) {
     const record = migrationRecord(snapshot, rootPath);
     add(record?.type === "directory"
       ? {
@@ -706,7 +695,7 @@ function migrationPathProofs(snapshot, mapping, outputDigests, stateOutput) {
   return Object.freeze([...proofs.values()].sort((left, right) => compareUtf8Bytes(left.path, right.path)));
 }
 
-function migrationIntendedOutputManifest(snapshot, mapping, stateOutput) {
+function migrationIntendedOutputs(snapshot, mapping, stateOutput) {
   const outputs = [];
   for (const entry of [...mapping.pages, ...mapping.assets]) {
     const sourcePath = `${entry.sourceRoot}/${entry.sourcePath}`;
@@ -727,6 +716,7 @@ function migrationIntendedOutputManifest(snapshot, mapping, stateOutput) {
       kind: entry.kind === "page" ? "canonical-page" : "canonical-asset",
       size: bytes.byteLength,
       sha256: `sha256:${sha256(bytes)}`,
+      bytes,
     }));
   }
   const stateBytes = stateOutputBytes(stateOutput);
@@ -735,9 +725,15 @@ function migrationIntendedOutputManifest(snapshot, mapping, stateOutput) {
     kind: "workflow-state",
     size: stateBytes.byteLength,
     sha256: `sha256:${sha256(stateBytes)}`,
+    bytes: stateBytes,
   }));
   outputs.sort((left, right) => compareUtf8Bytes(left.path, right.path));
   return Object.freeze(outputs);
+}
+
+function migrationIntendedOutputManifest(snapshot, mapping, stateOutput) {
+  return Object.freeze(migrationIntendedOutputs(snapshot, mapping, stateOutput).map(({ bytes: _bytes, ...value }) =>
+    Object.freeze(value)));
 }
 
 function migrationDiagnostics(rewrites, proposalDiagnostics) {
@@ -1409,7 +1405,12 @@ function processAlive(pid) {
 }
 
 async function acquireLease(fs, root, clock) {
-  await ensureDirectory(fs, root, ".chatero");
+  const privateRoot = await ensureDirectory(fs, root, ".chatero");
+  const privateMetadata = await fs.lstat(privateRoot);
+  if ((privateMetadata.mode & 0o777) !== PRIVATE_DIRECTORY_MODE) {
+    await fs.chmod(privateRoot, PRIVATE_DIRECTORY_MODE);
+    await syncDirectory(fs, dirname(privateRoot));
+  }
   const path = join(root, ...safeRelativePath(LEASE_PATH));
   const token = randomUUID();
   const record = Object.freeze({ schemaVersion: 1, pid: process.pid, token, createdAt: clock.now() });
@@ -1513,6 +1514,270 @@ async function createFilesystemAuthority(fs, root) {
   });
 }
 
+const MIGRATION_LIMITS = Object.freeze({
+  maximumEntries: 50_000,
+  maximumBlobBytes: 16 * 1024 * 1024,
+  maximumAggregateBytes: 64 * 1024 * 1024,
+  maximumReportBytes: 2 * 1024 * 1024,
+});
+
+function migrationExecutionRequest(value, epoch) {
+  exactFields(value, [
+    "kind", "schemaVersion", "operationId", "workspaceEpoch", "planDigest", "planRecord",
+    "approvalDigest", "idempotencyKey",
+  ], [], "execute migration request");
+  if (value.kind !== "execute-migration" || value.schemaVersion !== 1
+    || !/^migration-[0-9a-f]{32}$/u.test(value.operationId)
+    || value.workspaceEpoch !== epoch || !CHANGE_SET_DIGEST_RE.test(value.planDigest)
+    || !CHANGE_SET_DIGEST_RE.test(value.approvalDigest)
+    || !CHANGE_SET_OPERATION_RE.test(value.idempotencyKey)) {
+    throw new TypeError("execute migration request identity is invalid");
+  }
+  const plan = value.planRecord;
+  if (!plan || typeof plan !== "object" || Array.isArray(plan)
+    || plan.schemaVersion !== 2 || plan.plannerVersion !== MIGRATION_PLANNER_VERSION
+    || plan.operationId !== value.operationId || digestValue(plan) !== value.planDigest
+    || typeof plan.createdAt !== "string" || new Date(plan.createdAt).toISOString() !== plan.createdAt
+    || !Array.isArray(plan.affectedPaths) || !Array.isArray(plan.pathProofs)
+    || !Array.isArray(plan.intendedOutputManifest)) {
+    throw new TypeError("execute migration plan is invalid");
+  }
+  return Object.freeze({ ...value, planRecord: Object.freeze(plan) });
+}
+
+function migrationMarker(record) {
+  return Object.freeze({
+    schemaVersion: 1,
+    kind: "migration",
+    operationId: record.operationId,
+    workspaceEpoch: record.workspaceEpoch,
+    planDigest: record.planDigest,
+    requestDigest: record.requestDigest,
+    journalDigest: record.journalDigest,
+    affectedResourceDigest: record.affectedResourceDigest,
+  });
+}
+
+function sameCanonicalValue(left, right) {
+  return left !== null && canonicalJson(left) === canonicalJson(right);
+}
+
+function migrationAcceptanceProof(record) {
+  return digestValue({
+    kind: "migration-approval-accepted",
+    operationId: record.operationId,
+    requestDigest: record.requestDigest,
+    journalDigest: record.journalDigest,
+    approvalDigest: record.request.approvalDigest,
+  });
+}
+
+function migrationCommittedResult(record) {
+  return Object.freeze({
+    kind: "migration-committed",
+    operationId: record.operationId,
+    planDigest: record.planDigest,
+    receipt: record.idempotencyKey,
+    approvalAcceptanceProof: migrationAcceptanceProof(record),
+  });
+}
+
+function migrationConflictResult(record, path) {
+  return Object.freeze({
+    kind: "recovery-conflict",
+    operationId: record.operationId,
+    planDigest: record.planDigest,
+    approvalAcceptanceProof: migrationAcceptanceProof(record),
+    evidenceRef: `documentation-migration:${record.operationId}`,
+    ...(path ? { path } : {}),
+  });
+}
+
+function migrationStagingPath(operationId, outputPath) {
+  safeRelativePath(outputPath);
+  return `work/qlab-zotero/documentation-migration/${operationId}/staging/${outputPath}`;
+}
+
+async function migrationOutputsForPlan(fs, root, workspace, request) {
+  const snapshotRequest = Object.freeze({
+    workspace,
+    epoch: request.workspaceEpoch,
+    snapshot: Object.freeze({
+      kind: "plan-migration-v2",
+      limits: MIGRATION_LIMITS,
+      plannerVersion: MIGRATION_PLANNER_VERSION,
+      overlays: Object.freeze([]),
+    }),
+  });
+  const fixedTime = Date.parse(request.planRecord.createdAt);
+  const replanned = await planMigrationResult(fs, root, snapshotRequest, { now: () => fixedTime });
+  if (replanned.kind !== "migration-plan-v2" || replanned.planDigest !== request.planDigest
+    || canonicalJson(replanned.planRecord) !== canonicalJson(request.planRecord)) return null;
+  const snapshot = await collectMigrationSnapshot(fs, root, snapshotRequest);
+  if (snapshot.digest !== request.planRecord.sourceSnapshotDigest) return null;
+  const mapping = buildLegacyMigrationMapping({
+    knowledge: migrationEntries(snapshot, "knowledge"),
+    drafts: migrationEntries(snapshot, "drafts"),
+    documentation: [],
+  });
+  const stateOutput = migrationStateOutput(mapping);
+  const outputs = migrationIntendedOutputs(snapshot, mapping, stateOutput);
+  const manifest = outputs.map(({ bytes: _bytes, ...value }) => value);
+  if (canonicalJson(manifest) !== canonicalJson(request.planRecord.intendedOutputManifest)) return null;
+  return outputs;
+}
+
+async function syncRegularFile(fs, path) {
+  const handle = await fs.open(path, constants.O_RDONLY);
+  try { await handle.sync(); }
+  finally { await handle.close(); }
+}
+
+async function stageMigrationOutputs(fs, root, request, outputs) {
+  const operationRoot = `work/qlab-zotero/documentation-migration/${request.operationId}`;
+  await ensureDirectory(fs, root, "work/qlab-zotero/documentation-migration", { privateMode: true });
+  const absoluteOperationRoot = join(root, ...safeRelativePath(operationRoot));
+  await fs.mkdir(absoluteOperationRoot, { mode: PRIVATE_DIRECTORY_MODE });
+  await syncDirectory(fs, dirname(absoluteOperationRoot));
+  for (const output of outputs) {
+    const staging = migrationStagingPath(request.operationId, output.path);
+    await ensureDirectory(fs, root, dirname(staging));
+    await exclusiveWrite(fs, join(root, ...safeRelativePath(staging)), output.bytes);
+  }
+  await syncDirectory(fs, absoluteOperationRoot);
+  return operationRoot;
+}
+
+async function installedOutputDigest(fs, root, output) {
+  const inspected = await inspectRelative(fs, root, output.path);
+  if (!inspected.metadata) return null;
+  if (!inspected.metadata.isFile() || inspected.metadata.isSymbolicLink() || inspected.metadata.nlink !== 1
+    || inspected.metadata.size !== output.size) return "unsafe";
+  const bytes = await readRegularFile(fs, inspected.path, MIGRATION_LIMITS.maximumBlobBytes);
+  return `sha256:${sha256(bytes)}`;
+}
+
+async function installMigrationOutput(fs, root, record, output) {
+  const observed = await installedOutputDigest(fs, root, output);
+  if (observed !== null) return observed === output.sha256;
+  const stagingRelative = migrationStagingPath(record.operationId, output.path);
+  const staging = await inspectRelative(fs, root, stagingRelative);
+  if (!staging.metadata || !staging.metadata.isFile() || staging.metadata.isSymbolicLink()
+    || staging.metadata.nlink !== 1 || staging.metadata.size !== output.size) return false;
+  const stagedBytes = await readRegularFile(fs, staging.path, MIGRATION_LIMITS.maximumBlobBytes);
+  if (`sha256:${sha256(stagedBytes)}` !== output.sha256) return false;
+  await ensureDirectory(fs, root, dirname(output.path), { privateMode: output.path.startsWith(".chatero/") });
+  const target = join(root, ...safeRelativePath(output.path));
+  try { await fs.copyFile(staging.path, target, constants.COPYFILE_EXCL); }
+  catch (error) {
+    if (error?.code !== "EEXIST") throw error;
+    return await installedOutputDigest(fs, root, output) === output.sha256;
+  }
+  await fs.chmod(target, output.path.startsWith(".chatero/") ? PRIVATE_FILE_MODE : 0o644);
+  await syncRegularFile(fs, target);
+  await syncDirectory(fs, dirname(target));
+  return true;
+}
+
+async function continueMigration(fs, root, authority, record) {
+  const expectedMarker = migrationMarker(record);
+  let active = await authority.readActiveMarker();
+  if (record.phase === "private-staged") {
+    if (active !== null && !sameCanonicalValue(active, expectedMarker)) {
+      return Object.freeze({ kind: "documentation-operation-active", operationId: active.operationId ?? null });
+    }
+    if (active === null) await authority.createActiveMarker(expectedMarker);
+    record = Object.freeze({ ...record, phase: "marker-committed", markerCommitted: true });
+    await authority.updateOperation(record);
+    active = expectedMarker;
+  }
+  if (!sameCanonicalValue(active, expectedMarker) || record.markerCommitted !== true) {
+    return Object.freeze({
+      kind: "documentation-tamper",
+      reason: "migration marker does not match its durable journal",
+    });
+  }
+  if (record.phase === "marker-committed") {
+    record = Object.freeze({ ...record, phase: "applying", canonicalMutationStarted: true });
+    await authority.updateOperation(record);
+  }
+  if (!new Set(["applying", "recovery-conflict"]).has(record.phase)) {
+    return migrationConflictResult(record);
+  }
+  if (record.phase === "recovery-conflict") return migrationConflictResult(record);
+  for (const output of record.outputs) {
+    if (record.completedPaths.includes(output.path)) continue;
+    if (!await installMigrationOutput(fs, root, record, output)) {
+      record = Object.freeze({ ...record, phase: "recovery-conflict" });
+      await authority.updateOperation(record);
+      return migrationConflictResult(record, output.path);
+    }
+    record = Object.freeze({
+      ...record,
+      completedPaths: Object.freeze([...record.completedPaths, output.path]),
+    });
+    await authority.updateOperation(record);
+  }
+  const result = migrationCommittedResult(record);
+  await authority.writeReceipt(record.operationId, result);
+  record = Object.freeze({ ...record, phase: "committed", result });
+  await authority.updateOperation(record);
+  await authority.removeActiveMarker(expectedMarker);
+  return result;
+}
+
+async function executeMigrationTransaction(fs, root, workspace, authority, input, epoch) {
+  const request = migrationExecutionRequest(input, epoch);
+  const requestDigest = digestValue(request);
+  let record = await authority.readOperation(request.operationId);
+  if (record !== null) {
+    if (record.kind !== "migration" || record.requestDigest !== requestDigest
+      || canonicalJson(record.request) !== canonicalJson(request)) {
+      return Object.freeze({ kind: "idempotency-conflict", idempotencyKey: request.idempotencyKey });
+    }
+    const receipt = await authority.readReceipt(record.operationId);
+    if (receipt !== null) return receipt;
+    return continueMigration(fs, root, authority, record);
+  }
+  const outputs = await migrationOutputsForPlan(fs, root, workspace, request);
+  if (outputs === null) return Object.freeze({ kind: "stale-plan" });
+  await stageMigrationOutputs(fs, root, request, outputs);
+  const outputRecords = Object.freeze(outputs.map(({ bytes: _bytes, ...value }) => Object.freeze(value)));
+  const affectedResourceDigest = digestValue(request.planRecord.affectedPaths);
+  const prepared = {
+    schemaVersion: 1,
+    kind: "migration",
+    operationId: request.operationId,
+    workspaceEpoch: request.workspaceEpoch,
+    idempotencyKey: request.idempotencyKey,
+    requestDigest,
+    planDigest: request.planDigest,
+    affectedResourceDigest,
+    phase: "private-staged",
+    markerCommitted: false,
+    canonicalMutationStarted: false,
+    request,
+    outputs: outputRecords,
+    completedPaths: Object.freeze([]),
+    result: null,
+  };
+  const journalDigest = digestValue({
+    schemaVersion: prepared.schemaVersion,
+    kind: prepared.kind,
+    operationId: prepared.operationId,
+    workspaceEpoch: prepared.workspaceEpoch,
+    idempotencyKey: prepared.idempotencyKey,
+    requestDigest: prepared.requestDigest,
+    planDigest: prepared.planDigest,
+    affectedResourceDigest: prepared.affectedResourceDigest,
+    request: prepared.request,
+    outputs: prepared.outputs,
+  });
+  record = Object.freeze({ ...prepared, journalDigest });
+  await authority.createOperation(record);
+  return continueMigration(fs, root, authority, record);
+}
+
 async function dispatch(fs, clock, request) {
   const root = await assertWorkspaceRoot(fs, request.workspace);
   const activeOperationPath = join(root, ...safeRelativePath(ACTIVE_OPERATION_PATH));
@@ -1544,6 +1809,9 @@ async function dispatch(fs, clock, request) {
     }
     if (request.kind === "transact" && request.transaction?.kind === "ack-settlement-text") {
       return settlement.ack(request.transaction);
+    }
+    if (request.kind === "transact" && request.transaction?.kind === "execute-migration") {
+      return executeMigrationTransaction(fs, root, request.workspace, authority, request.transaction, request.epoch);
     }
     const executor = createStateTransactionExecutor({ authority });
     if (request.kind === "transact") return executor.execute(request.transaction);
