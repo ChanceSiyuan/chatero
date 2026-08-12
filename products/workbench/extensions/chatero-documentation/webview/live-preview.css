@@ -84,3 +84,34 @@ body {
   font-family: var(--vscode-editor-font-family);
   font-size: 0.9em;
 }
+
+.chatero-qmd-table {
+  border-collapse: collapse;
+  table-layout: fixed;
+  width: 100%;
+}
+
+.chatero-qmd-table th,
+.chatero-qmd-table td {
+  border: 1px solid var(--vscode-editorWidget-border);
+  overflow-wrap: anywhere;
+  padding: 0.3rem 0.55rem;
+}
+
+.chatero-qmd-table th {
+  background: var(--vscode-editorWidget-background);
+  font-weight: 650;
+}
+
+.chatero-qmd-table-align-center {
+  text-align: center;
+}
+
+.chatero-qmd-table-align-right {
+  text-align: right;
+}
+
+.chatero-qmd-table-delimiter {
+  height: 0;
+  overflow: hidden;
+}

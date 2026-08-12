@@ -229,6 +229,10 @@
           "destination": "extensions/chatero-documentation/webview/source-reveal.mjs"
         },
         {
+          "source": "products/workbench/extensions/chatero-documentation/webview/table-decorations.mjs",
+          "destination": "extensions/chatero-documentation/webview/table-decorations.mjs"
+        },
+        {
           "source": "products/workbench/extensions/chatero-documentation/working-copy-coordinator.mjs",
           "destination": "extensions/chatero-documentation/working-copy-coordinator.mjs"
         }

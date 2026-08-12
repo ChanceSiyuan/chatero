@@ -64,6 +64,7 @@ export function collectFormulaNodes(state, visibleRanges) {
       from: range.from,
       to: range.to,
       enter(cursor) {
+        if (cursor.name === "Table") return false;
         const source = state.doc.sliceString(cursor.from, cursor.to, "\n");
         if (cursor.name === "Paragraph") {
           const display = dollarDisplayNode(cursor.from, source);

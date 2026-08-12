@@ -149,6 +149,7 @@ test("first-party materialization declares the complete Documentation authority"
     "extensions/chatero-documentation/webview/qmd-preview.mjs",
     "extensions/chatero-documentation/webview/qmd-source-model.mjs",
     "extensions/chatero-documentation/webview/source-reveal.mjs",
+    "extensions/chatero-documentation/webview/table-decorations.mjs",
     "extensions/chatero-documentation/working-copy-coordinator.mjs",
   ]);
 });

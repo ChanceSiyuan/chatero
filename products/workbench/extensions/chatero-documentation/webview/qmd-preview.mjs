@@ -3,6 +3,7 @@ import katex from "katex";
 import { createFormulaDecorations } from "./formula-decorations.mjs";
 import { createQmdLanguage } from "./qmd-language.mjs";
 import { createProseDecorations } from "./prose-decorations.mjs";
+import { createTableDecorations } from "./table-decorations.mjs";
 
 export function createQmdPreviewExtensions({ postMessage }) {
   if (typeof postMessage !== "function") throw new TypeError("QMD preview requires postMessage");
@@ -10,5 +11,6 @@ export function createQmdPreviewExtensions({ postMessage }) {
     createQmdLanguage(),
     createProseDecorations({ postMessage }),
     createFormulaDecorations({ katex }),
+    createTableDecorations(),
   ]);
 }
