@@ -334,7 +334,7 @@ const CREATE_RUNTIME_SCRIPT = [
   "port=''",
   "tries=0",
   "while [ \"$tries\" -lt 200 ]; do",
-  "  if ! kill -0 \"$server_pid\" 2>/dev/null; then exit 83; fi",
+  "  if ! kill -0 \"$server_pid\" 2>/dev/null; then tail -c 4096 \"$server_log\" >&2; exit 83; fi",
   "  port=$(sed -n 's/^Extension host agent listening on \\([0-9][0-9]*\\)$/\\1/p' \"$server_log\" | tail -n 1)",
   "  [ -n \"$port\" ] && break",
   "  tries=$((tries + 1))",

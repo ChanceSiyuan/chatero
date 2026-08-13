@@ -19,8 +19,9 @@ test("Stage 5 CI builds, signs, runs real SSH, and gates both native Linux archi
   assert.match(source, /run-stage-5-real-ssh\.mjs/u);
   assert.match(source, /prepare-stage-5-ci-ssh\.mjs/u);
   const realSshSource = await readFile(new URL("../scripts/run-stage-5-real-ssh.mjs", import.meta.url), "utf8");
-  assert.match(realSshSource, /new SshSession\(\{\s*installerFactory:/u);
+  assert.match(realSshSource, /new SshSession\(\{[\s\S]*?installerFactory:/u);
   assert.match(realSshSource, /verifyRelease,\s*selectArtifact,/u);
+  assert.match(realSshSource, /\[stage-5 remote\]/u);
   assert.match(realSshSource, /const required=\['chatero-documentation','git','ipynb'\]/u);
   assert.doesNotMatch(realSshSource, /const required=\[[^\]]*chatero-zotero/u);
   const sshFixture = await readFile(new URL("../scripts/prepare-stage-5-ci-ssh.mjs", import.meta.url), "utf8");

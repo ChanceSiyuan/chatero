@@ -677,3 +677,8 @@ test("remote upload accepts an empty regular transaction without broadening file
   assert.match(REMOTE_AGENT_SCRIPTS.upload, /\*\) exit 77/);
   assert.doesNotMatch(REMOTE_AGENT_SCRIPTS.upload, /block special|character special|fifo|socket/);
 });
+
+test("remote server startup failure returns only a bounded diagnostic tail", () => {
+  assert.match(REMOTE_AGENT_SCRIPTS.createRuntime, /tail -c 4096 \"\$server_log\" >&2/);
+  assert.doesNotMatch(REMOTE_AGENT_SCRIPTS.createRuntime, /cat \"\$server_log\" >&2/);
+});

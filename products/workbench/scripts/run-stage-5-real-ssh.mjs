@@ -155,6 +155,7 @@ async function runScenario({ alias, releaseDirectory, receiptPath, expectedTuple
   const target = await resolveSshTarget(alias, sshRunner);
   if (!target.proxyJump) throw new Error("Stage 5 real SSH target must exercise ProxyJump");
   const session = new SshSession({
+    log: value => process.stderr.write(`[stage-5 remote] ${String(value).slice(0, 4096)}\n`),
     installerFactory: ({ alias: installerAlias, controlPath, log, transactionState }) => new RemoteAgentInstaller({
       remote: new SshRemoteAgentRuntime({ alias: installerAlias, controlPath, log }),
       verifyRelease,
