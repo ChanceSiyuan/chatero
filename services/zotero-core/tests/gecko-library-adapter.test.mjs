@@ -177,8 +177,8 @@ function fixture({
   const collections = [personal, nested, group];
   const items = [attachment, groupAttachment, highlight, childNote, alpha, beta, groupAlpha, note];
   const searches = [
-    Object.freeze({ key: "SEARCH01", libraryID: 1, name: "Unread methods", synced: true, version: 4 }),
-    Object.freeze({ key: "SEARCH01", libraryID: 2, name: "Group unread", synced: false, version: 2 }),
+    Object.freeze({ key: "SEARCH01", libraryID: 1, name: "Unread methods", search: async () => [12, 11, 90], synced: true, version: 4 }),
+    Object.freeze({ key: "SEARCH01", libraryID: 2, name: "Group unread", search: async () => [21], synced: false, version: 2 }),
   ];
 
   const Zotero = {
@@ -199,7 +199,10 @@ function fixture({
       { allowsLinkedFiles: false, archived: false, editable: true, filesEditable: false, groupID: 20, lastSync: 200, libraryID: 2, libraryType: "group", libraryVersion: 8, name: "Group", storageVersion: 7, syncable: true },
       { allowsLinkedFiles: true, archived: false, editable: true, filesEditable: true, lastSync: 100, libraryID: 1, libraryType: "user", libraryVersion: 10, name: "My Library", storageVersion: 9, syncable: true },
     ] },
-    Searches: { getAll: async libraryId => searches.filter(value => value.libraryID === libraryId) },
+    Searches: {
+      getAll: async libraryId => searches.filter(value => value.libraryID === libraryId),
+      getByLibraryAndKey: (libraryId, key) => searches.find(value => value.libraryID === libraryId && value.key === key) || false,
+    },
     Tags: { getAll: async libraryId => libraryId === 1
       ? [{ tag: "Methods" }, { tag: "reading", type: 1 }, { tag: "Renormalization" }]
       : [{ tag: "Group" }] },
@@ -219,6 +222,20 @@ test("lists libraries, saved searches, and paginated tags without database or pa
   ] });
   assert.deepEqual(await adapter.tags({ cursor: "1", libraryId: 1, limit: 1, query: "r" }), {
     tags: [{ name: "Renormalization", type: 0 }],
+    total: 2,
+  });
+  assert.deepEqual(await adapter.savedSearchItems({ libraryId: 1, limit: 1, searchKey: "SEARCH01" }), {
+    items: [{
+      attachmentCount: 1,
+      collectionKeys: ["NESTED01", "SHARED01"],
+      creators: ["Ada Lovelace", "Collaboration"],
+      itemKey: "ITEM0001",
+      itemType: "journalArticle",
+      libraryId: 1,
+      title: "Alpha Methods",
+      year: 2024,
+    }],
+    nextCursor: "1",
     total: 2,
   });
 });

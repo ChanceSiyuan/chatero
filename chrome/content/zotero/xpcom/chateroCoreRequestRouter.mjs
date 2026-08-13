@@ -56,6 +56,7 @@ function validateRouterOptions(options) {
 			|| typeof options.adapter.profileBackup !== "function"
 			|| typeof options.adapter.profileStatus !== "function"
 			|| typeof options.adapter.savedSearches !== "function"
+			|| typeof options.adapter.savedSearchItems !== "function"
 			|| typeof options.adapter.search !== "function"
 			|| typeof options.adapter.tags !== "function") {
 		throw new Error("Gecko Core router requires Profile and Library adapters");
@@ -235,6 +236,7 @@ export function createGeckoCoreRequestRouter(options = {}) {
 			if (message.method === "library.libraries") return { result: await adapter.libraries(message.params) };
 			if (message.method === "library.note") return { result: await adapter.note(message.params) };
 			if (message.method === "library.saved-searches") return { result: await adapter.savedSearches(message.params) };
+			if (message.method === "library.saved-search-items") return { result: await adapter.savedSearchItems(message.params) };
 			if (message.method === "library.tags") return { result: await adapter.tags(message.params) };
 			if (message.method === "library.search") {
 				if (typeof message.cancellationId !== "string" || !message.cancellationId) {

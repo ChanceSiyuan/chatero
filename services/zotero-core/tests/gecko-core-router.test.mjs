@@ -47,6 +47,7 @@ function createRouter(overrides = {}) {
     async profileBackup() { calls.push(["profileBackup"]); return { backupCreated: true, completedAt: 1234 }; },
     async profileStatus() { calls.push(["profileStatus"]); return { compatibilityVersion: 10, integrityCheckRequired: false, profileEpoch: "profile-epoch", profileName: "Disposable Profile", quickCheckPassed: true, readOnly: false, schemaVersion: 142, upstreamVersion: "7.1-real" }; },
     async savedSearches(params) { calls.push(["savedSearches", params]); return { searches: [] }; },
+    async savedSearchItems(params) { calls.push(["savedSearchItems", params]); return { items: [], total: 0 }; },
     async search(params, options) { calls.push(["search", params, options]); return { items: [], total: 0 }; },
     async tags(params) { calls.push(["tags", params]); return { tags: [], total: 0 }; },
   };

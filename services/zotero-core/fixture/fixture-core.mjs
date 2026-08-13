@@ -268,6 +268,22 @@ async function main() {
       }
       return { result: { searches: fixtureSavedSearches.filter(value => value.libraryId === message.params.libraryId) } };
     }
+    if (message.method === "library.saved-search-items") {
+      if (!message.params || typeof message.params !== "object" || Array.isArray(message.params)
+        || !Number.isSafeInteger(message.params.libraryId) || message.params.libraryId < 1
+        || typeof message.params.searchKey !== "string" || !/^[A-Z0-9]{8}$/.test(message.params.searchKey)
+        || !Number.isSafeInteger(message.params.limit) || message.params.limit < 1 || message.params.limit > 200
+        || (message.params.cursor !== undefined && (typeof message.params.cursor !== "string" || !/^\d+$/.test(message.params.cursor)))) {
+        throw new Error("library.saved-search-items params are invalid");
+      }
+      const definition = fixtureSavedSearches.find(value => value.libraryId === message.params.libraryId && value.searchKey === message.params.searchKey);
+      if (!definition) throw new Error(`fixture saved search ${message.params.libraryId}/${message.params.searchKey} was not found`);
+      const matches = fixtureItems.filter(item => item.libraryId === message.params.libraryId && definition.itemKeys?.includes(item.itemKey));
+      const offset = Number(message.params.cursor || 0);
+      const items = matches.slice(offset, offset + message.params.limit);
+      const nextOffset = offset + items.length;
+      return { result: { items, ...(nextOffset < matches.length && { nextCursor: String(nextOffset) }), total: matches.length } };
+    }
     if (message.method === "library.tags") {
       if (!message.params || typeof message.params !== "object" || Array.isArray(message.params)
         || !Number.isSafeInteger(message.params.libraryId) || message.params.libraryId < 1

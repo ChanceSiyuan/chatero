@@ -26,6 +26,7 @@ const ATTACHMENT_FIELDS = new Set(["attachmentKey", "libraryId"]);
 const NOTE_FIELDS = new Set(["libraryId", "noteKey"]);
 const LIBRARIES_FIELDS = new Set();
 const SAVED_SEARCH_FIELDS = new Set(["libraryId"]);
+const SAVED_SEARCH_ITEMS_FIELDS = new Set(["cursor", "libraryId", "limit", "searchKey"]);
 const TAG_FIELDS = new Set(["cursor", "libraryId", "limit", "query"]);
 const MAX_PAGE_SIZE = 200;
 const MAX_NOTE_BYTES = 512 * 1024;
@@ -331,6 +332,7 @@ function validateZotero(Zotero) {
 		[Zotero?.ItemTypes, "getName"],
 		[Zotero?.Libraries, "getAll"],
 		[Zotero?.Searches, "getAll"],
+		[Zotero?.Searches, "getByLibraryAndKey"],
 		[Zotero?.Tags, "getAll"],
 	];
 	for (let [owner, method] of required) {
@@ -378,6 +380,35 @@ export function createZoteroLibraryAdapter({ Zotero, openAttachmentFile = openGe
 				}))
 				.sort((left, right) => compareText(left.name, right.name) || compareText(left.searchKey, right.searchKey));
 			return { searches };
+		},
+
+		async savedSearchItems(params) {
+			exactObject(params, SAVED_SEARCH_ITEMS_FIELDS, "library.saved-search-items params");
+			positiveLibraryId(params.libraryId, "library.saved-search-items");
+			zoteroKey(params.searchKey, "library.saved-search-items searchKey");
+			if (!Number.isSafeInteger(params.limit) || params.limit < 1 || params.limit > MAX_PAGE_SIZE) {
+				throw new Error(`library.saved-search-items limit must be an integer from 1 through ${MAX_PAGE_SIZE}`);
+			}
+			if (params.cursor !== undefined && (typeof params.cursor !== "string" || !/^\d+$/.test(params.cursor))) {
+				throw new Error("library.saved-search-items cursor must be a decimal offset");
+			}
+			let search = Zotero.Searches.getByLibraryAndKey(params.libraryId, params.searchKey);
+			if (!search || search.libraryID !== params.libraryId || search.key !== params.searchKey || itemIsUnavailable(search)) {
+				unavailable(`Zotero saved search ${params.libraryId}/${params.searchKey} was not found`);
+			}
+			let ids = await search.search();
+			if (!Array.isArray(ids) || ids.some(value => !Number.isSafeInteger(value) || value < 1)) {
+				throw new Error("Zotero saved search returned invalid item ids");
+			}
+			let items = Zotero.Items.get(ids)
+				.filter(item => item?.libraryID === params.libraryId && item.isRegularItem?.() && !itemIsUnavailable(item))
+				.map(item => itemSummary(Zotero, item))
+				.sort((left, right) => compareText(left.title, right.title) || compareText(left.itemKey, right.itemKey));
+			let offset = Number(params.cursor || 0);
+			if (offset > items.length) throw new Error("library.saved-search-items cursor is outside the result set");
+			let page = items.slice(offset, offset + params.limit);
+			let nextOffset = offset + page.length;
+			return { items: page, ...(nextOffset < items.length && { nextCursor: String(nextOffset) }), total: items.length };
 		},
 
 		async tags(params) {

@@ -79,6 +79,12 @@
       "resultType": "LibrarySavedSearchesResult"
     },
     {
+      "name": "library.saved-search-items",
+      "capability": "library:read",
+      "paramsType": "LibrarySavedSearchItemsParams",
+      "resultType": "LibrarySearchResult"
+    },
+    {
       "name": "library.tags",
       "capability": "library:read",
       "paramsType": "LibraryTagsParams",
@@ -353,6 +359,15 @@
       "kind": "object",
       "fields": {
         "searches": "LibrarySavedSearchSummary[]"
+      }
+    },
+    "LibrarySavedSearchItemsParams": {
+      "kind": "object",
+      "fields": {
+        "cursor?": "string",
+        "libraryId": "number",
+        "limit": "number",
+        "searchKey": "string"
       }
     },
     "LibraryTagsParams": {
