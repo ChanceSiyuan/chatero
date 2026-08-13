@@ -9,6 +9,8 @@ test("the Workbench never shares the legacy Gecko Chatero application-data root"
   assert.equal(overlay.nameShort, "Chatero");
   assert.equal(overlay.chateroWorkbenchUserDataName, "Chatero Research Workbench");
   assert.match(additions, /product\.chateroWorkbenchUserDataName \?\? product\.nameShort/u);
+  assert.match(additions, /productService\.chateroWorkbenchUserDataName \?\? productService\.nameShort/u);
   assert.doesNotMatch(additions, /getUserDataPath\(args, product\.nameShort \?\?/u);
+  assert.doesNotMatch(additions, /getUserDataPath\(args, productService\.nameShort\)/u);
   assert.match(additions, /readonly chateroWorkbenchUserDataName\?: string/u);
 });

@@ -21,3 +21,15 @@ diff --git a/src/main.ts b/src/main.ts
  if (process.platform === 'win32') {
  	const userDataUNCHost = getUNCHost(userDataPath);
  	if (userDataUNCHost) {
+diff --git a/src/vs/platform/environment/node/environmentService.ts b/src/vs/platform/environment/node/environmentService.ts
+--- a/src/vs/platform/environment/node/environmentService.ts
++++ b/src/vs/platform/environment/node/environmentService.ts
+@@ -17,7 +17,7 @@ export class NativeEnvironmentService extends AbstractNativeEnvironmentService {
+ 		super(args, {
+ 			homeDir,
+ 			tmpDir: tmpdir(),
+-			userDataDir: getUserDataPath(args, productService.nameShort),
++			userDataDir: getUserDataPath(args, productService.chateroWorkbenchUserDataName ?? productService.nameShort),
+ 		}, productService);
+ 	}
+ }
