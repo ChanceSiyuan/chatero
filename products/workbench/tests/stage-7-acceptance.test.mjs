@@ -46,6 +46,23 @@ test("prior evidence must be passed, complete, and bound to the final source com
   }), /invalid|stale|incomplete/iu);
 });
 
+test("Stage 7 derives every prior check id from the immutable stage requirements", async () => {
+  const { loadPriorStageChecks } = await import("../scripts/run-stage-7-acceptance.mjs");
+  assert.deepEqual(await loadPriorStageChecks({ root, stage: 3 }), [
+    "native-library-tests", "core-library-tests", "official-zotero-feature-coverage",
+    "workbench-tests", "code-oss-compile", "signed-gecko-bundle", "library-parity-audit",
+  ]);
+  assert.deepEqual(await loadPriorStageChecks({ root, stage: 5 }), [
+    "ide-language-product-audit", "remote-contract-tests", "cursor-editor-agent-parity",
+    "code-oss-compile", "signed-agent-release", "linux-x64-real-ssh",
+    "linux-arm64-real-ssh", "stage-five-boundary-audit",
+  ]);
+  assert.deepEqual(await loadPriorStageChecks({ root, stage: 6 }), [
+    "research-loop-contract-tests", "documentation-transaction-tests", "qmd-obsidian-editing-parity",
+    "local-research-loop-runtime", "ssh-research-loop-runtime", "research-loop-boundary-audit",
+  ]);
+});
+
 test("atomic cutover refuses a missing notarization ticket or legacy-visible package", async () => {
   const { inspectAtomicCutover } = await import("../scripts/run-stage-7-acceptance.mjs");
   const base = {

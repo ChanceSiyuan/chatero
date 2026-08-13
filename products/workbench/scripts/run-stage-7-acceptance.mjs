@@ -26,19 +26,22 @@ const EXPECTED = Object.freeze({
   ]),
 });
 
-const STAGE_CHECKS = Object.freeze({
-  1: Object.freeze(["documentation-assets", "workbench-node-tests", "core-protocol", "core-node-tests", "legacy-node-tests", "code-oss-provenance", "code-oss-compile", "documentation-local-runtime", "tracked-source-clean"]),
-  2: Object.freeze(["core-protocol", "core-node-and-real-gecko", "profile-discovery-and-import", "signed-gecko-bundle", "core-boundary-audit"]),
-  3: Object.freeze(["native-library-tests", "core-library-tests", "workbench-tests", "code-oss-compile", "signed-gecko-bundle", "library-parity-audit"]),
-  4: Object.freeze(["core-protocol", "reader-note-citation-tests", "core-mutation-tests", "workbench-regression-tests", "real-profile-parity-twice", "code-oss-compile", "signed-gecko-bundle", "reader-boundary-audit"]),
-  5: Object.freeze(["ide-language-product-audit", "remote-contract-tests", "code-oss-compile", "signed-agent-release", "linux-x64-real-ssh", "linux-arm64-real-ssh", "stage-five-boundary-audit"]),
-  6: Object.freeze(["research-loop-contract-tests", "documentation-transaction-tests", "local-research-loop-runtime", "ssh-research-loop-runtime", "research-loop-boundary-audit"]),
-});
-
 function freeze(value) {
   if (Array.isArray(value)) return Object.freeze(value.map(freeze));
   if (value && typeof value === "object") return Object.freeze(Object.fromEntries(Object.entries(value).map(([key, child]) => [key, freeze(child)])));
   return value;
+}
+
+export async function loadPriorStageChecks({ root = ROOT, stage }) {
+  if (!Number.isInteger(stage) || stage < 1 || stage > 6) throw new TypeError("prior stage must be an integer from 1 through 6");
+  const requirements = JSON.parse(await readFile(join(root, "products", "workbench", "acceptance", `stage-${stage}.requirements.json`), "utf8"));
+  if (requirements?.schemaVersion !== 1 || requirements.stage !== stage || !Array.isArray(requirements.checks)
+      || requirements.checks.length === 0 || requirements.checks.some(value => !value || typeof value.id !== "string" || !value.id.length)) {
+    throw new Error(`Stage ${stage} requirements are invalid`);
+  }
+  const ids = requirements.checks.map(value => value.id);
+  if (new Set(ids).size !== ids.length) throw new Error(`Stage ${stage} requirements contain duplicate checks`);
+  return freeze(ids);
 }
 
 export function validateStageSevenRequirements(value) {
@@ -171,7 +174,8 @@ export async function runStageSevenAcceptance({
       if (descriptor.kind === "prior-stage") {
         const receipt = await read(join(root, "products", "workbench", ".cache", "acceptance", `stage-${descriptor.stage}.json`));
         audit[`stage${descriptor.stage}`] = inspectPriorStageEvidence(receipt, {
-          stage: descriptor.stage, sourceCommit, requiredChecks: STAGE_CHECKS[descriptor.stage],
+          stage: descriptor.stage, sourceCommit,
+          requiredChecks: await loadPriorStageChecks({ root, stage: descriptor.stage }),
         });
       }
       else if (descriptor.kind === "parity-inspection") audit.parity = await inspectParity({ root });
