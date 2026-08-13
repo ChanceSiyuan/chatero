@@ -23,7 +23,7 @@
     },
     {
       "file": "0006-disable-copilot-onboarding-without-agent.patch",
-      "sha256": "9b60f63d5a9801942c5ace0f0276f09f6007e33ca18604e97ef5bb95582081a2"
+      "sha256": "66ffe3c24831c9d9e7b7058dd9ab433f4e8ea7920b0910000f5980a05163d3d5"
     },
     {
       "file": "0007-bundle-chatero-codex-sdk.patch",

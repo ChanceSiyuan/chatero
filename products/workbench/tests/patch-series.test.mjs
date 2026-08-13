@@ -251,7 +251,8 @@ test("the canonical series pins Chatero startup compatibility after native Codex
   assert.equal(claudeDisabledEntry.sha256, sha256(claudeDisabledBytes));
   assert.match(bytes.toString("utf8"), /acquireDocumentationWorkingCopyBarrier/);
   assert.match(compatibilityBytes.toString("utf8"), /chatero_workspace/);
-  assert.match(startupBytes.toString("utf8"), /product\.defaultChatAgent \? OnboardingVariationA : DisabledOnboardingService/);
+  assert.match(startupBytes.toString("utf8"), /if \(product\.defaultChatAgent\)/);
+  assert.match(startupBytes.toString("utf8"), /registerSingleton\(IOnboardingService, DisabledOnboardingService/);
   assert.match(startupBytes.toString("utf8"), /if \(!productService\.defaultChatAgent\)/);
   assert.match(startupBytes.toString("utf8"), /this\.initBarrier\.open\(\)/);
   assert.doesNotMatch(startupBytes.toString("utf8"), /^\+.*Onboarding requires a default chat agent product configuration\./m);

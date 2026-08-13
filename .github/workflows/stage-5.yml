@@ -35,7 +35,11 @@ jobs:
           libkrb5-dev libx11-dev libxkbfile-dev
       - run: npm ci
       - run: npm run workbench:bootstrap
-      - run: npm ci --prefix vendor/code-oss
+      - run: npm ci --ignore-scripts --prefix vendor/code-oss
+      - run: node products/workbench/scripts/prepare-code-oss-lifecycle.mjs vendor/code-oss --prepare
+      - run: npm rebuild --prefix vendor/code-oss
+      - if: always()
+        run: node products/workbench/scripts/prepare-code-oss-lifecycle.mjs vendor/code-oss --cleanup
       - run: >-
           node products/workbench/remote-agent/scripts/build-linux-agent.mjs
           --arch ${{ matrix.arch }}
@@ -153,7 +157,11 @@ jobs:
       - run: >-
           sudo apt-get update && sudo apt-get install -y
           libkrb5-dev libx11-dev libxkbfile-dev
-      - run: npm ci --prefix vendor/code-oss
+      - run: npm ci --ignore-scripts --prefix vendor/code-oss
+      - run: node products/workbench/scripts/prepare-code-oss-lifecycle.mjs vendor/code-oss --prepare
+      - run: npm rebuild --prefix vendor/code-oss
+      - if: always()
+        run: node products/workbench/scripts/prepare-code-oss-lifecycle.mjs vendor/code-oss --cleanup
       - run: npm run verify:stage-5
         env:
           CHATERO_CODE_OSS_DIR: vendor/code-oss

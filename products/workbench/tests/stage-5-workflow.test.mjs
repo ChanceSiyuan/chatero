@@ -19,8 +19,12 @@ test("Stage 5 CI builds, signs, runs real SSH, and gates both native Linux archi
   assert.match(source, /run-stage-5-real-ssh\.mjs/u);
   assert.match(source, /prepare-stage-5-ci-ssh\.mjs/u);
   assert.match(source, /npm run verify:stage-5/u);
-  assert.equal((source.match(/npm ci --prefix vendor\/code-oss/gu) ?? []).length, 2);
-  assert.match(source, /sudo apt-get update && sudo apt-get install -y libkrb5-dev/u);
+  assert.equal((source.match(/npm ci --ignore-scripts --prefix vendor\/code-oss/gu) ?? []).length, 2);
+  assert.equal((source.match(/prepare-code-oss-lifecycle\.mjs vendor\/code-oss --prepare/gu) ?? []).length, 2);
+  assert.equal((source.match(/prepare-code-oss-lifecycle\.mjs vendor\/code-oss --cleanup/gu) ?? []).length, 2);
+  assert.equal((source.match(/npm rebuild --prefix vendor\/code-oss/gu) ?? []).length, 2);
+  assert.doesNotMatch(source, /AZURE|NUGET|FOUNDRY.*TOKEN|pkgs\.dev\.azure\.com/iu);
+  assert.match(source, /sudo apt-get update && sudo apt-get install -y\s+libkrb5-dev libx11-dev libxkbfile-dev/u);
   assert.doesNotMatch(source, /marketplace\.visualstudio\.com|ms-vscode-remote\.remote-ssh|PRIVATE KEY-----/iu);
 
   const realSsh = workflow.jobs["real-ssh"];
