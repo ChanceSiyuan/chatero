@@ -99,6 +99,21 @@ test("Stage 5 successful acceptance records all eight checks without secret fiel
   assert.doesNotMatch(JSON.stringify(evidence), /token|password|grantId|remotePath/iu);
 });
 
+test("Stage 5 boundary audit recognizes effective OpenSSH ProxyJump configuration", async () => {
+  const { inspectStageFiveBoundary } = await import("../scripts/run-stage-5-acceptance.mjs");
+  const boundary = await inspectStageFiveBoundary({
+    root,
+    release: {
+      artifacts: [
+        { tuple: "linux-x86_64" },
+        { tuple: "linux-aarch64" },
+      ],
+    },
+  });
+  assert.deepEqual(boundary.releaseTuples, ["linux-x86_64", "linux-aarch64"]);
+  assert.equal(boundary.rendererDatabaseAccess, false);
+});
+
 test("Stage 5 product audit binds the exact generated Code-OSS checkout", async t => {
   const checkout = process.env.CHATERO_CODE_OSS_DIR;
   if (!checkout) {

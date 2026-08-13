@@ -205,7 +205,7 @@ export async function inspectStageFiveBoundary({ root = ROOT, release } = {}) {
   ].map(path => readFile(join(extensionRoot, path), "utf8"))).then(values => values.join("\n"));
   if (/zotero\.sqlite|better-sqlite|sqlite3/iu.test(source)) throw new Error("remote renderer directly accesses Zotero database data");
   if (!source.includes("randomBytes(32)") || !source.includes("ttlSeconds !== TTL_SECONDS")
-      || !source.includes("FingerprintHash=sha256") || !source.includes("ProxyJump")) {
+      || !source.includes("FingerprintHash=sha256") || !source.includes('nullable("proxyjump")')) {
     throw new Error("Stage 5 remote security boundary is incomplete");
   }
   const releaseEntries = new Set(release.artifacts.map(value => value.tuple));
