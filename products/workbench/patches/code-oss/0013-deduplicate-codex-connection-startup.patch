@@ -1,0 +1,70 @@
+diff --git a/src/vs/platform/agentHost/node/codex/codexAgent.ts b/src/vs/platform/agentHost/node/codex/codexAgent.ts
+index 665617a0d43..179ee422b70 100644
+--- a/src/vs/platform/agentHost/node/codex/codexAgent.ts
++++ b/src/vs/platform/agentHost/node/codex/codexAgent.ts
+@@ -1348,6 +1348,15 @@ export class CodexAgent extends Disposable implements IAgent {
+ 				validation = this._usageSourceValidation;
+ 				await validation;
+ 			}
++			// Validation can establish the shared connection while this caller is
++			// suspended. Re-check the state before spawning so an earlier waiter and
++			// the validation path cannot create two app-server processes.
++			if (this._connection.kind === 'ready') {
++				return this._connection;
++			}
++			if (this._connection.kind === 'starting') {
++				return this._connection.promise;
++			}
+ 		}
+ 		const token = this._ensureAuthenticated();
+ 		const usageSource = this._usageSource;
+diff --git a/src/vs/platform/agentHost/test/node/codex/codexPrewarmEviction.test.ts b/src/vs/platform/agentHost/test/node/codex/codexPrewarmEviction.test.ts
+index 043a06df266..c2f130b9b12 100644
+--- a/src/vs/platform/agentHost/test/node/codex/codexPrewarmEviction.test.ts
++++ b/src/vs/platform/agentHost/test/node/codex/codexPrewarmEviction.test.ts
+@@ -6,6 +6,7 @@
+ import type { CCAModel } from '@vscode/copilot-api';
+ import assert from 'assert';
+ import { PassThrough } from 'stream';
++import { DeferredPromise } from '../../../../../base/common/async.js';
+ import { Emitter } from '../../../../../base/common/event.js';
+ import type { DisposableStore } from '../../../../../base/common/lifecycle.js';
+ import { waitForState } from '../../../../../base/common/observable.js';
+@@ -229,6 +230,37 @@ suite('CodexAgent prewarm eviction', () => {
+ 
+ 	const disposables = ensureNoDisposablesAreLeakedInTestSuite();
+ 
++	test('reuses a connection established while OpenAI validation was pending', async () => {
++		const agent = Object.create(CodexAgent.prototype) as CodexAgent;
++		const validation = new DeferredPromise<void>();
++		const established = {
++			kind: 'ready',
++			client: {},
++			usageSource: 'openai',
++			child: { kill: () => true },
++		} as never;
++		agent['_connection'] = { kind: 'idle' };
++		agent['_connectionGeneration'] = 0;
++		agent['_usageSource'] = 'openai';
++		agent['_usageSourceValidation'] = validation.p;
++		let starts = 0;
++		agent['_startConnection'] = (async () => {
++			starts++;
++			return {
++				client: {},
++				usageSource: 'openai',
++				child: { kill: () => true },
++			} as never;
++		}) as never;
++
++		const pending = agent['_ensureConnection']();
++		agent['_connection'] = established;
++		validation.complete();
++
++		assert.strictEqual(await pending, established);
++		assert.strictEqual(starts, 0);
++	});
++
+ 	test('evicts a completed folder prewarm when the first send resolves to a worktree', async () => {
+ 		await assertPrewarmEvictedOnSend(disposables, true);
+ 	});

@@ -48,6 +48,10 @@
     {
       "file": "0012-isolate-openai-codex-resources.patch",
       "sha256": "b3b649d84d8e483a88c78ec5826c2d99b4a93d8170935e6b2ba07be4097d1dd0"
+    },
+    {
+      "file": "0013-deduplicate-codex-connection-startup.patch",
+      "sha256": "61160022f211fc86552f1451d9049d425a70a208c5633d70593645c628010f28"
     }
   ]
 }
