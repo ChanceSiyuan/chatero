@@ -44,6 +44,8 @@ const IMPORT_ITEMS_FIELDS = new Set(["content", "libraryId", "translatorId"]);
 const SAVED_SEARCH_FIELDS = new Set(["libraryId"]);
 const SAVED_SEARCH_ITEMS_FIELDS = new Set(["cursor", "libraryId", "limit", "searchKey"]);
 const TAG_FIELDS = new Set(["cursor", "libraryId", "limit", "query"]);
+const DUPLICATE_FIELDS = new Set(["cursor", "libraryId", "limit"]);
+const FULLTEXT_SEARCH_FIELDS = new Set(["cursor", "libraryId", "limit", "query"]);
 const MAX_PAGE_SIZE = 200;
 const MAX_NOTE_BYTES = 512 * 1024;
 const MAX_ANNOTATION_FIELD_BYTES = 256 * 1024;
@@ -508,6 +510,7 @@ function annotationSummary(annotation, attachment) {
 }
 
 function validateZotero(Zotero) {
+	if (typeof Zotero?.Duplicates !== "function") throw new Error("initialized Zotero API is missing Duplicates");
 	let required = [
 		[Zotero?.Collections, "get"],
 		[Zotero?.Collections, "getByLibrary"],
@@ -525,6 +528,7 @@ function validateZotero(Zotero) {
 		[Zotero?.Fulltext || Zotero?.FullText, "getIndexedState"],
 		[Zotero?.Fulltext || Zotero?.FullText, "getItemVersion"],
 		[Zotero?.Fulltext || Zotero?.FullText, "getPages"],
+		[Zotero?.Fulltext || Zotero?.FullText, "findTextInItems"],
 		[Zotero?.Retractions, "isRetracted"],
 		[Zotero?.Retractions, "shouldShowCitationWarning"],
 		[Zotero?.Translators, "getAllForType"],
@@ -701,6 +705,51 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(S
 				syncable: Boolean(library.syncable),
 			})).sort((left, right) => left.libraryId - right.libraryId);
 			return { libraries };
+		},
+
+		async duplicates(params) {
+			exactObject(params, DUPLICATE_FIELDS, "library.duplicates params");
+			positiveLibraryId(params.libraryId, "library.duplicates");
+			if (!Number.isSafeInteger(params.limit) || params.limit < 1 || params.limit > MAX_PAGE_SIZE) throw new Error("library.duplicates limit is invalid");
+			if (params.cursor !== undefined && (typeof params.cursor !== "string" || !/^\d+$/.test(params.cursor))) throw new Error("library.duplicates cursor is invalid");
+			let library = Zotero.Libraries.get(params.libraryId);
+			if (!library || library.libraryType === "feed") unavailable("library.duplicates library is unavailable");
+			let search = await new Zotero.Duplicates(params.libraryId).getSearchObject();
+			let tempTable = Object.values(search.getConditions()).find(value => value.condition === "tempTable")?.value;
+			if (typeof tempTable !== "string" || !/^tmpDuplicates_[A-Za-z0-9_]+$/.test(tempTable)) throw new Error("Zotero duplicates temporary table is invalid");
+			let ids;
+			try { ids = await search.search(); }
+			finally { await Zotero.DB.queryAsync(`DROP TABLE IF EXISTS ${tempTable}`, false, { noCache: true }); }
+			let matches = Zotero.Items.get(ids).filter(item => item?.libraryID === params.libraryId && item.isRegularItem?.() && !itemIsUnavailable(item))
+				.map(item => itemSummary(Zotero, item)).sort((left, right) => compareText(left.title, right.title) || compareText(left.itemKey, right.itemKey));
+			let offset = Number(params.cursor || 0);
+			if (offset > matches.length) throw new Error("library.duplicates cursor is outside the result set");
+			let items = matches.slice(offset, offset + params.limit);
+			let nextOffset = offset + items.length;
+			return { items, ...(nextOffset < matches.length && { nextCursor: String(nextOffset) }), total: matches.length };
+		},
+
+		async fulltextSearch(params) {
+			exactObject(params, FULLTEXT_SEARCH_FIELDS, "library.fulltext-search params");
+			positiveLibraryId(params.libraryId, "library.fulltext-search");
+			let query = boundedString(params.query, 16 * 1024, "library.fulltext-search query").trim();
+			if (!query) throw new Error("library.fulltext-search query must not be empty");
+			if (!Number.isSafeInteger(params.limit) || params.limit < 1 || params.limit > MAX_PAGE_SIZE) throw new Error("library.fulltext-search limit is invalid");
+			if (params.cursor !== undefined && (typeof params.cursor !== "string" || !/^\d+$/.test(params.cursor))) throw new Error("library.fulltext-search cursor is invalid");
+			let candidates = (await Zotero.Items.getAll(params.libraryId, false, false, false)).filter(item => item?.isAttachment?.() && !itemIsUnavailable(item));
+			let found = await (Zotero.Fulltext || Zotero.FullText).findTextInItems(candidates.map(item => item.id), query);
+			let matches = found.map(value => Zotero.Items.get(value.id)).filter(item => item?.libraryID === params.libraryId && item.isAttachment?.())
+				.map(item => ({
+					attachmentKey: item.key,
+					libraryId: item.libraryID,
+					parentItemKey: parentKey(Zotero, item, "full-text attachment"),
+					title: item.getDisplayTitle?.() || item.attachmentFilename || "Untitled attachment",
+				})).sort((left, right) => compareText(left.title, right.title) || compareText(left.attachmentKey, right.attachmentKey));
+			let offset = Number(params.cursor || 0);
+			if (offset > matches.length) throw new Error("library.fulltext-search cursor is outside the result set");
+			let page = matches.slice(offset, offset + params.limit);
+			let nextOffset = offset + page.length;
+			return { matches: page, ...(nextOffset < matches.length && { nextCursor: String(nextOffset) }), total: matches.length };
 		},
 
 		async savedSearches(params) {

@@ -47,6 +47,8 @@ function createRouter(overrides = {}) {
 		async exportItems(params) { calls.push(["exportItems", params]); return { content: "@article{}", itemCount: params.identities.length, translatorId: params.translatorId }; },
 		async importItems(params) { calls.push(["importItems", params]); return { items: [{ itemKey: "IMPORT01", libraryId: params.libraryId, title: "Imported", version: 1 }], translatorId: params.translatorId }; },
     async feeds(params) { calls.push(["feeds", params]); return { feeds: [] }; },
+		async duplicates(params) { calls.push(["duplicates", params]); return { items: [], total: 0 }; },
+		async fulltextSearch(params) { calls.push(["fulltextSearch", params]); return { matches: [], total: 0 }; },
     async itemChildren(params) { calls.push(["itemChildren", params]); return { attachments: [], notes: [] }; },
     async itemMetadata(params) { calls.push(["itemMetadata", params]); return { itemKey: params.itemKey, libraryId: params.libraryId }; },
     async itemFacts(params) { calls.push(["itemFacts", params]); return { citationWarning: false, itemKey: params.itemKey, libraryId: params.libraryId, relations: [], retracted: false, synced: true, version: 1 }; },
@@ -278,6 +280,14 @@ test("routes read-only PDF, item facts, Note, and annotation methods through lib
   assert.deepEqual((await router.handle(request(session, "library.annotations", { attachmentKey: "PDF00001", libraryId: 1 }))).result, { annotations: [] });
   assert.equal((await router.handle(request(session, "library.note", { libraryId: 1, noteKey: "NOTE0001" }))).result.html, "<p>Note</p>");
   assert.deepEqual(calls.map(value => value[0]), ["itemChildren", "attachment", "attachmentState", "itemFacts", "annotations", "note"]);
+});
+
+test("routes duplicates and full-text search through read and search capabilities", async () => {
+	const { calls, router } = createRouter();
+	const session = await handshake(router);
+	assert.deepEqual((await router.handle(request(session, "library.duplicates", { libraryId: 1, limit: 50 }))).result, { items: [], total: 0 });
+	assert.deepEqual((await router.handle(request(session, "library.fulltext-search", { libraryId: 1, limit: 50, query: "flow" }))).result, { matches: [], total: 0 });
+	assert.deepEqual(calls.map(value => value[0]), ["duplicates", "fulltextSearch"]);
 });
 
 test("routes attachment chunks through a session-bound attachment:read capability", async () => {

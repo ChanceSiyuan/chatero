@@ -132,7 +132,8 @@ function fixture({
 } = {}) {
   const syncCalls = [];
 	const exportCalls = [];
-	const importCalls = [];
+  const importCalls = [];
+	const droppedTables = [];
   const highlight = item({
     id: 92,
     key: "ANN00001",
@@ -234,7 +235,7 @@ function fixture({
       get: id => Array.isArray(id)
         ? id.map(value => items.find(itemValue => itemValue.id === value)).filter(Boolean)
         : items.find(value => value.id === id) || false,
-      getAll: async libraryId => items.filter(value => value.libraryID === libraryId && value.isRegularItem()),
+			getAll: async (libraryId, onlyTopLevel = false) => items.filter(value => value.libraryID === libraryId && (onlyTopLevel ? value.isRegularItem() : true)),
       getByLibraryAndKey: (libraryId, key) => items.find(value => value.libraryID === libraryId && value.key === key) || false,
     },
     ItemTypes: { getName: itemTypeID => itemTypeID },
@@ -270,7 +271,17 @@ function fixture({
       getIndexedState: async value => value.id === 90 ? 3 : 1,
       getItemVersion: async value => value === 90 ? 6 : false,
       getPages: async value => value === 90 ? { indexedPages: 12, total: 12 } : false,
+			findTextInItems: async (ids, query) => query === "flow" && ids.includes(90) ? [{ id: 90 }] : [],
     },
+		Duplicates: class {
+			constructor(libraryId) { this.libraryId = libraryId; }
+			async getSearchObject() {
+				return {
+					getConditions: () => ({ 1: { condition: "tempTable", value: "tmpDuplicates_safe123" } }),
+					search: async () => this.libraryId === 1 ? [12, 11] : [],
+				};
+			}
+		},
     Retractions: {
       isRetracted: value => value.id === 11,
       shouldShowCitationWarning: value => value.id === 11,
@@ -315,7 +326,10 @@ function fixture({
 				}
 			},
 		},
-    DB: { executeTransaction: async callback => callback() },
+		DB: {
+			executeTransaction: async callback => callback(),
+			queryAsync: async sql => { droppedTables.push(sql); },
+		},
     Sync: {
 			Data: { Local: { getLastSyncTime: () => new Date(400_000) } },
       Runner: {
@@ -342,7 +356,7 @@ function fixture({
       } },
     },
   };
-  return { exportCalls, importCalls, syncCalls, Zotero };
+  return { droppedTables, exportCalls, importCalls, syncCalls, Zotero };
 }
 
 test("lists libraries, saved searches, and paginated tags without database or path data", async () => {
@@ -548,6 +562,29 @@ test("reports storage mode and bounded file conflicts without credentials or pat
 	const serialized = JSON.stringify(await adapter.syncConflicts({ libraryId: 1 }));
 	assert.equal(serialized.includes("password"), false);
 	assert.equal(serialized.includes("path"), false);
+});
+
+test("returns paged duplicate candidates and cleans Zotero's temporary table", async () => {
+	const source = fixture();
+	const adapter = createZoteroLibraryAdapter(source);
+	assert.deepEqual(await adapter.duplicates({ libraryId: 1, limit: 1 }), {
+		items: [{
+			attachmentCount: 1, collectionKeys: ["NESTED01", "SHARED01"], creators: ["Ada Lovelace", "Collaboration"],
+			itemKey: "ITEM0001", itemType: "journalArticle", libraryId: 1, title: "Alpha Methods", year: 2024,
+		}],
+		nextCursor: "1",
+		total: 2,
+	});
+	assert.deepEqual(source.droppedTables, ["DROP TABLE IF EXISTS tmpDuplicates_safe123"]);
+});
+
+test("searches bounded full text and returns attachment-parent identities without paths", async () => {
+	const adapter = createZoteroLibraryAdapter(fixture());
+	assert.deepEqual(await adapter.fulltextSearch({ libraryId: 1, limit: 10, query: "flow" }), {
+		matches: [{ attachmentKey: "PDF00001", libraryId: 1, parentItemKey: "ITEM0001", title: "Accepted manuscript" }],
+		total: 1,
+	});
+	await assert.rejects(adapter.fulltextSearch({ libraryId: 1, limit: 10, query: "" }), /query/);
 });
 
 test("lists bounded Zotero translator metadata without executable code or paths", async () => {

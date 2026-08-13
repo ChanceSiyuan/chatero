@@ -79,6 +79,18 @@
       "resultType": "LibraryFeedsResult"
     },
     {
+      "name": "library.duplicates",
+      "capability": "library:read",
+      "paramsType": "LibraryDuplicatesParams",
+      "resultType": "LibrarySearchResult"
+    },
+    {
+      "name": "library.fulltext-search",
+      "capability": "library:search",
+      "paramsType": "LibraryFulltextSearchParams",
+      "resultType": "LibraryFulltextSearchResult"
+    },
+    {
       "name": "library.libraries",
       "capability": "library:read",
       "paramsType": "LibraryLibrariesParams",
@@ -436,6 +448,40 @@
       "kind": "object",
       "fields": {
         "feeds": "LibraryFeedSummary[]"
+      }
+    },
+    "LibraryDuplicatesParams": {
+      "kind": "object",
+      "fields": {
+        "cursor?": "string",
+        "libraryId": "number",
+        "limit": "number"
+      }
+    },
+    "LibraryFulltextSearchParams": {
+      "kind": "object",
+      "fields": {
+        "cursor?": "string",
+        "libraryId": "number",
+        "limit": "number",
+        "query": "string"
+      }
+    },
+    "LibraryFulltextMatch": {
+      "kind": "object",
+      "fields": {
+        "attachmentKey": "string",
+        "libraryId": "number",
+        "parentItemKey": "string",
+        "title": "string"
+      }
+    },
+    "LibraryFulltextSearchResult": {
+      "kind": "object",
+      "fields": {
+        "matches": "LibraryFulltextMatch[]",
+        "nextCursor?": "string",
+        "total": "number"
       }
     },
     "LibrarySummary": {

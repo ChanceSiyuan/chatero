@@ -31,7 +31,9 @@ export const METHOD_CAPABILITIES = Object.freeze({
   "library.attachment": "library:read",
   "library.attachment-state": "library:read",
   "library.collections": "library:read",
+  "library.duplicates": "library:read",
   "library.feeds": "library:read",
+  "library.fulltext-search": "library:search",
   "library.item-children": "library:read",
   "library.item-facts": "library:read",
   "library.item-metadata": "library:read",
@@ -106,9 +108,17 @@ export const METHOD_TYPES = Object.freeze({
     "params": "LibraryCollectionsParams",
     "result": "LibraryCollectionsResult"
   },
+  "library.duplicates": {
+    "params": "LibraryDuplicatesParams",
+    "result": "LibrarySearchResult"
+  },
   "library.feeds": {
     "params": "LibraryFeedsParams",
     "result": "LibraryFeedsResult"
+  },
+  "library.fulltext-search": {
+    "params": "LibraryFulltextSearchParams",
+    "result": "LibraryFulltextSearchResult"
   },
   "library.item-children": {
     "params": "LibraryItemChildrenParams",
