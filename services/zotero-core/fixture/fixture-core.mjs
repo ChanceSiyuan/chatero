@@ -89,6 +89,7 @@ async function main() {
   const fixtureItems = Array.isArray(fixture) ? fixture : fixture.items;
   const fixtureCollections = Array.isArray(fixture?.collections) ? fixture.collections : [];
   const fixtureItemChildren = Array.isArray(fixture?.itemChildren) ? fixture.itemChildren : [];
+  const fixtureItemMetadata = Array.isArray(fixture?.itemMetadata) ? fixture.itemMetadata : [];
   const fixtureNotes = Array.isArray(fixture?.notes) ? fixture.notes : [];
   const fixtureAnnotations = Array.isArray(fixture?.annotations) ? fixture.annotations : [];
   if (!Array.isArray(fixtureItems)) throw new Error("fixture items must be an array");
@@ -167,6 +168,12 @@ async function main() {
       const value = fixtureItemChildren.find(entry => entry.libraryId === message.params.libraryId && entry.itemKey === message.params.itemKey);
       if (!value) throw new Error(`fixture item ${message.params.libraryId}/${message.params.itemKey} was not found`);
       return { result: { attachments: value.attachments, notes: value.notes } };
+    }
+    if (message.method === "library.item-metadata") {
+      validateIdentityParams(message.params, "itemKey", "library.item-metadata");
+      const value = fixtureItemMetadata.find(entry => entry.libraryId === message.params.libraryId && entry.itemKey === message.params.itemKey);
+      if (!value) throw new Error(`fixture item metadata ${message.params.libraryId}/${message.params.itemKey} was not found`);
+      return { result: value };
     }
     if (message.method === "library.attachment") {
       validateIdentityParams(message.params, "attachmentKey", "library.attachment");

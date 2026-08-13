@@ -161,6 +161,7 @@ export function createGeckoCoreRequestRouter(options = {}) {
 			if (message.method === "library.attachment") return { result: await adapter.attachment(message.params) };
 			if (message.method === "library.collections") return { result: await adapter.collections(message.params) };
 			if (message.method === "library.item-children") return { result: await adapter.itemChildren(message.params) };
+			if (message.method === "library.item-metadata") return { result: await adapter.itemMetadata(message.params) };
 			if (message.method === "library.note") return { result: await adapter.note(message.params) };
 			if (message.method === "library.search") {
 				if (typeof message.cancellationId !== "string" || !message.cancellationId) {

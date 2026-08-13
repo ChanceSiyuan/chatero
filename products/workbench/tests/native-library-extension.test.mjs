@@ -86,6 +86,48 @@ test("Library model lazily loads validated PDF, Note, and annotation records", a
   ]);
 });
 
+test("Library model fetches and validates read-only item metadata", async () => {
+  const { LibraryTreeModel } = await import("../extensions/chatero-zotero/library-tree-model.mjs");
+  const calls = [];
+  const model = new LibraryTreeModel({
+    request: async (method, params) => {
+      calls.push({ method, params });
+      return {
+        abstractNote: "Abstract",
+        creators: ["Ada Lovelace"],
+        date: "2024-01-15",
+        doi: "10.1234/alpha",
+        itemKey: "ITEM0001",
+        itemType: "journalArticle",
+        libraryId: 7,
+        publicationTitle: "Journal of Methods",
+        tags: ["methods", "reading"],
+        title: "Alpha Methods",
+        url: "https://example.org/alpha",
+        year: 2024,
+      };
+    },
+  });
+
+  assert.deepEqual(await model.metadata({ itemKey: "ITEM0001", libraryId: 7 }), {
+    abstractNote: "Abstract",
+    creators: ["Ada Lovelace"],
+    date: "2024-01-15",
+    doi: "10.1234/alpha",
+    itemKey: "ITEM0001",
+    itemType: "journalArticle",
+    libraryId: 7,
+    publicationTitle: "Journal of Methods",
+    tags: ["methods", "reading"],
+    title: "Alpha Methods",
+    url: "https://example.org/alpha",
+    year: 2024,
+  });
+  assert.deepEqual(calls, [
+    { method: "library.item-metadata", params: { itemKey: "ITEM0001", libraryId: 7 } },
+  ]);
+});
+
 test("Library open commands keep Core-originated evidence inside native workbench editors", async () => {
   const source = await readFile(join(extensionRoot, "extension.cjs"), "utf8");
 

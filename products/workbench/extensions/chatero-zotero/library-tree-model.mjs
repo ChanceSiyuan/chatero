@@ -52,6 +52,29 @@ function validateAnnotation(value) {
   return Object.freeze({ ...value });
 }
 
+function validateItemMetadata(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)
+    || typeof value.abstractNote !== "string"
+    || !Array.isArray(value.creators) || value.creators.some(creator => typeof creator !== "string")
+    || typeof value.date !== "string"
+    || typeof value.itemKey !== "string" || value.itemKey.length === 0
+    || typeof value.itemType !== "string" || value.itemType.length === 0
+    || !Number.isSafeInteger(value.libraryId) || value.libraryId < 1
+    || !Array.isArray(value.tags) || value.tags.some(tag => typeof tag !== "string")
+    || typeof value.title !== "string") {
+    throw new Error("Zotero Core returned invalid item metadata");
+  }
+  for (const field of ["doi", "publicationTitle", "url"]) {
+    if (value[field] !== undefined && typeof value[field] !== "string") {
+      throw new Error(`Zotero Core returned invalid item metadata ${field}`);
+    }
+  }
+  if (value.year !== undefined && (!Number.isSafeInteger(value.year) || value.year < 0)) {
+    throw new Error("Zotero Core returned invalid item metadata year");
+  }
+  return Object.freeze({ ...value });
+}
+
 export class LibraryTreeModel {
   #request;
 
@@ -114,5 +137,10 @@ export class LibraryTreeModel {
     const summary = validateNoteSummary(result);
     if (typeof result.html !== "string") throw new Error("Zotero Core returned invalid Note HTML");
     return Object.freeze({ ...summary, html: result.html });
+  }
+
+  async metadata({ itemKey, libraryId }) {
+    const result = await this.#request("library.item-metadata", { itemKey, libraryId });
+    return validateItemMetadata(result);
   }
 }

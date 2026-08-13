@@ -83,6 +83,7 @@ export async function startCore({
   fixtureAnnotations = [],
   fixtureItems = [],
   fixtureItemChildren = [],
+  fixtureItemMetadata = [],
   fixtureNotes = [],
   fixtureCorePath = DEFAULT_FIXTURE_CORE,
   fixtureSearchDelayMs = 0,
@@ -107,6 +108,7 @@ export async function startCore({
     annotations: fixtureAnnotations,
     collections: fixtureCollections,
     itemChildren: fixtureItemChildren,
+    itemMetadata: fixtureItemMetadata,
     items: fixtureItems,
     notes: fixtureNotes,
   })}\n`, { mode: 0o600 });

@@ -16,12 +16,14 @@
 const COLLECTION_FIELDS = new Set(["libraryId", "parentKey"]);
 const SEARCH_FIELDS = new Set(["collectionKey", "cursor", "libraryId", "limit", "query"]);
 const ITEM_CHILDREN_FIELDS = new Set(["itemKey", "libraryId"]);
+const ITEM_METADATA_FIELDS = new Set(["itemKey", "libraryId"]);
 const ANNOTATION_FIELDS = new Set(["attachmentKey", "libraryId"]);
 const ATTACHMENT_FIELDS = new Set(["attachmentKey", "libraryId"]);
 const NOTE_FIELDS = new Set(["libraryId", "noteKey"]);
 const MAX_PAGE_SIZE = 200;
 const MAX_NOTE_BYTES = 512 * 1024;
 const MAX_ANNOTATION_FIELD_BYTES = 256 * 1024;
+const MAX_METADATA_FIELD_BYTES = 256 * 1024;
 
 function exactObject(value, fields, label) {
 	if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -156,6 +158,41 @@ function itemSummary(Zotero, item) {
 		summary.year = Number(year);
 	}
 	return summary;
+}
+
+function optionalField(item, field) {
+	let value = item.getField(field);
+	if (typeof value !== "string" || !value.trim()) return undefined;
+	return value.trim();
+}
+
+function itemMetadataSummary(Zotero, item) {
+	let creators = item.getCreatorsJSON().map(creatorName).filter(Boolean);
+	let tags = (item.getTags() || [])
+		.map(tag => tag?.tag)
+		.filter(value => typeof value === "string" && value.trim())
+		.map(value => value.trim())
+		.sort(compareText);
+	let metadata = {
+		abstractNote: boundedString(item.getField("abstractNote") || "", MAX_METADATA_FIELD_BYTES, "item abstractNote"),
+		creators,
+		date: item.getField("date") || "",
+		itemKey: item.key,
+		itemType: Zotero.ItemTypes.getName(item.itemTypeID),
+		libraryId: item.libraryID,
+		tags,
+		title: item.getDisplayTitle(),
+	};
+	let year = item.getField("year");
+	if (typeof year === "number" && Number.isSafeInteger(year) && year >= 0
+			|| typeof year === "string" && /^\d{1,4}$/.test(year)) {
+		metadata.year = Number(year);
+	}
+	for (let [field, key] of [["DOI", "doi"], ["url", "url"], ["publicationTitle", "publicationTitle"]]) {
+		let value = optionalField(item, field);
+		if (value !== undefined) metadata[key] = value;
+	}
+	return metadata;
 }
 
 function itemIsUnavailable(item) {
@@ -325,6 +362,13 @@ export function createZoteroLibraryAdapter({ Zotero } = {}) {
 				.sort((left, right) => compareText(left.title, right.title)
 					|| compareText(left.noteKey, right.noteKey));
 			return { attachments, notes };
+		},
+
+		async itemMetadata(params) {
+			validateCompositeParams(params, ITEM_METADATA_FIELDS, "itemKey", "library.item-metadata");
+			let item = lookupItem(Zotero, params.libraryId, params.itemKey, "Zotero item");
+			if (!item.isRegularItem?.()) throw new Error("library.item-metadata target must be a regular item");
+			return itemMetadataSummary(Zotero, item);
 		},
 
 		async note(params) {

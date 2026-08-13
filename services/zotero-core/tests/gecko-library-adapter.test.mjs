@@ -16,6 +16,12 @@ function item({
   title,
   type = "journalArticle",
   year,
+  abstractNote = "",
+  date = "",
+  doi = "",
+  url = "",
+  publicationTitle = "",
+  tags = [],
   creators = [],
   collectionIDs = [],
   attachments = [],
@@ -51,10 +57,18 @@ function item({
     getCollections: () => collectionIDs.slice(),
     getCreatorsJSON: () => creators.map(creator),
     getDisplayTitle: () => title,
-    getField: field => field === "year" ? year : "",
+    getField: field => ({
+      DOI: doi,
+      abstractNote,
+      date,
+      publicationTitle,
+      url,
+      year,
+    }[field] ?? ""),
     getFilePathAsync: async () => path || false,
     getNote: () => noteHTML,
     getNotes: () => notes.slice(),
+    getTags: () => tags.slice(),
     isAnnotation: () => type === "annotation",
     isAttachment: () => type === "attachment",
     isFileAttachment: () => type === "attachment" && Boolean(path),
@@ -131,6 +145,12 @@ function fixture({
     title: "Alpha Methods",
     type: "journalArticle",
     year: "2024",
+    abstractNote: "A foundational method.",
+    date: "2024-01-15",
+    doi: "10.1234/alpha",
+    url: "https://example.org/alpha",
+    publicationTitle: "Journal of Methods",
+    tags: [{ tag: "methods" }, { tag: "reading" }],
     creators: ["Ada Lovelace", "Collaboration"],
     attachments: [attachment.id],
     notes: [childNote.id],
@@ -276,6 +296,26 @@ test("returns PDF and Note children with Zotero composite identity", async () =>
     }],
   });
   assert.equal((await adapter.itemChildren({ libraryId: 2, itemKey: "ITEM0001" })).attachments[0].path.endsWith("group.pdf"), true);
+});
+
+test("returns full read-only metadata for a regular item", async () => {
+  const adapter = createZoteroLibraryAdapter(fixture());
+
+  assert.deepEqual(await adapter.itemMetadata({ libraryId: 1, itemKey: "ITEM0001" }), {
+    abstractNote: "A foundational method.",
+    creators: ["Ada Lovelace", "Collaboration"],
+    date: "2024-01-15",
+    doi: "10.1234/alpha",
+    itemKey: "ITEM0001",
+    itemType: "journalArticle",
+    libraryId: 1,
+    publicationTitle: "Journal of Methods",
+    tags: ["methods", "reading"],
+    title: "Alpha Methods",
+    url: "https://example.org/alpha",
+    year: 2024,
+  });
+  await assert.rejects(adapter.itemMetadata({ libraryId: 1, itemKey: "NOTE0002" }), /regular item/);
 });
 
 test("looks up one file attachment by exact composite identity", async () => {

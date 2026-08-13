@@ -41,6 +41,12 @@
       "resultType": "LibraryItemChildrenResult"
     },
     {
+      "name": "library.item-metadata",
+      "capability": "library:read",
+      "paramsType": "LibraryItemMetadataParams",
+      "resultType": "LibraryItemMetadata"
+    },
+    {
       "name": "library.annotations",
       "capability": "library:read",
       "paramsType": "LibraryAnnotationsParams",
@@ -207,6 +213,30 @@
       "fields": {
         "attachments": "LibraryAttachmentSummary[]",
         "notes": "LibraryNoteSummary[]"
+      }
+    },
+    "LibraryItemMetadataParams": {
+      "kind": "object",
+      "fields": {
+        "itemKey": "string",
+        "libraryId": "number"
+      }
+    },
+    "LibraryItemMetadata": {
+      "kind": "object",
+      "fields": {
+        "abstractNote": "string",
+        "creators": "string[]",
+        "date": "string",
+        "doi?": "string",
+        "itemKey": "string",
+        "itemType": "string",
+        "libraryId": "number",
+        "publicationTitle?": "string",
+        "tags": "string[]",
+        "title": "string",
+        "url?": "string",
+        "year?": "number"
       }
     },
     "LibraryAnnotationsParams": {
