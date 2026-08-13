@@ -193,6 +193,19 @@ export function makeCodeOssExtensionsInvocation({
   });
 }
 
+export function makeCodeOssServerBundleInvocation({
+  checkout,
+  nodePath = process.execPath,
+  environment = process.env,
+}) {
+  return makeCodeOssBuildInvocation({
+    checkout,
+    target: "minify-vscode-reh",
+    nodePath,
+    environment,
+  });
+}
+
 export function makeCodexSdkPlan({ arch, checkout, root }) {
   if (!Object.hasOwn(ARCHITECTURES, arch)) {
     throw new TypeError("arch must equal x64 or arm64");
@@ -401,6 +414,12 @@ async function assertRequiredExtensionPayload(root) {
   }
 }
 
+async function assertRequiredServerRuntime(root) {
+  for (const relativePath of ["out/server-main.js", "out/bootstrap-fork.js"]) {
+    await assertRegularFile(join(root, ...relativePath.split("/")), `required Remote Agent runtime ${relativePath}`);
+  }
+}
+
 async function packDeterministically(source, root, destination) {
   await run("tar", [
     "--sort=name",
@@ -451,6 +470,11 @@ async function main() {
     cwd: extensionsInvocation.cwd,
     env: extensionsInvocation.env,
   });
+  const serverBundleInvocation = makeCodeOssServerBundleInvocation({ checkout });
+  await run(serverBundleInvocation.command, serverBundleInvocation.args, {
+    cwd: serverBundleInvocation.cwd,
+    env: serverBundleInvocation.env,
+  });
   const buildInvocation = makeCodeOssBuildInvocation({
     checkout,
     target: plan.target,
@@ -490,6 +514,7 @@ async function main() {
     await chmod(integrityVerifierDestination, 0o755);
     await assertDocumentationPayload(root);
     await assertRequiredExtensionPayload(root);
+    await assertRequiredServerRuntime(root);
 
     await mkdir(dirname(plan.output), { recursive: true });
     await packDeterministically(workDirectory, plan.rootName, plan.output);

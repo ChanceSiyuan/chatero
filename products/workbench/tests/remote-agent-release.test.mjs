@@ -830,6 +830,7 @@ test("Linux agent builder runs gulp with the already verified Node executable", 
     makeCodeOssBuildInvocation,
     makeCodeOssCompileInvocation,
     makeCodeOssExtensionsInvocation,
+    makeCodeOssServerBundleInvocation,
   } = await import(BUILD_PATH);
 
   assert.deepEqual(makeCodeOssCompileInvocation({
@@ -883,9 +884,16 @@ test("Linux agent builder runs gulp with the already verified Node executable", 
     checkout: "/srv/code-oss",
     nodePath: "/opt/chatero/node-v24.18.0/bin/node",
   }).args.at(-1), "compile-extensions-build");
+  assert.equal(makeCodeOssServerBundleInvocation({
+    checkout: "/srv/code-oss",
+    nodePath: "/opt/chatero/node-v24.18.0/bin/node",
+  }).args.at(-1), "minify-vscode-reh");
 
   const source = await readFile(BUILD_PATH, "utf8");
   assert.match(source, /assertRequiredExtensionPayload/);
+  assert.match(source, /assertRequiredServerRuntime/);
+  assert.match(source, /out\/server-main\.js/);
+  assert.match(source, /out\/bootstrap-fork\.js/);
   assert.doesNotMatch(source, /run\(["']npm["'],\s*\[["']run["'],\s*["']gulp["']/);
   const sdkDestinationPreflight = source.indexOf("assertSafeFileDestination(plan.tarball");
   assert.notEqual(sdkDestinationPreflight, -1);
