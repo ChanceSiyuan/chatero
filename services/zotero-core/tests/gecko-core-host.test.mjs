@@ -11,14 +11,14 @@ function decodeFrames(frames) {
   return messages;
 }
 
-test("connection emits a response followed by its monotonic event", async () => {
+test("connection emits a response followed by the Core-global monotonic event", async () => {
   const writes = [];
   const connection = createGeckoCoreConnection({
     profileEpoch: "epoch",
     router: {
       async handle(message) {
         return {
-          event: { payload: { source: message.id }, topic: "library.changed" },
+          event: { occurredAt: 10, payload: { source: message.id }, profileEpoch: "epoch", sequence: 7, topic: "library.changed" },
           result: { echoed: message.id },
         };
       },
@@ -29,7 +29,7 @@ test("connection emits a response followed by its monotonic event", async () => 
   await connection.push(encodeGeckoFrame({ id: "request-1" }));
   assert.deepEqual(decodeFrames(writes), [
     { id: "request-1", ok: true, result: { echoed: "request-1" } },
-    { event: true, payload: { source: "request-1" }, profileEpoch: "epoch", sequence: 1, topic: "library.changed" },
+    { event: true, occurredAt: 10, payload: { source: "request-1" }, profileEpoch: "epoch", sequence: 7, topic: "library.changed" },
   ]);
   connection.end();
 });
@@ -70,4 +70,21 @@ test("connection rejects malformed frames before invoking the router", async () 
 
   await assert.rejects(connection.push(Uint8Array.from([0, 0, 0, 0])), /cannot be zero/);
   assert.equal(calls, 0);
+});
+
+test("connection rejects a stale or cross-profile router event", async () => {
+  const connection = createGeckoCoreConnection({
+    profileEpoch: "epoch",
+    router: {
+      async handle() {
+        return {
+          event: { occurredAt: 10, payload: {}, profileEpoch: "other", sequence: 1, topic: "library.changed" },
+          result: {},
+        };
+      },
+    },
+    write: async () => {},
+  });
+
+  await assert.rejects(connection.push(encodeGeckoFrame({ id: "request-1" })), /invalid event sequence/);
 });

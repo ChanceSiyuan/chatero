@@ -25,7 +25,7 @@ export function createGeckoCoreConnection({ profileEpoch, router, write } = {}) 
 	if (typeof router?.handle !== "function") throw new Error("Core connection router is required");
 	if (typeof write !== "function") throw new Error("Core connection write function is required");
 	let decoder = new GeckoFrameDecoder();
-	let sequence = 0;
+	let lastEventSequence = 0;
 	let closed = false;
 
 	return Object.freeze({
@@ -49,12 +49,14 @@ export function createGeckoCoreConnection({ profileEpoch, router, write } = {}) 
 				}
 				await write(encodeGeckoFrame(response));
 				if (event) {
+					if (event.profileEpoch !== profileEpoch || !Number.isSafeInteger(event.sequence)
+							|| event.sequence <= lastEventSequence) {
+						throw new Error("Core router emitted an invalid event sequence");
+					}
+					lastEventSequence = event.sequence;
 					await write(encodeGeckoFrame({
+						...event,
 						event: true,
-						payload: event.payload,
-						profileEpoch,
-						sequence: ++sequence,
-						topic: event.topic,
 					}));
 				}
 			}

@@ -11,6 +11,7 @@ import {
 } from "../generated/protocol.mjs";
 import { SessionAuthority } from "../security/session-authority.mjs";
 import { FrameDecoder, writeFrame } from "../transport/frame-codec.mjs";
+import { createCoreEventJournal } from "../../../chrome/content/zotero/xpcom/chateroCoreEventJournal.mjs";
 
 const MAX_BOOTSTRAP_BYTES = 1024;
 const MAX_ERROR_MESSAGE = 512;
@@ -104,10 +105,12 @@ async function main() {
   if (!Number.isSafeInteger(searchDelayMs) || searchDelayMs < 0 || searchDelayMs > 10000) {
     throw new Error("fixture search delay is invalid");
   }
+  const eventJournal = createCoreEventJournal({ profileEpoch });
   const authority = new SessionAuthority({
     bootstrapToken,
     profileEpoch,
     capabilities: CAPABILITIES,
+    eventSequence: () => eventJournal.latestSequence,
   });
 
   const active = new Map();
@@ -140,6 +143,15 @@ async function main() {
       const controller = active.get(message.params.cancellationId);
       controller?.abort();
       return { result: { cancelled: Boolean(controller) } };
+    }
+    if (message.method === "core.events") {
+      if (!message.params || typeof message.params !== "object" || Array.isArray(message.params)
+        || Object.keys(message.params).some(key => !["afterSequence", "limit"].includes(key))
+        || !Number.isSafeInteger(message.params.afterSequence) || message.params.afterSequence < 0
+        || !Number.isSafeInteger(message.params.limit) || message.params.limit < 1 || message.params.limit > 1000) {
+        throw new Error("core.events params require a valid afterSequence and limit");
+      }
+      return { result: eventJournal.replay(message.params) };
     }
     if (message.method === "profile.status") {
       if (!message.params || typeof message.params !== "object" || Array.isArray(message.params) || Object.keys(message.params).length !== 0) {
@@ -253,7 +265,7 @@ async function main() {
         total: matches.length,
       };
       return {
-        event: { payload: { count: result.total, query: message.params.query }, topic: "library.search.completed" },
+        event: eventJournal.publish("library.search.completed", { count: result.total, query: message.params.query }),
         result,
       };
     }
@@ -263,7 +275,6 @@ async function main() {
   const server = net.createServer(socket => {
     const decoder = new FrameDecoder();
     let writes = Promise.resolve();
-    let sequence = 0;
     const enqueue = message => {
       writes = writes.then(() => writeFrame(socket, message));
       writes.catch(error => socket.destroy(error));
@@ -292,13 +303,9 @@ async function main() {
           }
           await enqueue(response);
           if (event) {
-            sequence += 1;
             await enqueue({
+              ...event,
               event: true,
-              payload: event.payload,
-              profileEpoch,
-              sequence,
-              topic: event.topic,
             });
           }
         }).catch(error => socket.destroy(error));

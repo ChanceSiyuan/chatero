@@ -11,6 +11,7 @@ export const CAPABILITIES = Object.freeze([
 ]);
 export const METHOD_CAPABILITIES = Object.freeze({
   "core.cancel": null,
+  "core.events": "events:read",
   "core.handshake": null,
   "library.annotations": "library:read",
   "library.attachment": "library:read",
@@ -25,6 +26,10 @@ export const METHOD_TYPES = Object.freeze({
   "core.cancel": {
     "params": "CoreCancelParams",
     "result": "CoreCancelResult"
+  },
+  "core.events": {
+    "params": "CoreEventsParams",
+    "result": "CoreEventsResult"
   },
   "core.handshake": {
     "params": "CoreHandshakeParams",

@@ -24,6 +24,7 @@ export class SessionAuthority {
   #bootstrapConsumed = false;
   #bootstrapToken;
   #maxDeadlineHorizonMs;
+  #eventSequence;
   #now;
   #profileEpoch;
   #protocolVersion;
@@ -40,6 +41,7 @@ export class SessionAuthority {
     randomToken = defaultRandomToken,
     sessionTtlMs = DEFAULT_SESSION_TTL_MS,
     maxDeadlineHorizonMs = DEFAULT_MAX_DEADLINE_HORIZON_MS,
+    eventSequence = () => 0,
   }) {
     if (typeof bootstrapToken !== "string" || bootstrapToken.length < 24) {
       throw new Error("bootstrapToken must contain at least 24 characters");
@@ -61,6 +63,8 @@ export class SessionAuthority {
     this.#randomToken = randomToken;
     this.#sessionTtlMs = sessionTtlMs;
     this.#maxDeadlineHorizonMs = maxDeadlineHorizonMs;
+    if (typeof eventSequence !== "function") throw new Error("eventSequence must be a function");
+    this.#eventSequence = eventSequence;
   }
 
   handshake({ bootstrapToken, protocolVersion, requestedCapabilities }) {
@@ -89,6 +93,7 @@ export class SessionAuthority {
     this.#bootstrapToken = "";
     return {
       capabilities: selected,
+      eventSequence: this.#eventSequence(),
       expiresAt,
       profileEpoch: this.#profileEpoch,
       protocolVersion: this.#protocolVersion,

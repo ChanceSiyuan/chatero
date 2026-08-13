@@ -240,8 +240,11 @@ test("delivers monotonic Core events independently of request responses", async 
 
   await core.client.request("library.search", { query: "white", limit: 10 });
 
-  assert.deepEqual(await event, {
+  const received = await event;
+  assert.ok(Number.isSafeInteger(received.occurredAt));
+  assert.deepEqual(received, {
     event: true,
+    occurredAt: received.occurredAt,
     payload: { count: 1, query: "white" },
     profileEpoch: core.profileEpoch,
     sequence: 1,

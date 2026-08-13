@@ -17,6 +17,12 @@
       "resultType": "CoreCancelResult"
     },
     {
+      "name": "core.events",
+      "capability": "events:read",
+      "paramsType": "CoreEventsParams",
+      "resultType": "CoreEventsResult"
+    },
+    {
       "name": "core.handshake",
       "capability": null,
       "paramsType": "CoreHandshakeParams",
@@ -84,6 +90,32 @@
         "cancelled": "boolean"
       }
     },
+    "CoreEventRecord": {
+      "kind": "object",
+      "fields": {
+        "occurredAt": "number",
+        "payload": "unknown",
+        "profileEpoch": "string",
+        "sequence": "number",
+        "topic": "string"
+      }
+    },
+    "CoreEventsParams": {
+      "kind": "object",
+      "fields": {
+        "afterSequence": "number",
+        "limit": "number"
+      }
+    },
+    "CoreEventsResult": {
+      "kind": "object",
+      "fields": {
+        "events": "CoreEventRecord[]",
+        "latestSequence": "number",
+        "oldestSequence": "number",
+        "truncated": "boolean"
+      }
+    },
     "CoreHandshakeParams": {
       "kind": "object",
       "fields": {
@@ -96,6 +128,7 @@
       "kind": "object",
       "fields": {
         "capabilities": "string[]",
+        "eventSequence": "number",
         "expiresAt": "number",
         "profileEpoch": "string",
         "protocolVersion": "string",

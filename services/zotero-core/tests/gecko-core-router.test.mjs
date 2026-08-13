@@ -66,6 +66,7 @@ test("exchanges the one-time bootstrap token and routes authenticated read metho
 
   assert.deepEqual(session, {
     capabilities: ["library:read", "library:search", "profile:read"],
+    eventSequence: 0,
     expiresAt: 301000,
     profileEpoch: "profile-epoch",
     protocolVersion: "1.0",
@@ -154,4 +155,25 @@ test("cancels an in-flight search without changing the session", async () => {
   assert.deepEqual((await router.handle(request(session, "core.cancel", { cancellationId: "active-search" }))).result, { cancelled: true });
   await assert.rejects(pending, error => error.code === "CANCELLED");
   assert.deepEqual((await router.handle(request(session, "core.cancel", { cancellationId: "missing" }))).result, { cancelled: false });
+});
+
+test("publishes Core-global events and serves capability-gated bounded replay", async () => {
+  const { router } = createRouter();
+  const session = await handshake(router, ["events:read", "library:search"]);
+
+  assert.equal(session.eventSequence, 0);
+  const searched = await router.handle(request(session, "library.search", { limit: 50, query: "tensor" }));
+  assert.equal(searched.event.sequence, 1);
+  assert.equal(searched.event.profileEpoch, session.profileEpoch);
+  assert.deepEqual((await router.handle(request(session, "core.events", {
+    afterSequence: 0,
+    limit: 50,
+  }))).result.events, [searched.event]);
+
+  const { router: forbidden } = createRouter();
+  const withoutEvents = await handshake(forbidden, ["library:read"]);
+  await assert.rejects(
+    forbidden.handle(request(withoutEvents, "core.events", { afterSequence: 0, limit: 50 })),
+    /missing capability events:read/,
+  );
 });

@@ -35,6 +35,7 @@ test("exchanges a one-time bootstrap secret for a least-privilege session", asyn
 
   assert.deepEqual(session, {
     capabilities: ["library:search"],
+    eventSequence: 0,
     expiresAt: 1_001_000,
     profileEpoch: "epoch-1",
     protocolVersion: "1.0",

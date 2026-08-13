@@ -162,6 +162,10 @@ export async function connectCore({
       protocolVersion: PROTOCOL_VERSION,
       requestedCapabilities,
     }, { handshake: true, timeoutMs: connectTimeoutMs });
+    if (!Number.isSafeInteger(session.eventSequence) || session.eventSequence < 0) {
+      throw new Error("Zotero Core handshake returned an invalid event sequence");
+    }
+    lastEventSequence = session.eventSequence;
   }
   catch (error) {
     socket.destroy();

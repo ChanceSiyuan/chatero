@@ -18,6 +18,7 @@ import {
 	METHOD_CAPABILITIES,
 	PROTOCOL_VERSION,
 } from "../modules/chateroCoreProtocol.mjs";
+import { createCoreEventJournal } from "./chateroCoreEventJournal.mjs";
 
 const SESSION_TTL_MS = 5 * 60 * 1000;
 const MAX_DEADLINE_HORIZON_MS = 2 * 60 * 1000;
@@ -89,6 +90,7 @@ export function createGeckoCoreRequestRouter(options = {}) {
 	let bootstrapConsumed = false;
 	let sessions = new Map();
 	let active = new Map();
+	let eventJournal = options.eventJournal || createCoreEventJournal({ profileEpoch, now });
 
 	function authorize(message, capability) {
 		if (!message || typeof message !== "object" || Array.isArray(message)) throw new Error("request must be an object");
@@ -129,6 +131,7 @@ export function createGeckoCoreRequestRouter(options = {}) {
 		bootstrapToken = "";
 		return {
 			capabilities: selected,
+			eventSequence: eventJournal.latestSequence,
 			expiresAt,
 			profileEpoch,
 			protocolVersion: PROTOCOL_VERSION,
@@ -149,6 +152,9 @@ export function createGeckoCoreRequestRouter(options = {}) {
 				let controller = active.get(message.params.cancellationId);
 				controller?.abort();
 				return { result: { cancelled: Boolean(controller) } };
+			}
+			if (message.method === "core.events") {
+				return { result: eventJournal.replay(message.params) };
 			}
 			if (message.method === "profile.status") {
 				if (!message.params || typeof message.params !== "object" || Array.isArray(message.params)
@@ -172,7 +178,7 @@ export function createGeckoCoreRequestRouter(options = {}) {
 				try {
 					let result = await adapter.search(message.params, { signal: controller.signal });
 					return {
-						event: { payload: { count: result.total, query: message.params.query }, topic: "library.search.completed" },
+						event: eventJournal.publish("library.search.completed", { count: result.total, query: message.params.query }),
 						result,
 					};
 				}
