@@ -1,6 +1,7 @@
 {
   "schemaVersion": 1,
   "entries": [
+    { "upstream": "Complete official Zotero action inventory", "chatero": "chatero.zotero.openCompleteZotero", "test": "zotero-feature-coverage.test.mjs#official-inventory", "status": "supported", "manualEvidence": "Complete Zotero compatibility mode with exclusive private-profile ownership" },
     { "upstream": "My Library root", "chatero": "chatero.zotero.library", "test": "native-library-extension.test.mjs#source-tree", "status": "supported", "manualEvidence": "Library Sources view" },
     { "upstream": "Group libraries", "chatero": "chatero.zotero.library", "test": "native-library-extension.test.mjs#source-tree", "status": "supported", "manualEvidence": "organization-themed group roots" },
     { "upstream": "Collections", "chatero": "chatero.zotero.library", "test": "native-library-extension.test.mjs#collections", "status": "supported", "manualEvidence": "nested folder tree" },

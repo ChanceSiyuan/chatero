@@ -18,6 +18,7 @@ const EXPECTED = Object.freeze({
   checks: Object.freeze([
     Object.freeze({ id: "ide-language-product-audit", kind: "source-inspection" }),
     Object.freeze({ id: "remote-contract-tests", command: "node", args: Object.freeze(["products/workbench/scripts/run-node-tests.mjs", "products/workbench/tests/chatero-remote-*.test.mjs", "products/workbench/tests/remote-agent-*.test.mjs", "products/workbench/tests/documentation-remote-transaction.test.mjs"]) }),
+    Object.freeze({ id: "cursor-editor-agent-parity", command: "node", args: Object.freeze(["--test", "products/workbench/tests/cursor-agent-parity.test.mjs"]) }),
     Object.freeze({ id: "code-oss-compile", command: "npm", args: Object.freeze(["run", "workbench:compile"]) }),
     Object.freeze({ id: "signed-agent-release", kind: "release-inspection" }),
     Object.freeze({ id: "linux-x64-real-ssh", kind: "runner-receipt", tuple: "linux-x86_64" }),

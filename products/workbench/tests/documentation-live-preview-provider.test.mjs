@@ -47,6 +47,10 @@ function createVscode({ livePreview = true } = {}) {
       WorkspaceEdit: class WorkspaceEdit {},
       commands: {
         async executeCommand(...args) { commandCalls.push(args); },
+        registerCommand(command, handler) {
+          commandCalls.push(["registerCommand", command]);
+          return { command, dispose() {}, handler };
+        },
       },
       window: {
         registerCustomEditorProvider(...args) {
@@ -80,6 +84,13 @@ test("contributes one optional Documentation QMD editor and preference", async (
   assert.equal(manifest.contributes.configuration.properties["chatero.documentation.livePreview"].default, true);
   assert.ok(manifest.activationEvents.includes("onCustomEditor:chatero.documentation.livePreview"));
   assert.ok(manifest.contributes.commands.some(command => command.command === "chatero.documentation.open"));
+  assert.ok(manifest.contributes.commands.some(command => command.command === "chatero.documentation.toggleEditingView"));
+  assert.deepEqual(manifest.contributes.keybindings, [{
+    command: "chatero.documentation.toggleEditingView",
+    key: "ctrl+e",
+    mac: "cmd+e",
+    when: "activeCustomEditorId == chatero.documentation.livePreview || resourceExtname == .qmd",
+  }]);
 });
 
 test("creates fresh 144-bit nonces and exact restrictive HTML", () => {
@@ -209,7 +220,7 @@ test("registers without a multiple-editor option and routes only Chatero opens b
   const context = { extensionUri: new TestUri("file:/extension"), subscriptions: [] };
   const bridgeRegistry = { attach() { return { dispose() {} }; } };
   const registrations = await registerLivePreview({ vscode: enabled.vscode, context, bridgeRegistry });
-  assert.equal(registrations.length, 1);
+  assert.equal(registrations.length, 2);
   assert.equal(enabled.providerCalls.length, 1);
   assert.equal(enabled.providerCalls[0].length, 2);
   assert.equal(enabled.providerCalls[0][0], LIVE_PREVIEW_VIEW_TYPE);
@@ -220,6 +231,20 @@ test("registers without a multiple-editor option and routes only Chatero opens b
   const disabled = createVscode({ livePreview: false });
   await openDocumentation(disabled.vscode, target);
   assert.deepEqual(disabled.commandCalls.at(-1), ["vscode.openWith", target, "default"]);
+});
+
+test("Obsidian editing-view shortcut toggles the active QMD between Live Preview and source", async () => {
+  const { LIVE_PREVIEW_VIEW_TYPE, toggleActiveQmdView } = loadProvider();
+  const live = createVscode();
+  const uri = Object.assign(new TestUri("file:/workspace/documentation/page.qmd"), { path: "/workspace/documentation/page.qmd" });
+  live.vscode.window.tabGroups = { activeTabGroup: { activeTab: { input: { uri, viewType: LIVE_PREVIEW_VIEW_TYPE } } } };
+  assert.equal(await toggleActiveQmdView(live.vscode), "default");
+  assert.deepEqual(live.commandCalls.at(-1), ["vscode.openWith", uri, "default"]);
+
+  const source = createVscode();
+  source.vscode.window.activeTextEditor = { document: { uri } };
+  assert.equal(await toggleActiveQmdView(source.vscode), LIVE_PREVIEW_VIEW_TYPE);
+  assert.deepEqual(source.commandCalls.at(-1), ["vscode.openWith", uri, LIVE_PREVIEW_VIEW_TYPE]);
 });
 
 test("falls back to the standard editor without truncating an oversized source", async () => {

@@ -4,6 +4,7 @@
   "checks": [
     { "id": "native-library-tests", "command": "node", "args": ["--test", "products/workbench/tests/native-library-extension.test.mjs"] },
     { "id": "core-library-tests", "command": "node", "args": ["--test", "services/zotero-core/tests/gecko-library-adapter.test.mjs", "services/zotero-core/tests/gecko-core-router.test.mjs", "services/zotero-core/tests/core-supervisor.integration.test.mjs"] },
+    { "id": "official-zotero-feature-coverage", "command": "node", "args": ["--test", "products/workbench/tests/zotero-feature-coverage.test.mjs"] },
     { "id": "workbench-tests", "command": "npm", "args": ["run", "test:workbench-bootstrap"] },
     { "id": "code-oss-compile", "command": "npm", "args": ["run", "workbench:compile"] },
     { "id": "signed-gecko-bundle", "command": "npm", "args": ["run", "verify:chatero-bundle"] },

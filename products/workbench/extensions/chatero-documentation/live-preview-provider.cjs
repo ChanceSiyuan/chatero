@@ -25,6 +25,25 @@ async function openDocumentation(vscode, uri) {
   );
 }
 
+function activeQmdTab(vscode) {
+  const tab = vscode.window.tabGroups?.activeTabGroup?.activeTab;
+  const uri = tab?.input?.uri;
+  return uri?.path?.toLowerCase?.().endsWith(".qmd") ? { uri, viewType: tab.input.viewType } : null;
+}
+
+async function toggleActiveQmdView(vscode) {
+  const tab = activeQmdTab(vscode);
+  const sourceUri = vscode.window.activeTextEditor?.document?.uri;
+  const uri = tab?.uri ?? (sourceUri?.path?.toLowerCase?.().endsWith(".qmd") ? sourceUri : null);
+  if (!uri) {
+    await vscode.window.showErrorMessage("Open a QMD file before toggling its editing view.");
+    return null;
+  }
+  const viewType = tab?.viewType === LIVE_PREVIEW_VIEW_TYPE ? "default" : LIVE_PREVIEW_VIEW_TYPE;
+  await vscode.commands.executeCommand("vscode.openWith", uri, viewType);
+  return viewType;
+}
+
 class LivePreviewProvider {
   constructor({ vscode, context, bridgeRegistry, randomBytes = nodeRandomBytes, createHtml, imageResolverFactory }) {
     if (!vscode?.Uri || !vscode?.commands || !vscode?.window) throw new TypeError("Live Preview provider requires VS Code APIs");
@@ -141,7 +160,11 @@ async function registerLivePreview({ vscode, context, bridgeRegistry, createServ
     for (const value of owned.reverse()) value.dispose();
     throw error;
   }
-  return Object.freeze([registration, ...owned]);
+  const toggle = vscode.commands.registerCommand(
+    "chatero.documentation.toggleEditingView",
+    () => toggleActiveQmdView(vscode),
+  );
+  return Object.freeze([registration, toggle, ...owned]);
 }
 
 module.exports = {
@@ -151,4 +174,5 @@ module.exports = {
   createLivePreviewNonce,
   openDocumentation,
   registerLivePreview,
+  toggleActiveQmdView,
 };

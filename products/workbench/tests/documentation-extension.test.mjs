@@ -91,6 +91,7 @@ test("Documentation is the default workspace surface with optional Live Preview"
     "chatero.documentation.open",
     "chatero.documentation.newPage",
     "chatero.documentation.openSource",
+    "chatero.documentation.toggleEditingView",
     "chatero.documentation.markWorking",
     "chatero.documentation.markReviewed",
     "chatero.documentation.planMigration",

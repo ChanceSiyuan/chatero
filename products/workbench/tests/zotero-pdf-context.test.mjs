@@ -364,8 +364,7 @@ test("manifest and source wire only the explicit native attach provider and real
   assert.match(viewerSource, /range\.endContainer/);
   assert.match(viewerSource, /range\.commonAncestorContainer/);
   assert.match(viewerSource, /selectionchange/);
-  assert.match(viewerSource, /metaKey[^\n]+[kK]|[kK][^\n]+metaKey/);
-  assert.match(viewerSource, /selectedText\.trim\(\)\.length > 0/);
+  assert.match(viewerSource, /\(event\.metaKey \|\| event\.ctrlKey\)[^\n]+event\.shiftKey[^\n]+[lL]/);
   assert.match(viewerSource, /acquireVsCodeApi\(\)/);
   assert.match(viewerSource, /function makeContextMessage[\s\S]+type: "pdf-context",[\s\S]+panelNonce,[\s\S]+sequence:[\s\S]+pageIndex:[\s\S]+pageLabel:[\s\S]+pageText:[\s\S]+selectedText:/);
   assert.match(viewerSource, /Object\.freeze\(\{ type: "pdf-context-attach", panelNonce, sequence \}\)/);

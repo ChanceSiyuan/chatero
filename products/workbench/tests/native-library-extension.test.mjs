@@ -17,6 +17,7 @@ test("declares native Library source and item-table views with Stage 3 commands"
   assert.ok(manifest.activationEvents.includes("onView:chatero.zotero.items"));
   for (const command of [
     "chatero.zotero.addPdfContextToChat",
+    "chatero.zotero.addActiveContextToChat",
     "chatero.zotero.batchMoveToCollection",
     "chatero.zotero.batchRestore",
     "chatero.zotero.batchTrash",
@@ -26,6 +27,7 @@ test("declares native Library source and item-table views with Stage 3 commands"
     "chatero.zotero.loadMoreItems",
     "chatero.zotero.lookupIdentifier",
     "chatero.zotero.openAttachment",
+    "chatero.zotero.openCompleteZotero",
     "chatero.zotero.openNote",
     "chatero.zotero.refreshLibrary",
     "chatero.zotero.retrySync",
@@ -46,6 +48,16 @@ test("declares native Library source and item-table views with Stage 3 commands"
   assert.deepEqual(manifest.contributes.configuration.properties["chatero.zotero.itemTableColumns"].default, ["creators", "year", "itemType"]);
   assert.equal(manifest.contributes.configuration.properties["chatero.zotero.itemTablePageSize"].maximum, 100);
   assert.ok(manifest.contributes.keybindings.some(value => value.command === "chatero.zotero.batchTrash"));
+  const cursorContextBindings = manifest.contributes.keybindings.filter(value =>
+    value.command === "chatero.zotero.addActiveContextToChat");
+  assert.deepEqual(cursorContextBindings, [
+    {
+      command: "chatero.zotero.addActiveContextToChat",
+      key: "ctrl+shift+l",
+      mac: "cmd+shift+l",
+      when: "activeCustomEditorId == chatero.zotero.pdf",
+    },
+  ]);
   assert.equal(Object.hasOwn(manifest.contributes, "webviewPanel"), false);
 });
 

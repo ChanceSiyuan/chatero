@@ -165,6 +165,7 @@ async function activate(context) {
   const {
     EvidenceDocumentRegistry,
     createCoreLifecycle,
+    buildZoteroCompatibilityLaunchPlan,
     createEvidenceDocumentResolver,
     readCoreLaunchConfiguration,
     resolveCoreExecutable,
@@ -395,7 +396,14 @@ async function activate(context) {
   });
   activeLifecycle = lifecycle;
   deactivationPromise = null;
-  const ensureCore = lifecycle.ensureCore;
+  let compatibilityMode = null;
+  let compatibilityTransition = false;
+  const ensureCore = async () => {
+    if (compatibilityTransition || compatibilityMode) {
+      throw new Error("Close Complete Zotero compatibility mode before starting the native Chatero Library");
+    }
+    return lifecycle.ensureCore();
+  };
   const resolveDocument = createEvidenceDocumentResolver({
     ensureCore,
     getModel: () => sourceProvider.core,
@@ -444,6 +452,35 @@ async function activate(context) {
   context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.selectCoreExecutable", selectCoreExecutable));
   context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.startCore", () => ensureCore().catch(error => vscode.window.showErrorMessage(`Could not start Zotero Core: ${error.message}`))));
   context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.stopCore", () => lifecycle.stopCore().catch(error => vscode.window.showErrorMessage(`Could not stop Zotero Core: ${error.message}`))));
+  context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.openCompleteZotero", async () => {
+    if (compatibilityMode) {
+      void vscode.window.showInformationMessage("Complete Zotero compatibility mode is already open.");
+      return compatibilityMode;
+    }
+    try {
+      compatibilityTransition = true;
+      const configuration = readCoreLaunchConfiguration(vscode.workspace.getConfiguration("chatero.zotero"));
+      const profileDirectory = configuration.profilePath || await selectProfile();
+      if (!profileDirectory) return null;
+      const geckoExecutable = await resolveCoreExecutable({
+        configuredPath: configuration.coreExecutable,
+        extensionPath: context.extensionPath || __dirname,
+      });
+      await lifecycle.stopCore();
+      const plan = buildZoteroCompatibilityLaunchPlan({ geckoExecutable, profileDirectory });
+      const { launchZoteroCompatibilityMode } = await import("./zotero-compatibility-launcher.mjs");
+      const launch = launchZoteroCompatibilityMode(plan);
+      compatibilityMode = launch.finally(() => { compatibilityMode = null; });
+      compatibilityTransition = false;
+      void vscode.window.showInformationMessage("Complete Zotero compatibility mode owns the private Chatero profile until its window closes.");
+      return await compatibilityMode;
+    }
+    catch (error) {
+      compatibilityTransition = false;
+      void vscode.window.showErrorMessage(`Could not open Complete Zotero compatibility mode: ${error.message}`);
+      return null;
+    }
+  }));
   context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.refreshLibrary", () => {
     sourceProvider.refresh();
     if (itemProvider.model?.source) void itemProvider.model.open(itemProvider.model.source, {
@@ -456,6 +493,18 @@ async function activate(context) {
     }
     catch (_) {
       void vscode.window.showErrorMessage("Could not attach the bounded Zotero PDF context.");
+      return null;
+    }
+  }));
+  context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.addActiveContextToChat", async () => {
+    if (vscode.window.activeTextEditor?.selection && !vscode.window.activeTextEditor.selection.isEmpty) {
+      return vscode.commands.executeCommand("workbench.action.chat.attachSelection");
+    }
+    try {
+      return await attachPdfSnapshot(pdfContexts.captureActive());
+    }
+    catch (_) {
+      void vscode.window.showErrorMessage("Select code or an active Zotero PDF page before adding context to Agent.");
       return null;
     }
   }));

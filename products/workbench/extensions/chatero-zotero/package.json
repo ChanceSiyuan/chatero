@@ -64,6 +64,11 @@
         "category": "Chatero"
       },
       {
+        "command": "chatero.zotero.openCompleteZotero",
+        "title": "Open Complete Zotero Compatibility Mode",
+        "category": "Chatero"
+      },
+      {
         "command": "chatero.zotero.openAttachment",
         "title": "Open Zotero Attachment",
         "category": "Chatero"
@@ -189,6 +194,11 @@
         "category": "Chatero"
       },
       {
+        "command": "chatero.zotero.addActiveContextToChat",
+        "title": "Add Active Selection to Chat",
+        "category": "Chatero"
+      },
+      {
         "command": "chatero.zotero.sendFullPaperToRemote",
         "title": "Send Full Paper to Remote…",
         "category": "Chatero"
@@ -232,6 +242,12 @@
       }
     },
     "keybindings": [
+      {
+        "command": "chatero.zotero.addActiveContextToChat",
+        "key": "ctrl+shift+l",
+        "mac": "cmd+shift+l",
+        "when": "activeCustomEditorId == chatero.zotero.pdf"
+      },
       {
         "command": "chatero.zotero.searchLibrary",
         "key": "ctrl+f",

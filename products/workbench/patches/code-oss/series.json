@@ -68,6 +68,10 @@
     {
       "file": "0017-lock-nested-lifecycle-installs.patch",
       "sha256": "f5826d06bd0516359a4d8a99b33f0b6d7a9cefe9f5aab61c0df1c6ff5b9fc0dd"
+    },
+    {
+      "file": "0018-cursor-agent-keybindings.patch",
+      "sha256": "6ae805cf8ab63c27816cf4ca9a4477f0a7df0e0227eb3cd46929762b2126ec69"
     }
   ]
 }

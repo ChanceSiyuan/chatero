@@ -15,7 +15,7 @@ const EXPECTED = Object.freeze({
   stage: 4,
   checks: Object.freeze([
     Object.freeze({ id: "core-protocol", command: "npm", args: Object.freeze(["run", "core:check"]) }),
-    Object.freeze({ id: "reader-note-citation-tests", command: "node", args: Object.freeze(["--test", "products/workbench/tests/reader-workflow-model.test.mjs", "products/workbench/tests/upstream-reader-bridge.test.mjs", "products/workbench/tests/zotero-evidence-editors.test.mjs", "products/workbench/tests/native-library-extension.test.mjs"]) }),
+    Object.freeze({ id: "reader-note-citation-tests", command: "node", args: Object.freeze(["--test", "products/workbench/tests/reader-workflow-model.test.mjs", "products/workbench/tests/upstream-reader-bridge.test.mjs", "products/workbench/tests/zotero-evidence-editors.test.mjs", "products/workbench/tests/zotero-pdf-context.test.mjs", "products/workbench/tests/native-library-extension.test.mjs"]) }),
     Object.freeze({ id: "core-mutation-tests", command: "node", args: Object.freeze(["--test", "services/zotero-core/tests/gecko-library-adapter.test.mjs", "services/zotero-core/tests/gecko-core-router.test.mjs", "services/zotero-core/tests/core-supervisor.integration.test.mjs"]) }),
     Object.freeze({ id: "workbench-regression-tests", command: "npm", args: Object.freeze(["run", "test:workbench-bootstrap"]) }),
     Object.freeze({ id: "real-profile-parity-twice", command: "node", args: Object.freeze(["services/zotero-core/scripts/run-stage-4-real-profile.mjs"]) }),

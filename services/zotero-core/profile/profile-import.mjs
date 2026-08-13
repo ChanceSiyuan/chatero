@@ -70,6 +70,17 @@ async function digestTree(path) {
   return hash.digest("hex");
 }
 
+async function copyDirectoryContents(source, destination) {
+  for (const entry of (await readdir(source)).sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right)))) {
+    await cp(join(source, entry), join(destination, entry), {
+      recursive: true,
+      force: false,
+      errorOnExist: true,
+      preserveTimestamps: true,
+    });
+  }
+}
+
 async function sqliteDatabase(path) {
   const handle = await open(path, "r");
   try {
@@ -137,7 +148,7 @@ export async function importZoteroProfile({
   try {
     await mkdir(staging, { mode: 0o700 });
     stagingOwned = true;
-    await cp(sourceProfile, staging, { recursive: true, force: false, errorOnExist: true, preserveTimestamps: true });
+    await copyDirectoryContents(sourceProfile, staging);
     const sourceProfileDigest = await digestTree(sourceProfile);
     const copiedProfileDigest = await digestTree(staging);
     if (sourceProfileDigest !== copiedProfileDigest) throw new Error("imported Zotero profile digest does not match its source");

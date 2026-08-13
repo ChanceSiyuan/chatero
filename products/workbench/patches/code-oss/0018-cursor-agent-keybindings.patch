@@ -1,0 +1,46 @@
+diff --git a/src/vs/workbench/contrib/inlineChat/browser/inlineChatActions.ts b/src/vs/workbench/contrib/inlineChat/browser/inlineChatActions.ts
+--- a/src/vs/workbench/contrib/inlineChat/browser/inlineChatActions.ts
++++ b/src/vs/workbench/contrib/inlineChat/browser/inlineChatActions.ts
+@@ -62,7 +62,7 @@ export class StartSessionAction extends Action2 {
+ 					ContextKeyExpr.or(CTX_INLINE_CHAT_FILE_BELONGS_TO_CHAT.negate(), CTX_ASK_IN_CHAT_ENABLED.negate())
+ 				),
+ 				weight: KeybindingWeight.WorkbenchContrib,
+-				primary: KeyMod.CtrlCmd | KeyCode.KeyI
++				primary: KeyMod.CtrlCmd | KeyCode.KeyK
+ 			},
+ 			icon: START_INLINE_CHAT,
+ 			menu: [{
+diff --git a/src/vs/workbench/contrib/chat/browser/actions/chatActions.ts b/src/vs/workbench/contrib/chat/browser/actions/chatActions.ts
+--- a/src/vs/workbench/contrib/chat/browser/actions/chatActions.ts
++++ b/src/vs/workbench/contrib/chat/browser/actions/chatActions.ts
+@@ -563,10 +563,7 @@ class PrimaryOpenChatGlobalAction extends OpenChatGlobalAction {
+ 			title: localize2('openChat', "Open Chat"),
+ 			keybinding: {
+ 				weight: KeybindingWeight.WorkbenchContrib,
+-				primary: KeyMod.CtrlCmd | KeyMod.Alt | KeyCode.KeyI,
+-				mac: {
+-					primary: KeyMod.CtrlCmd | KeyMod.WinCtrl | KeyCode.KeyI
+-				}
++				primary: KeyMod.CtrlCmd | KeyCode.KeyL
+ 			},
+ 			menu: [{
+ 				id: MenuId.ChatTitleBarMenu,
+diff --git a/src/vs/workbench/contrib/chat/browser/actions/chatContextActions.ts b/src/vs/workbench/contrib/chat/browser/actions/chatContextActions.ts
+--- a/src/vs/workbench/contrib/chat/browser/actions/chatContextActions.ts
++++ b/src/vs/workbench/contrib/chat/browser/actions/chatContextActions.ts
+@@ -395,6 +395,15 @@ class AttachSelectionToChatAction extends Action2 {
+ 			icon: Codicon.attach,
+ 			f1: true,
+ 			precondition: ChatContextKeys.enabled,
++			keybinding: {
++				when: ContextKeyExpr.and(
++					EditorContextKeys.focus,
++					EditorContextKeys.hasNonEmptySelection,
++					ChatContextKeys.enabled
++				),
++				primary: KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.KeyL,
++				weight: KeybindingWeight.WorkbenchContrib
++			},
+ 			menu: [{
+ 				id: MenuId.EditorContext,
+ 				group: '1_chat',

@@ -593,7 +593,7 @@ try {
     if (target) scheduleRender(() => goToPage(Number(target.dataset.pageIndex) + 1));
   });
   document.addEventListener("keydown", event => {
-    if (event.metaKey && !event.ctrlKey && !event.altKey && event.key.toLowerCase() === "k") {
+    if ((event.metaKey || event.ctrlKey) && event.shiftKey && !event.altKey && event.key.toLowerCase() === "l") {
       const selectedText = selectedTextWithinLayer();
       if (selectedText.trim().length > 0) {
         event.preventDefault();

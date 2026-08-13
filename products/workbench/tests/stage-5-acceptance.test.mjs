@@ -14,6 +14,7 @@ test("Stage 5 immutable contract covers product, signed release, both runners, a
   assert.deepEqual(contract.checks.map(value => value.id), [
     "ide-language-product-audit",
     "remote-contract-tests",
+    "cursor-editor-agent-parity",
     "code-oss-compile",
     "signed-agent-release",
     "linux-x64-real-ssh",
@@ -72,7 +73,7 @@ test("Stage 5 acceptance requires both architecture receipts before the boundary
   assert.equal(Object.hasOwn(evidence.audit, "boundary"), false);
 });
 
-test("Stage 5 successful acceptance records all seven checks without secret fields", async () => {
+test("Stage 5 successful acceptance records all eight checks without secret fields", async () => {
   const { runStageFiveAcceptance } = await import("../scripts/run-stage-5-acceptance.mjs");
   const requirements = JSON.parse(await readFile(join(root, "products", "workbench", "acceptance", "stage-5.requirements.json"), "utf8"));
   const release = {
@@ -93,7 +94,7 @@ test("Stage 5 successful acceptance records all seven checks without secret fiel
     write: async () => {},
   });
   assert.equal(evidence.status, "passed");
-  assert.equal(evidence.checks.length, 7);
+  assert.equal(evidence.checks.length, 8);
   assert.ok(evidence.checks.every(value => value.status === "passed"));
   assert.doesNotMatch(JSON.stringify(evidence), /token|password|grantId|remotePath/iu);
 });
@@ -107,7 +108,7 @@ test("Stage 5 product audit binds the exact generated Code-OSS checkout", async 
   const { inspectStageFiveProduct } = await import("../scripts/run-stage-5-acceptance.mjs");
   const audit = await inspectStageFiveProduct({ root });
   assert.equal(audit.languages, 13);
-  assert.equal(audit.workbenchCapabilities, 13);
+  assert.equal(audit.workbenchCapabilities, 16);
   assert.equal(audit.remoteCapabilities, 18);
   assert.equal(audit.restrictedComponents, 0);
 });

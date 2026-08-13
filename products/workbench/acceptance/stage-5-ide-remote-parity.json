@@ -19,7 +19,8 @@
   "workbench": [
     "files", "search", "scm-git", "pty-terminal", "tasks", "debug",
     "notebooks", "settings", "extensions", "file-watching", "workspace-trust",
-    "extension-host-restart", "session-restore"
+    "extension-host-restart", "session-restore", "cursor-inline-agent-shortcut",
+    "cursor-chat-shortcut", "cursor-add-selection-shortcut"
   ],
   "remote": [
     "openssh-config", "proxy-jump", "host-key-identity", "reconnect",

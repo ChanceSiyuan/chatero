@@ -16,6 +16,7 @@ const EXPECTED = Object.freeze({
   checks: Object.freeze([
     Object.freeze({ id: "native-library-tests", command: "node", args: Object.freeze(["--test", "products/workbench/tests/native-library-extension.test.mjs"]) }),
     Object.freeze({ id: "core-library-tests", command: "node", args: Object.freeze(["--test", "services/zotero-core/tests/gecko-library-adapter.test.mjs", "services/zotero-core/tests/gecko-core-router.test.mjs", "services/zotero-core/tests/core-supervisor.integration.test.mjs"]) }),
+    Object.freeze({ id: "official-zotero-feature-coverage", command: "node", args: Object.freeze(["--test", "products/workbench/tests/zotero-feature-coverage.test.mjs"]) }),
     Object.freeze({ id: "workbench-tests", command: "npm", args: Object.freeze(["run", "test:workbench-bootstrap"]) }),
     Object.freeze({ id: "code-oss-compile", command: "npm", args: Object.freeze(["run", "workbench:compile"]) }),
     Object.freeze({ id: "signed-gecko-bundle", command: "npm", args: Object.freeze(["run", "verify:chatero-bundle"]) }),

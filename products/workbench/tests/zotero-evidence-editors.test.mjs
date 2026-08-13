@@ -738,6 +738,61 @@ test("production Core resolution binds the packaged headless Gecko executable wi
   }), /bundled Zotero Core is unavailable/iu);
 });
 
+test("complete Zotero compatibility mode uses the same private profile without headless Core flags", async () => {
+  const { buildZoteroCompatibilityLaunchPlan } = await import("../extensions/chatero-zotero/evidence-editor-registry.mjs");
+  assert.deepEqual(buildZoteroCompatibilityLaunchPlan({
+    geckoExecutable: "/Applications/Chatero.app/Contents/Resources/chatero-core/Chatero Core.app/Contents/MacOS/zotero",
+    profileDirectory: "/Users/safe/Library/Application Support/Chatero/Profiles/research",
+  }), {
+    args: [
+      "-no-remote",
+      "-profile",
+      "/Users/safe/Library/Application Support/Chatero/Profiles/research",
+      "-datadir",
+      "profile",
+    ],
+    executable: "/Applications/Chatero.app/Contents/Resources/chatero-core/Chatero Core.app/Contents/MacOS/zotero",
+    profileDirectory: "/Users/safe/Library/Application Support/Chatero/Profiles/research",
+  });
+  assert.throws(() => buildZoteroCompatibilityLaunchPlan({
+    geckoExecutable: "relative/zotero",
+    profileDirectory: "/Users/safe/profile",
+  }), /absolute/iu);
+});
+
+test("complete Zotero compatibility process owns the profile lease until exit", async () => {
+  const { EventEmitter } = await import("node:events");
+  const { launchZoteroCompatibilityMode } = await import("../extensions/chatero-zotero/zotero-compatibility-launcher.mjs");
+  const child = new EventEmitter();
+  child.pid = 4321;
+  child.kill = () => true;
+  const calls = [];
+  let released = 0;
+  const launched = launchZoteroCompatibilityMode({
+    args: ["-profile", "/private/profile"],
+    executable: "/private/zotero",
+    profileDirectory: "/private/profile",
+  }, {
+    acquireLease: async value => {
+      calls.push(value);
+      return { async release() { released += 1; } };
+    },
+    spawnProcess(executable, args, options) {
+      assert.equal(executable, "/private/zotero");
+      assert.deepEqual(args, ["-profile", "/private/profile"]);
+      assert.deepEqual(options, { detached: false, stdio: "ignore" });
+      return child;
+    },
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].pid, undefined);
+  assert.equal(calls[0].profileDirectory, "/private/profile");
+  child.emit("exit", 0, null);
+  assert.equal(await launched, 0);
+  assert.equal(released, 1);
+});
+
 test("Core setup pickers reject remote URIs before persisting local paths", async () => {
   const { selectLocalCoreConfigurationPath } = await import("../extensions/chatero-zotero/evidence-editor-registry.mjs");
   const localDefault = { authority: "", fsPath: "/Users/safe", scheme: "file" };

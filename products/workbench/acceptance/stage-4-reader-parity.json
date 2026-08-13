@@ -11,6 +11,7 @@
     { "id": "annotation-comments-colors-tags-edit-delete", "status": "supported", "evidence": "products/workbench/tests/zotero-evidence-editors.test.mjs" },
     { "id": "annotation-batch-atomicity-undo-conflict", "status": "supported", "evidence": "products/workbench/tests/reader-workflow-model.test.mjs" },
     { "id": "reviewed-agent-proposals", "status": "supported", "evidence": "products/workbench/tests/reader-workflow-model.test.mjs" },
+    { "id": "cursor-compatible-pdf-agent-context", "status": "supported", "evidence": "products/workbench/tests/zotero-pdf-context.test.mjs" },
     { "id": "note-rich-text-roundtrip-conflict", "status": "supported", "evidence": "products/workbench/tests/zotero-evidence-editors.test.mjs" },
     { "id": "citation-copy-bibliography-insert", "status": "supported", "evidence": "products/workbench/tests/native-library-extension.test.mjs" },
     { "id": "offline-reconnect-stale-interruption-crash-restart", "status": "supported", "evidence": "services/zotero-core/tests/core-supervisor.integration.test.mjs" },

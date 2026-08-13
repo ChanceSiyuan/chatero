@@ -515,6 +515,10 @@
           "destination": "extensions/chatero-zotero/zotero-profile-discovery.mjs"
         },
         {
+          "source": "products/workbench/extensions/chatero-zotero/zotero-compatibility-launcher.mjs",
+          "destination": "extensions/chatero-zotero/zotero-compatibility-launcher.mjs"
+        },
+        {
           "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/115.js",
           "destination": "extensions/chatero-zotero/media/zotero-reader/115.js"
         },

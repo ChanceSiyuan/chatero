@@ -8,7 +8,7 @@ const root = resolve(import.meta.dirname, "..", "..", "..");
 test("Stage 6 immutable contract and complete Research Loop catalog pass", async () => {
   const { inspectStageSixResearchLoop, validateStageSixRequirements } = await import("../scripts/run-stage-6-acceptance.mjs");
   const requirements = JSON.parse(await readFile(new URL("../acceptance/stage-6.requirements.json", import.meta.url)));
-  assert.equal(validateStageSixRequirements(requirements).checks.length, 5);
+  assert.equal(validateStageSixRequirements(requirements).checks.length, 6);
   const audit = await inspectStageSixResearchLoop({ root });
   assert.ok(audit.parityEntries >= 20);
   assert.equal(audit.unsupportedEntries, 0);
@@ -33,7 +33,7 @@ test("Stage 6 acceptance stops at the first failed real runtime and writes bound
   });
   assert.equal(evidence.status, "failed");
   assert.match(evidence.sourceCommit, /^[0-9a-f]{40}$/u);
-  assert.equal(evidence.failure.checkId, "local-research-loop-runtime");
+  assert.equal(evidence.failure.checkId, "qmd-obsidian-editing-parity");
   assert.equal(evidence.checks.length, 3);
   assert.equal(writes.length, 1);
   assert.doesNotMatch(JSON.stringify(evidence), /Users|home|token|credential/iu);

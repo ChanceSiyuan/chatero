@@ -129,6 +129,26 @@ export async function resolveCoreExecutable({
   throw new Error("A development Zotero Core executable must be selected before Core can start");
 }
 
+export function buildZoteroCompatibilityLaunchPlan({ geckoExecutable, profileDirectory } = {}) {
+  if (typeof geckoExecutable !== "string" || resolve(geckoExecutable) !== geckoExecutable) {
+    throw new Error("Zotero compatibility executable must be an absolute path");
+  }
+  if (typeof profileDirectory !== "string" || resolve(profileDirectory) !== profileDirectory) {
+    throw new Error("Zotero compatibility profile must be an absolute path");
+  }
+  return Object.freeze({
+    executable: geckoExecutable,
+    profileDirectory: resolve(profileDirectory),
+    args: Object.freeze([
+      "-no-remote",
+      "-profile",
+      resolve(profileDirectory),
+      "-datadir",
+      "profile",
+    ]),
+  });
+}
+
 function localFilePath(uri, label) {
   if (!uri || uri.scheme !== "file" || uri.authority
       || typeof uri.fsPath !== "string" || uri.fsPath.length === 0) {

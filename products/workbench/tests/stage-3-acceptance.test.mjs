@@ -8,7 +8,7 @@ const root = resolve(import.meta.dirname, "..", "..", "..");
 test("Stage 3 immutable requirements and source audit pass", async () => {
   const { inspectStageThreeLibrary, validateStageThreeRequirements } = await import("../scripts/run-stage-3-acceptance.mjs");
   const requirements = JSON.parse(await readFile(join(root, "products", "workbench", "acceptance", "stage-3.requirements.json"), "utf8"));
-  assert.equal(validateStageThreeRequirements(requirements).checks.length, 6);
+  assert.equal(validateStageThreeRequirements(requirements).checks.length, 7);
   const audit = await inspectStageThreeLibrary({ root });
   assert.equal(audit.unsupportedEntries, 0);
   assert.ok(audit.parityEntries >= 35);

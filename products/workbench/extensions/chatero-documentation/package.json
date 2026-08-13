@@ -62,6 +62,11 @@
         "category": "Chatero"
       },
       {
+        "command": "chatero.documentation.toggleEditingView",
+        "title": "Toggle Live Preview/Source View",
+        "category": "Chatero"
+      },
+      {
         "command": "chatero.documentation.markWorking",
         "title": "Mark Documentation as Working",
         "category": "Chatero"
@@ -121,6 +126,14 @@
         "command": "chatero.research.openMainSite",
         "title": "Open Reviewed Main Site",
         "category": "Chatero Research"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "chatero.documentation.toggleEditingView",
+        "key": "ctrl+e",
+        "mac": "cmd+e",
+        "when": "activeCustomEditorId == chatero.documentation.livePreview || resourceExtname == .qmd"
       }
     ],
     "customEditors": [
