@@ -692,7 +692,7 @@ function validateZotero(Zotero) {
 	}
 }
 
-export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(Services?.io?.offline), openAttachmentFile = openGeckoAttachmentSource } = {}) {
+export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(globalThis.Services?.io?.offline), openAttachmentFile = openGeckoAttachmentSource } = {}) {
 	validateZotero(Zotero);
 	if (typeof openAttachmentFile !== "function") throw new Error("attachment source opener is required");
 	if (typeof isOffline !== "function") throw new Error("offline state provider is required");
@@ -1142,8 +1142,22 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(S
 				.filter(library => library.libraryType !== "feed" && library.syncable)
 				.map(library => library.libraryID));
 			if (libraryIds.some(value => !syncable.has(value))) throw new Error("sync.retry library is not syncable");
-			let completed = await Zotero.Sync.Runner.sync({ background: true, libraries: libraryIds });
-			return { completed: completed !== false, libraryIds };
+			let errors = [];
+			let completed = await Zotero.Sync.Runner.sync({
+				background: true,
+				libraries: libraryIds,
+				onError(error) {
+					if (errors.length >= 100) return;
+					let libraryId = Number.isSafeInteger(error?.libraryID) && libraryIds.includes(error.libraryID) ? error.libraryID : 0;
+					errors.push({
+						libraryId,
+						message: boundedString(String(error?.message || error), 16 * 1024, "sync error message"),
+						type: typeof error?.errorType === "string" ? boundedString(error.errorType, 256, "sync error type") : "error",
+					});
+				},
+			});
+			let successfulLibraryIds = Array.isArray(completed) ? completed.filter(value => libraryIds.includes(value)).sort((left, right) => left - right) : [];
+			return { completed: completed !== false && errors.length === 0, errors, libraryIds, successfulLibraryIds };
 		},
 		async annotations(params) {
 			validateCompositeParams(params, ANNOTATION_FIELDS, "attachmentKey", "library.annotations");

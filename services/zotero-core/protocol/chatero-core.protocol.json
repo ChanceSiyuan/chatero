@@ -1323,9 +1323,19 @@
       "kind": "object",
       "fields": {
         "completed": "boolean",
+        "errors": "SyncRunError[]",
         "libraryIds": "number[]",
         "replayed": "boolean",
-        "revision": "number"
+        "revision": "number",
+        "successfulLibraryIds": "number[]"
+      }
+    },
+    "SyncRunError": {
+      "kind": "object",
+      "fields": {
+        "libraryId": "number",
+        "message": "string",
+        "type": "string"
       }
     },
     "TranslationTranslatorsParams": {

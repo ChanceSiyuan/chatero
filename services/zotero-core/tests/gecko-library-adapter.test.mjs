@@ -411,7 +411,7 @@ function fixture({
         getErrorsByLibrary: libraryId => libraryId === 2 ? [{ errorType: "warning", message: "Storage quota warning" }] : [],
         lastSyncStatus: "Waiting",
         syncInProgress: false,
-        async sync(options) { syncCalls.push(structuredClone(options)); return true; },
+        async sync(options) { syncCalls.push({ background: options.background, libraries: options.libraries.slice() }); return options.libraries.slice(); },
       },
 			Storage: { Local: {
         SYNC_STATE_FORCE_DOWNLOAD: 4,
@@ -724,12 +724,30 @@ test("runs an explicit sync only for validated syncable libraries", async () => 
   const adapter = createZoteroLibraryAdapter({ ...source, isOffline: () => false });
   assert.deepEqual(await adapter.retrySync({ libraryIds: [2, 1] }), {
     completed: true,
+    errors: [],
     libraryIds: [1, 2],
+    successfulLibraryIds: [1, 2],
   });
   assert.deepEqual(source.syncCalls, [{ background: true, libraries: [1, 2] }]);
   await assert.rejects(adapter.retrySync({ libraryIds: [99] }), /not syncable/);
   const offline = createZoteroLibraryAdapter({ ...fixture(), isOffline: () => true });
   await assert.rejects(offline.retrySync({ libraryIds: [1] }), error => error.code === "UNAVAILABLE");
+});
+
+test("captures bounded per-library sync failures without exposing credentials", async () => {
+  const environment = fixture();
+  environment.Zotero.Sync.Runner.sync = async options => {
+    options.onError(Object.assign(new Error("Remote rejected item"), { libraryID: 2, errorType: "data" }));
+    return [1];
+  };
+  const result = await createZoteroLibraryAdapter({ ...environment, isOffline: () => false }).retrySync({ libraryIds: [2, 1] });
+  assert.deepEqual(result, {
+    completed: false,
+    errors: [{ libraryId: 2, message: "Remote rejected item", type: "data" }],
+    libraryIds: [1, 2],
+    successfulLibraryIds: [1],
+  });
+  assert.equal(JSON.stringify(result).includes("apiKey"), false);
 });
 
 test("reports storage mode and bounded file conflicts without credentials or paths", async () => {

@@ -76,7 +76,7 @@ function createRouter(overrides = {}) {
     async syncStatus(params) { calls.push(["syncStatus", params]); return { enabled: true, inProgress: false, libraries: [], offline: false, status: "" }; },
 		async syncStorageStatus(params) { calls.push(["syncStorageStatus", params]); return { conflictCount: 0, downloadAsNeeded: true, enabled: true, libraryId: params.libraryId, mode: "zfs" }; },
 		async syncConflicts(params) { calls.push(["syncConflicts", params]); return { conflicts: [] }; },
-    async retrySync(params) { calls.push(["retrySync", params]); return { completed: true, libraryIds: params.libraryIds }; },
+    async retrySync(params) { calls.push(["retrySync", params]); return { completed: true, errors: [], libraryIds: params.libraryIds, successfulLibraryIds: params.libraryIds }; },
     async tags(params) { calls.push(["tags", params]); return { tags: [], total: 0 }; },
 		async translators(params) { calls.push(["translators", params]); return { translators: [] }; },
   };
@@ -309,7 +309,7 @@ test("sync retry is a separately authorized idempotent transaction", async () =>
   const params = { expectedRevision: 0, idempotencyKey: "sync-retry-key-0001", libraryIds: [1, 2] };
   const first = await router.handle(request(session, "sync.retry", params));
   const replay = await router.handle(request(session, "sync.retry", params));
-  assert.deepEqual(first.result, { completed: true, libraryIds: [1, 2], replayed: false, revision: 1 });
+  assert.deepEqual(first.result, { completed: true, errors: [], libraryIds: [1, 2], replayed: false, revision: 1, successfulLibraryIds: [1, 2] });
   assert.equal(first.event.topic, "sync.completed");
   assert.equal(replay.result.replayed, true);
   assert.equal(calls.filter(value => value[0] === "retrySync").length, 1);

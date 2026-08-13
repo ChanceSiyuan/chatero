@@ -715,7 +715,9 @@ async function main() {
       const { expectedRevision, idempotencyKey, ...operation } = message.params || {};
       const completed = await transactionRegistry.execute({ expectedRevision, idempotencyKey, operation, scope: "sync:retry" }, async value => ({
         completed: true,
+        errors: [],
         libraryIds: [...new Set(value.libraryIds)].sort((left, right) => left - right),
+        successfulLibraryIds: [...new Set(value.libraryIds)].sort((left, right) => left - right),
       }));
       return {
         ...(!completed.replayed && { event: eventJournal.publish("sync.completed", { ...completed.result, revision: completed.revision }) }),

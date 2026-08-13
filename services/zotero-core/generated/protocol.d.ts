@@ -798,9 +798,17 @@ export interface SyncRetryParams {
 
 export interface SyncRetryResult {
   readonly completed: boolean;
+  readonly errors: ReadonlyArray<SyncRunError>;
   readonly libraryIds: ReadonlyArray<number>;
   readonly replayed: boolean;
   readonly revision: number;
+  readonly successfulLibraryIds: ReadonlyArray<number>;
+}
+
+export interface SyncRunError {
+  readonly libraryId: number;
+  readonly message: string;
+  readonly type: string;
 }
 
 export interface SyncStatusParams {
