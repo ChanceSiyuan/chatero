@@ -54,15 +54,34 @@ function defaultRandomBytes(length) {
 }
 
 function defaultSink(byteCount) {
-	let storage = Cc["@mozilla.org/storagestream;1"].createInstance(Ci.nsIStorageStream);
-	storage.init(8192, byteCount, null);
-	let output = storage.getOutputStream(0);
+	let file = Services.dirsvc.get("TmpD", Ci.nsIFile);
+	file.append("chatero-core-upload");
+	file.createUnique(Ci.nsIFile.NORMAL_FILE_TYPE, 0o600);
+	let output = Cc["@mozilla.org/network/file-output-stream;1"].createInstance(Ci.nsIFileOutputStream);
+	output.init(file, 0x02 | 0x08 | 0x20, 0o600, 0);
 	let binary = Cc["@mozilla.org/binaryoutputstream;1"].createInstance(Ci.nsIBinaryOutputStream);
 	binary.setOutputStream(output);
+	let finished = false;
+	let removed = false;
+	let cleanup = () => {
+		if (removed) return;
+		removed = true;
+		try { file.remove(false); } catch (_) {}
+	};
 	return {
 		write(bytes) { binary.writeByteArray(bytes); },
-		finish() { binary.close(); return storage.newInputStream(0); },
-		close() { try { binary.close(); } catch (_) {} try { storage.close(); } catch (_) {} },
+		finish() {
+			binary.flush();
+			binary.close();
+			finished = true;
+			let input = Cc["@mozilla.org/network/file-input-stream;1"].createInstance(Ci.nsIFileInputStream);
+			input.init(file, 0x01, 0o400, 0);
+			return input;
+		},
+		close() {
+			if (!finished) try { binary.close(); } catch (_) {}
+			cleanup();
+		},
 	};
 }
 
