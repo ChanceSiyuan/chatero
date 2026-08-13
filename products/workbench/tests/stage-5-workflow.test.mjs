@@ -18,6 +18,10 @@ test("Stage 5 CI builds, signs, runs real SSH, and gates both native Linux archi
   assert.match(source, /cmp - products\/workbench\/remote-agent\/release-public-key\.pem/u);
   assert.match(source, /run-stage-5-real-ssh\.mjs/u);
   assert.match(source, /prepare-stage-5-ci-ssh\.mjs/u);
+  const sshFixture = await readFile(new URL("../scripts/prepare-stage-5-ci-ssh.mjs", import.meta.url), "utf8");
+  assert.match(sshFixture, /"UsePAM yes"/u);
+  assert.match(sshFixture, /"PasswordAuthentication no"/u);
+  assert.match(sshFixture, /"KbdInteractiveAuthentication no"/u);
   assert.match(source, /npm run verify:stage-5/u);
   assert.equal((source.match(/npm ci --ignore-scripts --prefix vendor\/code-oss(?:\r?\n|$)/gu) ?? []).length, 2);
   assert.equal((source.match(/npm ci --ignore-scripts --prefix vendor\/code-oss\/build\/npm\/gyp/gu) ?? []).length, 2);

@@ -35,6 +35,9 @@ async function main() {
     `HostKey ${hostKey}`,
     `PidFile ${pidFile}`,
     `AuthorizedKeysFile ${join(sshRoot, "authorized_keys")}`,
+    // Ubuntu runner accounts are password-locked but valid for public-key SSH.
+    // The standalone test daemon must retain the distro PAM account policy.
+    "UsePAM yes",
     "PasswordAuthentication no",
     "KbdInteractiveAuthentication no",
     "PubkeyAuthentication yes",
