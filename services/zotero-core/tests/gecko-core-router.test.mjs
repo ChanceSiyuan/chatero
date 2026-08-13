@@ -48,6 +48,7 @@ function createRouter(overrides = {}) {
     async updateItem(params) { calls.push(["updateItem", params]); return { itemKey: params.itemKey, libraryId: params.libraryId, synced: false, version: params.expectedVersion + 1 }; },
     async libraries(params) { calls.push(["libraries", params]); return { libraries: [] }; },
     async note(params) { calls.push(["note", params]); return { html: "<p>Note</p>", libraryId: 1, noteKey: "NOTE0001", parentItemKey: "ITEM0001", title: "Note" }; },
+    async updateNote(params) { calls.push(["updateNote", params]); return { libraryId: params.libraryId, noteKey: params.noteKey, synced: false, version: params.expectedVersion + 1 }; },
     async profileBackup() { calls.push(["profileBackup"]); return { backupCreated: true, completedAt: 1234 }; },
     async profileStatus() { calls.push(["profileStatus"]); return { compatibilityVersion: 10, integrityCheckRequired: false, profileEpoch: "profile-epoch", profileName: "Disposable Profile", quickCheckPassed: true, readOnly: false, schemaVersion: 142, upstreamVersion: "7.1-real" }; },
     async savedSearches(params) { calls.push(["savedSearches", params]); return { searches: [] }; },
@@ -142,6 +143,25 @@ test("item update is capability-gated, idempotent, revision-checked, and evented
   assert.equal(first.event.topic, "library.item.changed");
   assert.equal(replay.event, undefined);
   assert.equal(calls.filter(value => value[0] === "updateItem").length, 1);
+});
+
+test("Note update is an idempotent object-version transaction", async () => {
+  const { calls, router } = createRouter();
+  const session = await handshake(router, ["library:write"]);
+  const params = {
+    expectedRevision: 0,
+    expectedVersion: 3,
+    html: "<p>Updated note</p>",
+    idempotencyKey: "note-update-key-0001",
+    libraryId: 1,
+    noteKey: "NOTE0001",
+  };
+  const first = await router.handle(request(session, "library.note-update", params));
+  const replay = await router.handle(request(session, "library.note-update", params));
+  assert.deepEqual(first.result, { libraryId: 1, noteKey: "NOTE0001", replayed: false, revision: 1, synced: false, version: 4 });
+  assert.equal(first.event.topic, "library.note.changed");
+  assert.equal(replay.result.replayed, true);
+  assert.equal(calls.filter(value => value[0] === "updateNote").length, 1);
 });
 
 test("enforces capabilities, profile epoch, session, and deadline before adapter access", async () => {

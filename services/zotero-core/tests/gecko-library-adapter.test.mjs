@@ -44,6 +44,7 @@ function item({
   let currentCreators = creators.map(creator);
   let currentTags = tags.map(value => ({ ...value }));
   let currentRelations = structuredClone(relations);
+  let currentNoteHTML = noteHTML;
   let currentVersion = version;
   let currentSynced = synced;
   const value = {
@@ -77,7 +78,7 @@ function item({
       year,
     }[field] ?? ""),
     getFilePathAsync: async () => path || false,
-    getNote: () => noteHTML,
+    getNote: () => currentNoteHTML,
     getNotes: () => notes.slice(),
     getRelations: () => structuredClone(currentRelations),
     getTags: () => structuredClone(currentTags),
@@ -95,6 +96,7 @@ function item({
       else throw new Error(`Unknown field '${field}'`);
     },
     setRelations: value => { currentRelations = structuredClone(value); },
+    setNote: value => { currentNoteHTML = value; },
     setTags: value => { currentTags = structuredClone(value); },
     get synced() { return currentSynced; },
     get version() { return currentVersion; },
@@ -387,6 +389,23 @@ test("atomically updates fields, creators, tags, and relations at an expected Zo
     itemKey: "ITEM0001",
     libraryId: 1,
   }), error => error.code === "REVISION_CONFLICT" && error.actualRevision === 18);
+});
+
+test("updates Note HTML only at the exact Zotero object version", async () => {
+  const adapter = createZoteroLibraryAdapter(fixture());
+  assert.deepEqual(await adapter.updateNote({
+    expectedVersion: 1,
+    html: '<div data-schema-version="9"><p>Revised note</p></div>',
+    libraryId: 1,
+    noteKey: "NOTE0002",
+  }), { libraryId: 1, noteKey: "NOTE0002", synced: false, version: 2 });
+  assert.equal((await adapter.note({ libraryId: 1, noteKey: "NOTE0002" })).html.includes("Revised note"), true);
+  await assert.rejects(adapter.updateNote({
+    expectedVersion: 1,
+    html: "<p>stale</p>",
+    libraryId: 1,
+    noteKey: "NOTE0002",
+  }), error => error.code === "REVISION_CONFLICT" && error.actualRevision === 2);
 });
 
 test("search isolates duplicate collection keys and emits protocol-exact item summaries", async () => {

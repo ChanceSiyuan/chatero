@@ -146,6 +146,12 @@
       "resultType": "LibraryNoteResult"
     },
     {
+      "name": "library.note-update",
+      "capability": "library:write",
+      "paramsType": "LibraryNoteUpdateParams",
+      "resultType": "LibraryNoteUpdateResult"
+    },
+    {
       "name": "library.search",
       "capability": "library:search",
       "paramsType": "LibrarySearchParams",
@@ -648,6 +654,28 @@
         "noteKey": "string",
         "parentItemKey": "string",
         "title": "string"
+      }
+    },
+    "LibraryNoteUpdateParams": {
+      "kind": "object",
+      "fields": {
+        "expectedRevision": "number",
+        "expectedVersion": "number",
+        "html": "string",
+        "idempotencyKey": "string",
+        "libraryId": "number",
+        "noteKey": "string"
+      }
+    },
+    "LibraryNoteUpdateResult": {
+      "kind": "object",
+      "fields": {
+        "libraryId": "number",
+        "noteKey": "string",
+        "replayed": "boolean",
+        "revision": "number",
+        "synced": "boolean",
+        "version": "number"
       }
     }
   }

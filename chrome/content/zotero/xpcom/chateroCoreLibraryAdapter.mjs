@@ -27,6 +27,7 @@ const ANNOTATION_FIELDS = new Set(["attachmentKey", "libraryId"]);
 const ATTACHMENT_FIELDS = new Set(["attachmentKey", "libraryId"]);
 const ATTACHMENT_STATE_FIELDS = new Set(["attachmentKey", "libraryId"]);
 const NOTE_FIELDS = new Set(["libraryId", "noteKey"]);
+const UPDATE_NOTE_FIELDS = new Set(["expectedVersion", "html", "libraryId", "noteKey"]);
 const LIBRARIES_FIELDS = new Set();
 const FEEDS_FIELDS = new Set();
 const SAVED_SEARCH_FIELDS = new Set(["libraryId"]);
@@ -365,6 +366,15 @@ function relationObject(relations) {
 	let result = {};
 	for (let relation of relations) (result[relation.predicate] ||= []).push(relation.object);
 	return result;
+}
+
+function revisionConflict(item, expectedVersion, label) {
+	if (item.version === expectedVersion) return;
+	let error = new Error(`${label} version changed before update`);
+	error.code = "REVISION_CONFLICT";
+	error.actualRevision = Number.isSafeInteger(item.version) ? item.version : 0;
+	error.expectedRevision = expectedVersion;
+	throw error;
 }
 
 function itemIsUnavailable(item) {
@@ -718,6 +728,32 @@ export function createZoteroLibraryAdapter({ Zotero, openAttachmentFile = openGe
 			return {
 				...summary,
 				html: boundedString(note.getNote(), MAX_NOTE_BYTES, "Zotero Note HTML"),
+			};
+		},
+
+		async updateNote(params) {
+			validateCompositeParams(params, UPDATE_NOTE_FIELDS, "noteKey", "library.note-update");
+			if (!Number.isSafeInteger(params.expectedVersion) || params.expectedVersion < 0) {
+				throw new Error("library.note-update expectedVersion must be a non-negative safe integer");
+			}
+			let html = boundedString(params.html, MAX_NOTE_BYTES, "Zotero Note HTML");
+			let note = lookupItem(Zotero, params.libraryId, params.noteKey, "Zotero note");
+			if (!note.isNote?.()) throw new Error("library.note-update target must be a Note");
+			revisionConflict(note, params.expectedVersion, "Zotero Note");
+			try {
+				note.setNote(html);
+				await note.saveTx();
+			}
+			catch (error) {
+				try { await note.reload?.(null, true); }
+				catch (_) {}
+				throw error;
+			}
+			return {
+				libraryId: note.libraryID,
+				noteKey: note.key,
+				synced: Boolean(note.synced),
+				version: Number.isSafeInteger(note.version) ? note.version : 0,
 			};
 		},
 

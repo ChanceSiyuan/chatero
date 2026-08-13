@@ -57,6 +57,7 @@ function validateRouterOptions(options) {
 			|| typeof options.adapter.updateItem !== "function"
 			|| typeof options.adapter.libraries !== "function"
 			|| typeof options.adapter.note !== "function"
+			|| typeof options.adapter.updateNote !== "function"
 			|| typeof options.adapter.profileBackup !== "function"
 			|| typeof options.adapter.profileStatus !== "function"
 			|| typeof options.adapter.savedSearches !== "function"
@@ -259,6 +260,23 @@ export function createGeckoCoreRequestRouter(options = {}) {
 			}
 			if (message.method === "library.libraries") return { result: await adapter.libraries(message.params) };
 			if (message.method === "library.note") return { result: await adapter.note(message.params) };
+			if (message.method === "library.note-update") {
+				let { expectedRevision, idempotencyKey, ...operation } = message.params || {};
+				let completed = await transactionRegistry.execute({
+					expectedRevision,
+					idempotencyKey,
+					operation,
+					scope: `library:${operation.libraryId}/note:${operation.noteKey}`,
+				}, value => adapter.updateNote(value));
+				let result = { ...completed.result, replayed: completed.replayed, revision: completed.revision };
+				return {
+					...(!completed.replayed && { event: eventJournal.publish("library.note.changed", {
+						identities: [{ itemKey: result.noteKey, libraryId: result.libraryId }],
+						revision: completed.revision,
+					}) }),
+					result,
+				};
+			}
 			if (message.method === "library.saved-searches") return { result: await adapter.savedSearches(message.params) };
 			if (message.method === "library.saved-search-items") return { result: await adapter.savedSearchItems(message.params) };
 			if (message.method === "library.tags") return { result: await adapter.tags(message.params) };
