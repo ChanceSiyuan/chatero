@@ -1,10 +1,13 @@
 #!/usr/bin/env node
 
-import { spawn } from "node:child_process";
+import { execFile as execFileCallback, spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { promisify } from "node:util";
+
+const execFile = promisify(execFileCallback);
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const EXPECTED = Object.freeze({
@@ -47,9 +50,10 @@ async function runCommand({ file, args, cwd }) {
   });
 }
 
-export async function inspectStageFourReader({ root }) {
+export async function inspectStageFourReader({ root, requireProductMatch = false, requireRealEvidence = false }) {
   const extensionRoot = join(root, "products", "workbench", "extensions", "chatero-zotero");
-  const [catalogText, extension, provider, workflow, pdf, noteHtml, readerHost, protocol, manifestText, firstPartyText] = await Promise.all([
+	const omniPath = join(root, "app", "staging", "Chatero.app", "Contents", "Resources", "app", "omni.ja");
+	const [catalogText, extension, provider, workflow, pdf, noteHtml, readerHost, protocol, manifestText, firstPartyText, sourceCommitResult, omniBytes, provenanceResult, realProfileText] = await Promise.all([
     readFile(join(root, "products", "workbench", "acceptance", "stage-4-reader-parity.json"), "utf8"),
     readFile(join(extensionRoot, "extension.cjs"), "utf8"),
     readFile(join(extensionRoot, "evidence-editors.cjs"), "utf8"),
@@ -60,6 +64,12 @@ export async function inspectStageFourReader({ root }) {
     readFile(join(root, "services", "zotero-core", "protocol", "chatero-core.protocol.json"), "utf8"),
     readFile(join(extensionRoot, "package.json"), "utf8"),
     readFile(join(root, "products", "workbench", "first-party-extensions.json"), "utf8"),
+		execFile("git", ["rev-parse", "HEAD^{commit}"], { cwd: root, encoding: "utf8" }),
+		readFile(omniPath),
+		execFile("unzip", ["-p", omniPath, "resource/chatero-build.mjs"], { encoding: "utf8", maxBuffer: 1024 * 1024 }),
+		requireRealEvidence
+			? readFile(join(root, "products", "workbench", ".cache", "acceptance", "stage-4-real-profile.json"), "utf8")
+			: Promise.resolve(null),
   ]);
   const catalog = JSON.parse(catalogText);
   if (catalog.schemaVersion !== 1 || catalog.stage !== 4 || !Array.isArray(catalog.entries) || catalog.entries.length < 14) throw new Error("Stage 4 parity catalog is incomplete");
@@ -78,13 +88,29 @@ export async function inspectStageFourReader({ root }) {
     if (!firstParty.files.some(value => value.destination.endsWith(path))) throw new Error(`first-party Reader package omits ${path}`);
   }
   if (!protocol.includes('"library.batch-mutate"') || !protocol.includes('"citation.render"')) throw new Error("Core protocol omits Stage 4 transactions");
+	const sourceCommit = sourceCommitResult.stdout.trim();
+	const packagedMatch = provenanceResult.stdout.match(/"sourceCommit":\s*"([0-9a-f]{40})"/u);
+	if (!/^[0-9a-f]{40}$/u.test(sourceCommit) || !packagedMatch) throw new Error("Stage 4 product provenance is invalid");
+	const packagedSourceCommit = packagedMatch[1];
+	if (requireProductMatch && packagedSourceCommit !== sourceCommit) throw new Error("Stage 4 signed product does not match repository HEAD");
+	let realProfile = null;
+	if (requireRealEvidence) {
+		realProfile = JSON.parse(realProfileText);
+		if (realProfile.schemaVersion !== 1 || realProfile.status !== "passed" || realProfile.runs !== 2 || !/^[0-9a-f]{64}$/u.test(realProfile.digest)) {
+			throw new Error("Stage 4 real profile evidence is invalid");
+		}
+	}
   return freeze({
+		bundleOmniSha256: createHash("sha256").update(omniBytes).digest("hex"),
     commandCount: commands.size,
     parityEntries: catalog.entries.length,
     paritySha256: createHash("sha256").update(catalogText).digest("hex"),
+		packagedSourceCommit,
+		...(realProfile && { realProfile }),
     rendererDatabaseAccess: false,
     remoteReaderFetches: 0,
     unsupportedEntries: 0,
+		sourceCommit,
   });
 }
 
@@ -108,7 +134,7 @@ export async function runStageFourAcceptance({ root = ROOT, requirements, run = 
     const checkStarted = clock();
     let exitCode = 0;
     try {
-      if (descriptor.kind === "source-inspection") audit = await inspect({ root });
+		if (descriptor.kind === "source-inspection") audit = await inspect({ root, requireProductMatch: true, requireRealEvidence: true });
       else exitCode = await run({ file: descriptor.command, args: [...descriptor.args], cwd: root });
       if (!Number.isInteger(exitCode) || exitCode < 0 || exitCode > 255) throw new Error("command returned an invalid exit code");
       if (exitCode !== 0) throw new Error(`required command ${descriptor.id} exited with ${exitCode}`);

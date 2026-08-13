@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,14 +11,36 @@ import { startCore } from "../supervisor/core-supervisor.mjs";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const DEFAULT_GECKO = join(ROOT, "app", "staging", "Chatero.app", "Contents", "MacOS", "zotero");
 const PDF = join(ROOT, "test", "tests", "data", "test.pdf");
+const EVIDENCE = join(ROOT, "products", "workbench", ".cache", "acceptance", "stage-4-real-profile.json");
 
 function normalized(value) {
   if (Array.isArray(value)) return value.map(normalized);
   if (!value || typeof value !== "object") return value;
   return Object.fromEntries(Object.entries(value)
-    .filter(([key]) => !["annotationKey", "attachmentKey", "dateCreated", "dateModified", "itemKey", "noteKey", "occurredAt", "revision", "version"].includes(key))
+		.filter(([key]) => !["annotationKey", "attachmentKey", "dateCreated", "dateModified", "itemKey", "noteKey", "occurredAt", "parentItemKey", "revision", "version"].includes(key))
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([key, child]) => [key, normalized(child)]));
+}
+
+function firstDifference(left, right, path = "result") {
+	if (Object.is(left, right)) return null;
+	if (Array.isArray(left) && Array.isArray(right)) {
+		if (left.length !== right.length) return `${path}.length (${left.length} !== ${right.length})`;
+		for (let index = 0; index < left.length; index++) {
+			const difference = firstDifference(left[index], right[index], `${path}[${index}]`);
+			if (difference) return difference;
+		}
+		return null;
+	}
+	if (left && right && typeof left === "object" && typeof right === "object") {
+		const keys = [...new Set([...Object.keys(left), ...Object.keys(right)])].sort();
+		for (const key of keys) {
+			const difference = firstDifference(left[key], right[key], `${path}.${key}`);
+			if (difference) return difference;
+		}
+		return null;
+	}
+	return `${path} (${JSON.stringify(left)} !== ${JSON.stringify(right)})`;
 }
 
 async function request(client, method, params) {
@@ -111,5 +133,22 @@ async function oneRun(geckoExecutable, run) {
 const geckoExecutable = process.env.CHATERO_GECKO_EXECUTABLE || DEFAULT_GECKO;
 if (!await stat(geckoExecutable).then(value => value.isFile()).catch(() => false)) throw new Error(`signed Gecko Core executable is unavailable: ${geckoExecutable}`);
 const runs = [await oneRun(geckoExecutable, 1), await oneRun(geckoExecutable, 2)];
-if (JSON.stringify(runs[0]) !== JSON.stringify(runs[1])) throw new Error("two real disposable profile runs produced different normalized data or events");
-process.stdout.write(`${JSON.stringify({ digest: createHash("sha256").update(JSON.stringify(runs[0])).digest("hex"), runs: runs.length, status: "passed" })}\n`);
+const difference = firstDifference(runs[0], runs[1]);
+if (difference) throw new Error(`two real disposable profile runs diverged at ${difference}`);
+const evidence = Object.freeze({
+	digest: createHash("sha256").update(JSON.stringify(runs[0])).digest("hex"),
+	runs: runs.length,
+	schemaVersion: 1,
+	status: "passed",
+});
+await mkdir(dirname(EVIDENCE), { recursive: true });
+const temporaryEvidence = `${EVIDENCE}.${process.pid}.${randomUUID()}.tmp`;
+try {
+	await writeFile(temporaryEvidence, `${JSON.stringify(evidence, null, 2)}\n`, { flag: "wx", mode: 0o600 });
+	await rename(temporaryEvidence, EVIDENCE);
+}
+catch (error) {
+	await unlink(temporaryEvidence).catch(() => {});
+	throw error;
+}
+process.stdout.write(`${JSON.stringify(evidence)}\n`);

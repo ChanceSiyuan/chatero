@@ -15,6 +15,9 @@ test("Stage 4 immutable requirements and Reader boundary audit pass", async () =
   assert.equal(audit.remoteReaderFetches, 0);
   assert.ok(audit.parityEntries >= 14);
   assert.match(audit.paritySha256, /^[a-f0-9]{64}$/);
+	assert.match(audit.bundleOmniSha256, /^[a-f0-9]{64}$/);
+	assert.match(audit.sourceCommit, /^[a-f0-9]{40}$/);
+	assert.match(audit.packagedSourceCommit, /^[a-f0-9]{40}$/);
 });
 
 test("Stage 4 acceptance fails closed before real profile parity and writes bounded evidence", async () => {
