@@ -121,8 +121,10 @@ async function main() {
   const fixtureAttachmentStates = Array.isArray(fixture?.attachmentStates) ? fixture.attachmentStates : [];
   const fixtureCitationStyles = Array.isArray(fixture?.citationStyles) ? fixture.citationStyles : [];
   const fixtureCitationRenders = Array.isArray(fixture?.citationRenders) ? fixture.citationRenders : [];
+  const fixtureDuplicates = Array.isArray(fixture?.duplicates) ? fixture.duplicates : [];
   const fixtureExports = Array.isArray(fixture?.exports) ? fixture.exports : [];
   const fixtureImportResults = Array.isArray(fixture?.importResults) ? fixture.importResults : [];
+  const fixtureFulltextMatches = Array.isArray(fixture?.fulltextMatches) ? fixture.fulltextMatches : [];
   const fixtureSyncConflicts = Array.isArray(fixture?.syncConflicts) ? fixture.syncConflicts : [];
   const fixtureSyncStorageStatuses = Array.isArray(fixture?.syncStorageStatuses) ? fixture.syncStorageStatuses : [];
   const fixtureTranslators = Array.isArray(fixture?.translators) ? fixture.translators : [];
@@ -264,6 +266,21 @@ async function main() {
         throw new Error("library.feeds params must be an empty object");
       }
       return { result: { feeds: fixtureFeeds } };
+    }
+    if (message.method === "library.duplicates") {
+      const matches = fixtureDuplicates.filter(value => value.libraryId === message.params?.libraryId);
+      const offset = Number(message.params?.cursor || 0);
+      const items = matches.slice(offset, offset + message.params.limit);
+      const nextOffset = offset + items.length;
+      return { result: { items, ...(nextOffset < matches.length && { nextCursor: String(nextOffset) }), total: matches.length } };
+    }
+    if (message.method === "library.fulltext-search") {
+      const matches = fixtureFulltextMatches.filter(value => value.libraryId === message.params?.libraryId
+        && (!value.query || value.query === message.params.query)).map(({ query: _, ...value }) => value);
+      const offset = Number(message.params?.cursor || 0);
+      const page = matches.slice(offset, offset + message.params.limit);
+      const nextOffset = offset + page.length;
+      return { result: { matches: page, ...(nextOffset < matches.length && { nextCursor: String(nextOffset) }), total: matches.length } };
     }
     if (message.method === "library.item-children") {
       validateIdentityParams(message.params, "itemKey", "library.item-children");

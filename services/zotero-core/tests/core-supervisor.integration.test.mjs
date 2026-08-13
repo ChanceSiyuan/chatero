@@ -236,7 +236,9 @@ test("fixture Core implements every new mutation, citation, translation, and syn
 		fixtureAnnotations,
 		fixtureCitationRenders: [{ params: citationParams, result: { html: "<div>Reference</div>", text: "Reference" } }],
 		fixtureCitationStyles: [{ citationFormat: "author-date", styleId: "apa", title: "APA" }],
+		fixtureDuplicates: [fixtureItems[0]],
 		fixtureExports: [{ params: exportParams, result: { content: "@article{}", itemCount: 1, translatorId: "bibtex" } }],
+		fixtureFulltextMatches: [{ attachmentKey: "PDF00001", libraryId: 1, parentItemKey: "FISHER01", query: "critical", title: "Paper PDF" }],
 		fixtureImportResults: [{ params: importOperation, result: { items: [{ itemKey: "IMPORT01", libraryId: 1, title: "Imported", version: 1 }], translatorId: "ris" } }],
 		fixtureNotes,
 		fixtureSyncConflicts: [{ attachmentKey: "PDF00001", libraryId: 1, localModifiedAt: "a", remoteModifiedAt: "b" }],
@@ -248,6 +250,8 @@ test("fixture Core implements every new mutation, citation, translation, and syn
 	assert.equal((await core.client.request("library.note-update", {
 		expectedRevision: 0, expectedVersion: 1, html: "<p>Changed</p>", idempotencyKey: "fixture-note-update-0001", libraryId: 1, noteKey: "NOTE0001",
 	})).version, 2);
+	assert.equal((await core.client.request("library.duplicates", { libraryId: 1, limit: 10 })).total, 1);
+	assert.equal((await core.client.request("library.fulltext-search", { libraryId: 1, limit: 10, query: "critical" })).total, 1);
 	assert.equal((await core.client.request("library.annotations-update", {
 		attachmentKey: "PDF00001", expectedRevision: 0, idempotencyKey: "fixture-annotation-update-0001", libraryId: 1,
 		updates: [{ annotationKey: "ANN00001", comment: "Changed", expectedVersion: 1 }],
