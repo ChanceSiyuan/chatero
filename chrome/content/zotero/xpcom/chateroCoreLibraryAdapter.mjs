@@ -635,6 +635,11 @@ function unavailable(message) {
 }
 
 async function lookupItem(Zotero, libraryId, key, label) {
+	let library = Zotero.Libraries.get(libraryId);
+	if (!library || library.libraryType === "feed") unavailable(`${label} library ${libraryId} is unavailable`);
+	// Zotero intentionally leaves item data unloaded until a library is first
+	// opened. Windowless Core must cross that same lazy-load barrier explicitly.
+	await library.waitForDataLoad?.("item");
 	let item = await Zotero.Items.getByLibraryAndKeyAsync(libraryId, key);
 	if (!item || item.libraryID !== libraryId || item.key !== key) {
 		unavailable(`${label} ${libraryId}/${key} was not found`);
@@ -1245,9 +1250,6 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 			validateCompositeParams(params, ANNOTATION_FIELDS, "attachmentKey", "library.annotations");
 			let attachment = await lookupItem(Zotero, params.libraryId, params.attachmentKey, "Zotero attachment");
 			if (!attachment.isFileAttachment?.()) throw new Error("library.annotations target must be a file attachment");
-			// A cold Zotero cache can contain the attachment key without its regular
-			// parent object. Annotation hydration traverses that parent synchronously.
-			if (attachment.parentItemID) await Zotero.Items.getAsync(attachment.parentItemID);
 			let annotations = (await Zotero.Items.getAsync(attachment.getAnnotations(false, true)))
 				.map(value => annotationSummary(Zotero, value, attachment))
 				.sort((left, right) => compareText(left.sortIndex, right.sortIndex)

@@ -318,8 +318,8 @@ function fixture({
 		Libraries: {
 			get: libraryId => Zotero.Libraries.getAll().find(value => value.libraryID === libraryId) || false,
 			getAll: () => [
-				{ allowsLinkedFiles: false, archived: false, editable: true, filesEditable: false, groupID: 20, lastSync: 200, libraryID: 2, libraryType: "group", libraryVersion: 8, name: "Group", storageVersion: 7, syncable: true },
-				{ allowsLinkedFiles: true, archived: false, editable: true, filesEditable: true, lastSync: 100, libraryID: 1, libraryType: "user", libraryVersion: 10, name: "My Library", storageVersion: 9, syncable: true },
+				{ allowsLinkedFiles: false, archived: false, editable: true, filesEditable: false, groupID: 20, lastSync: 200, libraryID: 2, libraryType: "group", libraryVersion: 8, name: "Group", storageVersion: 7, syncable: true, async waitForDataLoad() {} },
+				{ allowsLinkedFiles: true, archived: false, editable: true, filesEditable: true, lastSync: 100, libraryID: 1, libraryType: "user", libraryVersion: 10, name: "My Library", storageVersion: 9, syncable: true, async waitForDataLoad() {} },
 			],
 		},
     Searches: {
@@ -1113,7 +1113,7 @@ test("looks up one file attachment by exact composite identity", async () => {
   await assert.rejects(adapter.attachment({ libraryId: 1, attachmentKey: "NOTE0002" }), /file attachment/);
   await assert.rejects(
     adapter.attachment({ libraryId: 3, attachmentKey: "PDF00001" }),
-    error => error?.code === "UNAVAILABLE" && /not found/.test(error.message),
+    error => error?.code === "UNAVAILABLE" && /unavailable/.test(error.message),
   );
 });
 
@@ -1150,6 +1150,13 @@ test("exact attachment and Note lookup rejects deleted or trashed Zotero items a
 test("returns a Note and PDF annotations without crossing libraries", async () => {
 	const environment = fixture();
 	const loads = [];
+	const libraryLoads = [];
+	const getLibrary = environment.Zotero.Libraries.get;
+	environment.Zotero.Libraries.get = libraryId => {
+		const library = getLibrary(libraryId);
+		if (library) library.waitForDataLoad = async type => libraryLoads.push([library.libraryID, type]);
+		return library;
+	};
 	const getAsync = environment.Zotero.Items.getAsync;
 	environment.Zotero.Items.getAsync = async value => {
 		loads.push(Array.isArray(value) ? value.slice() : value);
@@ -1182,7 +1189,8 @@ test("returns a Note and PDF annotations without crossing libraries", async () =
     }],
   });
 	assert.deepEqual(await adapter.annotations({ libraryId: 2, attachmentKey: "PDF00001" }), { annotations: [] });
-	assert.deepEqual(loads.slice(0, 2), [11, [92]], "the regular parent loads before annotation children");
+	assert.deepEqual(libraryLoads.at(-1), [2, "item"], "cold library items load before exact annotation lookup");
+	assert.deepEqual(loads.at(-1), [], "annotation children hydrate through the async item loader");
 });
 
 test("rejects malformed requests before touching Zotero APIs", async () => {
@@ -1198,10 +1206,10 @@ test("rejects malformed requests before touching Zotero APIs", async () => {
   await assert.rejects(adapter.collections({ libraryId: 1 }), /parentKey/);
   await assert.rejects(adapter.itemChildren({ libraryId: 1, itemKey: "" }), /itemKey/);
   await assert.rejects(adapter.attachment({ libraryId: 1, attachmentKey: "pdf00001" }), /attachmentKey/);
+	assert.equal(calls, 0);
   await assert.rejects(
     adapter.note({ libraryId: 2, noteKey: "NOTE0002" }),
     error => error?.code === "UNAVAILABLE" && /not found/.test(error.message),
   );
   await assert.rejects(adapter.annotations({ attachmentKey: "PDF00001", libraryId: 1, extra: true }), /unknown field/);
-  assert.equal(calls, 0);
 });
