@@ -329,6 +329,25 @@ export class LibraryTreeModel {
     return Object.freeze({ ...result, results: Object.freeze(result.results.map(value => Object.freeze({ ...value }))) });
   }
 
+  async updateItem({ creators, fields, itemKey, libraryId, relations, tags }) {
+    safeInteger(libraryId, "item update libraryId", { minimum: 1 });
+    boundedString(itemKey, "item update itemKey");
+    if (!Array.isArray(fields) || fields.some(value => !value || typeof value.field !== "string" || typeof value.value !== "string")) {
+      throw new Error("item update fields are invalid");
+    }
+    const facts = await this.#request("library.item-facts", { itemKey, libraryId });
+    if (!facts || !Number.isSafeInteger(facts.version) || facts.version < 0) throw new Error("Zotero Core returned invalid item facts");
+    return this.transact("library.item-update", {
+      ...(creators !== undefined && { creators }),
+      expectedVersion: facts.version,
+      fields,
+      itemKey,
+      libraryId,
+      ...(relations !== undefined && { relations }),
+      ...(tags !== undefined && { tags }),
+    }, { scope: `library:${libraryId}/item:${itemKey}` });
+  }
+
   async note({ libraryId, noteKey }) {
     const result = await this.#request("library.note", { libraryId, noteKey });
     const summary = validateNoteSummary(result);

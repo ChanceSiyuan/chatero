@@ -1,7 +1,7 @@
 {
   "name": "chatero-zotero",
-  "displayName": "Chatero Library",
-  "description": "Native Zotero Library integration for the Chatero research workbench.",
+  "displayName": "%extension.displayName%",
+  "description": "%extension.description%",
   "version": "0.1.0",
   "publisher": "chatero",
   "license": "AGPL-3.0-or-later",
@@ -145,6 +145,36 @@
         "category": "Chatero"
       },
       {
+        "command": "chatero.zotero.editItemMetadata",
+        "title": "Edit Zotero Item Metadata…",
+        "category": "Chatero"
+      },
+      {
+        "command": "chatero.zotero.saveAdvancedSearch",
+        "title": "Save Advanced Zotero Search…",
+        "category": "Chatero"
+      },
+      {
+        "command": "chatero.zotero.showSyncConflicts",
+        "title": "Show Zotero Sync Conflicts",
+        "category": "Chatero"
+      },
+      {
+        "command": "chatero.zotero.copyCitation",
+        "title": "Copy Zotero Citation",
+        "category": "Chatero"
+      },
+      {
+        "command": "chatero.zotero.copyBibliography",
+        "title": "Copy Zotero Bibliography",
+        "category": "Chatero"
+      },
+      {
+        "command": "chatero.zotero.copyLocateUrl",
+        "title": "Copy Zotero Item URL",
+        "category": "Chatero"
+      },
+      {
         "command": "chatero.zotero.addPdfContextToChat",
         "title": "Add PDF Page or Selection to Chat",
         "category": "Chatero"
@@ -212,6 +242,21 @@
           "command": "chatero.zotero.showItemDetails",
           "when": "viewItem == chateroZoteroItem",
           "group": "inline"
+        },
+        {
+          "command": "chatero.zotero.editItemMetadata",
+          "when": "viewItem == chateroZoteroItem",
+          "group": "zotero@1"
+        },
+        {
+          "command": "chatero.zotero.copyCitation",
+          "when": "viewItem == chateroZoteroItem",
+          "group": "zotero@2"
+        },
+        {
+          "command": "chatero.zotero.copyBibliography",
+          "when": "viewItem == chateroZoteroItem",
+          "group": "zotero@3"
         }
       ],
       "view/title": [
@@ -263,7 +308,7 @@
       {
         "name": "Zotero item table help",
         "id": "chatero.zotero.items.accessibilityHelp",
-        "content": "Use Up and Down Arrow to navigate items, Space to select, Enter to expand attachments and Notes, and the command palette for sort, search, batch, import, export, and sync actions."
+        "content": "%accessibility.items%"
       }
     ]
   }

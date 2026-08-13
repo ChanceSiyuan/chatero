@@ -407,6 +407,14 @@
           "destination": "extensions/chatero-zotero/pdf-context-format.mjs"
         },
         {
+          "source": "products/workbench/extensions/chatero-zotero/library-item-table-model.mjs",
+          "destination": "extensions/chatero-zotero/library-item-table-model.mjs"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/library-source-tree-model.mjs",
+          "destination": "extensions/chatero-zotero/library-source-tree-model.mjs"
+        },
+        {
           "source": "products/workbench/extensions/chatero-zotero/library-tree-model.mjs",
           "destination": "extensions/chatero-zotero/library-tree-model.mjs"
         },
@@ -437,6 +445,14 @@
         {
           "source": "products/workbench/extensions/chatero-zotero/package.json",
           "destination": "extensions/chatero-zotero/package.json"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/package.nls.json",
+          "destination": "extensions/chatero-zotero/package.nls.json"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/package.nls.zh-cn.json",
+          "destination": "extensions/chatero-zotero/package.nls.zh-cn.json"
         },
         {
           "source": "services/zotero-core/client/core-client.mjs",

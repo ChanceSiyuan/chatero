@@ -531,6 +531,92 @@ async function activate(context) {
     }
     catch (error) { void vscode.window.showErrorMessage(`Could not look up identifier: ${error.message}`); }
   }));
+  const selectedRows = () => itemProvider.model?.selectedRows || [];
+  context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.editItemMetadata", async item => {
+    const row = item?.itemKey ? item : selectedRows()[0];
+    if (!row) return void vscode.window.showErrorMessage("Select one Zotero item to edit.");
+    try {
+      const metadata = await sourceProvider.core.metadata({ itemKey: row.itemKey, libraryId: row.libraryId });
+      const title = await vscode.window.showInputBox({ prompt: "Zotero item title", value: metadata.title });
+      if (title === undefined) return;
+      const creatorsText = await vscode.window.showInputBox({ prompt: "Creators as JSON", value: JSON.stringify(metadata.creators.map(name => ({ creatorType: "author", name }))) });
+      if (creatorsText === undefined) return;
+      const tagsText = await vscode.window.showInputBox({ prompt: "Tags as comma-separated values", value: metadata.tags.join(", ") });
+      if (tagsText === undefined) return;
+      await sourceProvider.core.updateItem({
+        creators: JSON.parse(creatorsText),
+        fields: [
+          { field: "title", value: title },
+          { field: "date", value: metadata.date },
+          { field: "abstractNote", value: metadata.abstractNote },
+          ...(metadata.doi ? [{ field: "DOI", value: metadata.doi }] : []),
+          ...(metadata.url ? [{ field: "url", value: metadata.url }] : []),
+        ],
+        itemKey: row.itemKey,
+        libraryId: row.libraryId,
+        tags: tagsText.split(",").map(value => value.trim()).filter(Boolean).map(name => ({ name, type: 0 })),
+      });
+      await persistAndRefreshItems();
+    }
+    catch (error) { void vscode.window.showErrorMessage(`Could not edit Zotero metadata: ${error.message}`); }
+  }));
+  context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.saveAdvancedSearch", async () => {
+    const source = itemProvider.model?.source;
+    if (!source) return void vscode.window.showErrorMessage("Select a Zotero library first.");
+    const name = await vscode.window.showInputBox({ prompt: "Saved search name" });
+    if (!name) return;
+    const condition = await vscode.window.showQuickPick(["title", "creator", "tag", "year", "itemType"], { placeHolder: "Search field" });
+    if (!condition) return;
+    const value = await vscode.window.showInputBox({ prompt: `Value for ${condition}` });
+    if (value === undefined) return;
+    try {
+      await sourceProvider.core.transact("library.saved-search-mutate", {
+        action: "create", conditions: [{ condition, operator: "contains", value }], libraryId: source.libraryId, name,
+      }, { scope: `library:${source.libraryId}/saved-search:catalog` });
+      sourceProvider.refresh();
+    }
+    catch (error) { void vscode.window.showErrorMessage(`Could not save advanced search: ${error.message}`); }
+  }));
+  context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.showSyncConflicts", async () => {
+    try {
+      const status = await sourceProvider.core.syncStatus();
+      const conflicts = (await Promise.all(status.libraries.map(value => sourceProvider.core.request("sync.conflicts", { libraryId: value.libraryId })))).flatMap(value => value.conflicts);
+      if (!conflicts.length) return void vscode.window.showInformationMessage("No Zotero file conflicts.");
+      await vscode.window.showQuickPick(conflicts.map(value => ({
+        description: `${value.localModifiedAt} ↔ ${value.remoteModifiedAt}`,
+        label: `${value.libraryId}/${value.attachmentKey}`,
+      })), { placeHolder: "Zotero file conflicts" });
+    }
+    catch (error) { void vscode.window.showErrorMessage(`Could not load Zotero conflicts: ${error.message}`); }
+  }));
+  const copyRenderedCitation = async mode => {
+    const selected = selectedRows();
+    if (!selected.length) return void vscode.window.showErrorMessage("Select at least one Zotero item.");
+    try {
+      const styles = await sourceProvider.core.request("citation.styles", {});
+      const style = await vscode.window.showQuickPick(styles.styles.map(value => ({ label: value.title, value })), { placeHolder: "Citation style" });
+      if (!style) return;
+      const rendered = await sourceProvider.core.request("citation.render", {
+        identities: selected.map(value => ({ itemKey: value.itemKey, libraryId: value.libraryId })), mode, styleId: style.value.styleId,
+      });
+      await vscode.env.clipboard.writeText(rendered.text);
+      void vscode.window.showInformationMessage(`${mode === "citation" ? "Citation" : "Bibliography"} copied to clipboard.`);
+    }
+    catch (error) { void vscode.window.showErrorMessage(`Could not render Zotero ${mode}: ${error.message}`); }
+  };
+  context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.copyCitation", () => copyRenderedCitation("citation")));
+  context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.copyBibliography", () => copyRenderedCitation("bibliography")));
+  context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.copyLocateUrl", async item => {
+    const row = item?.itemKey ? item : selectedRows()[0];
+    if (!row) return void vscode.window.showErrorMessage("Select one Zotero item.");
+    try {
+      const metadata = await sourceProvider.core.metadata({ itemKey: row.itemKey, libraryId: row.libraryId });
+      if (!metadata.url) return void vscode.window.showInformationMessage("This Zotero item has no URL.");
+      await vscode.env.clipboard.writeText(metadata.url);
+      void vscode.window.showInformationMessage("Zotero item URL copied to clipboard.");
+    }
+    catch (error) { void vscode.window.showErrorMessage(`Could not locate Zotero item: ${error.message}`); }
+  }));
   context.subscriptions.push({
     dispose: () => {
       const cleanup = lifecycle.dispose();

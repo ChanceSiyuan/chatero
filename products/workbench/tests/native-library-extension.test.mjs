@@ -407,3 +407,73 @@ test("batch mutation learns a Core scope revision and retries once with a fresh 
     { expectedRevision: 5, idempotencyKey: "chatero-stage3-key-2" },
   ]);
 });
+
+test("Library model updates complete item metadata through a versioned idempotent transaction", async () => {
+  const { LibraryTreeModel } = await import("../extensions/chatero-zotero/library-tree-model.mjs");
+  const calls = [];
+  const model = new LibraryTreeModel({
+    idempotencyKey: () => "chatero-item-update-key-0001",
+    request: async (method, params) => {
+      calls.push({ method, params });
+      if (method === "library.item-facts") return {
+        citationWarning: false, itemKey: "ITEM0001", libraryId: 1, relations: [], retracted: false, synced: true, version: 4,
+      };
+      return { itemKey: "ITEM0001", libraryId: 1, replayed: false, revision: 1, synced: false, version: 5 };
+    },
+  });
+
+  assert.equal((await model.updateItem({
+    creators: [{ creatorType: "author", firstName: "Ada", lastName: "Lovelace" }],
+    fields: [{ field: "title", value: "Analytical Engine" }],
+    itemKey: "ITEM0001",
+    libraryId: 1,
+    relations: [{ object: "http://zotero.org/users/1/items/ITEM0002", predicate: "dc:relation" }],
+    tags: [{ name: "history", type: 0 }],
+  })).version, 5);
+  assert.deepEqual(calls, [
+    { method: "library.item-facts", params: { itemKey: "ITEM0001", libraryId: 1 } },
+    { method: "library.item-update", params: {
+      creators: [{ creatorType: "author", firstName: "Ada", lastName: "Lovelace" }],
+      expectedRevision: 0,
+      expectedVersion: 4,
+      fields: [{ field: "title", value: "Analytical Engine" }],
+      idempotencyKey: "chatero-item-update-key-0001",
+      itemKey: "ITEM0001",
+      libraryId: 1,
+      relations: [{ object: "http://zotero.org/users/1/items/ITEM0002", predicate: "dc:relation" }],
+      tags: [{ name: "history", type: 0 }],
+    } },
+  ]);
+});
+
+test("Stage 3 parity catalog has no unsupported Library entry and maps commands to automated evidence", async () => {
+  const catalog = JSON.parse(await readFile(join(root, "products", "workbench", "acceptance", "stage-3-library-parity.json"), "utf8"));
+  assert.equal(catalog.schemaVersion, 1);
+  assert.ok(catalog.entries.length >= 35);
+  for (const entry of catalog.entries) {
+    assert.match(entry.upstream, /\S/);
+    assert.match(entry.chatero, /^chatero\.zotero\.|^chatero\.zotero\./);
+    assert.match(entry.test, /\S+\.test\.mjs#\S+/);
+    assert.equal(entry.status, "supported", `${entry.upstream} is not supported`);
+    assert.match(entry.manualEvidence, /\S/);
+  }
+});
+
+test("10k-row item table restore and stable multi-selection stay inside the Stage 3 budget", async () => {
+  const { performance } = await import("node:perf_hooks");
+  const { LibraryItemTableModel } = await import("../extensions/chatero-zotero/library-item-table-model.mjs");
+  const core = { async sourceItems() { return { items: [], total: 0 }; }, async batchMutate() { return { replayed: false, results: [], revision: 1 }; } };
+  const rows = Array.from({ length: 10_000 }, (_, index) => ({
+    attachmentCount: 0, creators: [], itemKey: `I${String(index).padStart(7, "0")}`,
+    itemType: "journalArticle", libraryId: 1, title: `Item ${index}`, version: 1,
+  }));
+  const snapshot = {
+    query: "", rows, schemaVersion: 1, selection: ["1/I0000000", "1/I0009999"],
+    sortBy: "title", sortDirection: "asc", source: { kind: "library", libraryId: 1 }, total: rows.length,
+  };
+  const start = performance.now();
+  const model = new LibraryItemTableModel({ core });
+  model.restore(snapshot);
+  assert.deepEqual(model.selectedRows.map(value => value.itemKey), ["I0000000", "I0009999"]);
+  assert.ok(performance.now() - start < 250, "10k item table restore exceeded 250 ms");
+});
