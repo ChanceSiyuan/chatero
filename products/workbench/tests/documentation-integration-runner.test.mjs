@@ -8,6 +8,7 @@ import { afterEach, test } from "node:test";
 import {
   parseDocumentationIntegrationArguments,
   runDocumentationIntegration,
+  spawnDocumentationIntegrationProcess,
 } from "../scripts/run-documentation-integration.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
@@ -196,4 +197,31 @@ test("fixture keeps the macOS user-data socket path within the Unix-domain limit
   // socket path must stay below the macOS ~104-byte Unix-domain limit.
   const socketPath = join(fixture.userDataDir, "1.13-main.sock");
   assert.ok(Buffer.byteLength(socketPath) < 104, `${socketPath} is too long`);
+});
+
+test("SSH fixture binds the remote workspace to an explicit real OpenSSH alias", async () => {
+  const { createTemporaryDocumentationWorkspace } = await import("../integration/documentation/fixtures.mjs");
+  const checkout = await createCheckoutFixture();
+  const fixture = await createTemporaryDocumentationWorkspace({
+    root: repositoryRoot,
+    checkout,
+    target: "ssh-fixture",
+    sshAlias: "stage5-target",
+  });
+  temporaryDirectories.push(fixture.fixtureRoot);
+  const workspace = new URL(fixture.workspaceUri);
+  assert.equal(workspace.protocol, "vscode-remote:");
+  assert.equal(workspace.hostname, "chatero-remote+cHJvZmlsZTpzdGFnZTUtdGFyZ2V0");
+  assert.equal(Buffer.from(workspace.hostname.slice("chatero-remote+".length), "base64url").toString("utf8"), "profile:stage5-target");
+});
+
+test("integration child has a hard deadline and cannot wait forever in authority resolution", async () => {
+  await assert.rejects(spawnDocumentationIntegrationProcess({
+    file: process.execPath,
+    args: ["-e", "setInterval(() => {}, 1000)"],
+    cwd: repositoryRoot,
+    env: process.env,
+    timeoutMs: 25,
+    killGraceMs: 25,
+  }), /timed out/i);
 });

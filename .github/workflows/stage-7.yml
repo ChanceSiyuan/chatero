@@ -73,15 +73,18 @@ jobs:
           gh run download "$STAGE_5_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "stage-5-receipt-linux-x86_64-$CHATERO_SOURCE_SHA" --dir products/workbench/.cache/acceptance/stage-5-runner-receipts
           gh run download "$STAGE_5_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "stage-5-receipt-linux-aarch64-$CHATERO_SOURCE_SHA" --dir products/workbench/.cache/acceptance/stage-5-runner-receipts
           gh run download "$STAGE_5_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "stage-5-acceptance-$CHATERO_SOURCE_SHA" --dir products/workbench/.cache/acceptance/stage-5-downloaded
+          gh run download "$STAGE_5_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "stage-6-acceptance-$CHATERO_SOURCE_SHA" --dir products/workbench/.cache/acceptance/stage-6-downloaded
       - run: npm run verify:stage-5
         env:
           CHATERO_CODE_OSS_DIR: vendor/code-oss
           CHATERO_REMOTE_AGENT_RELEASE_DIR: products/workbench/remote-agent/dist
           CHATERO_STAGE_5_RECEIPT_DIR: products/workbench/.cache/acceptance/stage-5-runner-receipts
-      - run: npm run verify:stage-6
-        env:
-          CHATERO_CODE_OSS_DIR: vendor/code-oss
-          CHATERO_REMOTE_AGENT_RELEASE_DIR: products/workbench/remote-agent/dist
+      - name: Install same-source Stage 6 acceptance evidence
+        run: >-
+          install -m 600
+          products/workbench/.cache/acceptance/stage-6-downloaded/stage-6.json
+          products/workbench/.cache/acceptance/stage-6.json
+      - run: npm run verify:stage-6:evidence
       - run: npm run gulp vscode-darwin-arm64-min
         working-directory: vendor/code-oss
       - name: Sign, notarize, and verify Chatero Workbench

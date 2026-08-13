@@ -3,6 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { encodeAuthority } from "../../extensions/chatero-remote/authority.mjs";
+import { assertConcreteAlias } from "../../extensions/chatero-remote/openssh-targets.mjs";
+
 export const TEXT_DOCUMENT_SCENARIOS = Object.freeze([
   "shared-buffer",
   "origin-ack-no-echo",
@@ -30,8 +33,11 @@ async function fixtureTempBase() {
   return realpath(base);
 }
 
-export async function createTemporaryDocumentationWorkspace({ root, checkout, target, remoteAgentReleaseDir }) {
+export async function createTemporaryDocumentationWorkspace({ root, checkout, target, remoteAgentReleaseDir, sshAlias }) {
   if (!new Set(["local", "ssh-fixture"]).has(target)) throw new TypeError("invalid Documentation integration target");
+  const remoteAuthority = target === "ssh-fixture"
+    ? encodeAuthority(`profile:${assertConcreteAlias(sshAlias)}`)
+    : null;
   const fixtureRoot = await mkdtemp(join(await fixtureTempBase(), "chatero-doc-"));
   const workspacePath = join(fixtureRoot, "workspace");
   const userDataDir = join(fixtureRoot, "user-data");
@@ -58,7 +64,6 @@ export async function createTemporaryDocumentationWorkspace({ root, checkout, ta
   const driverExtensionPath = join(root, "products", "workbench", "integration", "documentation", "driver");
   const testRunnerPath = join(driverExtensionPath, "run.cjs");
   const codeScript = join(checkout, "scripts", "code.sh");
-  const remoteAuthority = "chatero-remote+cHJvZmlsZTpmaXh0dXJl";
   const workspaceUri = target === "local"
     ? pathToFileURL(workspacePath).href
     : `vscode-remote://${remoteAuthority}${workspacePath}`;

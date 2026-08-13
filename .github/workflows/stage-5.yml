@@ -160,7 +160,7 @@ jobs:
       - run: npm run workbench:bootstrap
       - run: >-
           sudo apt-get update && sudo apt-get install -y
-          libkrb5-dev libx11-dev libxkbfile-dev
+          libkrb5-dev libx11-dev libxkbfile-dev openssh-server
       - run: npm ci --ignore-scripts --prefix vendor/code-oss
       - run: npm ci --ignore-scripts --prefix vendor/code-oss/build/npm/gyp
       - run: node products/workbench/scripts/prepare-code-oss-lifecycle.mjs vendor/code-oss --prepare
@@ -172,10 +172,25 @@ jobs:
           CHATERO_CODE_OSS_DIR: vendor/code-oss
           CHATERO_REMOTE_AGENT_RELEASE_DIR: products/workbench/remote-agent/dist
           CHATERO_STAGE_5_RECEIPT_DIR: products/workbench/.cache/acceptance/stage-5-runner-receipts
+      - name: Prepare real SSH target for the Research Loop
+        run: node products/workbench/scripts/prepare-stage-5-ci-ssh.mjs
+      - name: Verify Stage 6 through the signed Linux Remote Agent
+        run: npm run verify:stage-6
+        env:
+          CHATERO_CODE_OSS_DIR: vendor/code-oss
+          CHATERO_REMOTE_AGENT_RELEASE_DIR: products/workbench/remote-agent/dist
+          CHATERO_DOCUMENTATION_SSH_ALIAS: stage5-target
       - if: always()
         uses: actions/upload-artifact@v4
         with:
           name: stage-5-acceptance-${{ github.sha }}
           path: products/workbench/.cache/acceptance/stage-5.json
+          if-no-files-found: error
+          retention-days: 30
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage-6-acceptance-${{ github.sha }}
+          path: products/workbench/.cache/acceptance/stage-6.json
           if-no-files-found: error
           retention-days: 30

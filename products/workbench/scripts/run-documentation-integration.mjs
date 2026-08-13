@@ -16,6 +16,8 @@ const TARGETS = new Set(["local", "ssh-fixture"]);
 const MAX_GREP_UTF8 = 256;
 const MAX_STARTUP_OUTPUT_BYTES = 4 * 1024 * 1024;
 const MAX_AGENT_HOST_LOG_BYTES = 4 * 1024 * 1024;
+const DEFAULT_PROCESS_TIMEOUT_MS = 15 * 60 * 1000;
+const DEFAULT_KILL_GRACE_MS = 5_000;
 
 async function safeRegularFile(path, label) {
   const metadata = await lstat(path).catch(error => {
@@ -63,11 +65,24 @@ function environmentFor(fixture, target, root, grep) {
   return Object.freeze(environment);
 }
 
-async function spawnAndWait({ file, args, cwd, env }) {
+export async function spawnDocumentationIntegrationProcess({
+  file,
+  args,
+  cwd,
+  env,
+  timeoutMs = DEFAULT_PROCESS_TIMEOUT_MS,
+  killGraceMs = DEFAULT_KILL_GRACE_MS,
+}) {
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1
+      || !Number.isSafeInteger(killGraceMs) || killGraceMs < 1) {
+    throw new TypeError("Documentation integration process deadlines must be positive integers");
+  }
   return new Promise((accept, reject) => {
     const child = spawn(file, args, { cwd, env, shell: false, stdio: ["inherit", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
+    let timedOut = false;
+    let killTimer = null;
     const relay = (stream, destination, append) => {
       stream.on("data", chunk => {
         destination.write(chunk);
@@ -87,14 +102,24 @@ async function spawnAndWait({ file, args, cwd, env }) {
     const onTerminate = () => forwardSignal("SIGTERM");
     process.on("SIGINT", onInterrupt);
     process.on("SIGTERM", onTerminate);
+    const deadline = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGTERM");
+      killTimer = setTimeout(() => child.kill("SIGKILL"), killGraceMs);
+      killTimer.unref?.();
+    }, timeoutMs);
+    deadline.unref?.();
     const cleanup = () => {
+      clearTimeout(deadline);
+      if (killTimer) clearTimeout(killTimer);
       process.off("SIGINT", onInterrupt);
       process.off("SIGTERM", onTerminate);
     };
     child.once("error", error => { cleanup(); reject(error); });
     child.once("exit", (code, signal) => {
       cleanup();
-      if (code === 0) accept(Object.freeze({ stdout, stderr }));
+      if (timedOut) reject(new Error(`Documentation integration process timed out after ${timeoutMs} ms`));
+      else if (code === 0) accept(Object.freeze({ stdout, stderr }));
       else reject(new Error(`Documentation integration process exited with ${signal ?? code}`));
     });
   });
@@ -157,8 +182,9 @@ export async function runDocumentationIntegration({
   target,
   grep,
   remoteAgentReleaseDir = process.env.CHATERO_REMOTE_AGENT_RELEASE_DIR,
+  sshAlias = process.env.CHATERO_DOCUMENTATION_SSH_ALIAS,
   platform = process.platform,
-  run = spawnAndWait,
+  run = spawnDocumentationIntegrationProcess,
   verify = verifyCodeOss,
 } = {}) {
   if (!TARGETS.has(target)) throw new TypeError("invalid Documentation integration target");
@@ -178,6 +204,7 @@ export async function runDocumentationIntegration({
     checkout: canonicalCheckout,
     target,
     remoteAgentReleaseDir,
+    sshAlias,
   });
   try {
     const codeArguments = [

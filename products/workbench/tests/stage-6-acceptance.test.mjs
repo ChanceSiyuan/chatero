@@ -44,3 +44,19 @@ test("Stage 6 CLI and requirements reject every bypass", async () => {
   assert.throws(() => parseStageSixAcceptanceArguments(["--skip-ssh"]), /accepts no arguments/iu);
   assert.throws(() => validateStageSixRequirements({ schemaVersion: 1, stage: 6, checks: [] }), /immutable Stage 6/iu);
 });
+
+test("downloaded Stage 6 evidence must be complete and bound to the current source", async () => {
+  const { verifyStageSixEvidence } = await import("../scripts/run-stage-6-acceptance.mjs");
+  const requirements = JSON.parse(await readFile(new URL("../acceptance/stage-6.requirements.json", import.meta.url)));
+  const sourceCommit = (await import("node:child_process")).execFileSync("git", ["rev-parse", "HEAD^{commit}"], { cwd: root, encoding: "utf8" }).trim();
+  const evidence = {
+    schemaVersion: 1,
+    stage: 6,
+    status: "passed",
+    sourceCommit,
+    checks: requirements.checks.map(value => ({ id: value.id, status: "passed", exitCode: 0 })),
+  };
+  assert.equal((await verifyStageSixEvidence({ root, read: async () => evidence })).checks, requirements.checks.length);
+  await assert.rejects(verifyStageSixEvidence({ root, read: async () => ({ ...evidence, sourceCommit: "0".repeat(40) }) }), /stale/iu);
+  await assert.rejects(verifyStageSixEvidence({ root, read: async () => ({ ...evidence, checks: evidence.checks.slice(1) }) }), /incomplete/iu);
+});

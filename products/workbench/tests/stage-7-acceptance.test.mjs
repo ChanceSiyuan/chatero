@@ -94,6 +94,8 @@ test("Stage 7 release workflow is protected, macOS-native, notarizes, verifies, 
   assert.match(source, /signed-stage-5-release/u);
   assert.match(source, /stage-5-receipt/u);
   for (const stage of [1, 2, 3, 4, 5, 6]) assert.match(source, new RegExp(`verify:stage-${stage}`, "u"));
+  assert.match(source, /stage-6-acceptance/u);
+  assert.match(source, /verify:stage-6:evidence/u);
   assert.match(source, /app\/scripts\/dir_build/u);
   assert.match(source, /CHATERO_APPLE_DEVELOPER_ID/u);
   assert.match(source, /notarizationAccepted/u);

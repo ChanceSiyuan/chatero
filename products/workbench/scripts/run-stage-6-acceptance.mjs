@@ -96,6 +96,20 @@ export async function inspectStageSixResearchLoop({ root = ROOT } = {}) {
   });
 }
 
+export async function verifyStageSixEvidence({ root = ROOT, read = async path => JSON.parse(await readFile(path, "utf8")) } = {}) {
+  const sourceCommit = (await execFile("git", ["rev-parse", "HEAD^{commit}"], { cwd: root, encoding: "utf8" })).stdout.trim();
+  const requirements = validateStageSixRequirements(JSON.parse(await readFile(join(root, "products", "workbench", "acceptance", "stage-6.requirements.json"), "utf8")));
+  const evidence = await read(join(root, "products", "workbench", ".cache", "acceptance", "stage-6.json"));
+  const required = new Set(requirements.checks.map(value => value.id));
+  if (!evidence || evidence.schemaVersion !== 1 || evidence.stage !== 6 || evidence.status !== "passed"
+      || evidence.sourceCommit !== sourceCommit || !Array.isArray(evidence.checks)
+      || evidence.checks.length !== required.size
+      || evidence.checks.some(value => !value || !required.delete(value.id) || value.status !== "passed" || value.exitCode !== 0)) {
+    throw new Error("Stage 6 evidence is invalid, incomplete, or stale");
+  }
+  return freeze({ stage: 6, status: "passed", sourceCommit, checks: evidence.checks.length });
+}
+
 async function writeEvidence(path, value) {
   await mkdir(dirname(path), { recursive: true });
   const temporary = join(dirname(path), `.stage-6-${process.pid}-${randomUUID()}.tmp`);
