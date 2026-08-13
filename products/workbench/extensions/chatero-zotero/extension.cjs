@@ -102,11 +102,12 @@ class LibraryProvider {
 }
 
 async function activate(context) {
-  const [{ LibraryTreeModel }, { EvidenceRecordAuthority }, registryModule, html, brokerModule, contextFormat] = await Promise.all([
+  const [{ LibraryTreeModel }, { EvidenceRecordAuthority }, registryModule, html, metadataHtml, brokerModule, contextFormat] = await Promise.all([
     import("./library-tree-model.mjs"),
     import("./evidence-authority.mjs"),
     import("./evidence-editor-registry.mjs"),
     import("./evidence-editor-html.mjs"),
+    import("./item-metadata-html.mjs"),
     import("./pdf-context-broker.mjs"),
     import("./pdf-context-format.mjs"),
   ]);
@@ -286,6 +287,29 @@ async function activate(context) {
     const trusted = evidenceAuthority.authorize(record, "note");
     const uri = vscode.Uri.parse(evidenceDocuments.stage("note", trusted));
     return vscode.commands.executeCommand("vscode.openWith", uri, "chatero.zotero.note", { preview: false });
+  }));
+  context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.showItemDetails", async item => {
+    if (!provider.model) {
+      void vscode.window.showErrorMessage("Zotero Core is stopped.");
+      return;
+    }
+    if (!item || typeof item.itemKey !== "string" || typeof item.libraryId !== "number") {
+      void vscode.window.showErrorMessage("No Zotero item is selected.");
+      return;
+    }
+    try {
+      const metadata = await provider.model.metadata({ itemKey: item.itemKey, libraryId: item.libraryId });
+      const panel = vscode.window.createWebviewPanel(
+        "chatero.zotero.itemDetails",
+        metadata.title || "Item Details",
+        vscode.ViewColumn.Beside,
+        { enableScripts: false, localResourceRoots: [] },
+      );
+      panel.webview.html = metadataHtml.renderItemMetadataHTML(metadata);
+    }
+    catch (error) {
+      void vscode.window.showErrorMessage(`Could not load Zotero item details: ${error.message}`);
+    }
   }));
   context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.searchLibrary", async () => {
     const query = await vscode.window.showInputBox({ placeHolder: "Search titles and creators", prompt: "Search Zotero Library" });

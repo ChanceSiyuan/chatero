@@ -29,6 +29,7 @@ test("declares native Library views and commands without a webview", async () =>
     "chatero.zotero.selectCoreExecutable",
     "chatero.zotero.selectProfile",
     "chatero.zotero.sendFullPaperToRemote",
+    "chatero.zotero.showItemDetails",
     "chatero.zotero.startCore",
     "chatero.zotero.stopCore",
   ]);
@@ -126,6 +127,41 @@ test("Library model fetches and validates read-only item metadata", async () => 
   assert.deepEqual(calls, [
     { method: "library.item-metadata", params: { itemKey: "ITEM0001", libraryId: 7 } },
   ]);
+});
+
+test("item metadata HTML escapes hostile values and admits no scripts or remote resources", async () => {
+  const { renderItemMetadataHTML } = await import("../extensions/chatero-zotero/item-metadata-html.mjs");
+  const html = renderItemMetadataHTML({
+    abstractNote: "<script>alert(1)</script>",
+    creators: ["Ada & Bob", "<img src=x onerror=alert(1)>"],
+    date: "2024-01-15",
+    doi: "10.1234/alpha",
+    itemKey: "ITEM0001",
+    itemType: "journalArticle",
+    libraryId: 7,
+    publicationTitle: "",
+    tags: [],
+    title: "Alpha \"Methods\"",
+    url: "https://example.org/<x>",
+    year: 2024,
+  });
+
+  assert.match(html, /default-src 'none'/);
+  assert.doesNotMatch(html, /<(script|img|iframe|object|embed|a)[\s>]/);
+  assert.match(html, /Alpha &quot;Methods&quot;/);
+  assert.match(html, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+  assert.match(html, /https:\/\/example\.org\/&lt;x&gt;/);
+  assert.doesNotMatch(html, /Publication|Tags/);
+  assert.throws(() => renderItemMetadataHTML(null), /must be an object/);
+});
+
+test("item details command renders validated metadata through a scriptless webview", async () => {
+  const source = await readFile(join(extensionRoot, "extension.cjs"), "utf8");
+  assert.match(source, /registerCommand\("chatero\.zotero\.showItemDetails"/);
+  assert.match(source, /createWebviewPanel\(/);
+  assert.match(source, /enableScripts: false/);
+  assert.match(source, /renderItemMetadataHTML/);
+  assert.doesNotMatch(source, /executeCommand\(["']vscode\.open["']|openExternal|child_process/);
 });
 
 test("Library open commands keep Core-originated evidence inside native workbench editors", async () => {

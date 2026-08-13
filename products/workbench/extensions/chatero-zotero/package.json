@@ -69,6 +69,11 @@
         "category": "Chatero"
       },
       {
+        "command": "chatero.zotero.showItemDetails",
+        "title": "Show Item Details",
+        "category": "Chatero"
+      },
+      {
         "command": "chatero.zotero.selectProfile",
         "title": "Select Zotero Profile…",
         "category": "Chatero"
@@ -125,6 +130,13 @@
       }
     },
     "menus": {
+      "view/item/context": [
+        {
+          "command": "chatero.zotero.showItemDetails",
+          "when": "viewItem == chateroZoteroItem",
+          "group": "inline"
+        }
+      ],
       "view/title": [
         {
           "command": "chatero.zotero.searchLibrary",
