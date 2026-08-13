@@ -1,0 +1,23 @@
+diff --git a/src/vs/base/common/product.ts b/src/vs/base/common/product.ts
+--- a/src/vs/base/common/product.ts
++++ b/src/vs/base/common/product.ts
+@@ -105,6 +105,7 @@ export interface IProductConfiguration {
+ 
+ 	readonly nameShort: string;
+ 	readonly nameLong: string;
++	readonly chateroWorkbenchUserDataName?: string;
+ 
+ 	readonly win32AppUserModelId?: string;
+ 	readonly win32MutexName?: string;
+diff --git a/src/main.ts b/src/main.ts
+--- a/src/main.ts
++++ b/src/main.ts
+@@ -54,7 +54,7 @@ if (!app.commandLine.hasSwitch('no-sandbox') &&
+ }
+ 
+ // Set userData path before app 'ready' event
+-const userDataPath = getUserDataPath(args, product.nameShort ?? 'code-oss-dev');
++const userDataPath = getUserDataPath(args, product.chateroWorkbenchUserDataName ?? product.nameShort ?? 'code-oss-dev');
+ if (process.platform === 'win32') {
+ 	const userDataUNCHost = getUNCHost(userDataPath);
+ 	if (userDataUNCHost) {

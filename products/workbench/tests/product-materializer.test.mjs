@@ -58,6 +58,7 @@ test("brands Code-OSS as Chatero and selects only Open VSX", async () => {
 
   assert.equal(product.nameShort, "Chatero");
   assert.equal(product.nameLong, "Chatero Research Workbench");
+  assert.equal(product.chateroWorkbenchUserDataName, "Chatero Research Workbench");
   assert.equal(product.applicationName, "chatero");
   assert.equal(product.dataFolderName, ".chatero");
   assert.equal(product.darwinBundleIdentifier, "io.github.chancesiyuan.chatero");

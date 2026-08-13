@@ -1,6 +1,7 @@
 {
   "nameShort": "Chatero",
   "nameLong": "Chatero Research Workbench",
+  "chateroWorkbenchUserDataName": "Chatero Research Workbench",
   "applicationName": "chatero",
   "dataFolderName": ".chatero",
   "sharedDataFolderName": ".chatero-shared",
