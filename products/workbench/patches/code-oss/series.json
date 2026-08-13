@@ -51,11 +51,15 @@
     },
     {
       "file": "0013-deduplicate-codex-connection-startup.patch",
-      "sha256": "87dc7098beb22cd6dafe9a61295c9b0ecbfb1b1c45d7ab6008e2b7389a316405"
+      "sha256": "47dfbfcbced5abfd7a1a581dc7714d4f0749e5efc425763124ce64216af75b73"
     },
     {
       "file": "0014-default-agent-host-to-codex-only.patch",
       "sha256": "93954ea7b367ef0a4be03ac8261609a2df9f55707b0b95791a3088b7d7f3a90d"
+    },
+    {
+      "file": "0015-preserve-codex-workspace-roots.patch",
+      "sha256": "2ff71a364a09980eac42273c1f7bbc6bdeb0bbb7a0b94225daa58ba006d28253"
     }
   ]
 }

@@ -2,7 +2,7 @@ diff --git a/src/vs/platform/agentHost/node/codex/codexAgent.ts b/src/vs/platfor
 index 665617a0d43..179ee422b70 100644
 --- a/src/vs/platform/agentHost/node/codex/codexAgent.ts
 +++ b/src/vs/platform/agentHost/node/codex/codexAgent.ts
-@@ -1348,6 +1348,15 @@ export class CodexAgent extends Disposable implements IAgent {
+@@ -1348,6 +1348,16 @@ export class CodexAgent extends Disposable implements IAgent {
  				validation = this._usageSourceValidation;
  				await validation;
  			}

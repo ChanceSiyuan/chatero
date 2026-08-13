@@ -1,0 +1,177 @@
+diff --git a/src/vs/platform/agentHost/node/codex/codexAgent.ts b/src/vs/platform/agentHost/node/codex/codexAgent.ts
+index a64fc001df8..e93ffa3a1b7 100644
+--- a/src/vs/platform/agentHost/node/codex/codexAgent.ts
++++ b/src/vs/platform/agentHost/node/codex/codexAgent.ts
+@@ -63,7 +63,7 @@ import { replayThreadToTurns } from './codexReplayMapper.js';
+ import { CodexSessionMetadataStore } from './codexSessionMetadataStore.js';
+ import { buildCodexLaunchConfig, buildCodexResumeParams, isCodexThreadProviderCompatible } from './codexLaunchConfig.js';
+ import { codexAccountStateForUsageSource, codexAccountStateFromResponse, codexProtectedResourcesForUsageSource, type ICodexAccountState } from './codexAccountState.js';
+-import { CodexSessionConfigKey, CODEX_DEFAULT_PERMISSIONS_PRESET, CODEX_PERMISSIONS_PRESETS, collaborationModeKind, migrateCodexPermissionValues, narrowPersonality, narrowReasoningEffort, narrowReasoningSummary, narrowWebSearchMode, resolveCodexPermissions, type CodexApprovalPolicy, type CodexPermissionsPreset, type ICodexResolvedPermissions } from './codexSessionConfigKeys.js';
++import { CodexSessionConfigKey, CODEX_DEFAULT_PERMISSIONS_PRESET, CODEX_PERMISSIONS_PRESETS, collaborationModeKind, migrateCodexPermissionValues, narrowAdditionalDirectories, narrowPersonality, narrowReasoningEffort, narrowReasoningSummary, narrowWebSearchMode, resolveCodexPermissions, type CodexApprovalPolicy, type CodexPermissionsPreset, type ICodexResolvedPermissions } from './codexSessionConfigKeys.js';
+ import type { ReasoningEffort } from './protocol/generated/ReasoningEffort.js';
+ import type { ReasoningSummary } from './protocol/generated/ReasoningSummary.js';
+ import type { Personality } from './protocol/generated/Personality.js';
+@@ -1217,7 +1217,12 @@ export class CodexAgent extends Disposable implements IAgent {
+ 	private _runtimeWorkspaceRoots(session: ICodexSession): string[] {
+ 		const workingDirectories = session.workingDirectories
+ 			?? (session.workingDirectory ? [session.workingDirectory] : []);
+-		return distinctAbsolutePaths(workingDirectories.map(directory => directory.fsPath));
++		const config = this._readSessionConfig(session);
++		const additionalDirectories = narrowAdditionalDirectories(config[CodexSessionConfigKey.AdditionalDirectories]) ?? [];
++		return distinctAbsolutePaths([
++			...workingDirectories.map(directory => directory.fsPath),
++			...additionalDirectories,
++		]);
+ 	}
+ 
+ 	private _chateroCodexPreflight(connection: IConnectionReady, cwd: string): Promise<Readonly<{ epoch: string }>> {
+diff --git a/src/vs/platform/agentHost/test/node/codex/codexPrewarmEviction.test.ts b/src/vs/platform/agentHost/test/node/codex/codexPrewarmEviction.test.ts
+index c2f130b9b12..35c8ab276f1 100644
+--- a/src/vs/platform/agentHost/test/node/codex/codexPrewarmEviction.test.ts
++++ b/src/vs/platform/agentHost/test/node/codex/codexPrewarmEviction.test.ts
+@@ -9,7 +9,6 @@ import { PassThrough } from 'stream';
+ import { DeferredPromise } from '../../../../../base/common/async.js';
+ import { Emitter } from '../../../../../base/common/event.js';
+ import type { DisposableStore } from '../../../../../base/common/lifecycle.js';
+-import { waitForState } from '../../../../../base/common/observable.js';
+ import { URI } from '../../../../../base/common/uri.js';
+ import { sep } from '../../../../../base/common/path.js';
+ import { isWindows } from '../../../../../base/common/platform.js';
+@@ -45,6 +44,8 @@ interface ITestWireRequest {
+ 	};
+ }
+ 
++const workspaceActivePermissionProfile = Object.freeze({ id: 'chatero_workspace', extends: ':workspace' });
++
+ interface ITestPeer {
+ 	readonly transport: ICodexAppServerTransport;
+ 	readonly outbound: PassThrough;
+@@ -75,7 +76,13 @@ function createTestPeer(): ITestPeer {
+ 	return {
+ 		transport,
+ 		outbound: stdin,
+-		push: message => stdout.write(JSON.stringify(message) + '\n'),
++		push: message => {
++			const response = message as { result?: { thread?: object; activePermissionProfile?: object } };
++			if (response.result?.thread && !response.result.activePermissionProfile) {
++				response.result.activePermissionProfile = workspaceActivePermissionProfile;
++			}
++			stdout.write(JSON.stringify(message) + '\n');
++		},
+ 		exit: fireExit,
+ 		dispose: () => {
+ 			onceExitListeners.length = 0;
+@@ -148,9 +155,21 @@ async function createAgent(disposables: Pick<DisposableStore, 'add'>, options: I
+ 	instantiationService.stub(IProductService, { _serviceBrand: undefined, version: '1.0.0-test' } as IProductService);
+ 	instantiationService.stub(INativeEnvironmentService, { userHome: URI.file('/tmp') });
+ 	instantiationService.stub(ILogService, logService);
+-	const agent = disposables.add(instantiationService.createInstance(CodexAgent));
+-	await agent.authenticate(agent.getProtectedResources()[0].resource, 'test-token');
+-	await waitForState(agent.models, models => models.length > 0);
++	// These routing tests replace the transport with an in-memory peer. Construct
++	// the fixture on the legacy in-memory source so the OpenAI-only production
++	// default cannot start a real local app-server in the background.
++	const prototype = CodexAgent.prototype as unknown as { _resolveUsageSource: () => 'copilot' };
++	const resolveUsageSource = prototype._resolveUsageSource;
++	prototype._resolveUsageSource = () => 'copilot';
++	let agent: CodexAgent;
++	try {
++		agent = disposables.add(instantiationService.createInstance(CodexAgent));
++	} finally {
++		prototype._resolveUsageSource = resolveUsageSource;
++	}
++	agent['_githubToken'] = 'test-token';
++	agent['_models'].set(models as never, undefined);
++	agent['_chateroCodexPreflight'] = async () => ({ epoch: 'test' });
+ 	return agent;
+ }
+ 
+@@ -305,9 +324,15 @@ suite('CodexAgent prewarm eviction', () => {
+ 			await send;
+ 			const configurationService = agent['_configurationService'];
+ 			assert.ok(configurationService instanceof TestCodexConfigurationService);
+-			configurationService.setSessionConfig({ [CodexSessionConfigKey.PermissionsPreset]: 'full-access' });
++			configurationService.setSessionConfig({
++				[CodexSessionConfigKey.PermissionsPreset]: 'full-access',
++				[CodexSessionConfigKey.AdditionalDirectories]: [additionalDirectory],
++			});
+ 			const fullAccess = agent['_turnStartOptions'](entry, 'gpt-test');
+-			configurationService.setSessionConfig({ [CodexSessionConfigKey.SandboxMode]: 'read-only' });
++			configurationService.setSessionConfig({
++				[CodexSessionConfigKey.SandboxMode]: 'read-only',
++				[CodexSessionConfigKey.AdditionalDirectories]: [additionalDirectory],
++			});
+ 			const readOnly = agent['_turnStartOptions'](entry, 'gpt-test');
+ 
+ 			assert.deepStrictEqual({
+@@ -325,17 +350,17 @@ suite('CodexAgent prewarm eviction', () => {
+ 					permissions: readOnly.permissions,
+ 				},
+ 			}, {
+-				start: { cwd: repoA.fsPath, runtimeWorkspaceRoots: [repoA.fsPath, repoB.fsPath] },
++				start: { cwd: repoA.fsPath, runtimeWorkspaceRoots: [repoA.fsPath, repoB.fsPath, additionalDirectory] },
+ 				turn: {
+-					runtimeWorkspaceRoots: [repoA.fsPath, repoB.fsPath],
++					runtimeWorkspaceRoots: [repoA.fsPath, repoB.fsPath, additionalDirectory],
+ 					permissions: 'chatero_workspace',
+ 				},
+ 				fullAccess: {
+-					runtimeWorkspaceRoots: [repoA.fsPath, repoB.fsPath],
++					runtimeWorkspaceRoots: [repoA.fsPath, repoB.fsPath, additionalDirectory],
+ 					permissions: 'chatero_full_access',
+ 				},
+ 				readOnly: {
+-					runtimeWorkspaceRoots: [repoA.fsPath, repoB.fsPath],
++					runtimeWorkspaceRoots: [repoA.fsPath, repoB.fsPath, additionalDirectory],
+ 					permissions: 'chatero_read_only',
+ 				},
+ 			});
+@@ -380,7 +405,7 @@ suite('CodexAgent prewarm eviction', () => {
+ 				turnRuntimeWorkspaceRoots: turn.params.runtimeWorkspaceRoots,
+ 				permissions: turn.params.permissions,
+ 			}, {
+-				startRuntimeWorkspaceRoots: undefined,
++				startRuntimeWorkspaceRoots: [repoA.fsPath, additionalDirectory],
+ 				turnRuntimeWorkspaceRoots: [repoA.fsPath, additionalDirectory],
+ 				permissions: 'chatero_workspace',
+ 			});
+@@ -421,9 +446,15 @@ suite('CodexAgent prewarm eviction', () => {
+ 			await send;
+ 			const configurationService = agent['_configurationService'];
+ 			assert.ok(configurationService instanceof TestCodexConfigurationService);
+-			configurationService.setSessionConfig({ [CodexSessionConfigKey.PermissionsPreset]: 'full-access' });
++			configurationService.setSessionConfig({
++				[CodexSessionConfigKey.PermissionsPreset]: 'full-access',
++				[CodexSessionConfigKey.AdditionalDirectories]: [additionalDirectory],
++			});
+ 			const fullAccess = agent['_turnStartOptions'](entry, 'gpt-test');
+-			configurationService.setSessionConfig({ [CodexSessionConfigKey.SandboxMode]: 'read-only' });
++			configurationService.setSessionConfig({
++				[CodexSessionConfigKey.SandboxMode]: 'read-only',
++				[CodexSessionConfigKey.AdditionalDirectories]: [additionalDirectory],
++			});
+ 			const readOnly = agent['_turnStartOptions'](entry, 'gpt-test');
+ 
+ 			assert.deepStrictEqual({
+@@ -446,18 +477,18 @@ suite('CodexAgent prewarm eviction', () => {
+ 			}, {
+ 				start: {
+ 					cwd: repo.fsPath,
+-					runtimeWorkspaceRoots: undefined,
++					runtimeWorkspaceRoots: [repo.fsPath, additionalDirectory],
+ 				},
+ 				turn: {
+ 					runtimeWorkspaceRoots: [repo.fsPath, additionalDirectory],
+ 					permissions: 'chatero_workspace',
+ 				},
+ 				fullAccess: {
+-					runtimeWorkspaceRoots: undefined,
++					runtimeWorkspaceRoots: [repo.fsPath, additionalDirectory],
+ 					permissions: 'chatero_full_access',
+ 				},
+ 				readOnly: {
+-					runtimeWorkspaceRoots: undefined,
++					runtimeWorkspaceRoots: [repo.fsPath, additionalDirectory],
+ 					permissions: 'chatero_read_only',
+ 				},
+ 			});
