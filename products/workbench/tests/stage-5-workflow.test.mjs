@@ -18,6 +18,9 @@ test("Stage 5 CI builds, signs, runs real SSH, and gates both native Linux archi
   assert.match(source, /cmp - products\/workbench\/remote-agent\/release-public-key\.pem/u);
   assert.match(source, /run-stage-5-real-ssh\.mjs/u);
   assert.match(source, /prepare-stage-5-ci-ssh\.mjs/u);
+  const realSshSource = await readFile(new URL("../scripts/run-stage-5-real-ssh.mjs", import.meta.url), "utf8");
+  assert.match(realSshSource, /new SshSession\(\{\s*installerFactory:/u);
+  assert.match(realSshSource, /verifyRelease,\s*selectArtifact,/u);
   const sshFixture = await readFile(new URL("../scripts/prepare-stage-5-ci-ssh.mjs", import.meta.url), "utf8");
   assert.match(sshFixture, /"UsePAM yes"/u);
   assert.match(sshFixture, /"PasswordAuthentication no"/u);

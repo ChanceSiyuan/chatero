@@ -11,9 +11,10 @@ import { promisify } from "node:util";
 import { EvidenceCacheService } from "../extensions/chatero-remote/evidence-cache.mjs";
 import { encodeAuthority } from "../extensions/chatero-remote/authority.mjs";
 import { resolveSshTarget } from "../extensions/chatero-remote/openssh-targets.mjs";
+import { RemoteAgentInstaller, SshRemoteAgentRuntime } from "../extensions/chatero-remote/remote-agent-installer.mjs";
 import { runFramedBridgeRequest } from "../extensions/chatero-remote/remote-process.mjs";
 import { SshSession } from "../extensions/chatero-remote/ssh-session.mjs";
-import { verifyRelease } from "../remote-agent/release-contract.mjs";
+import { selectArtifact, verifyRelease } from "../remote-agent/release-contract.mjs";
 
 const execFile = promisify(execFileCallback);
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
@@ -153,7 +154,14 @@ async function runScenario({ alias, releaseDirectory, receiptPath, expectedTuple
   if (!artifact) throw new Error(`signed release omits ${expectedTuple}`);
   const target = await resolveSshTarget(alias, sshRunner);
   if (!target.proxyJump) throw new Error("Stage 5 real SSH target must exercise ProxyJump");
-  const session = new SshSession();
+  const session = new SshSession({
+    installerFactory: ({ alias: installerAlias, controlPath, log, transactionState }) => new RemoteAgentInstaller({
+      remote: new SshRemoteAgentRuntime({ alias: installerAlias, controlPath, log }),
+      verifyRelease,
+      selectArtifact,
+      transactionState,
+    }),
+  });
   const checks = new Map(EXPECTED_CHECKS.map(id => [id, false]));
   checks.set("signed-release", true);
   checks.set("openssh-proxyjump", true);
