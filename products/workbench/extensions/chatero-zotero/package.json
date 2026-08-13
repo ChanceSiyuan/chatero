@@ -24,7 +24,11 @@
     "onCustomEditor:chatero.zotero.pdf",
     "onCustomEditor:chatero.zotero.note",
     "onChatContextProvider:zotero-pdf-evidence",
-    "onChatContextProvider:chatero.chatero-zotero-zotero-pdf-evidence"
+    "onChatContextProvider:chatero.chatero-zotero-zotero-pdf-evidence",
+    "onCommand:chatero.zotero.research.selection",
+    "onCommand:chatero.zotero.research.activeObject",
+    "onCommand:chatero.zotero.research.activeNote",
+    "onCommand:chatero.zotero.research.bibliography"
   ],
   "contributes": {
     "chatContext": [

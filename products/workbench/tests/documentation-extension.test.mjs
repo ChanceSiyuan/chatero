@@ -95,8 +95,14 @@ test("Documentation is the default workspace surface with optional Live Preview"
     "chatero.documentation.migrate",
     "chatero.documentation.reviewChangeSet",
     "chatero.documentation.refresh",
+    "chatero.research.runAction",
+    "chatero.research.chatWithSelection",
+    "chatero.research.refreshLiterature",
+    "chatero.research.noteToDraft",
+    "chatero.research.openTopicGraph",
+    "chatero.research.openMainSite",
   ]);
-  assert.ok(commandIds.every(command => command.startsWith("chatero.documentation.")));
+  assert.ok(commandIds.every(command => command.startsWith("chatero.documentation.") || command.startsWith("chatero.research.")));
 
   assert.equal(Object.hasOwn(manifest.contributes, "webviewPanel"), false);
   assert.deepEqual(manifest.contributes.languageModelTools.map(tool => tool.name), [
@@ -183,6 +189,13 @@ test("first-party materialization declares the complete Documentation authority"
     "extensions/chatero-documentation/pending-edit-rebase.mjs",
     "extensions/chatero-documentation/review-decisions.mjs",
     "extensions/chatero-documentation/review-snapshot.mjs",
+    "extensions/chatero-documentation/research-loop-commands.mjs",
+    "extensions/chatero-documentation/research-loop-composition.mjs",
+    "extensions/chatero-documentation/research-loop-controller.mjs",
+    "extensions/chatero-documentation/research-loop-model.mjs",
+    "extensions/chatero-documentation/research-loop-registration.mjs",
+    "extensions/chatero-documentation/literature-review.mjs",
+    "extensions/chatero-documentation/reviewed-research-surfaces.mjs",
     "extensions/chatero-documentation/settlement-planner.mjs",
     "extensions/chatero-documentation/settlement-protocol.mjs",
     "extensions/chatero-documentation/settlement-recovery.mjs",

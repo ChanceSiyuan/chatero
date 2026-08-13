@@ -516,6 +516,22 @@ test("extension deactivate awaits the same cleanup for pending and ready Core re
   }
 });
 
+test("extension activation exposes only one frozen path-free Research API", async () => {
+  const vscode = fakeVscode(async () => null);
+  const extension = loadExtension(vscode);
+  const context = {
+    extensionUri: { authority: "", path: "/extension", scheme: "file" },
+    subscriptions: [],
+    workspaceState: { get: () => undefined, update: async () => {} },
+  };
+  const api = await extension.activate(context);
+  assert.equal(Object.isFrozen(api), true);
+  assert.deepEqual(Object.keys(api).sort(), [
+    "exportBibliographySnapshot", "getActiveNoteSnapshot", "getActiveResearchObject", "getSelectionSnapshot",
+  ]);
+  assert.doesNotMatch(JSON.stringify(api), /profilePath|coreExecutable|path|client|request/iu);
+});
+
 test("an unexpected Core stop invalidates evidence before restart and forces exact lookup", async () => {
   const {
     EvidenceDocumentRegistry,

@@ -221,6 +221,34 @@
           "destination": "extensions/chatero-documentation/review-snapshot.mjs"
         },
         {
+          "source": "products/workbench/extensions/chatero-documentation/research-loop-commands.mjs",
+          "destination": "extensions/chatero-documentation/research-loop-commands.mjs"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-documentation/research-loop-composition.mjs",
+          "destination": "extensions/chatero-documentation/research-loop-composition.mjs"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-documentation/research-loop-controller.mjs",
+          "destination": "extensions/chatero-documentation/research-loop-controller.mjs"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-documentation/research-loop-model.mjs",
+          "destination": "extensions/chatero-documentation/research-loop-model.mjs"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-documentation/research-loop-registration.mjs",
+          "destination": "extensions/chatero-documentation/research-loop-registration.mjs"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-documentation/literature-review.mjs",
+          "destination": "extensions/chatero-documentation/literature-review.mjs"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-documentation/reviewed-research-surfaces.mjs",
+          "destination": "extensions/chatero-documentation/reviewed-research-surfaces.mjs"
+        },
+        {
           "source": "products/workbench/extensions/chatero-documentation/settlement-planner.mjs",
           "destination": "extensions/chatero-documentation/settlement-planner.mjs"
         },
@@ -421,6 +449,10 @@
         {
           "source": "products/workbench/extensions/chatero-zotero/reader-workflow-model.mjs",
           "destination": "extensions/chatero-zotero/reader-workflow-model.mjs"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/research-api.mjs",
+          "destination": "extensions/chatero-zotero/research-api.mjs"
         },
         {
           "source": "products/workbench/extensions/chatero-zotero/item-metadata-html.mjs",

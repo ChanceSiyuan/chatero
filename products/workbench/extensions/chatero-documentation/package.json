@@ -91,6 +91,36 @@
         "title": "Refresh Documentation",
         "category": "Chatero",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "chatero.research.runAction",
+        "title": "Run Research Action…",
+        "category": "Chatero Research"
+      },
+      {
+        "command": "chatero.research.chatWithSelection",
+        "title": "Chat with Selected Papers",
+        "category": "Chatero Research"
+      },
+      {
+        "command": "chatero.research.refreshLiterature",
+        "title": "Refresh Literature Bibliography",
+        "category": "Chatero Research"
+      },
+      {
+        "command": "chatero.research.noteToDraft",
+        "title": "Import Zotero Note to Documentation…",
+        "category": "Chatero Research"
+      },
+      {
+        "command": "chatero.research.openTopicGraph",
+        "title": "Open Documentation Topic Graph",
+        "category": "Chatero Research"
+      },
+      {
+        "command": "chatero.research.openMainSite",
+        "title": "Open Reviewed Main Site",
+        "category": "Chatero Research"
       }
     ],
     "customEditors": [

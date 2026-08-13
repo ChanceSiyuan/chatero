@@ -94,6 +94,10 @@ async function activate(context) {
       const { registerDocumentationReview } = require("./documentation-review.cjs");
       registrations.push(...await registerDocumentationReview({ vscode, services }));
     }
+    if (typeof services.transactions?.stage === "function") {
+      const { registerResearchLoop } = await import("./research-loop-registration.mjs");
+      registrations.push(...await registerResearchLoop({ vscode, services }));
+    }
     registrations.push(...await registerDocumentation(vscode, context, registrationServices));
     return registrations;
   });

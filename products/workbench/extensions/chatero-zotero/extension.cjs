@@ -144,7 +144,7 @@ class LibraryItemProvider {
 }
 
 async function activate(context) {
-  const [{ LibraryTreeModel }, { LibraryItemTableModel }, { LibrarySourceTreeModel }, { ReaderWorkflowModel }, readerBridge, { EvidenceRecordAuthority }, registryModule, html, metadataHtml, brokerModule, contextFormat] = await Promise.all([
+  const [{ LibraryTreeModel }, { LibraryItemTableModel }, { LibrarySourceTreeModel }, { ReaderWorkflowModel }, readerBridge, { EvidenceRecordAuthority }, registryModule, html, metadataHtml, brokerModule, contextFormat, researchModule] = await Promise.all([
     import("./library-tree-model.mjs"),
     import("./library-item-table-model.mjs"),
     import("./library-source-tree-model.mjs"),
@@ -156,6 +156,7 @@ async function activate(context) {
     import("./item-metadata-html.mjs"),
     import("./pdf-context-broker.mjs"),
     import("./pdf-context-format.mjs"),
+    import("./research-api.mjs"),
   ]);
   const {
     EvidenceDocumentRegistry,
@@ -168,6 +169,7 @@ async function activate(context) {
   const evidenceDocuments = new EvidenceDocumentRegistry();
   const pdfContexts = new brokerModule.PdfContextBroker();
   const sourceProvider = new LibrarySourceProvider();
+  let activeNoteIdentity = null;
   const itemProvider = new LibraryItemProvider({
     evidenceAuthority,
     persist: snapshot => context.workspaceState.update("chatero.zotero.itemTable.v1", snapshot),
@@ -318,6 +320,7 @@ async function activate(context) {
       });
     },
     unpublish: () => {
+      activeNoteIdentity = null;
       pdfMaterializer = null;
       evidenceDocuments.reset();
       sourceProvider.setConnection(null, null);
@@ -402,6 +405,7 @@ async function activate(context) {
   }));
   context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.openNote", record => {
     const trusted = evidenceAuthority.authorize(record, "note");
+    activeNoteIdentity = Object.freeze({ libraryId: trusted.libraryId, noteKey: trusted.noteKey });
     const uri = vscode.Uri.parse(evidenceDocuments.stage("note", trusted));
     return vscode.commands.executeCommand("vscode.openWith", uri, "chatero.zotero.note", { preview: false });
   }));
@@ -656,6 +660,17 @@ async function activate(context) {
       void cleanup.catch(() => {});
     },
   });
+  const researchApi = researchModule.createZoteroResearchApi({
+    getActiveNoteIdentity: () => activeNoteIdentity,
+    getActiveSource: () => itemProvider.model?.source ?? null,
+    getCore: () => sourceProvider.core,
+    getSelectedRows: () => itemProvider.model?.selectedRows ?? [],
+  });
+  context.subscriptions.push(...researchModule.registerZoteroResearchCommands({
+    api: researchApi,
+    commands: vscode.commands,
+  }));
+  return researchApi;
 }
 
 function deactivate() {
