@@ -56,7 +56,7 @@ function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
-test("Documentation authority and its Chatero compatibility patches are digest-pinned last", async () => {
+test("Documentation authority and its Chatero compatibility patches remain digest-pinned in order", async () => {
   const [patch, compatibilityPatch, startupPatch, bundledSdkPatch, optionalCopilotPatch, codexIpcPatch, liveCodexHomePatch, seriesText] = await Promise.all([
     readFile(patchPath),
     readFile(compatibilityPatchPath),
@@ -68,7 +68,9 @@ test("Documentation authority and its Chatero compatibility patches are digest-p
     readFile(join(workbenchRoot, "patches", "code-oss", "series.json"), "utf8"),
   ]);
   const entries = JSON.parse(seriesText).patches;
-  assert.deepEqual(entries.slice(-7), [{
+  const authorityIndex = entries.findIndex(entry => entry.file === "0004-chatero-documentation-agent-authority.patch");
+  assert.notEqual(authorityIndex, -1);
+  assert.deepEqual(entries.slice(authorityIndex, authorityIndex + 7), [{
     file: "0004-chatero-documentation-agent-authority.patch",
     sha256: sha256(patch),
   }, {

@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "stage": 1,
+  "checks": [
+    {
+      "id": "documentation-assets",
+      "command": "npm",
+      "args": ["run", "build:documentation-webview"]
+    },
+    {
+      "id": "workbench-node-tests",
+      "command": "npm",
+      "args": ["run", "test:workbench-bootstrap"]
+    },
+    {
+      "id": "core-protocol",
+      "command": "npm",
+      "args": ["run", "core:check"]
+    },
+    {
+      "id": "core-node-tests",
+      "command": "npm",
+      "args": ["run", "test:zotero-core"]
+    },
+    {
+      "id": "legacy-node-tests",
+      "command": "npm",
+      "args": ["run", "test:chatero"]
+    },
+    {
+      "id": "code-oss-provenance",
+      "command": "npm",
+      "args": ["run", "workbench:verify"]
+    },
+    {
+      "id": "code-oss-compile",
+      "command": "npm",
+      "args": ["run", "workbench:compile"]
+    },
+    {
+      "id": "documentation-local-runtime",
+      "command": "npm",
+      "args": ["run", "test:documentation:integration", "--", "--target", "local"]
+    },
+    {
+      "id": "tracked-source-clean",
+      "kind": "source-inspection"
+    }
+  ]
+}

@@ -85,6 +85,7 @@ async function createFixture() {
     darwinBundleIdentifier: "io.github.chancesiyuan.chatero",
     urlProtocol: "chatero",
     builtInExtensions: [],
+    excludedSystemExtensionNames: [],
   }, null, 2)}\n`);
   await writeFile(join(workbenchRoot, "patches", "code-oss", "series.json"), '{"schemaVersion":1,"patches":[]}\n');
   await writeFile(join(workbenchRoot, "extensions", "chatero-documentation", "webview", "live-preview-entry.mjs"), "document.body.textContent = 'fixture';\n");
@@ -133,6 +134,7 @@ test("materializes and verifies a pinned Chatero checkout without network access
   assert.equal(result.commit, input.contract.codeOss.commit);
   assert.equal(product.nameShort, "Chatero");
   assert.equal(product.extensionsGallery.serviceUrl, "https://open-vsx.org/vscode/gallery");
+  assert.deepEqual(product.excludedSystemExtensionNames, []);
   assert.equal(provenance.codeOssCommit, input.contract.codeOss.commit);
   assert.deepEqual(provenance.patches, []);
   assert.equal(provenance.firstPartyExtensions[0].id, "chatero.zotero");

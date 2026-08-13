@@ -33,6 +33,7 @@
     "package:chatero": "app/scripts/package_chatero_dmg",
     "verify:chatero-bundle": "app/scripts/verify_chatero_bundle app/staging/Chatero.app",
     "verify:workbench-bootstrap": "npm run test:workbench-bootstrap && npm run workbench:verify",
+    "verify:stage-1": "node products/workbench/scripts/run-stage-1-acceptance.mjs",
     "test:chatero:staged": "app/scripts/verify_chatero_bundle app/staging/Chatero.app"
   },
   "license": "",
