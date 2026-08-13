@@ -38,6 +38,7 @@
     "verify:stage-3": "node products/workbench/scripts/run-stage-3-acceptance.mjs",
     "verify:stage-4": "node products/workbench/scripts/run-stage-4-acceptance.mjs",
     "verify:stage-5": "node products/workbench/scripts/run-stage-5-acceptance.mjs",
+    "verify:stage-6": "node products/workbench/scripts/run-stage-6-acceptance.mjs",
     "test:chatero:staged": "app/scripts/verify_chatero_bundle app/staging/Chatero.app"
   },
   "license": "",

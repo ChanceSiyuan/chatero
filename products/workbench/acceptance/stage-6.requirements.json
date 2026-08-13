@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "stage": 6,
+  "checks": [
+    { "id": "research-loop-contract-tests", "command": "node", "args": ["products/workbench/scripts/run-node-tests.mjs", "products/workbench/tests/research-loop-*.test.mjs", "products/workbench/tests/reviewed-research-surfaces.test.mjs", "products/workbench/tests/zotero-research-api.test.mjs"] },
+    { "id": "documentation-transaction-tests", "command": "node", "args": ["products/workbench/scripts/run-node-tests.mjs", "products/workbench/tests/documentation-*.test.mjs"] },
+    { "id": "local-research-loop-runtime", "command": "npm", "args": ["run", "test:documentation:integration", "--", "--target", "local"] },
+    { "id": "ssh-research-loop-runtime", "command": "npm", "args": ["run", "test:documentation:integration", "--", "--target", "ssh-fixture"] },
+    { "id": "research-loop-boundary-audit", "kind": "source-inspection" }
+  ]
+}
