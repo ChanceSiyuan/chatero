@@ -161,6 +161,19 @@ export function makeCodeOssBuildInvocation({
   };
 }
 
+export function makeCodeOssCompileInvocation({
+  checkout,
+  nodePath = process.execPath,
+  environment = process.env,
+}) {
+  return makeCodeOssBuildInvocation({
+    checkout,
+    target: "compile-build-without-mangling",
+    nodePath,
+    environment,
+  });
+}
+
 export function makeCodexSdkPlan({ arch, checkout, root }) {
   if (!Object.hasOwn(ARCHITECTURES, arch)) {
     throw new TypeError("arch must equal x64 or arm64");
@@ -377,6 +390,11 @@ async function main() {
     root: join(dirname(plan.upstreamRoot), plan.rootName),
   });
   await buildCodexSdk(sdkPlan);
+  const compileInvocation = makeCodeOssCompileInvocation({ checkout });
+  await run(compileInvocation.command, compileInvocation.args, {
+    cwd: compileInvocation.cwd,
+    env: compileInvocation.env,
+  });
   const buildInvocation = makeCodeOssBuildInvocation({
     checkout,
     target: plan.target,

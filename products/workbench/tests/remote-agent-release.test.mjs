@@ -814,7 +814,30 @@ test("Linux agent builder requires the pinned Node runtime", async () => {
 });
 
 test("Linux agent builder runs gulp with the already verified Node executable", async () => {
-  const { makeCodeOssBuildInvocation } = await import(BUILD_PATH);
+  const { makeCodeOssBuildInvocation, makeCodeOssCompileInvocation } = await import(BUILD_PATH);
+
+  assert.deepEqual(makeCodeOssCompileInvocation({
+    checkout: "/srv/code-oss",
+    nodePath: "/opt/chatero/node-v24.18.0/bin/node",
+    environment: {
+      AGENT_SDK_RESULTS_FILE: "/tmp/untrusted-sdk-results.json",
+      PATH: "/usr/bin",
+      VSCODE_PUBLISH: "true",
+    },
+  }), {
+    command: "/opt/chatero/node-v24.18.0/bin/node",
+    args: [
+      "--experimental-strip-types",
+      "--max-old-space-size=8192",
+      "/srv/code-oss/node_modules/gulp/bin/gulp.js",
+      "compile-build-without-mangling",
+    ],
+    cwd: "/srv/code-oss",
+    env: {
+      PATH: "/usr/bin",
+      VSCODE_PUBLISH: "false",
+    },
+  });
 
   assert.deepEqual(makeCodeOssBuildInvocation({
     checkout: "/srv/code-oss",
