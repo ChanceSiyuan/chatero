@@ -5,6 +5,7 @@
   "defaultDeadlineMs": 5000,
   "capabilities": [
     "attachment:read",
+    "citation:read",
     "events:read",
     "library:read",
     "library:search",
@@ -12,7 +13,8 @@
     "profile:read",
     "profile:write",
     "sync:read",
-    "sync:write"
+    "sync:write",
+    "translation:read"
   ],
   "methods": [
     {
@@ -176,6 +178,24 @@
       "capability": "sync:write",
       "paramsType": "SyncRetryParams",
       "resultType": "SyncRetryResult"
+    },
+    {
+      "name": "translation.translators",
+      "capability": "translation:read",
+      "paramsType": "TranslationTranslatorsParams",
+      "resultType": "TranslationTranslatorsResult"
+    },
+    {
+      "name": "citation.styles",
+      "capability": "citation:read",
+      "paramsType": "CitationStylesParams",
+      "resultType": "CitationStylesResult"
+    },
+    {
+      "name": "citation.render",
+      "capability": "citation:read",
+      "paramsType": "CitationRenderParams",
+      "resultType": "CitationRenderResult"
     }
   ],
   "types": {
@@ -782,6 +802,72 @@
         "libraryIds": "number[]",
         "replayed": "boolean",
         "revision": "number"
+      }
+    },
+    "TranslationTranslatorsParams": {
+      "kind": "object",
+      "fields": {
+        "kind": "string"
+      }
+    },
+    "TranslationTranslatorSummary": {
+      "kind": "object",
+      "fields": {
+        "browserSupport": "string",
+        "creator": "string",
+        "kind": "string",
+        "label": "string",
+        "lastUpdated": "string",
+        "priority": "number",
+        "target": "string",
+        "translatorId": "string"
+      }
+    },
+    "TranslationTranslatorsResult": {
+      "kind": "object",
+      "fields": {
+        "translators": "TranslationTranslatorSummary[]"
+      }
+    },
+    "CitationStyleSummary": {
+      "kind": "object",
+      "fields": {
+        "citationFormat": "string",
+        "styleId": "string",
+        "title": "string"
+      }
+    },
+    "CitationStylesParams": {
+      "kind": "object",
+      "fields": {}
+    },
+    "CitationStylesResult": {
+      "kind": "object",
+      "fields": {
+        "styles": "CitationStyleSummary[]"
+      }
+    },
+    "CitationItemIdentity": {
+      "kind": "object",
+      "fields": {
+        "itemKey": "string",
+        "libraryId": "number"
+      }
+    },
+    "CitationRenderParams": {
+      "kind": "object",
+      "fields": {
+        "identities": "CitationItemIdentity[]",
+        "locale?": "string",
+        "mode": "string",
+        "styleId": "string"
+      }
+    },
+    "CitationRenderResult": {
+      "kind": "object",
+      "fields": {
+        "html": "string",
+        "text": "string"
       }
     }
   }

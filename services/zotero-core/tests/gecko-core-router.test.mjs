@@ -42,6 +42,8 @@ function createRouter(overrides = {}) {
     async attachmentState(params) { calls.push(["attachmentState", params]); return { attachmentKey: params.attachmentKey, fileAvailable: true, fulltextIndexState: "indexed", libraryId: params.libraryId, storageSyncState: "in-sync" }; },
     async attachmentSource(params) { calls.push(["attachmentSource", params]); return { size: 4, async read(offset, length) { return Uint8Array.from([1, 2, 3, 4]).slice(offset, offset + length); }, async close() {} }; },
     async collections(params) { calls.push(["collections", params]); return { collections: [] }; },
+		async citationStyles(params) { calls.push(["citationStyles", params]); return { styles: [] }; },
+		async renderCitation(params) { calls.push(["renderCitation", params]); return { html: "<div>Reference</div>", text: "Reference" }; },
     async feeds(params) { calls.push(["feeds", params]); return { feeds: [] }; },
     async itemChildren(params) { calls.push(["itemChildren", params]); return { attachments: [], notes: [] }; },
     async itemMetadata(params) { calls.push(["itemMetadata", params]); return { itemKey: params.itemKey, libraryId: params.libraryId }; },
@@ -58,6 +60,7 @@ function createRouter(overrides = {}) {
     async syncStatus(params) { calls.push(["syncStatus", params]); return { enabled: true, inProgress: false, libraries: [], offline: false, status: "" }; },
     async retrySync(params) { calls.push(["retrySync", params]); return { completed: true, libraryIds: params.libraryIds }; },
     async tags(params) { calls.push(["tags", params]); return { tags: [], total: 0 }; },
+		async translators(params) { calls.push(["translators", params]); return { translators: [] }; },
   };
   const selectedAdapter = { ...adapter, ...(overrides.adapter || {}) };
   return {
@@ -215,6 +218,19 @@ test("sync retry is a separately authorized idempotent transaction", async () =>
   assert.equal(first.event.topic, "sync.completed");
   assert.equal(replay.result.replayed, true);
   assert.equal(calls.filter(value => value[0] === "retrySync").length, 1);
+});
+
+test("routes translator catalog and citation rendering through separate read capabilities", async () => {
+	const { calls, router } = createRouter();
+	const session = await handshake(router, ["citation:read", "translation:read"]);
+	assert.deepEqual((await router.handle(request(session, "translation.translators", { kind: "export" }))).result, { translators: [] });
+	assert.deepEqual((await router.handle(request(session, "citation.styles", {}))).result, { styles: [] });
+	assert.deepEqual((await router.handle(request(session, "citation.render", {
+		identities: [{ itemKey: "ITEM0001", libraryId: 1 }],
+		mode: "bibliography",
+		styleId: "http://www.zotero.org/styles/apa",
+	}))).result, { html: "<div>Reference</div>", text: "Reference" });
+	assert.deepEqual(calls.map(value => value[0]), ["translators", "citationStyles", "renderCitation"]);
 });
 
 test("routes read-only PDF, item facts, Note, and annotation methods through library:read", async () => {

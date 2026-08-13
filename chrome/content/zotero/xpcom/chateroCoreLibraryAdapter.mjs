@@ -33,6 +33,11 @@ const LIBRARIES_FIELDS = new Set();
 const FEEDS_FIELDS = new Set();
 const SYNC_STATUS_FIELDS = new Set();
 const SYNC_RETRY_FIELDS = new Set(["libraryIds"]);
+const TRANSLATOR_FIELDS = new Set(["kind"]);
+const TRANSLATOR_KINDS = new Set(["export", "import", "search", "web"]);
+const CITATION_STYLES_FIELDS = new Set();
+const CITATION_RENDER_FIELDS = new Set(["identities", "locale", "mode", "styleId"]);
+const CITATION_MODES = new Set(["bibliography", "citation"]);
 const SAVED_SEARCH_FIELDS = new Set(["libraryId"]);
 const SAVED_SEARCH_ITEMS_FIELDS = new Set(["cursor", "libraryId", "limit", "searchKey"]);
 const TAG_FIELDS = new Set(["cursor", "libraryId", "limit", "query"]);
@@ -43,6 +48,8 @@ const MAX_METADATA_FIELD_BYTES = 256 * 1024;
 const MAX_RELATIONS = 1024;
 const MAX_RELATION_FIELD_BYTES = 16 * 1024;
 const MAX_MUTATION_ENTRIES = 1024;
+const MAX_CITATION_ITEMS = 200;
+const MAX_CITATION_OUTPUT_BYTES = 384 * 1024;
 
 function exactObject(value, fields, label) {
 	if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -75,6 +82,10 @@ function boundedString(value, maxBytes, label) {
 	if (typeof value !== "string") throw new Error(`${label} must be a string`);
 	if (new TextEncoder().encode(value).length > maxBytes) throw new Error(`${label} exceeds its size limit`);
 	return value;
+}
+
+function optionalBoundedString(value, maxBytes, label) {
+	return typeof value === "string" ? boundedString(value, maxBytes, label) : "";
 }
 
 function stableJSON(value) {
@@ -508,6 +519,10 @@ function validateZotero(Zotero) {
 		[Zotero?.Fulltext || Zotero?.FullText, "getPages"],
 		[Zotero?.Retractions, "isRetracted"],
 		[Zotero?.Retractions, "shouldShowCitationWarning"],
+		[Zotero?.Translators, "getAllForType"],
+		[Zotero?.Styles, "get"],
+		[Zotero?.Styles, "getVisible"],
+		[Zotero?.QuickCopy, "getContentFromItems"],
 	];
 	for (let [owner, method] of required) {
 		if (typeof owner?.[method] !== "function") {
@@ -522,6 +537,70 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(S
 	if (typeof isOffline !== "function") throw new Error("offline state provider is required");
 
 	return Object.freeze({
+		async translators(params) {
+			exactObject(params, TRANSLATOR_FIELDS, "translation.translators params");
+			if (!TRANSLATOR_KINDS.has(params.kind)) {
+				throw new Error(`translation.translators kind must be one of ${[...TRANSLATOR_KINDS].join(", ")}`);
+			}
+			let translators = (await Zotero.Translators.getAllForType(params.kind)).map(translator => ({
+				browserSupport: optionalBoundedString(translator.browserSupport, 256, "translator browserSupport"),
+				creator: optionalBoundedString(translator.creator, 16 * 1024, "translator creator"),
+				kind: params.kind,
+				label: boundedString(translator.label, 16 * 1024, "translator label"),
+				lastUpdated: optionalBoundedString(translator.lastUpdated, 256, "translator lastUpdated"),
+				priority: Number.isSafeInteger(translator.priority) ? translator.priority : 100,
+				target: optionalBoundedString(translator.target, 16 * 1024, "translator target"),
+				translatorId: boundedString(translator.translatorID, 256, "translator id"),
+			})).sort((left, right) => compareText(left.label, right.label) || compareText(left.translatorId, right.translatorId));
+			return { translators };
+		},
+
+		async citationStyles(params) {
+			exactObject(params, CITATION_STYLES_FIELDS, "citation.styles params");
+			let styles = Zotero.Styles.getVisible().map(style => ({
+				citationFormat: optionalBoundedString(style.citationFormat, 256, "CSL citation format"),
+				styleId: boundedString(style.styleID, 16 * 1024, "CSL style id"),
+				title: boundedString(style.title, 16 * 1024, "CSL style title"),
+			})).sort((left, right) => compareText(left.title, right.title) || compareText(left.styleId, right.styleId));
+			return { styles };
+		},
+
+		async renderCitation(params) {
+			exactObject(params, CITATION_RENDER_FIELDS, "citation.render params");
+			let styleId = boundedString(params.styleId, 16 * 1024, "citation.render styleId");
+			if (!CITATION_MODES.has(params.mode)) throw new Error("citation.render mode must be bibliography or citation");
+			if (params.locale !== undefined && (typeof params.locale !== "string" || !/^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/.test(params.locale))) {
+				throw new Error("citation.render locale is invalid");
+			}
+			if (!Array.isArray(params.identities) || params.identities.length < 1 || params.identities.length > MAX_CITATION_ITEMS) {
+				throw new Error("citation.render identities must be a non-empty bounded array");
+			}
+			let seen = new Set();
+			let items = params.identities.map(identity => {
+				validateCompositeParams(identity, ITEM_METADATA_FIELDS, "itemKey", "citation.render identity");
+				let composite = `${identity.libraryId}/${identity.itemKey}`;
+				if (seen.has(composite)) throw new Error("citation.render identities must be unique");
+				seen.add(composite);
+				let item = lookupItem(Zotero, identity.libraryId, identity.itemKey, "Zotero citation item");
+				if (!item.isRegularItem?.()) throw new Error("citation.render target must be a regular item");
+				return item;
+			});
+			if (!Zotero.Styles.get(styleId)) unavailable("citation.render style is not installed");
+			let rendered = Zotero.QuickCopy.getContentFromItems(items, {
+				contentType: "",
+				id: styleId,
+				locale: params.locale || "",
+				mode: "bibliography",
+			}, null, params.mode === "citation");
+			if (!rendered || typeof rendered.text !== "string" || typeof rendered.html !== "string") {
+				throw new Error("Zotero Quick Copy did not produce citation content");
+			}
+			return {
+				html: boundedString(rendered.html, MAX_CITATION_OUTPUT_BYTES, "citation HTML"),
+				text: boundedString(rendered.text, MAX_CITATION_OUTPUT_BYTES, "citation text"),
+			};
+		},
+
 		async feeds(params) {
 			exactObject(params, FEEDS_FIELDS, "library.feeds params");
 			let feeds = Zotero.Feeds.getAll().map(feed => ({

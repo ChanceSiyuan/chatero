@@ -5,6 +5,7 @@ export const MAX_FRAME_BYTES = 1048576;
 export const DEFAULT_DEADLINE_MS = 5000;
 export const CAPABILITIES = Object.freeze([
   "attachment:read",
+  "citation:read",
   "events:read",
   "library:read",
   "library:search",
@@ -12,12 +13,15 @@ export const CAPABILITIES = Object.freeze([
   "profile:read",
   "profile:write",
   "sync:read",
-  "sync:write"
+  "sync:write",
+  "translation:read"
 ]);
 export const METHOD_CAPABILITIES = Object.freeze({
   "attachment.close": "attachment:read",
   "attachment.open": "attachment:read",
   "attachment.read": "attachment:read",
+  "citation.render": "citation:read",
+  "citation.styles": "citation:read",
   "core.cancel": null,
   "core.events": "events:read",
   "core.handshake": null,
@@ -41,7 +45,8 @@ export const METHOD_CAPABILITIES = Object.freeze({
   "profile.backup": "profile:write",
   "profile.status": "profile:read",
   "sync.retry": "sync:write",
-  "sync.status": "sync:read"
+  "sync.status": "sync:read",
+  "translation.translators": "translation:read"
 });
 export const METHOD_TYPES = Object.freeze({
   "attachment.close": {
@@ -55,6 +60,14 @@ export const METHOD_TYPES = Object.freeze({
   "attachment.read": {
     "params": "AttachmentReadParams",
     "result": "AttachmentReadResult"
+  },
+  "citation.render": {
+    "params": "CitationRenderParams",
+    "result": "CitationRenderResult"
+  },
+  "citation.styles": {
+    "params": "CitationStylesParams",
+    "result": "CitationStylesResult"
   },
   "core.cancel": {
     "params": "CoreCancelParams",
@@ -151,5 +164,9 @@ export const METHOD_TYPES = Object.freeze({
   "sync.status": {
     "params": "SyncStatusParams",
     "result": "SyncStatusResult"
+  },
+  "translation.translators": {
+    "params": "TranslationTranslatorsParams",
+    "result": "TranslationTranslatorsResult"
   }
 });

@@ -270,6 +270,24 @@ function fixture({
       isRetracted: value => value.id === 11,
       shouldShowCitationWarning: value => value.id === 11,
     },
+		Translators: {
+			getAllForType: async kind => kind === "export" ? [
+				{ browserSupport: "g", creator: "Simon Kornblith", label: "BibTeX", lastUpdated: "2026-01-01 00:00:00", priority: 100, target: "bib", translatorID: "9cb70025-a888-4a29-a210-93ec52da40d4", translatorType: 2 },
+				{ browserSupport: "g", creator: "Zotero", label: "CSL JSON", lastUpdated: "2025-01-01 00:00:00", priority: 100, target: "json", translatorID: "bc03b4fe-436d-4a1f-ba59-de4d2d7a63f7", translatorType: 2 },
+			] : [],
+		},
+		Styles: {
+			get: styleId => styleId === "http://www.zotero.org/styles/apa" ? { styleID: styleId } : false,
+			getVisible: () => [
+				{ citationFormat: "author-date", styleID: "http://www.zotero.org/styles/apa", title: "American Psychological Association 7th edition" },
+			],
+		},
+		QuickCopy: {
+			getContentFromItems: (selected, format, _callback, modified) => ({
+				html: modified ? `<span>(${selected.map(value => value.getDisplayTitle()).join("; ")})</span>` : `<div>${selected.map(value => value.getDisplayTitle()).join("; ")}</div>`,
+				text: modified ? `(${selected.map(value => value.getDisplayTitle()).join("; ")})` : selected.map(value => value.getDisplayTitle()).join("; "),
+			}),
+		},
     DB: { executeTransaction: async callback => callback() },
     Sync: {
       Data: { Local: { getLastSyncTime: () => new Date(400_000) } },
@@ -475,6 +493,35 @@ test("runs an explicit sync only for validated syncable libraries", async () => 
   await assert.rejects(adapter.retrySync({ libraryIds: [99] }), /not syncable/);
   const offline = createZoteroLibraryAdapter({ ...fixture(), isOffline: () => true });
   await assert.rejects(offline.retrySync({ libraryIds: [1] }), error => error.code === "UNAVAILABLE");
+});
+
+test("lists bounded Zotero translator metadata without executable code or paths", async () => {
+	const adapter = createZoteroLibraryAdapter(fixture());
+	assert.deepEqual(await adapter.translators({ kind: "export" }), { translators: [
+		{ browserSupport: "g", creator: "Simon Kornblith", kind: "export", label: "BibTeX", lastUpdated: "2026-01-01 00:00:00", priority: 100, target: "bib", translatorId: "9cb70025-a888-4a29-a210-93ec52da40d4" },
+		{ browserSupport: "g", creator: "Zotero", kind: "export", label: "CSL JSON", lastUpdated: "2025-01-01 00:00:00", priority: 100, target: "json", translatorId: "bc03b4fe-436d-4a1f-ba59-de4d2d7a63f7" },
+	] });
+	assert.equal(JSON.stringify(await adapter.translators({ kind: "export" })).includes("code"), false);
+	await assert.rejects(adapter.translators({ kind: "filesystem" }), /kind/);
+});
+
+test("lists installed CSL styles and renders bibliography or citation through Quick Copy", async () => {
+	const adapter = createZoteroLibraryAdapter(fixture());
+	assert.deepEqual(await adapter.citationStyles({}), { styles: [{
+		citationFormat: "author-date",
+		styleId: "http://www.zotero.org/styles/apa",
+		title: "American Psychological Association 7th edition",
+	}] });
+	const identities = [{ itemKey: "ITEM0001", libraryId: 1 }, { itemKey: "ITEM0001", libraryId: 2 }];
+	assert.deepEqual(await adapter.renderCitation({ identities, locale: "en-US", mode: "bibliography", styleId: "http://www.zotero.org/styles/apa" }), {
+		html: "<div>Alpha Methods; Group Alpha</div>",
+		text: "Alpha Methods; Group Alpha",
+	});
+	assert.deepEqual(await adapter.renderCitation({ identities: identities.slice(0, 1), mode: "citation", styleId: "http://www.zotero.org/styles/apa" }), {
+		html: "<span>(Alpha Methods)</span>",
+		text: "(Alpha Methods)",
+	});
+	await assert.rejects(adapter.renderCitation({ identities, mode: "bibliography", styleId: "file:///tmp/evil.csl" }), /installed/);
 });
 
 test("search isolates duplicate collection keys and emits protocol-exact item summaries", async () => {
