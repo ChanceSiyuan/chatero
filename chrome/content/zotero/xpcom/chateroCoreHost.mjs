@@ -22,14 +22,16 @@ import { createGeckoCoreRequestRouter, mapGeckoCoreError } from "./chateroCoreRe
 
 const MAX_BOOTSTRAP_BYTES = 1024;
 
-export function createGeckoCoreConnection({ profileEpoch, router, subscribeEvents = router?.subscribeEvents, write } = {}) {
+export function createGeckoCoreConnection({ onFatal = () => {}, profileEpoch, router, subscribeEvents = router?.subscribeEvents, write } = {}) {
 	if (typeof profileEpoch !== "string" || !profileEpoch) throw new Error("Core connection profileEpoch is required");
 	if (typeof router?.handle !== "function") throw new Error("Core connection router is required");
 	if (typeof write !== "function") throw new Error("Core connection write function is required");
+	if (typeof onFatal !== "function") throw new Error("Core connection fatal callback is invalid");
 	let decoder = new GeckoFrameDecoder();
 	let lastEventSequence = 0;
 	let closed = false;
 	let processingRequest = false;
+	let authenticated = false;
 	let queuedEvents = [];
 	let backgroundWrites = Promise.resolve();
 
@@ -45,10 +47,11 @@ export function createGeckoCoreConnection({ profileEpoch, router, subscribeEvent
 		while (queuedEvents.length) await writeEvent(queuedEvents.shift());
 	};
 	let disposeEvents = typeof subscribeEvents === "function" ? subscribeEvents(event => {
+		if (!authenticated || closed) return;
 		queuedEvents.push(event);
-		if (!processingRequest && !closed) {
+		if (!processingRequest) {
 			backgroundWrites = backgroundWrites.then(drainEvents);
-			backgroundWrites.catch(() => {});
+			backgroundWrites.catch(onFatal);
 		}
 	}) : null;
 
@@ -65,6 +68,13 @@ export function createGeckoCoreConnection({ profileEpoch, router, subscribeEvent
 					let handled = await router.handle(message);
 					response = { id: message.id, ok: true, result: handled.result };
 					event = handled.event;
+					if (message.method === "core.handshake") {
+						if (!Number.isSafeInteger(handled.result?.eventSequence) || handled.result.eventSequence < 0) {
+							throw new Error("Core handshake returned an invalid event sequence");
+						}
+						lastEventSequence = handled.result.eventSequence;
+						authenticated = true;
+					}
 				}
 				catch (error) {
 					response = {
@@ -73,10 +83,14 @@ export function createGeckoCoreConnection({ profileEpoch, router, subscribeEvent
 						ok: false,
 					};
 				}
-				await write(encodeGeckoFrame(response));
-				processingRequest = false;
-				if (disposeEvents) await drainEvents();
-				else if (event) await writeEvent(event);
+				try {
+					await write(encodeGeckoFrame(response));
+					if (disposeEvents) await drainEvents();
+					else if (event) await writeEvent(event);
+				}
+				finally {
+					processingRequest = false;
+				}
 			}
 		},
 		end() {
@@ -166,12 +180,14 @@ function attachTransport({ transport, router, profileEpoch, onClose }) {
 	let output = transport.openOutputStream(0, 0, 0);
 	let processing = Promise.resolve();
 	let closed = false;
+	let close;
 	let connection = createGeckoCoreConnection({
+		onFatal: error => close(error),
 		profileEpoch,
 		router,
 		write: bytes => writeAll(output, bytes),
 	});
-	let close = error => {
+	close = error => {
 		if (closed) return;
 		closed = true;
 		try { connection.end(); }

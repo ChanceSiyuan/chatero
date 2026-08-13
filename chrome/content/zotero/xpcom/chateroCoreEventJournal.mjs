@@ -102,7 +102,10 @@ export function createCoreEventJournal({
 			});
 			events.push(event);
 			if (events.length > capacity) events.shift();
-			for (let listener of listeners) listener(event);
+			for (let listener of listeners) {
+				try { listener(event); }
+				catch (_) {}
+			}
 			return event;
 		},
 		replay(params) {

@@ -79,3 +79,14 @@ test("Core event subscribers observe each published immutable record and can det
   assert.deepEqual(received, [first]);
   assert.throws(() => journal.subscribe(null), /listener/);
 });
+
+test("one failing event subscriber cannot break journal publication", () => {
+  const journal = createCoreEventJournal({ profileEpoch: "epoch", now: () => 10 });
+  const seen = [];
+  journal.subscribe(() => { throw new Error("subscriber failed"); });
+  journal.subscribe(event => seen.push(event));
+
+  const published = journal.publish("library.changed", { libraryId: 1 });
+  assert.deepEqual(seen, [published]);
+  assert.equal(journal.latestSequence, 1);
+});

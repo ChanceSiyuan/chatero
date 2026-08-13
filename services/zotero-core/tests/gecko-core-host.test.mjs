@@ -95,7 +95,8 @@ test("subscribed background events serialize after an in-flight response", async
   const connection = createGeckoCoreConnection({
     profileEpoch: "epoch",
     router: {
-      async handle() {
+      async handle(message) {
+        if (message.method === "core.handshake") return { result: { eventSequence: 0 } };
         listener({ occurredAt: 10, payload: {}, profileEpoch: "epoch", sequence: 1, topic: "zotero.item.modify" });
         return { result: { ok: true } };
       },
@@ -104,9 +105,46 @@ test("subscribed background events serialize after an in-flight response", async
     write: async bytes => writes.push(bytes),
   });
 
+  await connection.push(encodeGeckoFrame({ id: "handshake", method: "core.handshake" }));
   await connection.push(encodeGeckoFrame({ id: "request-1" }));
   assert.deepEqual(decodeFrames(writes), [
+    { id: "handshake", ok: true, result: { eventSequence: 0 } },
     { id: "request-1", ok: true, result: { ok: true } },
     { event: true, occurredAt: 10, payload: {}, profileEpoch: "epoch", sequence: 1, topic: "zotero.item.modify" },
   ]);
+});
+
+test("subscribed events are withheld before authentication", async () => {
+  const writes = [];
+  let listener;
+  const connection = createGeckoCoreConnection({
+    profileEpoch: "epoch",
+    router: { async handle() { return { result: { eventSequence: 3 } }; } },
+    subscribeEvents: value => { listener = value; return () => {}; },
+    write: async bytes => writes.push(bytes),
+  });
+
+  listener({ occurredAt: 10, payload: {}, profileEpoch: "epoch", sequence: 3, topic: "zotero.item.modify" });
+  await connection.push(encodeGeckoFrame({ id: "handshake", method: "core.handshake" }));
+  assert.deepEqual(decodeFrames(writes), [{ id: "handshake", ok: true, result: { eventSequence: 3 } }]);
+});
+
+test("background write failures notify the transport fatal callback", async () => {
+  let listener;
+  let fatal;
+  let writes = 0;
+  const fatalPromise = new Promise(resolve => { fatal = resolve; });
+  const connection = createGeckoCoreConnection({
+    onFatal: fatal,
+    profileEpoch: "epoch",
+    router: { async handle() { return { result: { eventSequence: 0 } }; } },
+    subscribeEvents: value => { listener = value; return () => {}; },
+    write: async () => {
+      writes += 1;
+      if (writes > 1) throw new Error("socket write failed");
+    },
+  });
+  await connection.push(encodeGeckoFrame({ id: "handshake", method: "core.handshake" }));
+  listener({ occurredAt: 10, payload: {}, profileEpoch: "epoch", sequence: 1, topic: "zotero.item.modify" });
+  assert.match((await fatalPromise).message, /socket write failed/);
 });
