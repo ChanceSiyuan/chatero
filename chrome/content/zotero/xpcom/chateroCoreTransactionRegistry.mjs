@@ -166,8 +166,15 @@ export function createZoteroCoreTransactionStore({ Zotero } = {}) {
 			exactObject(scopeRevision, new Set(["revision", "scope"]), "Core transaction scope revision");
 			let value = encode(receipt, "Core transaction receipt");
 			await Zotero.DB.executeTransaction(async () => {
-				let changed = await Zotero.DB.queryAsync("UPDATE settings SET value=? WHERE setting=? AND key=?", [value, RECEIPT_SETTING, receipt.idempotencyKey]);
-				if (changed !== 1) throw new Error("Core transaction reservation disappeared before commit");
+				let reserved = await Zotero.DB.valueQueryAsync("SELECT value FROM settings WHERE setting=? AND key=?", [RECEIPT_SETTING, receipt.idempotencyKey]);
+				if (reserved === false) throw new Error("Core transaction reservation disappeared before commit");
+				let parsed;
+				try { parsed = JSON.parse(reserved); }
+				catch (_) { throw new Error("Core transaction reservation is corrupt before commit"); }
+				if (parsed?.state !== "pending" || parsed?.operationDigest !== receipt.operationDigest || parsed?.scope !== receipt.scope) {
+					throw new Error("Core transaction reservation changed before commit");
+				}
+				await Zotero.DB.queryAsync("UPDATE settings SET value=? WHERE setting=? AND key=?", [value, RECEIPT_SETTING, receipt.idempotencyKey]);
 				await Zotero.DB.queryAsync("REPLACE INTO settings (setting, key, value) VALUES (?, ?, ?)", [REVISION_SETTING, scopeRevision.scope, String(scopeRevision.revision)]);
 				for (let idempotencyKey of evictedKeys) await Zotero.DB.queryAsync("DELETE FROM settings WHERE setting=? AND key=?", [RECEIPT_SETTING, idempotencyKey]);
 			});

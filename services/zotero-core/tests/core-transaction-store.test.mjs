@@ -45,6 +45,10 @@ function fakeZotero() {
         }
         throw new Error(`unexpected SQL: ${sql}`);
       },
+			async valueQueryAsync(sql, params) {
+				if (!sql.startsWith("SELECT value")) throw new Error(`unexpected value SQL: ${sql}`);
+				return rows.get(key(params[0], params[1]))?.value ?? false;
+			},
     },
     get transactions() { return transactions; },
     rows,
