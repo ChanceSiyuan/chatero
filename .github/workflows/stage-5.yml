@@ -36,6 +36,7 @@ jobs:
       - run: npm ci
       - run: npm run workbench:bootstrap
       - run: npm ci --ignore-scripts --prefix vendor/code-oss
+      - run: npm ci --ignore-scripts --prefix vendor/code-oss/build/npm/gyp
       - run: node products/workbench/scripts/prepare-code-oss-lifecycle.mjs vendor/code-oss --prepare
       - run: npm rebuild --prefix vendor/code-oss
       - if: always()
@@ -158,6 +159,7 @@ jobs:
           sudo apt-get update && sudo apt-get install -y
           libkrb5-dev libx11-dev libxkbfile-dev
       - run: npm ci --ignore-scripts --prefix vendor/code-oss
+      - run: npm ci --ignore-scripts --prefix vendor/code-oss/build/npm/gyp
       - run: node products/workbench/scripts/prepare-code-oss-lifecycle.mjs vendor/code-oss --prepare
       - run: npm rebuild --prefix vendor/code-oss
       - if: always()
