@@ -14,3 +14,4 @@ products/workbench/dist/
 products/workbench/remote-agent/dist/
 products/workbench/remote-agent/.cache/
 products/workbench/remote-agent/**/*.private.pem
+.worktrees/
