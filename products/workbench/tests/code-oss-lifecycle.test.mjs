@@ -13,7 +13,7 @@ async function fixture() {
   const root = await realpath(await mkdtemp(join(tmpdir(), "chatero-code-oss-lifecycle-")));
   roots.push(root);
   await mkdir(join(root, "node_modules"));
-  await writeFile(join(root, "product.json"), '{"nameShort":"Code - OSS"}\n');
+  await writeFile(join(root, "product.json"), '{"applicationName":"chatero","nameLong":"Chatero Research Workbench","nameShort":"Chatero"}\n');
   return root;
 }
 

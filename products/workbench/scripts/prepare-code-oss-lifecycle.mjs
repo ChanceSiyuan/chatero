@@ -13,7 +13,10 @@ async function assertCheckout(value) {
     throw new Error("Code-OSS lifecycle checkout must be a real directory");
   }
   const product = JSON.parse(await readFile(resolve(checkout, "product.json"), "utf8"));
-  if (product.nameShort !== "Code - OSS") throw new Error("Code-OSS lifecycle checkout identity is invalid");
+  if (product.nameShort !== "Chatero" || product.nameLong !== "Chatero Research Workbench"
+      || product.applicationName !== "chatero") {
+    throw new Error("Code-OSS lifecycle checkout identity is invalid");
+  }
   return checkout;
 }
 
