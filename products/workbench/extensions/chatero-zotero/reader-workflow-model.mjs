@@ -242,6 +242,65 @@ export class ReaderWorkflowModel {
     return result;
   }
 
+  async applyAnnotationChanges(changes) {
+    if (!this.#identity || typeof this.#core.batchMutate !== "function") throw new Error("Reader batch mutation is unavailable");
+    if (!Array.isArray(changes) || !changes.length || changes.length > 100) throw new TypeError("Reader changes must contain 1 through 100 entries");
+    const current = new Map(this.#annotations.map(value => [value.annotationKey, value]));
+    const operations = [];
+    const createdIndexes = [];
+    const updates = [];
+    for (const [index, change] of changes.entries()) {
+      object(change, `Reader change ${index}`);
+      if (change.action === "create") {
+        const params = {
+          action: "create", ...this.#identity,
+          color: string(change.color, "annotation color", { maximum: 32 }),
+          comment: string(change.comment ?? "", "annotation comment", { empty: true, maximum: 64 * 1024 }),
+          pageLabel: string(change.pageLabel ?? "", "annotation pageLabel", { empty: true, maximum: 1024 }),
+          positionJson: string(change.positionJson, "annotation position", { maximum: 256 * 1024 }),
+          sortIndex: string(change.sortIndex, "annotation sortIndex", { maximum: 1024 }),
+          tags: validateTags(change.tags) || [],
+          text: string(change.text ?? "", "annotation text", { empty: true, maximum: 64 * 1024 }),
+          type: string(change.type, "annotation type", { maximum: 64 }),
+        };
+        createdIndexes.push({ changeIndex: index, operationIndex: operations.length });
+        operations.push({ kind: "annotation-mutate", params });
+        continue;
+      }
+      if (change.action === "trash") {
+        const annotationKey = string(change.annotationKey, "annotation key", { maximum: 128 });
+        if (!current.has(annotationKey)) throw new Error(`annotation ${annotationKey} is not loaded`);
+        operations.push({ kind: "annotation-mutate", params: { action: "trash", ...this.#identity, annotationKey, expectedVersion: integer(change.expectedVersion, "annotation expectedVersion") } });
+        continue;
+      }
+      const annotationKey = string(change.annotationKey, "annotation key", { maximum: 128 });
+      if (!current.has(annotationKey)) throw new Error(`annotation ${annotationKey} is not loaded`);
+      const tags = validateTags(change.tags);
+      const update = {
+        annotationKey, expectedVersion: integer(change.expectedVersion, "annotation expectedVersion"),
+        ...(change.color !== undefined && { color: string(change.color, "annotation color", { maximum: 32 }) }),
+        ...(change.comment !== undefined && { comment: string(change.comment, "annotation comment", { empty: true, maximum: 64 * 1024 }) }),
+        ...(change.pageLabel !== undefined && { pageLabel: string(change.pageLabel, "annotation pageLabel", { empty: true, maximum: 1024 }) }),
+        ...(change.positionJson !== undefined && { positionJson: string(change.positionJson, "annotation position", { maximum: 256 * 1024 }) }),
+        ...(change.sortIndex !== undefined && { sortIndex: string(change.sortIndex, "annotation sortIndex", { maximum: 1024 }) }),
+        ...(tags !== undefined && { tags }),
+        ...(change.text !== undefined && { text: string(change.text, "annotation text", { empty: true, maximum: 64 * 1024 }) }),
+        ...(change.type !== undefined && { type: string(change.type, "annotation type", { maximum: 64 }) }),
+      };
+      if (Object.keys(update).length === 2) continue;
+      updates.push(update);
+    }
+    if (updates.length) operations.push({ kind: "annotations-update", params: { ...this.#identity, updates } });
+    if (!operations.length) return Object.freeze({ created: Object.freeze([]), replayed: false, results: Object.freeze([]), revision: 0 });
+    const result = await this.#core.batchMutate({ libraryId: this.#identity.libraryId, operations });
+    const created = createdIndexes.map(({ changeIndex, operationIndex }) => Object.freeze({
+      changeIndex,
+      annotation: validateAnnotation(result.results[operationIndex]?.result?.annotation),
+    }));
+    await this.#reloadAnnotations();
+    return Object.freeze({ ...result, created: Object.freeze(created) });
+  }
+
   async undo() {
     const operation = this.#undo.pop();
     if (!operation) return false;

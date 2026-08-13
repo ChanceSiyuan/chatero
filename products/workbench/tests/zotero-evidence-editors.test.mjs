@@ -906,6 +906,68 @@ test("EPUB provider uses the pinned upstream Reader and commits exact CFI state"
   assert.deepEqual(calls.at(-1), ["state", { cfi: "epubcfi(/6/2)" }]);
 });
 
+test("upstream Reader saves and deletes use one atomic batch and preserve created key identity", async () => {
+  const providers = await import("../extensions/chatero-zotero/evidence-editors.cjs");
+  const epub = Object.freeze({ ...attachment, contentType: "application/epub+zip", filename: "paper.epub" });
+  const existing = Object.freeze({ annotationKey: "ANN00001", color: "#ffd400", comment: "Old", libraryId: 7, pageLabel: "1", positionJson: '{"type":"CssSelector","value":"#old"}', sortIndex: "00001", tags: [], text: "Old", type: "highlight", version: 2 });
+  const created = Object.freeze({ ...existing, annotationKey: "ANNNEW01", comment: "New", version: 1 });
+  const batches = [];
+  const workflow = {
+    annotations: [existing],
+    async load() { return { annotations: this.annotations, attachment: epub, state: { attachmentKey: "PDF00001", contentType: "application/epub+zip", libraryId: 7, version: 2 } }; },
+    async applyAnnotationChanges(changes) {
+      batches.push(changes);
+      if (changes.some(value => value.action === "create")) this.annotations = [existing, created];
+      return { created: changes.flatMap((value, index) => value.action === "create" ? [{ changeIndex: index, annotation: created }] : []), replayed: false, results: [], revision: batches.length };
+    },
+  };
+  const fileUri = value => ({ authority: "", fsPath: value, path: value, scheme: "file", value, toString: () => `file://${value}` });
+  const provider = new providers.PdfEditorProvider({
+    createReaderWorkflow: () => workflow,
+    extensionUri: fileUri("/extension"),
+    fromUpstreamReaderAnnotation: (value, current) => current
+      ? { annotationKey: current.annotationKey, comment: value.comment, expectedVersion: current.version }
+      : { action: "create", color: value.color, comment: value.comment, pageLabel: value.pageLabel, positionJson: JSON.stringify(value.position), sortIndex: value.sortIndex, tags: [], text: value.text, type: value.type },
+    getModel: () => ({ ready: true }),
+    materializePdf: async () => ({ path: "/tmp/private/document.epub", async dispose() {} }),
+    readerLocationFromViewState: (_contentType, state) => state,
+    registry: { release() {} },
+    renderPdfEditorHTML: () => { throw new Error("not reached"); },
+    renderUpstreamReaderHTML: () => "<html>EPUB</html>",
+    toUpstreamReaderAnnotation: value => value,
+    vscode: { Uri: { file: fileUri, joinPath: (base, ...parts) => fileUri(`${base.value}/${parts.join("/")}`), parse: value => ({ scheme: value.split(":")[0] }) }, env: { async openExternal() {} }, window: {}, workspace: {} },
+  });
+  let receiveMessage;
+  const posted = [];
+  const panel = { active: true, onDidDispose() { return { dispose() {} }; }, webview: {
+    asWebviewUri: value => ({ toString: () => `vscode-webview:${value.value}` }), cspSource: "vscode-webview://unit-test",
+    onDidReceiveMessage(listener) { receiveMessage = listener; return { dispose() {} }; },
+    async postMessage(message) { posted.push(message); },
+  } };
+  await provider.resolveCustomEditor({ record: epub, uri: { toString: () => "chatero-zotero-pdf:/7/PDF00001/paper.chatero-zotero-pdf" } }, panel);
+
+  const upstream = (id, comment) => ({ id, color: "#ffd400", comment, pageLabel: "1", position: { type: "CssSelector", value: `#${id}` }, sortIndex: "00001", tags: [], text: comment, type: "highlight" });
+  await receiveMessage({ type: "upstream-reader-save", annotations: [upstream("temp-1", "New"), upstream("ANN00001", "Edited")], sequence: 1 });
+  assert.equal(batches.length, 1);
+  assert.deepEqual(batches[0].map(value => value.action || "update"), ["create", "update"]);
+  await receiveMessage({ type: "upstream-reader-delete", ids: ["temp-1"], sequence: 2 });
+  assert.equal(batches.length, 2);
+  assert.deepEqual(batches[1], [{ action: "trash", annotationKey: "ANNNEW01", expectedVersion: 1 }]);
+  assert.deepEqual(posted.map(value => [value.type, value.sequence]), [["upstream-reader-saved", 1], ["upstream-reader-saved", 2]]);
+});
+
+test("upstream Reader host exposes unawaited delete failures and locks further edits", async () => {
+  const [host, htmlSource] = await Promise.all([
+    readFile(join(extensionRoot, "media", "zotero-reader", "chatero-reader-host.mjs"), "utf8"),
+    readFile(join(extensionRoot, "evidence-editor-html.mjs"), "utf8"),
+  ]);
+  assert.match(host, /function exposeWriteFailure/);
+  assert.match(host, /setReadOnly\(true\)/);
+  assert.match(host, /pending\.set\(requestSequence, \{\}\)/);
+  assert.match(host, /if \(!operation\) \{[\s\S]*exposeWriteFailure/);
+  assert.match(htmlSource, /id="reader-error" role="alert" hidden/);
+});
+
 test("packaged PDF viewer renders one page at a time and owns the highlight overlay", async () => {
   const source = await readFile(join(extensionRoot, "media", "pdf-viewer", "pdf-viewer.mjs"), "utf8");
   assert.match(source, /getDocument/);

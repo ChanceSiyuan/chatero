@@ -147,6 +147,71 @@ test("applies reviewed annotation proposals as one same-library atomic batch", a
   assert.equal(model.proposals[0].status, "applied");
 });
 
+test("commits an upstream Reader save as one atomic create, trash, and update batch", async () => {
+  const second = Object.freeze({ ...annotation, annotationKey: "ANN00002", comment: "Remove", version: 5 });
+  let current = [annotation, second];
+  const calls = [];
+  const created = Object.freeze({ ...annotation, annotationKey: "ANNNEW01", comment: "Created", text: "New quote", version: 1 });
+  const core = {
+    attachment: async () => attachment,
+    annotations: async () => current,
+    request: async method => method === "reader.state"
+      ? { attachmentKey: "PDF00001", contentType: "application/pdf", libraryId: 7, pageIndex: 0, version: 4 }
+      : null,
+    async batchMutate(value) {
+      calls.push(value);
+      current = [created, { ...annotation, comment: "Edited", version: 3 }];
+      return {
+        replayed: false,
+        revision: 9,
+        results: [
+          { kind: "annotation-mutate", result: { action: "create", annotation: created, deleted: false, replayed: false, revision: 9, synced: false } },
+          { kind: "annotation-mutate", result: { action: "trash", annotation: { ...second, version: 6 }, deleted: true, replayed: false, revision: 9, synced: false } },
+          { kind: "annotations-update", result: { annotations: [{ annotationKey: "ANN00001", libraryId: 7, synced: false, version: 3 }], replayed: false, revision: 9 } },
+        ],
+      };
+    },
+  };
+  const model = new ReaderWorkflowModel({ core });
+  await model.load({ attachmentKey: "PDF00001", libraryId: 7 });
+
+  const result = await model.applyAnnotationChanges([
+    { action: "create", color: "#2ea8e5", comment: "Created", pageLabel: "4", positionJson: '{"pageIndex":3,"rects":[[5,6,7,8]]}', sortIndex: "00003|000001|00000", tags: ["method"], text: "New quote", type: "highlight" },
+    { action: "trash", annotationKey: "ANN00002", expectedVersion: 5 },
+    { annotationKey: "ANN00001", comment: "Edited", expectedVersion: 2 },
+  ]);
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].libraryId, 7);
+  assert.deepEqual(calls[0].operations.map(value => value.kind), ["annotation-mutate", "annotation-mutate", "annotations-update"]);
+  assert.deepEqual(result.created.map(value => [value.changeIndex, value.annotation.annotationKey]), [[0, "ANNNEW01"]]);
+  assert.deepEqual(model.annotations.map(value => value.annotationKey), ["ANNNEW01", "ANN00001"]);
+});
+
+test("keeps the loaded Reader snapshot unchanged when an atomic save fails", async () => {
+  const core = {
+    attachment: async () => attachment,
+    annotations: async () => [annotation],
+    request: async method => method === "reader.state"
+      ? { attachmentKey: "PDF00001", contentType: "application/pdf", libraryId: 7, pageIndex: 0, version: 4 }
+      : null,
+    async batchMutate() {
+      const error = new Error("annotation version conflict");
+      error.code = "CONFLICT";
+      throw error;
+    },
+  };
+  const model = new ReaderWorkflowModel({ core });
+  await model.load({ attachmentKey: "PDF00001", libraryId: 7 });
+  const before = model.annotations;
+
+  await assert.rejects(model.applyAnnotationChanges([
+    { annotationKey: "ANN00001", comment: "Must not leak", expectedVersion: 2 },
+  ]), /version conflict/);
+  assert.strictEqual(model.annotations, before);
+  assert.equal(model.annotations[0].comment, "Initial");
+});
+
 test("updates complete Notes and renders citations through Core only", async () => {
   const calls = [];
   const core = {

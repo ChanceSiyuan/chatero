@@ -127,16 +127,21 @@ class PdfEditorProvider {
                   || message.annotations.length > 100 || Object.keys(message).sort().join(",") !== "annotations,sequence,type") {
                 throw new TypeError("Upstream Reader save message is invalid");
               }
+              const pendingChanges = [];
+              const pendingKeys = [];
               for (const value of message.annotations) {
                 const key = typeof value?.id === "string" ? value.id : "";
                 const currentKey = readerKeyMap.get(key) || key;
                 const current = workflow.annotations.find(annotation => annotation.annotationKey === currentKey);
                 const change = this.fromUpstreamReaderAnnotation(value, current);
-                if (change.action === "create") {
-                  const created = await workflow.createAnnotation(change);
-                  readerKeyMap.set(key, created.annotationKey);
+                if (change.action === "create" || Object.keys(change).length > 2) {
+                  pendingKeys.push(key);
+                  pendingChanges.push(change);
                 }
-                else if (Object.keys(change).length > 2) await workflow.updateAnnotations([change]);
+              }
+              if (pendingChanges.length) {
+                const saved = await workflow.applyAnnotationChanges(pendingChanges);
+                for (const created of saved.created) readerKeyMap.set(pendingKeys[created.changeIndex], created.annotation.annotationKey);
               }
               await panel.webview.postMessage?.({ sequence, type: "upstream-reader-saved" });
             }
@@ -152,13 +157,14 @@ class PdfEditorProvider {
               if (isPdf || !workflow || !Number.isSafeInteger(sequence) || sequence < 1 || !Array.isArray(message.ids)
                   || message.ids.length > 100 || new Set(message.ids).size !== message.ids.length
                   || Object.keys(message).sort().join(",") !== "ids,sequence,type") throw new TypeError("Upstream Reader delete message is invalid");
-              for (const key of message.ids) {
+              const changes = message.ids.map(key => {
                 const currentKey = readerKeyMap.get(key) || key;
                 const current = workflow.annotations.find(annotation => annotation.annotationKey === currentKey);
                 if (!current) throw new Error(`Reader annotation ${key} is unavailable`);
-                await workflow.mutateAnnotation({ action: "trash", annotationKey: currentKey, expectedVersion: current.version });
-                readerKeyMap.delete(key);
-              }
+                return { action: "trash", annotationKey: currentKey, expectedVersion: current.version };
+              });
+              await workflow.applyAnnotationChanges(changes);
+              for (const key of message.ids) readerKeyMap.delete(key);
               await panel.webview.postMessage?.({ sequence, type: "upstream-reader-saved" });
             }
             catch (error) {

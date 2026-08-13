@@ -3,18 +3,30 @@ const vscode = acquireVsCodeApi();
 const type = bootstrap.dataset.readerType;
 const annotations = JSON.parse(document.getElementById("annotation-data")?.textContent || "[]");
 const state = JSON.parse(document.getElementById("reader-state")?.textContent || "{}");
+const errorBanner = document.getElementById("reader-error");
 let sequence = 0;
 const pending = new Map();
+
+function exposeWriteFailure(message) {
+  window._reader?.setReadOnly(true);
+  if (errorBanner) {
+    errorBanner.hidden = false;
+    errorBanner.textContent = `Zotero write failed. Reopen the document before editing again: ${message}`;
+  }
+}
 
 window.addEventListener("message", event => {
   if (event.data?.type !== "upstream-reader-saved" && event.data?.type !== "upstream-reader-error") return;
   const operation = pending.get(event.data.sequence);
-  if (!operation) return;
+  if (!operation) {
+    if (event.data.type === "upstream-reader-error") exposeWriteFailure(event.data.message);
+    return;
+  }
   pending.delete(event.data.sequence);
-  if (event.data.type === "upstream-reader-saved") operation.resolve();
+  if (event.data.type === "upstream-reader-saved") operation.resolve?.();
   else {
-    operation.reject(new Error(event.data.message));
-    window._reader?.setReadOnly(true);
+    exposeWriteFailure(event.data.message);
+    operation.reject?.(new Error(event.data.message));
   }
 });
 
@@ -36,7 +48,11 @@ try {
     },
     onClosePopup() {},
     onConfirm(_title, text) { return window.confirm(text); },
-    onDeleteAnnotations(ids) { vscode.postMessage({ type: "upstream-reader-delete", ids, sequence: ++sequence }); },
+    onDeleteAnnotations(ids) {
+      const requestSequence = ++sequence;
+      pending.set(requestSequence, {});
+      vscode.postMessage({ type: "upstream-reader-delete", ids, sequence: requestSequence });
+    },
     onOpenContextMenu(params) { return reader.openContextMenu(params); },
     onOpenLink(url) { vscode.postMessage({ type: "pdf-open-link", url }); },
     onOpenTagsPopup() {},
