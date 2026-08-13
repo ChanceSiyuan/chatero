@@ -24,6 +24,11 @@ test("Stage 5 immutable contract covers product, signed release, both runners, a
   assert.deepEqual(contract.checks.filter(value => value.tuple).map(value => value.tuple), [
     "linux-x86_64", "linux-aarch64",
   ]);
+  assert.deepEqual(contract.checks.find(value => value.id === "code-oss-compile"), {
+    id: "code-oss-compile",
+    command: "npm",
+    args: ["run", "compile", "--prefix", "vendor/code-oss"],
+  });
 });
 
 test("Stage 5 acceptance fails closed on a missing signed release and writes bounded evidence", async () => {
