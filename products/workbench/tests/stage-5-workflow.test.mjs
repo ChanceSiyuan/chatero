@@ -34,6 +34,9 @@ test("Stage 5 CI builds, signs, runs real SSH, and gates both native Linux archi
   assert.match(source, /Verify Stage 6 through the signed Linux Remote Agent/u);
   assert.match(source, /CHATERO_DOCUMENTATION_SSH_ALIAS: stage5-target/u);
   assert.match(source, /stage-6-acceptance-\$\{\{ github\.sha \}\}/u);
+  assert.match(source, /chown root:root vendor\/code-oss\/\.build\/electron\/chrome-sandbox/u);
+  assert.match(source, /chmod 4755 vendor\/code-oss\/\.build\/electron\/chrome-sandbox/u);
+  assert.doesNotMatch(source, /--no-sandbox/u);
   assert.equal((source.match(/npm ci --ignore-scripts --prefix vendor\/code-oss(?:\r?\n|$)/gu) ?? []).length, 2);
   assert.equal((source.match(/npm ci --ignore-scripts --prefix vendor\/code-oss\/build\/npm\/gyp/gu) ?? []).length, 2);
   assert.equal((source.match(/prepare-code-oss-lifecycle\.mjs vendor\/code-oss --prepare/gu) ?? []).length, 2);
