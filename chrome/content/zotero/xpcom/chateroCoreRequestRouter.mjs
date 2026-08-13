@@ -21,6 +21,7 @@ import {
 import { createCoreEventJournal } from "./chateroCoreEventJournal.mjs";
 import { createCoreAttachmentSourceRegistry } from "./chateroCoreAttachmentSourceRegistry.mjs";
 import { createCoreTransactionRegistry } from "./chateroCoreTransactionRegistry.mjs";
+import { createCoreAttachmentUploadRegistry } from "./chateroCoreAttachmentUploadRegistry.mjs";
 
 const SESSION_TTL_MS = 5 * 60 * 1000;
 const MAX_DEADLINE_HORIZON_MS = 2 * 60 * 1000;
@@ -50,6 +51,7 @@ function validateRouterOptions(options) {
 			|| typeof options.adapter.attachment !== "function"
 			|| typeof options.adapter.attachmentState !== "function"
 			|| typeof options.adapter.attachmentSource !== "function"
+			|| typeof options.adapter.importAttachment !== "function"
 			|| typeof options.adapter.collections !== "function"
 			|| typeof options.adapter.mutateCollection !== "function"
 			|| typeof options.adapter.feeds !== "function"
@@ -138,6 +140,7 @@ export function createGeckoCoreRequestRouter(options = {}) {
 	let active = new Map();
 	let eventJournal = options.eventJournal || createCoreEventJournal({ profileEpoch, now });
 	let attachmentSources = options.attachmentSources || createCoreAttachmentSourceRegistry({ now });
+	let attachmentUploads = options.attachmentUploads || createCoreAttachmentUploadRegistry({ now });
 	let transactionRegistry = options.transactionRegistry || createCoreTransactionRegistry();
 
 	function authorize(message, capability) {
@@ -214,7 +217,7 @@ export function createGeckoCoreRequestRouter(options = {}) {
 	}
 
 	return Object.freeze({
-		async dispose() { await attachmentSources.dispose(); },
+		async dispose() { await Promise.all([attachmentSources.dispose(), attachmentUploads.dispose()]); },
 		publishEvent(topic, payload) { return eventJournal.publish(topic, payload); },
 		subscribeEvents(listener) { return eventJournal.subscribe(listener); },
 		async handle(message) {
@@ -261,6 +264,28 @@ export function createGeckoCoreRequestRouter(options = {}) {
 					profileEpoch,
 					sessionToken: message.sessionToken,
 				}) };
+			}
+			if (message.method === "attachment.upload-open") {
+				return { result: attachmentUploads.open({ ...message.params, profileEpoch, sessionToken: message.sessionToken }) };
+			}
+			if (message.method === "attachment.upload-write") {
+				return { result: attachmentUploads.write({ ...message.params, profileEpoch, sessionToken: message.sessionToken }) };
+			}
+			if (message.method === "attachment.upload-abort") {
+				return { result: attachmentUploads.abort({ ...message.params, profileEpoch, sessionToken: message.sessionToken }) };
+			}
+			if (message.method === "attachment.upload-commit") {
+				let { expectedRevision, idempotencyKey, uploadId, ...operation } = message.params || {};
+				let completed = await transactionRegistry.execute({
+					expectedRevision, idempotencyKey, operation: { ...operation, uploadId },
+					scope: `library:${operation.libraryId}/attachment:catalog`,
+				}, () => attachmentUploads.commit({ profileEpoch, sessionToken: message.sessionToken, uploadId }, upload => adapter.importAttachment(operation, upload)));
+				let result = { ...completed.result, replayed: completed.replayed, revision: completed.revision };
+				return {
+					...(!completed.replayed && { event: eventJournal.publish("library.attachment.changed", {
+						identities: [{ itemKey: result.attachmentKey, libraryId: result.libraryId }], revision: completed.revision,
+					}) }), result,
+				};
 			}
 			if (message.method === "profile.status") {
 				return { result: await adapter.profileStatus(message.params) };

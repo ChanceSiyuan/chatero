@@ -31,6 +31,7 @@ const ANNOTATION_FIELDS = new Set(["attachmentKey", "libraryId"]);
 const UPDATE_ANNOTATIONS_FIELDS = new Set(["attachmentKey", "libraryId", "updates"]);
 const ATTACHMENT_FIELDS = new Set(["attachmentKey", "libraryId"]);
 const ATTACHMENT_STATE_FIELDS = new Set(["attachmentKey", "libraryId"]);
+const ATTACHMENT_UPLOAD_COMMIT_FIELDS = new Set(["collectionKeys", "libraryId", "parentItemKey", "title"]);
 const NOTE_FIELDS = new Set(["libraryId", "noteKey"]);
 const UPDATE_NOTE_FIELDS = new Set(["expectedVersion", "html", "libraryId", "noteKey"]);
 const NOTE_MUTATION_FIELDS = new Set(["action", "expectedVersion", "html", "libraryId", "noteKey", "parentItemKey"]);
@@ -660,6 +661,7 @@ function validateZotero(Zotero) {
 		[Zotero?.Styles, "getVisible"],
 		[Zotero?.QuickCopy, "getContentFromItems"],
 		[Zotero?.Utilities, "extractIdentifiers"],
+		[Zotero?.Attachments, "importFromNetworkStream"],
 	];
 	for (let [owner, method] of required) {
 		if (typeof owner?.[method] !== "function") {
@@ -1198,6 +1200,41 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(S
 			let path = await attachment.getFilePathAsync();
 			if (typeof path !== "string" || !path) unavailable("Zotero attachment file is unavailable");
 			return openAttachmentFile(path);
+		},
+
+		async importAttachment(params, upload) {
+			exactObject(params, ATTACHMENT_UPLOAD_COMMIT_FIELDS, "attachment.upload-commit operation");
+			positiveLibraryId(params.libraryId, "attachment.upload-commit");
+			if (!upload || typeof upload !== "object" || !upload.stream || !Number.isSafeInteger(upload.byteCount)) throw new Error("attachment upload stream is invalid");
+			let library = Zotero.Libraries.get(params.libraryId);
+			if (!library || library.libraryType === "feed" || !library.filesEditable) unavailable("attachment target library files are not editable");
+			let parent;
+			if (params.parentItemKey !== undefined) {
+				zoteroKey(params.parentItemKey, "attachment.upload-commit parentItemKey");
+				parent = lookupItem(Zotero, params.libraryId, params.parentItemKey, "Zotero attachment parent");
+				if (!parent.isRegularItem?.()) throw new Error("attachment parent must be a regular item");
+			}
+			let collections = validateCollectionKeys(Zotero, params.libraryId, params.collectionKeys || [], "attachment.upload-commit collectionKeys");
+			if (parent && collections.length) throw new Error("attachment upload cannot use parentItemKey and collectionKeys together");
+			let title = params.title === undefined ? undefined : boundedString(params.title, MAX_METADATA_FIELD_BYTES, "attachment upload title");
+			let attachment = await Zotero.Attachments.importFromNetworkStream({
+				byteCount: upload.byteCount,
+				contentType: upload.contentType,
+				...(collections.length && { collections: collections.map(collection => collection.id) }),
+				...(!parent && { libraryID: params.libraryId }),
+				...(parent && { parentItemID: parent.id }),
+				stream: upload.stream,
+				...(title !== undefined && { title }),
+				url: `https://chatero.invalid/upload/${encodeURIComponent(upload.filename)}`,
+			});
+			if (!attachment?.isAttachment?.() || attachment.libraryID !== params.libraryId) throw new Error("Zotero attachment import crossed the requested library boundary");
+			return {
+				attachmentKey: attachment.key,
+				libraryId: attachment.libraryID,
+				...(parent && { parentItemKey: parent.key }),
+				synced: Boolean(attachment.synced),
+				version: Number.isSafeInteger(attachment.clientVersion) ? attachment.clientVersion : 0,
+			};
 		},
 
 		async collections(params) {

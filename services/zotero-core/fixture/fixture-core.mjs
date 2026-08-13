@@ -12,6 +12,7 @@ import { SessionAuthority } from "../security/session-authority.mjs";
 import { FrameDecoder, writeFrame } from "../transport/frame-codec.mjs";
 import { createCoreEventJournal } from "../../../chrome/content/zotero/xpcom/chateroCoreEventJournal.mjs";
 import { createCoreAttachmentSourceRegistry } from "../../../chrome/content/zotero/xpcom/chateroCoreAttachmentSourceRegistry.mjs";
+import { createCoreAttachmentUploadRegistry } from "../../../chrome/content/zotero/xpcom/chateroCoreAttachmentUploadRegistry.mjs";
 import { createCoreTransactionRegistry } from "../../../chrome/content/zotero/xpcom/chateroCoreTransactionRegistry.mjs";
 
 const MAX_BOOTSTRAP_BYTES = 1024;
@@ -138,6 +139,16 @@ async function main() {
   const eventJournal = createCoreEventJournal({ profileEpoch });
   const transactionRegistry = createCoreTransactionRegistry();
   const attachmentSources = createCoreAttachmentSourceRegistry();
+  const attachmentUploads = createCoreAttachmentUploadRegistry({
+    createSink: () => {
+      const chunks = [];
+      return {
+        close() {},
+        finish() { return { bytes: Buffer.concat(chunks), close() {} }; },
+        write(bytes) { chunks.push(Buffer.from(bytes)); },
+      };
+    },
+  });
   const authority = new SessionAuthority({
     bootstrapToken,
     profileEpoch,
@@ -224,6 +235,29 @@ async function main() {
         profileEpoch,
         sessionToken: authorizedSession.sessionToken,
       }) };
+    }
+    if (message.method === "attachment.upload-open") return { result: attachmentUploads.open({
+      ...message.params, profileEpoch, sessionToken: authorizedSession.sessionToken,
+    }) };
+    if (message.method === "attachment.upload-write") return { result: attachmentUploads.write({
+      ...message.params, profileEpoch, sessionToken: authorizedSession.sessionToken,
+    }) };
+    if (message.method === "attachment.upload-abort") return { result: attachmentUploads.abort({
+      ...message.params, profileEpoch, sessionToken: authorizedSession.sessionToken,
+    }) };
+    if (message.method === "attachment.upload-commit") {
+      const { expectedRevision, idempotencyKey, uploadId, ...operation } = message.params || {};
+      const completed = await transactionRegistry.execute({
+        expectedRevision, idempotencyKey, operation: { ...operation, uploadId }, scope: `library:${operation.libraryId}/attachment:catalog`,
+      }, () => attachmentUploads.commit({ profileEpoch, sessionToken: authorizedSession.sessionToken, uploadId }, async upload => {
+        const sequence = fixtureItemChildren.flatMap(entry => entry.attachments || []).length + 1;
+        return { attachmentKey: `UPL${String(sequence).padStart(5, "0")}`, libraryId: operation.libraryId, ...(operation.parentItemKey && { parentItemKey: operation.parentItemKey }), synced: false, version: 1 };
+      }));
+      return {
+        ...(!completed.replayed && { event: eventJournal.publish("library.attachment.changed", {
+          identities: [{ itemKey: completed.result.attachmentKey, libraryId: completed.result.libraryId }], revision: completed.revision,
+        }) }), result: { ...completed.result, replayed: completed.replayed, revision: completed.revision },
+      };
     }
     if (message.method === "profile.status") {
       if (!message.params || typeof message.params !== "object" || Array.isArray(message.params) || Object.keys(message.params).length !== 0) {
@@ -805,7 +839,7 @@ async function main() {
   await chmod(socketPath, 0o600);
 
   const shutdown = () => server.close(() => {
-    void attachmentSources.dispose().finally(() => process.exit(0));
+    void Promise.all([attachmentSources.dispose(), attachmentUploads.dispose()]).finally(() => process.exit(0));
   });
   process.once("SIGTERM", shutdown);
   process.once("SIGINT", shutdown);

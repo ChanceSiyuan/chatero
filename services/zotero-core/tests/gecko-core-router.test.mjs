@@ -5,6 +5,7 @@ import {
   createGeckoCoreRequestRouter,
   mapGeckoCoreError,
 } from "../../../chrome/content/zotero/xpcom/chateroCoreRequestRouter.mjs";
+import { createCoreAttachmentUploadRegistry } from "../../../chrome/content/zotero/xpcom/chateroCoreAttachmentUploadRegistry.mjs";
 
 function request(session, method, params = {}, overrides = {}) {
   return {
@@ -41,6 +42,7 @@ function createRouter(overrides = {}) {
     async attachment(params) { calls.push(["attachment", params]); return { annotationCount: 0, attachmentKey: "PDF00001", contentType: "application/pdf", filename: "paper.pdf", libraryId: 1, parentItemKey: "ITEM0001", title: "Paper" }; },
     async attachmentState(params) { calls.push(["attachmentState", params]); return { attachmentKey: params.attachmentKey, fileAvailable: true, fulltextIndexState: "indexed", libraryId: params.libraryId, storageSyncState: "in-sync" }; },
     async attachmentSource(params) { calls.push(["attachmentSource", params]); return { size: 4, async read(offset, length) { return Uint8Array.from([1, 2, 3, 4]).slice(offset, offset + length); }, async close() {} }; },
+    async importAttachment(params, upload) { calls.push(["importAttachment", params, upload.byteCount]); return { attachmentKey: "UPLOAD01", libraryId: params.libraryId, parentItemKey: params.parentItemKey, synced: false, version: 1 }; },
     async collections(params) { calls.push(["collections", params]); return { collections: [] }; },
     async mutateCollection(params) { calls.push(["mutateCollection", params]); return { action: params.action, collectionKey: "NEWCOL01", deleted: false, libraryId: params.libraryId, name: params.name, synced: false, version: 1 }; },
 		async citationStyles(params) { calls.push(["citationStyles", params]); return { styles: [] }; },
@@ -386,6 +388,29 @@ test("routes attachment chunks through a session-bound attachment:read capabilit
   }))).result, { bytesBase64url: "AgM", eof: false });
   assert.deepEqual((await router.handle(request(session, "attachment.close", { sourceId: opened.sourceId }))).result, { closed: true });
   assert.deepEqual(calls.map(value => value[0]), ["attachmentSource"]);
+  await router.dispose();
+});
+
+test("uploads attachment chunks through a session-bound idempotent commit", async () => {
+  const bytes = [];
+  const attachmentUploads = createCoreAttachmentUploadRegistry({
+    createSink: () => ({ close() {}, finish() { return { close() {}, bytes: Uint8Array.from(bytes) }; }, write(chunk) { bytes.push(...chunk); } }),
+    now: () => 1000,
+    randomBytes: () => new Uint8Array(32).fill(8),
+    setTimeout: () => 1,
+    clearTimeout: () => {},
+  });
+  const { calls, router } = createRouter({ attachmentUploads });
+  const session = await handshake(router, ["attachment:write"]);
+  const opened = (await router.handle(request(session, "attachment.upload-open", { byteCount: 4, contentType: "application/pdf", filename: "paper.pdf" }))).result;
+  assert.deepEqual((await router.handle(request(session, "attachment.upload-write", { bytesBase64url: "AQIDBA", offset: 0, uploadId: opened.uploadId }))).result, { complete: true, nextOffset: 4 });
+  const params = { expectedRevision: 0, idempotencyKey: "attachment-upload-key-0001", libraryId: 1, parentItemKey: "ITEM0001", title: "Evidence", uploadId: opened.uploadId };
+  const committed = await router.handle(request(session, "attachment.upload-commit", params));
+  const replay = await router.handle(request(session, "attachment.upload-commit", params));
+  assert.deepEqual(committed.result, { attachmentKey: "UPLOAD01", libraryId: 1, parentItemKey: "ITEM0001", replayed: false, revision: 1, synced: false, version: 1 });
+  assert.equal(committed.event.topic, "library.attachment.changed");
+  assert.equal(replay.result.replayed, true);
+  assert.equal(calls.filter(value => value[0] === "importAttachment").length, 1);
   await router.dispose();
 });
 

@@ -169,6 +169,7 @@ function fixture({
   const syncCalls = [];
 	const exportCalls = [];
   const importCalls = [];
+	const attachmentImportCalls = [];
 	const droppedTables = [];
 	const indexCalls = [];
   const highlight = item({
@@ -263,6 +264,12 @@ function fixture({
   ];
 
   const Zotero = {
+    Attachments: {
+      async importFromNetworkStream(options) {
+        attachmentImportCalls.push({ ...options, stream: "opaque-stream" });
+        return item({ id: 401, key: "UPLOAD01", libraryID: options.parentItemID ? 1 : options.libraryID, title: options.title || "Uploaded", type: "attachment", parentItemID: options.parentItemID, path: "/opaque/upload.pdf", clientVersion: 3, synced: false });
+      },
+    },
     Collection: class {
       constructor(params) {
         return collection({ id: 1000 + collections.length, key: `NEWCOL0${collections.length}`, version: 0, ...params });
@@ -419,7 +426,7 @@ function fixture({
       } },
     },
   };
-  return { droppedTables, exportCalls, importCalls, indexCalls, syncCalls, Zotero };
+  return { attachmentImportCalls, droppedTables, exportCalls, importCalls, indexCalls, syncCalls, Zotero };
 }
 
 test("lists libraries, saved searches, and paginated tags without database or path data", async () => {
@@ -548,6 +555,20 @@ test("exposes bounded item facts and attachment availability without leaking pat
     totalPages: 12,
   });
   assert.equal(JSON.stringify(state).includes("/Users/example"), false);
+});
+
+test("imports an authorized upload stream through Zotero without exposing paths", async () => {
+  const environment = fixture();
+  const adapter = createZoteroLibraryAdapter(environment);
+  const result = await adapter.importAttachment({ libraryId: 1, parentItemKey: "ITEM0001", title: "Evidence" }, {
+    byteCount: 4, contentType: "application/pdf", filename: "paper.pdf", stream: { opaque: true },
+  });
+  assert.deepEqual(result, { attachmentKey: "UPLOAD01", libraryId: 1, parentItemKey: "ITEM0001", synced: false, version: 3 });
+  assert.equal(environment.attachmentImportCalls[0].url, "https://chatero.invalid/upload/paper.pdf");
+  assert.equal(Object.hasOwn(result, "path"), false);
+  await assert.rejects(adapter.importAttachment({ collectionKeys: ["SHARED01"], libraryId: 1, parentItemKey: "ITEM0001" }, {
+    byteCount: 4, contentType: "application/pdf", filename: "paper.pdf", stream: {},
+  }), /cannot use parentItemKey/);
 });
 
 test("atomically updates fields, creators, tags, and relations at an expected Zotero client version", async () => {

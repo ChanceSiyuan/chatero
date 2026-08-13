@@ -5,6 +5,7 @@
   "defaultDeadlineMs": 5000,
   "capabilities": [
     "attachment:read",
+    "attachment:write",
     "citation:read",
     "events:read",
     "library:read",
@@ -77,6 +78,30 @@
       "capability": "attachment:read",
       "paramsType": "AttachmentCloseParams",
       "resultType": "AttachmentCloseResult"
+    },
+    {
+      "name": "attachment.upload-open",
+      "capability": "attachment:write",
+      "paramsType": "AttachmentUploadOpenParams",
+      "resultType": "AttachmentUploadOpenResult"
+    },
+    {
+      "name": "attachment.upload-write",
+      "capability": "attachment:write",
+      "paramsType": "AttachmentUploadWriteParams",
+      "resultType": "AttachmentUploadWriteResult"
+    },
+    {
+      "name": "attachment.upload-commit",
+      "capability": "attachment:write",
+      "paramsType": "AttachmentUploadCommitParams",
+      "resultType": "AttachmentUploadCommitResult"
+    },
+    {
+      "name": "attachment.upload-abort",
+      "capability": "attachment:write",
+      "paramsType": "AttachmentUploadAbortParams",
+      "resultType": "AttachmentUploadAbortResult"
     },
     {
       "name": "library.collections",
@@ -459,6 +484,73 @@
       "kind": "object",
       "fields": {
         "closed": "boolean"
+      }
+    },
+    "AttachmentUploadOpenParams": {
+      "kind": "object",
+      "fields": {
+        "byteCount": "number",
+        "contentType": "string",
+        "filename": "string"
+      }
+    },
+    "AttachmentUploadOpenResult": {
+      "kind": "object",
+      "fields": {
+        "expiresAt": "number",
+        "nextOffset": "number",
+        "uploadId": "string"
+      }
+    },
+    "AttachmentUploadWriteParams": {
+      "kind": "object",
+      "fields": {
+        "bytesBase64url": "string",
+        "offset": "number",
+        "uploadId": "string"
+      }
+    },
+    "AttachmentUploadWriteResult": {
+      "kind": "object",
+      "fields": {
+        "complete": "boolean",
+        "nextOffset": "number"
+      }
+    },
+    "AttachmentUploadCommitParams": {
+      "kind": "object",
+      "fields": {
+        "collectionKeys?": "string[]",
+        "expectedRevision": "number",
+        "idempotencyKey": "string",
+        "libraryId": "number",
+        "parentItemKey?": "string",
+        "title?": "string",
+        "uploadId": "string"
+      }
+    },
+    "AttachmentUploadCommitResult": {
+      "kind": "object",
+      "fields": {
+        "attachmentKey": "string",
+        "libraryId": "number",
+        "parentItemKey?": "string",
+        "replayed": "boolean",
+        "revision": "number",
+        "synced": "boolean",
+        "version": "number"
+      }
+    },
+    "AttachmentUploadAbortParams": {
+      "kind": "object",
+      "fields": {
+        "uploadId": "string"
+      }
+    },
+    "AttachmentUploadAbortResult": {
+      "kind": "object",
+      "fields": {
+        "aborted": "boolean"
       }
     },
     "LibrarySearchParams": {

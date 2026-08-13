@@ -5,6 +5,7 @@ export const MAX_FRAME_BYTES = 1048576;
 export const DEFAULT_DEADLINE_MS = 5000;
 export const CAPABILITIES = Object.freeze([
   "attachment:read",
+  "attachment:write",
   "citation:read",
   "events:read",
   "library:read",
@@ -21,6 +22,10 @@ export const METHOD_CAPABILITIES = Object.freeze({
   "attachment.close": "attachment:read",
   "attachment.open": "attachment:read",
   "attachment.read": "attachment:read",
+  "attachment.upload-abort": "attachment:write",
+  "attachment.upload-commit": "attachment:write",
+  "attachment.upload-open": "attachment:write",
+  "attachment.upload-write": "attachment:write",
   "citation.render": "citation:read",
   "citation.styles": "citation:read",
   "core.cancel": null,
@@ -75,6 +80,22 @@ export const METHOD_TYPES = Object.freeze({
   "attachment.read": {
     "params": "AttachmentReadParams",
     "result": "AttachmentReadResult"
+  },
+  "attachment.upload-abort": {
+    "params": "AttachmentUploadAbortParams",
+    "result": "AttachmentUploadAbortResult"
+  },
+  "attachment.upload-commit": {
+    "params": "AttachmentUploadCommitParams",
+    "result": "AttachmentUploadCommitResult"
+  },
+  "attachment.upload-open": {
+    "params": "AttachmentUploadOpenParams",
+    "result": "AttachmentUploadOpenResult"
+  },
+  "attachment.upload-write": {
+    "params": "AttachmentUploadWriteParams",
+    "result": "AttachmentUploadWriteResult"
   },
   "citation.render": {
     "params": "CitationRenderParams",
