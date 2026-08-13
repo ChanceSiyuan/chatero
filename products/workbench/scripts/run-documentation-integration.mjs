@@ -205,6 +205,7 @@ export async function runDocumentationIntegration({
     target,
     remoteAgentReleaseDir,
     sshAlias,
+    sshSourceHome: target === "ssh-fixture" ? process.env.HOME : undefined,
   });
   try {
     const codeArguments = [

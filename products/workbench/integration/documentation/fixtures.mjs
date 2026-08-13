@@ -46,7 +46,7 @@ export async function prepareDocumentationSshHome({ sourceHome, fixtureHome }) {
   }
 }
 
-export async function createTemporaryDocumentationWorkspace({ root, checkout, target, remoteAgentReleaseDir, sshAlias }) {
+export async function createTemporaryDocumentationWorkspace({ root, checkout, target, remoteAgentReleaseDir, sshAlias, sshSourceHome }) {
   if (!new Set(["local", "ssh-fixture"]).has(target)) throw new TypeError("invalid Documentation integration target");
   const remoteAuthority = target === "ssh-fixture"
     ? encodeAuthority(`profile:${assertConcreteAlias(sshAlias)}`)
@@ -62,8 +62,8 @@ export async function createTemporaryDocumentationWorkspace({ root, checkout, ta
     mkdir(extensionsDir, { recursive: true }),
     mkdir(homeDir, { recursive: true }),
   ]);
-  if (target === "ssh-fixture") {
-    await prepareDocumentationSshHome({ sourceHome: process.env.HOME, fixtureHome: homeDir });
+  if (target === "ssh-fixture" && sshSourceHome) {
+    await prepareDocumentationSshHome({ sourceHome: sshSourceHome, fixtureHome: homeDir });
   }
   await writeFile(join(workspacePath, "documentation", "index.qmd"), [
     "---",
