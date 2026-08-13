@@ -15,6 +15,7 @@ import {
 import {
   parseRemotePlatform,
   pumpInput,
+  REMOTE_AGENT_SCRIPTS,
   RemoteAgentInstaller,
   SshRemoteAgentRuntime,
 } from "../extensions/chatero-remote/remote-agent-installer.mjs";
@@ -669,4 +670,10 @@ test("remote upload accepts only a clean SSH exit after a terminal EPIPE", async
     source: async () => Buffer.from("rejected artifact"),
     offset: 0,
   }), /remote bootstrap exited with 71/);
+});
+
+test("remote upload accepts an empty regular transaction without broadening file types", () => {
+  assert.match(REMOTE_AGENT_SCRIPTS.upload, /'regular file'\|'regular empty file'/);
+  assert.match(REMOTE_AGENT_SCRIPTS.upload, /\*\) exit 77/);
+  assert.doesNotMatch(REMOTE_AGENT_SCRIPTS.upload, /block special|character special|fifo|socket/);
 });

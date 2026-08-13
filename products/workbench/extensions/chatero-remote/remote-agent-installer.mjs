@@ -157,7 +157,7 @@ const UPLOAD_SCRIPT = [
   "exec 3>>\"$p\"",
   "fd=/proc/$$/fd/3",
   "[ \"$(stat -Lc '%d:%i' \"$fd\")\" = \"$identity\" ]",
-  "[ \"$(stat -Lc %F \"$fd\")\" = 'regular file' ]",
+  "case \"$(stat -Lc %F \"$fd\")\" in 'regular file'|'regular empty file') ;; *) exit 77;; esac",
   "[ \"$(stat -Lc %u \"$fd\")\" = \"$uid\" ] && [ \"$(stat -Lc %h \"$fd\")\" = 1 ] && [ \"$(stat -Lc %a \"$fd\")\" = 600 ]",
   "cat >&3",
   "[ \"$(stat -Lc '%d:%i' \"$fd\")\" = \"$identity\" ] && [ \"$(stat -Lc %h \"$fd\")\" = 1 ] && [ \"$(stat -Lc %a \"$fd\")\" = 600 ]",
