@@ -377,6 +377,34 @@ async function main() {
       }
       return { result: { searches: fixtureSavedSearches.filter(value => value.libraryId === message.params.libraryId) } };
     }
+    if (message.method === "library.saved-search-mutate") {
+      const { expectedRevision, idempotencyKey, ...operation } = message.params || {};
+      const completed = await transactionRegistry.execute({
+        expectedRevision, idempotencyKey, operation, scope: `library:${operation.libraryId}/search:catalog`,
+      }, async value => {
+        let search;
+        if (value.action === "create") {
+          search = { deleted: false, itemKeys: [], libraryId: value.libraryId, name: value.name, searchKey: `SEA${String(fixtureSavedSearches.length + 1).padStart(5, "0")}`, synced: false, version: 1 };
+          fixtureSavedSearches.push(search);
+        }
+        else {
+          search = fixtureSavedSearches.find(entry => entry.libraryId === value.libraryId && entry.searchKey === value.searchKey);
+          if (!search || search.version !== value.expectedVersion) throw new Error("fixture saved search changed");
+          if (value.name !== undefined) search.name = value.name;
+          if (value.action === "trash") search.deleted = true;
+          if (value.action === "restore") search.deleted = false;
+          search.synced = false;
+          search.version += 1;
+        }
+        return { action: value.action, deleted: Boolean(search.deleted), libraryId: search.libraryId, name: search.name, searchKey: search.searchKey, synced: search.synced, version: search.version };
+      });
+      return {
+        ...(!completed.replayed && { event: eventJournal.publish("library.saved-search.changed", {
+          action: completed.result.action, libraryId: completed.result.libraryId, revision: completed.revision, searchKey: completed.result.searchKey,
+        }) }),
+        result: { ...completed.result, replayed: completed.replayed, revision: completed.revision },
+      };
+    }
     if (message.method === "library.saved-search-items") {
       if (!message.params || typeof message.params !== "object" || Array.isArray(message.params)
         || !Number.isSafeInteger(message.params.libraryId) || message.params.libraryId < 1

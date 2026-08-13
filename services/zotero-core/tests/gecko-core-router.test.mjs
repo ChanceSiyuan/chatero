@@ -64,6 +64,7 @@ function createRouter(overrides = {}) {
 		async profileMigrate() { calls.push(["profileMigrate"]); return { compatibilityVersion: 10, migrated: true, schemaVersion: 142 }; },
     async profileStatus() { calls.push(["profileStatus"]); return { compatibilityVersion: 10, integrityCheckRequired: false, profileEpoch: "profile-epoch", profileName: "Disposable Profile", quickCheckPassed: true, readOnly: false, schemaVersion: 142, upstreamVersion: "7.1-real" }; },
     async savedSearches(params) { calls.push(["savedSearches", params]); return { searches: [] }; },
+    async mutateSavedSearch(params) { calls.push(["mutateSavedSearch", params]); return { action: params.action, deleted: false, libraryId: params.libraryId, name: params.name, searchKey: "NEWSEA01", synced: false, version: 1 }; },
     async savedSearchItems(params) { calls.push(["savedSearchItems", params]); return { items: [], total: 0 }; },
     async search(params, options) { calls.push(["search", params, options]); return { items: [], total: 0 }; },
     async syncStatus(params) { calls.push(["syncStatus", params]); return { enabled: true, inProgress: false, libraries: [], offline: false, status: "" }; },
@@ -152,6 +153,17 @@ test("collection mutations are idempotent, capability-gated, and evented", async
   assert.equal(first.event.topic, "library.collection.changed");
   assert.equal(replay.result.replayed, true);
   assert.equal(calls.filter(value => value[0] === "mutateCollection").length, 1);
+});
+
+test("saved-search mutations are one idempotent evented transaction", async () => {
+  const { calls, router } = createRouter();
+  const session = await handshake(router, ["library:write"]);
+  const params = { action: "create", conditions: [{ condition: "title", operator: "contains", value: "quantum" }], expectedRevision: 0, idempotencyKey: "saved-search-key-0001", libraryId: 1, name: "Quantum" };
+  const first = await router.handle(request(session, "library.saved-search-mutate", params));
+  const replay = await router.handle(request(session, "library.saved-search-mutate", params));
+  assert.equal(first.event.topic, "library.saved-search.changed");
+  assert.equal(replay.result.replayed, true);
+  assert.equal(calls.filter(value => value[0] === "mutateSavedSearch").length, 1);
 });
 
 test("profile migration is an idempotent Zotero-owned schema transaction", async () => {

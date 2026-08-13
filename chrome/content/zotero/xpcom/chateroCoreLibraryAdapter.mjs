@@ -47,6 +47,8 @@ const EXPORT_ITEMS_FIELDS = new Set(["identities", "translatorId"]);
 const IMPORT_ITEMS_FIELDS = new Set(["content", "libraryId", "translatorId"]);
 const LOOKUP_FIELDS = new Set(["text"]);
 const SAVED_SEARCH_FIELDS = new Set(["libraryId"]);
+const SAVED_SEARCH_MUTATION_FIELDS = new Set(["action", "conditions", "expectedVersion", "libraryId", "name", "searchKey"]);
+const SAVED_SEARCH_ACTIONS = new Set(["create", "update", "trash", "restore"]);
 const SAVED_SEARCH_ITEMS_FIELDS = new Set(["cursor", "libraryId", "limit", "searchKey"]);
 const TAG_FIELDS = new Set(["cursor", "libraryId", "limit", "query"]);
 const DUPLICATE_FIELDS = new Set(["cursor", "libraryId", "limit"]);
@@ -171,6 +173,32 @@ function validateTagsParams(params) {
 	}
 	if (params.cursor !== undefined && (typeof params.cursor !== "string" || !/^\d+$/.test(params.cursor))) {
 		throw new Error("library.tags cursor must be a decimal offset");
+	}
+}
+
+function validateSavedSearchMutation(params) {
+	exactObject(params, SAVED_SEARCH_MUTATION_FIELDS, "library.saved-search-mutate params");
+	positiveLibraryId(params.libraryId, "library.saved-search-mutate");
+	if (!SAVED_SEARCH_ACTIONS.has(params.action)) throw new Error("library.saved-search-mutate action is invalid");
+	if (params.searchKey !== undefined) zoteroKey(params.searchKey, "library.saved-search-mutate searchKey");
+	if (params.expectedVersion !== undefined && (!Number.isSafeInteger(params.expectedVersion) || params.expectedVersion < 0)) throw new Error("saved search expectedVersion is invalid");
+	if (params.name !== undefined && !boundedString(params.name, 16 * 1024, "saved search name").trim()) throw new Error("saved search name must not be empty");
+	if (params.conditions !== undefined) {
+		if (!Array.isArray(params.conditions) || params.conditions.length < 1 || params.conditions.length > MAX_MUTATION_ENTRIES) throw new Error("saved search conditions must be a non-empty bounded array");
+		for (let condition of params.conditions) {
+			exactObject(condition, new Set(["condition", "operator", "value"]), "saved search condition");
+			if (typeof condition.condition !== "string" || !/^[A-Za-z][A-Za-z0-9/]*$/.test(condition.condition)) throw new Error("saved search condition is invalid");
+			boundedString(condition.operator, 256, "saved search operator");
+			boundedString(condition.value, MAX_RELATION_FIELD_BYTES, "saved search value");
+		}
+	}
+	if (params.action === "create") {
+		if (params.searchKey !== undefined || params.expectedVersion !== undefined || params.name === undefined || params.conditions === undefined) throw new Error("saved search create requires name and conditions only");
+	}
+	else {
+		if (params.searchKey === undefined || params.expectedVersion === undefined) throw new Error("saved search existing action requires identity and version");
+		if (params.action === "update" && params.name === undefined && params.conditions === undefined) throw new Error("saved search update requires changes");
+		if ((params.action === "trash" || params.action === "restore") && (params.name !== undefined || params.conditions !== undefined)) throw new Error("saved search trash and restore do not accept changes");
 	}
 }
 
@@ -914,6 +942,43 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(S
 				}))
 				.sort((left, right) => compareText(left.name, right.name) || compareText(left.searchKey, right.searchKey));
 			return { searches };
+		},
+
+		async mutateSavedSearch(params) {
+			validateSavedSearchMutation(params);
+			let library = Zotero.Libraries.get(params.libraryId);
+			if (!library || library.libraryType === "feed" || !library.editable) unavailable("saved search target library is not editable");
+			let search;
+			if (params.action === "create") {
+				search = new Zotero.Search();
+				search.libraryID = params.libraryId;
+			}
+			else {
+				search = Zotero.Searches.getByLibraryAndKey(params.libraryId, params.searchKey);
+				if (!search || search.libraryID !== params.libraryId || search.key !== params.searchKey) unavailable("saved search is unavailable");
+				if (params.action !== "restore" && itemIsUnavailable(search)) unavailable("saved search is unavailable");
+				if (params.action === "restore" && !search.deleted) throw new Error("saved search restore target is not in trash");
+				revisionConflict(search, params.expectedVersion, "Zotero saved search");
+			}
+			try {
+				if (params.action === "create" || params.action === "update") search.fromJSON({
+					...(params.conditions !== undefined && { conditions: params.conditions }),
+					...(params.name !== undefined && { name: params.name.trim() }),
+				}, { strict: true });
+				if (params.action === "trash") search.deleted = true;
+				if (params.action === "restore") search.deleted = false;
+				await search.saveTx();
+			}
+			catch (error) {
+				try { await search.reload?.(null, true); }
+				catch (_) {}
+				throw error;
+			}
+			return {
+				action: params.action, deleted: Boolean(search.deleted), libraryId: search.libraryID,
+				name: search.name, searchKey: search.key, synced: Boolean(search.synced),
+				version: Number.isSafeInteger(search.clientVersion) ? search.clientVersion : 0,
+			};
 		},
 
 		async savedSearchItems(params) {

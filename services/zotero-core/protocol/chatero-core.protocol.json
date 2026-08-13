@@ -127,6 +127,12 @@
       "resultType": "LibrarySavedSearchesResult"
     },
     {
+      "name": "library.saved-search-mutate",
+      "capability": "library:write",
+      "paramsType": "LibrarySavedSearchMutationParams",
+      "resultType": "LibrarySavedSearchMutationResult"
+    },
+    {
       "name": "library.saved-search-items",
       "capability": "library:read",
       "paramsType": "LibrarySavedSearchItemsParams",
@@ -660,6 +666,41 @@
       "kind": "object",
       "fields": {
         "searches": "LibrarySavedSearchSummary[]"
+      }
+    },
+    "LibrarySavedSearchCondition": {
+      "kind": "object",
+      "fields": {
+        "condition": "string",
+        "operator": "string",
+        "value": "string"
+      }
+    },
+    "LibrarySavedSearchMutationParams": {
+      "kind": "object",
+      "fields": {
+        "action": "string",
+        "conditions?": "LibrarySavedSearchCondition[]",
+        "expectedRevision": "number",
+        "expectedVersion?": "number",
+        "idempotencyKey": "string",
+        "libraryId": "number",
+        "name?": "string",
+        "searchKey?": "string"
+      }
+    },
+    "LibrarySavedSearchMutationResult": {
+      "kind": "object",
+      "fields": {
+        "action": "string",
+        "deleted": "boolean",
+        "libraryId": "number",
+        "name": "string",
+        "replayed": "boolean",
+        "revision": "number",
+        "searchKey": "string",
+        "synced": "boolean",
+        "version": "number"
       }
     },
     "LibrarySavedSearchItemsParams": {

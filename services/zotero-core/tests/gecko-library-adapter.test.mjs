@@ -139,6 +139,25 @@ function collection({ id, key, libraryID, name, parentKey, childCollections = []
   return value;
 }
 
+function savedSearch({ key, libraryID, name, itemIDs = [], synced = true, version = 1 }) {
+  let currentVersion = version;
+  const value = {
+    deleted: false, key, libraryID, name, synced,
+    conditions: [],
+    fromJSON(json) {
+      if (json.name !== undefined) this.name = json.name;
+      if (json.conditions !== undefined) this.conditions = structuredClone(json.conditions);
+      if (json.deleted !== undefined) this.deleted = json.deleted;
+    },
+    async reload() {},
+    async saveTx() { currentVersion += 1; this.synced = false; return true; },
+    search: async () => itemIDs.slice(),
+    get clientVersion() { return currentVersion; },
+    get version() { return version; },
+  };
+  return value;
+}
+
 function fixture({
   attachmentDeleted = false,
   attachmentInTrash = false,
@@ -237,8 +256,8 @@ function fixture({
   const collections = [personal, nested, group];
   const items = [attachment, groupAttachment, highlight, childNote, alpha, beta, groupAlpha, note];
   const searches = [
-    Object.freeze({ key: "SEARCH01", libraryID: 1, name: "Unread methods", search: async () => [12, 11, 90], synced: true, version: 4 }),
-    Object.freeze({ key: "SEARCH01", libraryID: 2, name: "Group unread", search: async () => [21], synced: false, version: 2 }),
+    savedSearch({ key: "SEARCH01", libraryID: 1, name: "Unread methods", itemIDs: [12, 11, 90], version: 4 }),
+    savedSearch({ key: "SEARCH01", libraryID: 2, name: "Group unread", itemIDs: [21], synced: false, version: 2 }),
   ];
 
   const Zotero = {
@@ -251,6 +270,9 @@ function fixture({
       constructor(type) {
         return item({ id: 2000 + items.length, key: `NEWITEM${items.length}`, libraryID: 0, title: "", type, version: 0 });
       }
+    },
+    Search: class {
+      constructor() { return savedSearch({ key: `NEWSEA0${searches.length}`, libraryID: 0, name: "", version: 0 }); }
     },
     Collections: {
       get: id => collections.find(value => value.id === id) || false,
@@ -439,6 +461,20 @@ test("lists libraries, saved searches, and paginated tags without database or pa
     updating: false,
     url: "https://example.org/feed.xml",
   }] });
+});
+
+test("creates, edits, trashes, and restores saved searches at exact object versions", async () => {
+  const environment = fixture();
+  const adapter = createZoteroLibraryAdapter(environment);
+  assert.deepEqual(await adapter.mutateSavedSearch({
+    action: "create", conditions: [{ condition: "title", operator: "contains", value: "quantum" }], libraryId: 1, name: "Quantum",
+  }), { action: "create", deleted: false, libraryId: 1, name: "Quantum", searchKey: "NEWSEA02", synced: false, version: 1 });
+  assert.deepEqual(await adapter.mutateSavedSearch({
+    action: "update", conditions: [{ condition: "tag", operator: "is", value: "reading" }],
+    expectedVersion: 4, libraryId: 1, name: "Reading", searchKey: "SEARCH01",
+  }), { action: "update", deleted: false, libraryId: 1, name: "Reading", searchKey: "SEARCH01", synced: false, version: 5 });
+  assert.equal((await adapter.mutateSavedSearch({ action: "trash", expectedVersion: 5, libraryId: 1, searchKey: "SEARCH01" })).deleted, true);
+  assert.equal((await adapter.mutateSavedSearch({ action: "restore", expectedVersion: 6, libraryId: 1, searchKey: "SEARCH01" })).deleted, false);
 });
 
 test("normalizes root and nested collections with composite library identity", async () => {

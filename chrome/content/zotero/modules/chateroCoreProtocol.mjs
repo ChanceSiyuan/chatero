@@ -46,6 +46,7 @@ export const METHOD_CAPABILITIES = Object.freeze({
   "library.note": "library:read",
   "library.note-update": "library:write",
   "library.saved-search-items": "library:read",
+  "library.saved-search-mutate": "library:write",
   "library.saved-searches": "library:read",
   "library.search": "library:search",
   "library.tags": "library:read",
@@ -173,6 +174,10 @@ export const METHOD_TYPES = Object.freeze({
   "library.saved-search-items": {
     "params": "LibrarySavedSearchItemsParams",
     "result": "LibrarySearchResult"
+  },
+  "library.saved-search-mutate": {
+    "params": "LibrarySavedSearchMutationParams",
+    "result": "LibrarySavedSearchMutationResult"
   },
   "library.saved-searches": {
     "params": "LibrarySavedSearchesParams",

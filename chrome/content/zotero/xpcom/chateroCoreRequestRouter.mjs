@@ -68,6 +68,7 @@ function validateRouterOptions(options) {
 			|| typeof options.adapter.profileStatus !== "function"
 			|| typeof options.adapter.profileMigrate !== "function"
 			|| typeof options.adapter.savedSearches !== "function"
+			|| typeof options.adapter.mutateSavedSearch !== "function"
 			|| typeof options.adapter.savedSearchItems !== "function"
 			|| typeof options.adapter.search !== "function"
 			|| typeof options.adapter.tags !== "function"
@@ -396,6 +397,19 @@ export function createGeckoCoreRequestRouter(options = {}) {
 				};
 			}
 			if (message.method === "library.saved-searches") return { result: await adapter.savedSearches(message.params) };
+			if (message.method === "library.saved-search-mutate") {
+				let { expectedRevision, idempotencyKey, ...operation } = message.params || {};
+				let completed = await transactionRegistry.execute({
+					expectedRevision, idempotencyKey, operation, scope: `library:${operation.libraryId}/search:catalog`,
+				}, value => adapter.mutateSavedSearch(value));
+				let result = { ...completed.result, replayed: completed.replayed, revision: completed.revision };
+				return {
+					...(!completed.replayed && { event: eventJournal.publish("library.saved-search.changed", {
+						action: result.action, libraryId: result.libraryId, revision: completed.revision, searchKey: result.searchKey,
+					}) }),
+					result,
+				};
+			}
 			if (message.method === "library.saved-search-items") return { result: await adapter.savedSearchItems(message.params) };
 			if (message.method === "library.tags") return { result: await adapter.tags(message.params) };
 			if (message.method === "translation.translators") return { result: await adapter.translators(message.params) };
