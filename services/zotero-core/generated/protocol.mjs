@@ -10,7 +10,8 @@ export const CAPABILITIES = Object.freeze([
   "library:search",
   "library:write",
   "profile:read",
-  "profile:write"
+  "profile:write",
+  "sync:read"
 ]);
 export const METHOD_CAPABILITIES = Object.freeze({
   "attachment.close": "attachment:read",
@@ -37,7 +38,8 @@ export const METHOD_CAPABILITIES = Object.freeze({
   "library.search": "library:search",
   "library.tags": "library:read",
   "profile.backup": "profile:write",
-  "profile.status": "profile:read"
+  "profile.status": "profile:read",
+  "sync.status": "sync:read"
 });
 export const METHOD_TYPES = Object.freeze({
   "attachment.close": {
@@ -139,5 +141,9 @@ export const METHOD_TYPES = Object.freeze({
   "profile.status": {
     "params": "ProfileStatusParams",
     "result": "ProfileStatusResult"
+  },
+  "sync.status": {
+    "params": "SyncStatusParams",
+    "result": "SyncStatusResult"
   }
 });

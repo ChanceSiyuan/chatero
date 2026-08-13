@@ -31,6 +31,7 @@ const NOTE_FIELDS = new Set(["libraryId", "noteKey"]);
 const UPDATE_NOTE_FIELDS = new Set(["expectedVersion", "html", "libraryId", "noteKey"]);
 const LIBRARIES_FIELDS = new Set();
 const FEEDS_FIELDS = new Set();
+const SYNC_STATUS_FIELDS = new Set();
 const SAVED_SEARCH_FIELDS = new Set(["libraryId"]);
 const SAVED_SEARCH_ITEMS_FIELDS = new Set(["cursor", "libraryId", "limit", "searchKey"]);
 const TAG_FIELDS = new Set(["cursor", "libraryId", "limit", "query"]);
@@ -512,9 +513,10 @@ function validateZotero(Zotero) {
 	}
 }
 
-export function createZoteroLibraryAdapter({ Zotero, openAttachmentFile = openGeckoAttachmentSource } = {}) {
+export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(Services?.io?.offline), openAttachmentFile = openGeckoAttachmentSource } = {}) {
 	validateZotero(Zotero);
 	if (typeof openAttachmentFile !== "function") throw new Error("attachment source opener is required");
+	if (typeof isOffline !== "function") throw new Error("offline state provider is required");
 
 	return Object.freeze({
 		async feeds(params) {
@@ -611,6 +613,31 @@ export function createZoteroLibraryAdapter({ Zotero, openAttachmentFile = openGe
 			let tags = matches.slice(offset, offset + params.limit);
 			let nextOffset = offset + tags.length;
 			return { tags, ...(nextOffset < matches.length && { nextCursor: String(nextOffset) }), total: matches.length };
+		},
+
+		async syncStatus(params) {
+			exactObject(params, SYNC_STATUS_FIELDS, "sync.status params");
+			let lastSync = Zotero.Sync.Data.Local.getLastSyncTime();
+			let libraries = Zotero.Libraries.getAll()
+				.filter(library => library.libraryType !== "feed")
+				.map(library => ({
+					errors: (Zotero.Sync.Runner.getErrorsByLibrary(library.libraryID) || []).slice(0, 100).map(error => ({
+						message: boundedString(String(error?.message || error), 16 * 1024, "sync error message"),
+						type: typeof error?.errorType === "string" ? error.errorType : "error",
+					})),
+					lastSync: Number.isSafeInteger(library.lastSync) ? library.lastSync : 0,
+					libraryId: library.libraryID,
+					libraryVersion: Number.isSafeInteger(library.libraryVersion) ? library.libraryVersion : 0,
+					storageVersion: Number.isSafeInteger(library.storageVersion) ? library.storageVersion : 0,
+				})).sort((left, right) => left.libraryId - right.libraryId);
+			return {
+				enabled: Boolean(Zotero.Sync.Runner.enabled),
+				inProgress: Boolean(Zotero.Sync.Runner.syncInProgress),
+				...(lastSync instanceof Date && Number.isFinite(lastSync.getTime()) && { lastSyncAt: lastSync.getTime() }),
+				libraries,
+				offline: Boolean(isOffline()),
+				status: typeof Zotero.Sync.Runner.lastSyncStatus === "string" ? Zotero.Sync.Runner.lastSyncStatus : "",
+			};
 		},
 		async annotations(params) {
 			validateCompositeParams(params, ANNOTATION_FIELDS, "attachmentKey", "library.annotations");

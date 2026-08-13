@@ -55,6 +55,7 @@ function createRouter(overrides = {}) {
     async savedSearches(params) { calls.push(["savedSearches", params]); return { searches: [] }; },
     async savedSearchItems(params) { calls.push(["savedSearchItems", params]); return { items: [], total: 0 }; },
     async search(params, options) { calls.push(["search", params, options]); return { items: [], total: 0 }; },
+    async syncStatus(params) { calls.push(["syncStatus", params]); return { enabled: true, inProgress: false, libraries: [], offline: false, status: "" }; },
     async tags(params) { calls.push(["tags", params]); return { tags: [], total: 0 }; },
   };
   const selectedAdapter = { ...adapter, ...(overrides.adapter || {}) };
@@ -192,6 +193,15 @@ test("enforces capabilities, profile epoch, session, and deadline before adapter
   await assert.rejects(router.handle(request(session, "library.collections", {}, { sessionToken: "wrong" })), /session authentication/);
   await assert.rejects(router.handle(request(session, "library.collections", {}, { deadline: 1000 })), /deadline expired/);
   assert.deepEqual(calls, []);
+});
+
+test("sync status has a separate read capability and returns no credentials", async () => {
+  const { calls, router } = createRouter();
+  const session = await handshake(router, ["sync:read"]);
+  const result = (await router.handle(request(session, "sync.status", {}))).result;
+  assert.deepEqual(result, { enabled: true, inProgress: false, libraries: [], offline: false, status: "" });
+  assert.equal(JSON.stringify(result).includes("apiKey"), false);
+  assert.deepEqual(calls, [["syncStatus", {}]]);
 });
 
 test("routes read-only PDF, item facts, Note, and annotation methods through library:read", async () => {

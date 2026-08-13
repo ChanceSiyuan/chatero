@@ -266,15 +266,24 @@ function fixture({
       isRetracted: value => value.id === 11,
       shouldShowCitationWarning: value => value.id === 11,
     },
-    Sync: { Storage: { Local: {
-      SYNC_STATE_FORCE_DOWNLOAD: 4,
-      SYNC_STATE_FORCE_UPLOAD: 3,
-      SYNC_STATE_IN_CONFLICT: 5,
-      SYNC_STATE_IN_SYNC: 2,
-      SYNC_STATE_TO_DOWNLOAD: 1,
-      SYNC_STATE_TO_UPLOAD: 0,
-    } } },
     DB: { executeTransaction: async callback => callback() },
+    Sync: {
+      Data: { Local: { getLastSyncTime: () => new Date(400_000) } },
+      Runner: {
+        enabled: true,
+        getErrorsByLibrary: libraryId => libraryId === 2 ? [{ errorType: "warning", message: "Storage quota warning" }] : [],
+        lastSyncStatus: "Waiting",
+        syncInProgress: false,
+      },
+      Storage: { Local: {
+        SYNC_STATE_FORCE_DOWNLOAD: 4,
+        SYNC_STATE_FORCE_UPLOAD: 3,
+        SYNC_STATE_IN_CONFLICT: 5,
+        SYNC_STATE_IN_SYNC: 2,
+        SYNC_STATE_TO_DOWNLOAD: 1,
+        SYNC_STATE_TO_UPLOAD: 0,
+      } },
+    },
   };
   return { Zotero };
 }
@@ -432,6 +441,22 @@ test("updates a batch of annotations after validating every object version", asy
     text: "Updated evidence",
     type: "highlight",
   });
+});
+
+test("reports bounded offline-aware sync status without credentials", async () => {
+  const adapter = createZoteroLibraryAdapter({ ...fixture(), isOffline: () => true });
+  assert.deepEqual(await adapter.syncStatus({}), {
+    enabled: true,
+    inProgress: false,
+    lastSyncAt: 400000,
+    libraries: [
+      { errors: [], lastSync: 100, libraryId: 1, libraryVersion: 10, storageVersion: 9 },
+      { errors: [{ message: "Storage quota warning", type: "warning" }], lastSync: 200, libraryId: 2, libraryVersion: 8, storageVersion: 7 },
+    ],
+    offline: true,
+    status: "Waiting",
+  });
+  assert.equal(JSON.stringify(await adapter.syncStatus({})).includes("apiKey"), false);
 });
 
 test("search isolates duplicate collection keys and emits protocol-exact item summaries", async () => {

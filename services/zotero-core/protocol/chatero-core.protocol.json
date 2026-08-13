@@ -10,7 +10,8 @@
     "library:search",
     "library:write",
     "profile:read",
-    "profile:write"
+    "profile:write",
+    "sync:read"
   ],
   "methods": [
     {
@@ -162,6 +163,12 @@
       "capability": "library:search",
       "paramsType": "LibrarySearchParams",
       "resultType": "LibrarySearchResult"
+    },
+    {
+      "name": "sync.status",
+      "capability": "sync:read",
+      "paramsType": "SyncStatusParams",
+      "resultType": "SyncStatusResult"
     }
   ],
   "types": {
@@ -719,6 +726,38 @@
         "revision": "number",
         "synced": "boolean",
         "version": "number"
+      }
+    },
+    "SyncStatusParams": {
+      "kind": "object",
+      "fields": {}
+    },
+    "SyncErrorSummary": {
+      "kind": "object",
+      "fields": {
+        "message": "string",
+        "type": "string"
+      }
+    },
+    "SyncLibraryStatus": {
+      "kind": "object",
+      "fields": {
+        "errors": "SyncErrorSummary[]",
+        "lastSync": "number",
+        "libraryId": "number",
+        "libraryVersion": "number",
+        "storageVersion": "number"
+      }
+    },
+    "SyncStatusResult": {
+      "kind": "object",
+      "fields": {
+        "enabled": "boolean",
+        "inProgress": "boolean",
+        "lastSyncAt?": "number",
+        "libraries": "SyncLibraryStatus[]",
+        "offline": "boolean",
+        "status": "string"
       }
     }
   }

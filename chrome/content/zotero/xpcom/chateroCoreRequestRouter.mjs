@@ -64,7 +64,8 @@ function validateRouterOptions(options) {
 			|| typeof options.adapter.savedSearches !== "function"
 			|| typeof options.adapter.savedSearchItems !== "function"
 			|| typeof options.adapter.search !== "function"
-			|| typeof options.adapter.tags !== "function") {
+			|| typeof options.adapter.tags !== "function"
+			|| typeof options.adapter.syncStatus !== "function") {
 		throw new Error("Gecko Core router requires Profile and Library adapters");
 	}
 	if (typeof options.bootstrapToken !== "string" || options.bootstrapToken.length < 24) {
@@ -298,6 +299,7 @@ export function createGeckoCoreRequestRouter(options = {}) {
 			if (message.method === "library.saved-searches") return { result: await adapter.savedSearches(message.params) };
 			if (message.method === "library.saved-search-items") return { result: await adapter.savedSearchItems(message.params) };
 			if (message.method === "library.tags") return { result: await adapter.tags(message.params) };
+			if (message.method === "sync.status") return { result: await adapter.syncStatus(message.params) };
 			if (message.method === "library.search") {
 				if (typeof message.cancellationId !== "string" || !message.cancellationId) {
 					throw new Error("library.search cancellationId is required");
