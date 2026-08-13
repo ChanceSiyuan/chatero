@@ -269,7 +269,7 @@ async function runScenario({ alias, releaseDirectory, receiptPath, expectedTuple
   finally {
     await session.dispose().catch(() => {});
     await sshRunner("/usr/bin/ssh", ["-T", "-o", "BatchMode=yes", "--", alias,
-      "pkill -f '/bin/chatero-server' 2>/dev/null || true; rm -rf -- \"$HOME/.chatero-server\"; rm -rf -- /tmp/chatero-stage5-* /tmp/chatero-$(id -u)"]);
+      "pkill -f '[.]chatero-server/artifacts-v1/.*/out/server-main.js' 2>/dev/null || true; pkill -f '[b]in/chatero-server' 2>/dev/null || true; rm -rf -- \"$HOME/.chatero-server\"; rm -rf -- /tmp/chatero-stage5-* /tmp/chatero-$(id -u)"]);
   }
   const removed = await sshRunner("/usr/bin/ssh", ["-T", "-o", "BatchMode=yes", "--", alias, "test ! -e \"$HOME/.chatero-server\""]);
   if (removed.code !== 0) throw new Error("Remote Agent removal did not complete");
