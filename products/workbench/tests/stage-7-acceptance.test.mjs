@@ -114,6 +114,9 @@ test("both macOS release paths embed and reverify the signed dual-architecture R
   for (const source of [production, local]) {
     assert.match(source, /embedRemoteAgentRelease\(app|embedRemoteAgentRelease\(builtApp/u);
     assert.match(source, /verifyEmbeddedRemoteAgentRelease/u);
+    assert.match(source, /realpath\(await mkdtemp/u);
+    assert.match(source, /\/usr\/bin\/ditto/u);
+    assert.doesNotMatch(source, /await cp\([^;]+recursive: true/su);
   }
   assert.match(embedding, /verifyRelease/u);
   assert.match(embedding, /REMOTE_AGENT_TUPLES/u);
@@ -124,7 +127,11 @@ test("both macOS release paths embed and reverify the signed dual-architecture R
 test("local macOS release stays distinct from notarized Stage 7 and performs a real cold-start probe", async () => {
   const source = await readFile(new URL("../scripts/create-local-macos-release.mjs", import.meta.url), "utf8");
   assert.match(source, /codesign[\s\S]*--sign[\s\S]*"-"/u);
-  assert.match(source, /smokeTest\(app, scratch\)/u);
+  assert.match(source, /smokeTest\(app\)/u);
+  assert.match(source, /stdio: \["ignore", "pipe", "pipe"\]/u);
+  assert.match(source, /diagnosticOutput\(\)/u);
+  assert.match(source, /mkdtemp\("\/tmp\/chatero-smoke-"\)/u);
+  assert.match(source, /rm\(smokeRoot, \{ recursive: true, force: true \}\)/u);
   assert.match(source, /waitForSmoke/u);
   assert.match(source, /signature: "adhoc-local"/u);
   assert.match(source, /notarized: false/u);

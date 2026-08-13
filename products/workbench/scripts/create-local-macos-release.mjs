@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
-import { cp, mkdir, mkdtemp, readdir, rename, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, realpath, rename, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,14 +18,17 @@ import { embedRemoteAgentRelease, verifyEmbeddedRemoteAgentRelease } from "./emb
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const DEFAULT_DIST = join(ROOT, "products", "workbench", "dist");
 
-async function waitForSmoke(child, durationMs = 12_000) {
+async function waitForSmoke(child, diagnosticOutput, durationMs = 12_000) {
   let exit = null;
   let launchError = null;
   child.once("exit", (code, signal) => { exit = { code, signal }; });
   child.once("error", error => { launchError = error; });
   await new Promise(accept => setTimeout(accept, durationMs));
   if (launchError) throw launchError;
-  if (exit) throw new Error(`Chatero exited during its cold-start smoke test (${exit.code ?? exit.signal})`);
+  if (exit) {
+    const diagnostics = diagnosticOutput().trim();
+    throw new Error(`Chatero exited during its cold-start smoke test (${exit.code ?? exit.signal})${diagnostics ? `:\n${diagnostics}` : ""}`);
+  }
   child.kill("SIGTERM");
   await new Promise(accept => {
     const timer = setTimeout(() => { child.kill("SIGKILL"); accept(); }, 5_000);
@@ -33,23 +36,37 @@ async function waitForSmoke(child, durationMs = 12_000) {
   });
 }
 
-async function smokeTest(appPath, scratch) {
+async function smokeTest(appPath) {
   const plist = join(appPath, "Contents", "Info.plist");
   const executableName = (await command("/usr/libexec/PlistBuddy", ["-c", "Print :CFBundleExecutable", plist])).stdout.trim();
   const executable = join(appPath, "Contents", "MacOS", executableName);
-  const userData = join(scratch, "user-data");
-  const extensions = join(scratch, "extensions");
-  await mkdir(userData);
-  await mkdir(extensions);
-  const child = spawn(executable, [
-    "--disable-gpu",
-    `--user-data-dir=${userData}`,
-    `--extensions-dir=${extensions}`,
-    "--skip-release-notes",
-    "--skip-welcome",
-    "--new-window",
-  ], { env: { ...process.env }, stdio: "ignore" });
-  await waitForSmoke(child);
+  const smokeRoot = await realpath(await mkdtemp("/tmp/chatero-smoke-"));
+  try {
+    const userData = join(smokeRoot, "u");
+    const extensions = join(smokeRoot, "e");
+    await mkdir(userData);
+    await mkdir(extensions);
+    let diagnostics = "";
+    const collect = chunk => { diagnostics = `${diagnostics}${chunk}`.slice(-32_768); };
+    const child = spawn(executable, [
+      "--disable-gpu",
+      `--user-data-dir=${userData}`,
+      `--extensions-dir=${extensions}`,
+      "--skip-release-notes",
+      "--skip-welcome",
+      "--new-window",
+    ], { env: { ...process.env }, stdio: ["ignore", "pipe", "pipe"] });
+    child.stdout.on("data", collect);
+    child.stderr.on("data", collect);
+    await waitForSmoke(child, () => diagnostics);
+  }
+  finally { await rm(smokeRoot, { recursive: true, force: true }); }
+}
+
+async function copyBundle(source, destination) {
+  if (await stat(destination).then(() => true).catch(() => false)) throw new Error("bundle copy destination already exists");
+  await mkdir(dirname(destination), { recursive: true });
+  await command("/usr/bin/ditto", ["--noqtn", source, destination]);
 }
 
 async function verifyDmg(dmg, scratch) {
@@ -71,17 +88,17 @@ async function main() {
   const sourceCommit = (await command("git", ["rev-parse", "HEAD^{commit}"], { cwd: ROOT })).stdout.trim();
   if (!/^[0-9a-f]{40}$/u.test(sourceCommit)) throw new Error("source commit is invalid");
   const outputDirectory = resolve(process.env.CHATERO_LOCAL_RELEASE_OUTPUT ?? DEFAULT_DIST);
-  const scratch = await mkdtemp(join(tmpdir(), "chatero-local-release-"));
+  const scratch = await realpath(await mkdtemp(join(tmpdir(), "chatero-local-release-")));
   try {
     const builtApp = await findBuiltApp();
     const app = join(scratch, "Chatero.app");
-    await cp(builtApp, app, { recursive: true, force: false, errorOnExist: true });
+    await copyBundle(builtApp, app);
     await embedCore(app);
     await embedRemoteAgentRelease(app);
     await verifyAppShape(app);
     await command("/usr/bin/codesign", ["--force", "--deep", "--sign", "-", app]);
     await command("/usr/bin/codesign", ["--verify", "--deep", "--strict", app]);
-    await smokeTest(app, scratch);
+    await smokeTest(app);
 
     await mkdir(outputDirectory, { recursive: true });
     const filename = `Chatero-local-${sourceCommit}.dmg`;
@@ -90,7 +107,7 @@ async function main() {
     if (await stat(finalDmg).then(() => true).catch(() => false)) throw new Error("local release output already exists");
     const root = join(scratch, "dmg-root");
     await mkdir(root);
-    await cp(app, join(root, "Chatero.app"), { recursive: true, force: false, errorOnExist: true });
+    await copyBundle(app, join(root, "Chatero.app"));
     await command("/usr/bin/hdiutil", ["create", "-volname", "Chatero Local", "-srcfolder", root, "-format", "UDZO", temporaryDmg]);
     await command("/usr/bin/hdiutil", ["verify", temporaryDmg]);
     await verifyDmg(temporaryDmg, scratch);

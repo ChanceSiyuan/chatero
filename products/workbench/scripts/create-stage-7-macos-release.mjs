@@ -2,7 +2,7 @@
 
 import { execFile as execFileCallback } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
-import { cp, mkdir, mkdtemp, readdir, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, realpath, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -82,12 +82,17 @@ export async function embedCore(appPath) {
   if (!await stat(join(source, "Contents", "MacOS", "zotero")).then(value => value.isFile()).catch(() => false)) {
     throw new Error("same-source staged Gecko Core is unavailable");
   }
-  await mkdir(dirname(destination), { recursive: true });
-  await cp(source, destination, { recursive: true, force: false, errorOnExist: true });
+  await copyBundle(source, destination);
   const plist = join(destination, "Contents", "Info.plist");
   await command("/usr/libexec/PlistBuddy", ["-c", "Set :CFBundleIdentifier io.github.chancesiyuan.chatero.core", plist]);
   await command("/usr/libexec/PlistBuddy", ["-c", "Set :CFBundleName Chatero Core", plist]);
   await command("/usr/libexec/PlistBuddy", ["-c", "Delete :CFBundleURLTypes", plist]).catch(() => {});
+}
+
+async function copyBundle(source, destination) {
+  if (await stat(destination).then(() => true).catch(() => false)) throw new Error("bundle copy destination already exists");
+  await mkdir(dirname(destination), { recursive: true });
+  await command("/usr/bin/ditto", ["--noqtn", source, destination]);
 }
 
 async function signApp({ appPath, keychain, identity }) {
@@ -121,8 +126,8 @@ export async function verifyMountedProduct({ dmg, sourceApp, scratch }) {
     const side = join(scratch, "side-by-side", basename(sourceApp));
     await mkdir(dirname(clean), { recursive: true });
     await mkdir(dirname(side), { recursive: true });
-    await cp(mountedApp, clean, { recursive: true, force: false, errorOnExist: true });
-    await cp(mountedApp, side, { recursive: true, force: false, errorOnExist: true });
+    await copyBundle(mountedApp, clean);
+    await copyBundle(mountedApp, side);
     await command("/usr/bin/codesign", ["--verify", "--deep", "--strict", clean]);
     await command("/usr/bin/codesign", ["--verify", "--deep", "--strict", side]);
   }
@@ -139,7 +144,7 @@ async function main() {
   const keyId = requiredEnvironment("CHATERO_APPLE_NOTARY_KEY_ID");
   const issuer = requiredEnvironment("CHATERO_APPLE_NOTARY_ISSUER_ID");
   const notaryKey = requiredEnvironment("CHATERO_APPLE_NOTARY_KEY_BASE64");
-  const scratch = await mkdtemp(join(tmpdir(), "chatero-stage-7-release-"));
+  const scratch = await realpath(await mkdtemp(join(tmpdir(), "chatero-stage-7-release-")));
   const keychain = join(scratch, "buildagent.keychain");
   const certificatePath = join(scratch, "certificate.p12");
   const notaryPath = join(scratch, `AuthKey_${keyId}.p8`);
@@ -166,7 +171,7 @@ async function main() {
     const dmg = join(DIST, dmgName);
     const dmgRoot = join(scratch, "dmg-root");
     await mkdir(dmgRoot);
-    await cp(builtApp, join(dmgRoot, "Chatero.app"), { recursive: true, force: false, errorOnExist: true });
+    await copyBundle(builtApp, join(dmgRoot, "Chatero.app"));
     await command("/usr/bin/hdiutil", ["create", "-volname", "Chatero", "-srcfolder", dmgRoot, "-ov", "-format", "UDZO", dmgTemporary]);
     await command("/usr/bin/hdiutil", ["verify", dmgTemporary]);
     const submission = JSON.parse((await command("/usr/bin/xcrun", ["notarytool", "submit", dmgTemporary, "--key", notaryPath, "--key-id", keyId, "--issuer", issuer, "--wait", "--output-format", "json"])).stdout);
