@@ -56,6 +56,7 @@ export const METHOD_CAPABILITIES = Object.freeze({
   "sync.storage-status": "sync:read",
   "translation.export": "translation:read",
   "translation.import": "translation:write",
+  "translation.lookup": "translation:read",
   "translation.translators": "translation:read"
 });
 export const METHOD_TYPES = Object.freeze({
@@ -210,6 +211,10 @@ export const METHOD_TYPES = Object.freeze({
   "translation.import": {
     "params": "TranslationImportParams",
     "result": "TranslationImportResult"
+  },
+  "translation.lookup": {
+    "params": "TranslationLookupParams",
+    "result": "TranslationLookupResult"
   },
   "translation.translators": {
     "params": "TranslationTranslatorsParams",

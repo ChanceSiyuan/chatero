@@ -231,6 +231,7 @@ test("fixture Core implements every new mutation, citation, translation, and syn
 	const citationParams = { identities: [{ itemKey: "FISHER01", libraryId: 1 }], mode: "bibliography", styleId: "apa" };
 	const exportParams = { identities: [{ itemKey: "FISHER01", libraryId: 1 }], translatorId: "bibtex" };
 	const importOperation = { content: "TY  - JOUR\nER  -", libraryId: 1, translatorId: "ris" };
+	const lookupParams = { text: "10.1234/example" };
 	const core = await startCore({
 		profileDirectory,
 		fixtureAnnotations,
@@ -240,6 +241,10 @@ test("fixture Core implements every new mutation, citation, translation, and syn
 		fixtureExports: [{ params: exportParams, result: { content: "@article{}", itemCount: 1, translatorId: "bibtex" } }],
 		fixtureFulltextMatches: [{ attachmentKey: "PDF00001", libraryId: 1, parentItemKey: "FISHER01", query: "critical", title: "Paper PDF" }],
 		fixtureImportResults: [{ params: importOperation, result: { items: [{ itemKey: "IMPORT01", libraryId: 1, title: "Imported", version: 1 }], translatorId: "ris" } }],
+		fixtureLookupResults: [{ params: lookupParams, result: {
+			candidates: [{ creators: ["Ada Lovelace"], date: "1843", doi: "10.1234/example", itemType: "journalArticle", title: "Notes" }],
+			identifiers: [{ kind: "DOI", value: "10.1234/example" }],
+		} }],
 		fixtureNotes,
 		fixtureSyncConflicts: [{ attachmentKey: "PDF00001", libraryId: 1, localModifiedAt: "a", remoteModifiedAt: "b" }],
 		fixtureSyncStorageStatuses: [{ conflictCount: 1, downloadAsNeeded: true, enabled: true, libraryId: 1, mode: "zfs" }],
@@ -266,6 +271,7 @@ test("fixture Core implements every new mutation, citation, translation, and syn
 	assert.equal((await core.client.request("sync.retry", { expectedRevision: 0, idempotencyKey: "fixture-sync-retry-0001", libraryIds: [1] })).completed, true);
 	assert.equal((await core.client.request("translation.translators", { kind: "export" })).translators.length, 1);
 	assert.equal((await core.client.request("translation.export", exportParams)).content, "@article{}");
+	assert.equal((await core.client.request("translation.lookup", lookupParams)).candidates[0].title, "Notes");
 	assert.equal((await core.client.request("citation.styles", {})).styles[0].styleId, "apa");
 	assert.equal((await core.client.request("citation.render", citationParams)).text, "Reference");
 	assert.equal((await core.client.request("translation.import", {

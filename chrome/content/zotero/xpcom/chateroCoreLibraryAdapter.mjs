@@ -41,6 +41,7 @@ const CITATION_RENDER_FIELDS = new Set(["identities", "locale", "mode", "styleId
 const CITATION_MODES = new Set(["bibliography", "citation"]);
 const EXPORT_ITEMS_FIELDS = new Set(["identities", "translatorId"]);
 const IMPORT_ITEMS_FIELDS = new Set(["content", "libraryId", "translatorId"]);
+const LOOKUP_FIELDS = new Set(["text"]);
 const SAVED_SEARCH_FIELDS = new Set(["libraryId"]);
 const SAVED_SEARCH_ITEMS_FIELDS = new Set(["cursor", "libraryId", "limit", "searchKey"]);
 const TAG_FIELDS = new Set(["cursor", "libraryId", "limit", "query"]);
@@ -58,6 +59,7 @@ const MAX_CITATION_ITEMS = 200;
 const MAX_CITATION_OUTPUT_BYTES = 384 * 1024;
 const MAX_EXPORT_OUTPUT_BYTES = 768 * 1024;
 const MAX_IMPORT_INPUT_BYTES = 768 * 1024;
+const MAX_LOOKUP_TEXT_BYTES = 16 * 1024;
 
 function exactObject(value, fields, label) {
 	if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -538,6 +540,7 @@ function validateZotero(Zotero) {
 		[Zotero?.Styles, "get"],
 		[Zotero?.Styles, "getVisible"],
 		[Zotero?.QuickCopy, "getContentFromItems"],
+		[Zotero?.Utilities, "extractIdentifiers"],
 	];
 	for (let [owner, method] of required) {
 		if (typeof owner?.[method] !== "function") {
@@ -670,6 +673,50 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(S
 			}));
 			if (items.some(item => item.libraryId !== params.libraryId)) throw new Error("Zotero import crossed the requested library boundary");
 			return { items, translatorId };
+		},
+
+		async lookupIdentifiers(params) {
+			exactObject(params, LOOKUP_FIELDS, "translation.lookup params");
+			let text = boundedString(params.text, MAX_LOOKUP_TEXT_BYTES, "translation.lookup text").trim();
+			if (!text) throw new Error("translation.lookup text must not be empty");
+			let identifiers = Zotero.Utilities.extractIdentifiers(text);
+			if (!Array.isArray(identifiers) || identifiers.length < 1 || identifiers.length > MAX_CITATION_ITEMS) unavailable("translation.lookup found no supported identifier");
+			let candidates = [];
+			let identifierSummaries = [];
+			for (let identifier of identifiers) {
+				let entries = Object.entries(identifier);
+				if (entries.length !== 1) throw new Error("Zotero identifier extraction returned an invalid result");
+				let [kind, rawValue] = entries[0];
+				let value = boundedString(String(rawValue), 16 * 1024, "lookup identifier");
+				identifierSummaries.push({ kind, value });
+				let translation = new Zotero.Translate.Search();
+				translation.setIdentifier(identifier);
+				let translators = await translation.getTranslators();
+				if (!Array.isArray(translators) || !translators.length) continue;
+				translation.setTranslator(translators);
+				let found;
+				try { found = await translation.translate({ libraryID: false, saveAttachments: false }); }
+				catch (error) {
+					if (String(error).includes(translation.ERROR_NO_RESULTS || "No items returned")) continue;
+					throw error;
+				}
+				for (let item of found || []) {
+					let creators = (item.creators || item.getCreatorsJSON?.() || []).map(creatorName).filter(Boolean);
+					let field = name => item[name] ?? item.getField?.(name) ?? "";
+					let candidate = {
+						creators,
+						date: optionalBoundedString(field("date"), 16 * 1024, "lookup date"),
+						itemType: boundedString(item.itemType || Zotero.ItemTypes.getName(item.itemTypeID), 256, "lookup item type"),
+						title: boundedString(field("title"), MAX_METADATA_FIELD_BYTES, "lookup title"),
+					};
+					let doi = optionalBoundedString(field("DOI"), 16 * 1024, "lookup DOI");
+					if (doi) candidate.doi = doi;
+					candidates.push(candidate);
+					if (candidates.length > MAX_CITATION_ITEMS) throw new Error("translation.lookup returned too many candidates");
+				}
+			}
+			if (!candidates.length) unavailable("translation.lookup found no metadata candidates");
+			return { candidates, identifiers: identifierSummaries };
 		},
 
 		async feeds(params) {

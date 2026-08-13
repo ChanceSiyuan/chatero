@@ -327,6 +327,18 @@ function fixture({
 					return [item({ id: 301, key: "IMPORT01", libraryID: options.libraryID, title: "Imported Paper", version: 0, clientVersion: 31 })];
 				}
 			},
+			Search: class {
+				setIdentifier(identifier) { this.identifier = structuredClone(identifier); }
+				async getTranslators() { return [{ translatorID: "lookup" }]; }
+				setTranslator(translators) { this.translators = translators; }
+				async translate(options) {
+					assert.deepEqual(options, { libraryID: false, saveAttachments: false });
+					return [{ DOI: this.identifier.DOI || "", creators: [{ firstName: "Ada", lastName: "Lovelace" }], date: "2024", itemType: "journalArticle", title: "Lookup Result" }];
+				}
+			},
+		},
+		Utilities: {
+			extractIdentifiers: text => text.includes("10.1234/lookup") ? [{ DOI: "10.1234/lookup" }] : [],
 		},
 		DB: {
 			executeTransaction: async callback => callback(),
@@ -664,6 +676,15 @@ test("imports bounded bibliographic text into an editable library with attachmen
 		translatorId: "32d59d2d-b65a-4da4-b0a3-bf57b3d0c6f8",
 	}]);
 	await assert.rejects(adapter.importItems({ content: "x", libraryId: 2, translatorId: "missing" }), /installed import translator/);
+});
+
+test("looks up bounded identifier candidates without saving to a library", async () => {
+	const adapter = createZoteroLibraryAdapter(fixture());
+	assert.deepEqual(await adapter.lookupIdentifiers({ text: "doi:10.1234/lookup" }), {
+		candidates: [{ creators: ["Ada Lovelace"], date: "2024", doi: "10.1234/lookup", itemType: "journalArticle", title: "Lookup Result" }],
+		identifiers: [{ kind: "DOI", value: "10.1234/lookup" }],
+	});
+	await assert.rejects(adapter.lookupIdentifiers({ text: "not an identifier" }), error => error.code === "UNAVAILABLE");
 });
 
 test("search isolates duplicate collection keys and emits protocol-exact item summaries", async () => {

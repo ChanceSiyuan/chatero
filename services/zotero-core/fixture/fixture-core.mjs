@@ -124,6 +124,7 @@ async function main() {
   const fixtureDuplicates = Array.isArray(fixture?.duplicates) ? fixture.duplicates : [];
   const fixtureExports = Array.isArray(fixture?.exports) ? fixture.exports : [];
   const fixtureImportResults = Array.isArray(fixture?.importResults) ? fixture.importResults : [];
+  const fixtureLookupResults = Array.isArray(fixture?.lookupResults) ? fixture.lookupResults : [];
   const fixtureFulltextMatches = Array.isArray(fixture?.fulltextMatches) ? fixture.fulltextMatches : [];
   const fixtureSyncConflicts = Array.isArray(fixture?.syncConflicts) ? fixture.syncConflicts : [];
   const fixtureSyncStorageStatuses = Array.isArray(fixture?.syncStorageStatuses) ? fixture.syncStorageStatuses : [];
@@ -531,6 +532,12 @@ async function main() {
       const serialized = JSON.stringify(message.params);
       const value = fixtureExports.find(entry => JSON.stringify(entry.params) === serialized);
       if (!value) throw new Error("fixture translation.export params were not configured");
+      return { result: value.result };
+    }
+    if (message.method === "translation.lookup") {
+      const serialized = JSON.stringify(message.params);
+      const value = fixtureLookupResults.find(entry => JSON.stringify(entry.params) === serialized);
+      if (!value) throw new Error("fixture translation.lookup params were not configured");
       return { result: value.result };
     }
     if (message.method === "translation.import") {

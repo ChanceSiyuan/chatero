@@ -241,6 +241,12 @@
       "resultType": "TranslationImportResult"
     },
     {
+      "name": "translation.lookup",
+      "capability": "translation:read",
+      "paramsType": "TranslationLookupParams",
+      "resultType": "TranslationLookupResult"
+    },
+    {
       "name": "citation.styles",
       "capability": "citation:read",
       "paramsType": "CitationStylesParams",
@@ -1059,6 +1065,36 @@
         "replayed": "boolean",
         "revision": "number",
         "translatorId": "string"
+      }
+    },
+    "TranslationLookupParams": {
+      "kind": "object",
+      "fields": {
+        "text": "string"
+      }
+    },
+    "TranslationLookupIdentifier": {
+      "kind": "object",
+      "fields": {
+        "kind": "string",
+        "value": "string"
+      }
+    },
+    "TranslationLookupCandidate": {
+      "kind": "object",
+      "fields": {
+        "creators": "string[]",
+        "date": "string",
+        "doi?": "string",
+        "itemType": "string",
+        "title": "string"
+      }
+    },
+    "TranslationLookupResult": {
+      "kind": "object",
+      "fields": {
+        "candidates": "TranslationLookupCandidate[]",
+        "identifiers": "TranslationLookupIdentifier[]"
       }
     },
     "CitationStyleSummary": {

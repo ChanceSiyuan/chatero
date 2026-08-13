@@ -46,6 +46,7 @@ function createRouter(overrides = {}) {
 		async renderCitation(params) { calls.push(["renderCitation", params]); return { html: "<div>Reference</div>", text: "Reference" }; },
 		async exportItems(params) { calls.push(["exportItems", params]); return { content: "@article{}", itemCount: params.identities.length, translatorId: params.translatorId }; },
 		async importItems(params) { calls.push(["importItems", params]); return { items: [{ itemKey: "IMPORT01", libraryId: params.libraryId, title: "Imported", version: 1 }], translatorId: params.translatorId }; },
+		async lookupIdentifiers(params) { calls.push(["lookupIdentifiers", params]); return { candidates: [], identifiers: [] }; },
     async feeds(params) { calls.push(["feeds", params]); return { feeds: [] }; },
 		async duplicates(params) { calls.push(["duplicates", params]); return { items: [], total: 0 }; },
 		async fulltextSearch(params) { calls.push(["fulltextSearch", params]); return { matches: [], total: 0 }; },
@@ -251,13 +252,14 @@ test("routes translator catalog and citation rendering through separate read cap
 	assert.deepEqual((await router.handle(request(session, "translation.export", {
 		identities: [{ itemKey: "ITEM0001", libraryId: 1 }], translatorId: "bibtex",
 	}))).result, { content: "@article{}", itemCount: 1, translatorId: "bibtex" });
+	assert.deepEqual((await router.handle(request(session, "translation.lookup", { text: "10.1234/example" }))).result, { candidates: [], identifiers: [] });
 	assert.deepEqual((await router.handle(request(session, "citation.styles", {}))).result, { styles: [] });
 	assert.deepEqual((await router.handle(request(session, "citation.render", {
 		identities: [{ itemKey: "ITEM0001", libraryId: 1 }],
 		mode: "bibliography",
 		styleId: "http://www.zotero.org/styles/apa",
 	}))).result, { html: "<div>Reference</div>", text: "Reference" });
-	assert.deepEqual(calls.map(value => value[0]), ["translators", "exportItems", "citationStyles", "renderCitation"]);
+	assert.deepEqual(calls.map(value => value[0]), ["translators", "exportItems", "lookupIdentifiers", "citationStyles", "renderCitation"]);
 });
 
 test("translation import is capability-gated, idempotent, revision-checked, and evented", async () => {
