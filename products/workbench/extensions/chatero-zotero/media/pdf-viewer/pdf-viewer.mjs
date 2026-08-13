@@ -34,6 +34,7 @@ let canvasRenderTask = null;
 let textLayerRenderTask = null;
 let selectionTimer = null;
 let currentViewport = null;
+let areaSelection = null;
 
 function utf8Width(character) {
   const codePoint = character.codePointAt(0);
@@ -113,16 +114,18 @@ function postContext(selectedText = selectedTextWithinLayer()) {
   return message.sequence;
 }
 
-function rectangleOverlay(viewport, rectangle, color) {
+function rectangleOverlay(viewport, rectangle, annotation) {
   if (!Array.isArray(rectangle) || rectangle.length !== 4 || !rectangle.every(Number.isFinite)) return null;
   const points = viewport.convertToViewportRectangle(rectangle);
   const element = document.createElement("span");
-  element.className = "pdf-highlight";
+  element.className = `pdf-highlight ${annotation.type}`;
   element.style.left = `${Math.min(points[0], points[2])}px`;
   element.style.top = `${Math.min(points[1], points[3])}px`;
   element.style.width = `${Math.abs(points[2] - points[0])}px`;
   element.style.height = `${Math.abs(points[3] - points[1])}px`;
-  element.style.backgroundColor = `${safeColor(color)}66`;
+  element.style.setProperty("--annotation-color", safeColor(annotation.color));
+  element.style.backgroundColor = `${safeColor(annotation.color)}66`;
+  element.setAttribute("aria-label", `${annotation.type} annotation${annotation.comment ? `: ${annotation.comment}` : ""}`);
   return element;
 }
 
@@ -130,7 +133,7 @@ function renderAnnotationLayer(viewport) {
   annotationLayer.replaceChildren();
   for (const annotation of pageAnnotations(pageNumber - 1)) {
     for (const rectangle of annotation.rects) {
-      const overlay = rectangleOverlay(viewport, rectangle, annotation.color);
+      const overlay = rectangleOverlay(viewport, rectangle, annotation);
       if (overlay) annotationLayer.append(overlay);
     }
   }
@@ -190,6 +193,96 @@ function selectedRectangles() {
     }
   }
   return values.slice(0, 200);
+}
+
+function annotationPosition(value) {
+  try {
+    const position = JSON.parse(value.positionJson);
+    return { ...value, pageIndex: Number.isSafeInteger(position.pageIndex) ? position.pageIndex : null, rects: Array.isArray(position.rects) ? position.rects : [] };
+  }
+  catch {
+    return { ...value, pageIndex: null, rects: [] };
+  }
+}
+
+function annotationRow(annotation) {
+  const article = document.createElement("article");
+  article.className = "annotation";
+  article.dataset.annotationKey = annotation.annotationKey;
+  article.dataset.version = String(annotation.version);
+  if (annotation.pageIndex !== null) {
+    article.dataset.pageIndex = String(annotation.pageIndex);
+    article.tabIndex = 0;
+    article.setAttribute("role", "button");
+  }
+  const meta = document.createElement("div");
+  meta.className = "annotation-meta";
+  const swatch = document.createElement("span");
+  swatch.className = "swatch";
+  swatch.style.backgroundColor = safeColor(annotation.color);
+  meta.append(swatch, document.createTextNode(`${annotation.type} · Page ${annotation.pageLabel || (annotation.pageIndex === null ? "?" : annotation.pageIndex + 1)}`));
+  article.append(meta);
+  if (annotation.text) {
+    const quote = document.createElement("blockquote");
+    quote.textContent = annotation.text;
+    article.append(quote);
+  }
+  if (annotation.comment) {
+    const comment = document.createElement("p");
+    comment.textContent = annotation.comment;
+    article.append(comment);
+  }
+  if (annotation.tags?.length) {
+    const tags = document.createElement("p");
+    tags.className = "annotation-tags";
+    tags.textContent = annotation.tags.map(tag => `#${tag}`).join(" ");
+    article.append(tags);
+  }
+  const actions = document.createElement("div");
+  actions.className = "annotation-actions";
+  for (const [action, label] of [["edit-annotation", "Edit"], ["delete-annotation", "Delete"]]) {
+    const button = document.createElement("button");
+    button.dataset.action = action;
+    button.setAttribute("aria-label", `${label} annotation`);
+    button.textContent = label;
+    actions.append(button);
+  }
+  article.append(actions);
+  return article;
+}
+
+function renderAnnotationSidebar() {
+  const list = document.getElementById("annotation-list");
+  const count = document.getElementById("annotation-count");
+  count.textContent = `${annotations.length} Zotero annotation${annotations.length === 1 ? "" : "s"}`;
+  list.replaceChildren();
+  if (!annotations.length) {
+    const empty = document.createElement("p");
+    empty.className = "empty";
+    empty.textContent = "No Zotero highlights or annotations yet.";
+    list.append(empty);
+    return;
+  }
+  list.append(...annotations.map(annotationRow));
+}
+
+function postAnnotationCreate(annotationType, { rects = selectedRectangles(), text = selectedTextWithinLayer() } = {}) {
+  if (!rects.length || (["highlight", "underline"].includes(annotationType) && !text.trim())) {
+    status.textContent = annotationType === "image" ? "Drag an area on this page first." : "Select text on this page first.";
+    return;
+  }
+  vscode.postMessage({
+    type: "annotation-create",
+    annotationType,
+    color: "#ffd400",
+    comment: "",
+    pageLabel: currentPageLabel(),
+    positionJson: JSON.stringify({ pageIndex: pageNumber - 1, rects }),
+    sortIndex: `${String(pageNumber - 1).padStart(5, "0")}|${String(Date.now()).padStart(15, "0")}|00000`,
+    tags: [],
+    text,
+  });
+  status.textContent = "Saving annotation…";
 }
 
 function expectedCancellation(error, generation) {
@@ -386,15 +479,7 @@ async function goToPage(value) {
 }
 
 function parseAnnotations() {
-  return annotations.map(annotation => {
-    let position = {};
-    try { position = JSON.parse(annotation.positionJson); } catch {}
-    return {
-      ...annotation,
-      pageIndex: Number.isSafeInteger(position.pageIndex) ? position.pageIndex : null,
-      rects: Array.isArray(position.rects) ? position.rects : [],
-    };
-  });
+  return annotations.map(annotationPosition);
 }
 
 try {
@@ -422,22 +507,88 @@ try {
   document.getElementById("print-pdf").addEventListener("click", () => window.print());
   document.getElementById("export-pdf").addEventListener("click", () => vscode.postMessage({ type: "pdf-export" }));
   document.getElementById("create-highlight").addEventListener("click", () => {
-    const text = selectedTextWithinLayer();
-    const rects = selectedRectangles();
-    if (!text.trim() || !rects.length) {
-      status.textContent = "Select text on this page before creating a highlight.";
+    postAnnotationCreate("highlight");
+  });
+  document.getElementById("create-underline").addEventListener("click", () => postAnnotationCreate("underline"));
+  document.getElementById("create-area").addEventListener("click", () => {
+    areaSelection = { annotationType: "image", armed: true };
+    pageRoot.classList.add("area-selecting");
+    status.textContent = "Drag across an image or page area.";
+  });
+  document.getElementById("create-note").addEventListener("click", () => {
+    areaSelection = { annotationType: "note", armed: true };
+    pageRoot.classList.add("area-selecting");
+    status.textContent = "Click a location for the note.";
+  });
+  document.getElementById("undo-annotation").addEventListener("click", () => vscode.postMessage({ type: "annotation-undo" }));
+  pageRoot.addEventListener("pointerdown", event => {
+    if (!areaSelection?.armed || !currentViewport) return;
+    event.preventDefault();
+    const root = pageRoot.getBoundingClientRect();
+    if (areaSelection.annotationType === "note") {
+      const x = event.clientX - root.left;
+      const y = event.clientY - root.top;
+      const first = currentViewport.convertToPdfPoint(Math.max(0, x - 8), Math.max(0, y - 8));
+      const second = currentViewport.convertToPdfPoint(Math.min(root.width, x + 8), Math.min(root.height, y + 8));
+      const rect = [Math.min(first[0], second[0]), Math.min(first[1], second[1]), Math.max(first[0], second[0]), Math.max(first[1], second[1])];
+      areaSelection = null;
+      pageRoot.classList.remove("area-selecting");
+      postAnnotationCreate("note", { rects: [rect], text: "" });
       return;
     }
-    vscode.postMessage({
-      type: "annotation-create",
-      pageLabel: currentPageLabel(),
-      positionJson: JSON.stringify({ pageIndex: pageNumber - 1, rects }),
-      sortIndex: `${String(pageNumber - 1).padStart(5, "0")}|${String(Date.now()).padStart(15, "0")}|00000`,
-      text,
-    });
+    const preview = document.createElement("span");
+    preview.className = "area-preview";
+    pageRoot.append(preview);
+    areaSelection = { pointerId: event.pointerId, preview, startX: event.clientX - root.left, startY: event.clientY - root.top };
+    pageRoot.setPointerCapture(event.pointerId);
+  });
+  pageRoot.addEventListener("pointermove", event => {
+    if (areaSelection?.pointerId !== event.pointerId) return;
+    const root = pageRoot.getBoundingClientRect();
+    const x = Math.max(0, Math.min(root.width, event.clientX - root.left));
+    const y = Math.max(0, Math.min(root.height, event.clientY - root.top));
+    areaSelection.preview.style.left = `${Math.min(areaSelection.startX, x)}px`;
+    areaSelection.preview.style.top = `${Math.min(areaSelection.startY, y)}px`;
+    areaSelection.preview.style.width = `${Math.abs(x - areaSelection.startX)}px`;
+    areaSelection.preview.style.height = `${Math.abs(y - areaSelection.startY)}px`;
+  });
+  pageRoot.addEventListener("pointerup", event => {
+    if (areaSelection?.pointerId !== event.pointerId || !currentViewport) return;
+    const root = pageRoot.getBoundingClientRect();
+    const endX = Math.max(0, Math.min(root.width, event.clientX - root.left));
+    const endY = Math.max(0, Math.min(root.height, event.clientY - root.top));
+    const start = currentViewport.convertToPdfPoint(areaSelection.startX, areaSelection.startY);
+    const end = currentViewport.convertToPdfPoint(endX, endY);
+    const rect = [Math.min(start[0], end[0]), Math.min(start[1], end[1]), Math.max(start[0], end[0]), Math.max(start[1], end[1])];
+    areaSelection.preview.remove();
+    areaSelection = null;
+    pageRoot.classList.remove("area-selecting");
+    if ((rect[2] - rect[0]) * (rect[3] - rect[1]) > 16) postAnnotationCreate("image", { rects: [rect], text: "" });
   });
   pageField.addEventListener("change", () => scheduleRender(() => goToPage(pageField.value)));
   document.addEventListener("click", event => {
+    const action = event.target.closest("[data-action]");
+    if (action) {
+      event.preventDefault();
+      event.stopPropagation();
+      const row = action.closest("[data-annotation-key]");
+      const annotation = annotations.find(value => value.annotationKey === row?.dataset.annotationKey);
+      if (!annotation) return;
+      if (action.dataset.action === "delete-annotation") {
+        if (window.confirm("Delete this Zotero annotation?")) vscode.postMessage({ type: "annotation-delete", annotationKey: annotation.annotationKey, expectedVersion: annotation.version });
+      }
+      else {
+        const comment = window.prompt("Annotation comment", annotation.comment);
+        if (comment === null) return;
+        const tags = window.prompt("Tags (comma-separated)", annotation.tags.join(", "));
+        if (tags === null) return;
+        const color = window.prompt("Color (#RRGGBB)", annotation.color);
+        if (color === null) return;
+        if (!/^#[0-9a-f]{6}$/i.test(color)) return void (status.textContent = "Color must use #RRGGBB.");
+        vscode.postMessage({ type: "annotation-update", annotationKey: annotation.annotationKey, color, comment, expectedVersion: annotation.version, tags: tags.split(",").map(value => value.trim()).filter(Boolean) });
+      }
+      return;
+    }
     const target = event.target.closest("[data-page-index]");
     if (target) scheduleRender(() => goToPage(Number(target.dataset.pageIndex) + 1));
   });
@@ -471,15 +622,35 @@ try {
     cancelRenderTasks();
   });
   window.addEventListener("message", event => {
-    if (event.data?.type !== "annotation-created") return;
-    const created = event.data.annotation;
-    try {
-      const position = JSON.parse(created.positionJson);
-      annotations.push({ ...created, pageIndex: position.pageIndex, rects: position.rects || [] });
+    if (event.data?.type === "annotation-error") {
+      status.textContent = `Zotero write failed: ${event.data.message}. Reopen the document to resolve the conflict.`;
+      status.classList.add("error");
+      return;
+    }
+    if (event.data?.type === "annotation-created" || event.data?.type === "annotation-updated") {
+      const next = annotationPosition(event.data.annotation);
+      const index = annotations.findIndex(value => value.annotationKey === next.annotationKey);
+      if (index === -1) annotations.push(next); else annotations.splice(index, 1, next);
+      renderAnnotationSidebar();
+      status.textContent = "Saved";
+      scheduleRender(renderPage);
+      return;
+    }
+    if (event.data?.type === "annotation-deleted") {
+      const index = annotations.findIndex(value => value.annotationKey === event.data.annotationKey);
+      if (index !== -1) annotations.splice(index, 1);
+      renderAnnotationSidebar();
+      scheduleRender(renderPage);
+      return;
+    }
+    if (event.data?.type === "annotation-undone") {
+      annotations.splice(0, annotations.length, ...event.data.annotations.map(annotationPosition));
+      renderAnnotationSidebar();
+      status.textContent = event.data.changed ? "Last annotation change undone" : "Nothing to undo";
       scheduleRender(renderPage);
     }
-    catch { status.textContent = "The new annotation could not be displayed."; }
   });
+  renderAnnotationSidebar();
   await renderPage();
 } catch (error) {
   reportRenderError();

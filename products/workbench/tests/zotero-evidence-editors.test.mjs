@@ -978,6 +978,50 @@ test("packaged PDF viewer renders one page at a time and owns the highlight over
     assert.match(source, new RegExp(behavior.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
   assert.doesNotMatch(source, /fetch\(["']https?:|openExternal/);
+  for (const behavior of ["create-underline", "create-note", "create-area", "annotation-update", "annotation-delete", "annotation-undo"]) {
+    assert.match(source, new RegExp(behavior));
+  }
+});
+
+test("PDF annotation controls use exact Core versions for create, edit, delete, and undo", async () => {
+  const providers = await import("../extensions/chatero-zotero/evidence-editors.cjs");
+  const calls = [];
+  const revised = Object.freeze({ annotationKey: "ANN00001", color: "#2ea8e5", comment: "Reviewed", libraryId: 7, pageLabel: "3", positionJson: '{"pageIndex":2,"rects":[[1,2,3,4]]}', sortIndex: "00002", tags: ["reviewed"], text: "Quote", type: "underline", version: 3 });
+  const workflow = {
+    annotations: [revised],
+    async load() { return { annotations: [], attachment, state: { attachmentKey: "PDF00001", contentType: "application/pdf", libraryId: 7, pageIndex: 0, version: 4 } }; },
+    async createAnnotation(value) { calls.push(["create", value]); return { ...revised, ...value, annotationKey: "ANNNEW01", version: 1 }; },
+    async updateAnnotations(value) { calls.push(["update", value]); return { annotations: [{ annotationKey: "ANN00001", libraryId: 7, synced: false, version: 3 }], replayed: false, revision: 2 }; },
+    async mutateAnnotation(value) { calls.push(["mutate", value]); return { annotation: revised }; },
+    async undo() { calls.push(["undo"]); return true; },
+  };
+  const fileUri = value => ({ authority: "", fsPath: value, path: value, scheme: "file", value, toString: () => `file://${value}` });
+  const provider = new providers.PdfEditorProvider({
+    createReaderWorkflow: () => workflow,
+    extensionUri: fileUri("/extension"),
+    getModel: () => ({ ready: true }),
+    materializePdf: async () => ({ path: "/tmp/private/document.pdf", async dispose() {} }),
+    registry: { release() {} },
+    renderPdfEditorHTML: () => "<html>PDF</html>",
+    vscode: { Uri: { file: fileUri, joinPath: (base, ...parts) => fileUri(`${base.value}/${parts.join("/")}`), parse: value => ({ scheme: value.split(":")[0] }) }, env: {}, window: {}, workspace: {} },
+  });
+  let receiveMessage;
+  const posted = [];
+  const panel = { active: true, onDidDispose() { return { dispose() {} }; }, webview: {
+    asWebviewUri: value => ({ toString: () => `vscode-webview:${value.value}` }), cspSource: "vscode-webview://unit-test",
+    onDidReceiveMessage(listener) { receiveMessage = listener; return { dispose() {} }; },
+    async postMessage(value) { posted.push(value); },
+  } };
+  await provider.resolveCustomEditor({ record: attachment, uri: { toString: () => "chatero-zotero-pdf:/7/PDF00001/paper.chatero-zotero-pdf" } }, panel);
+
+  await receiveMessage({ type: "annotation-create", annotationType: "image", color: "#ffd400", comment: "", pageLabel: "3", positionJson: '{"pageIndex":2,"rects":[[1,2,3,4]]}', sortIndex: "00002", tags: [], text: "" });
+  await receiveMessage({ type: "annotation-update", annotationKey: "ANN00001", color: "#2ea8e5", comment: "Reviewed", expectedVersion: 2, tags: ["reviewed"] });
+  await receiveMessage({ type: "annotation-delete", annotationKey: "ANN00001", expectedVersion: 3 });
+  await receiveMessage({ type: "annotation-undo" });
+  assert.deepEqual(calls.map(value => value[0]), ["create", "update", "mutate", "undo"]);
+  assert.equal(calls[1][1][0].expectedVersion, 2);
+  assert.deepEqual(calls[2][1], { action: "trash", annotationKey: "ANN00001", expectedVersion: 3 });
+  assert.deepEqual(posted.map(value => value.type), ["annotation-created", "annotation-updated", "annotation-deleted", "annotation-undone"]);
 });
 
 test("PDF provider exposes only the authorized file and packaged viewer roots", async () => {

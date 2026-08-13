@@ -186,15 +186,48 @@ class PdfEditorProvider {
           }
           if (message?.type === "annotation-create") {
             if (!workflow || typeof message.text !== "string" || typeof message.positionJson !== "string"
-                || typeof message.pageLabel !== "string" || typeof message.sortIndex !== "string") {
+                || typeof message.pageLabel !== "string" || typeof message.sortIndex !== "string"
+                || !["highlight", "image", "note", "underline"].includes(message.annotationType)
+                || typeof message.color !== "string" || !Array.isArray(message.tags) || typeof message.comment !== "string"
+                || Object.keys(message).sort().join(",") !== "annotationType,color,comment,pageLabel,positionJson,sortIndex,tags,text,type") {
               throw new TypeError("Reader annotation message is invalid");
             }
             const annotation = await workflow.createAnnotation({
-              color: "#ffd400", comment: "", pageLabel: message.pageLabel,
+              color: message.color, comment: message.comment, pageLabel: message.pageLabel,
               positionJson: message.positionJson, sortIndex: message.sortIndex,
-              tags: [], text: message.text, type: "highlight",
+              tags: message.tags, text: message.text, type: message.annotationType,
             });
             await panel.webview.postMessage?.({ annotation, type: "annotation-created" });
+            return;
+          }
+          if (message?.type === "annotation-update") {
+            if (!workflow || typeof message.annotationKey !== "string" || !Number.isSafeInteger(message.expectedVersion)
+                || typeof message.comment !== "string" || typeof message.color !== "string" || !Array.isArray(message.tags)
+                || Object.keys(message).sort().join(",") !== "annotationKey,color,comment,expectedVersion,tags,type") {
+              throw new TypeError("Reader annotation update message is invalid");
+            }
+            const result = await workflow.updateAnnotations([{
+              annotationKey: message.annotationKey, color: message.color, comment: message.comment,
+              expectedVersion: message.expectedVersion, tags: message.tags,
+            }]);
+            const version = result.annotations.find(value => value.annotationKey === message.annotationKey)?.version;
+            const annotation = workflow.annotations.find(value => value.annotationKey === message.annotationKey);
+            await panel.webview.postMessage?.({ annotation: annotation && { ...annotation, version: version ?? annotation.version }, type: "annotation-updated" });
+            return;
+          }
+          if (message?.type === "annotation-delete") {
+            if (!workflow || typeof message.annotationKey !== "string" || !Number.isSafeInteger(message.expectedVersion)
+                || Object.keys(message).sort().join(",") !== "annotationKey,expectedVersion,type") {
+              throw new TypeError("Reader annotation delete message is invalid");
+            }
+            await workflow.mutateAnnotation({ action: "trash", annotationKey: message.annotationKey, expectedVersion: message.expectedVersion });
+            await panel.webview.postMessage?.({ annotationKey: message.annotationKey, type: "annotation-deleted" });
+            return;
+          }
+          if (message?.type === "annotation-undo") {
+            if (!workflow || Object.keys(message).sort().join(",") !== "type") throw new TypeError("Reader annotation undo message is invalid");
+            const changed = await workflow.undo();
+            await panel.webview.postMessage?.({ annotations: workflow.annotations, changed, type: "annotation-undone" });
             return;
           }
           if (message?.type === "pdf-open-link") {
@@ -239,7 +272,12 @@ class PdfEditorProvider {
           lastAttachSequence = message.sequence;
           await this.attachPdfContext(lastSnapshot);
         })();
-        void operation.catch(this.onContextError);
+        void operation.catch(async error => {
+          if (["annotation-create", "annotation-update", "annotation-delete", "annotation-undo"].includes(message?.type)) {
+            try { await panel.webview.postMessage?.({ message: error.message, type: "annotation-error" }); } catch (_) {}
+          }
+          this.onContextError(error);
+        });
         return operation;
       })
         : null;
