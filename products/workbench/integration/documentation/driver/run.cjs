@@ -8,8 +8,7 @@ async function run() {
   }
   const repositoryRequire = createRequire(path.join(repositoryRoot, "package.json"));
   const Mocha = repositoryRequire("mocha");
-  const grepArgument = process.argv.find(value => value.startsWith("--chatero-documentation-grep="));
-  const grep = grepArgument?.slice("--chatero-documentation-grep=".length);
+  const grep = process.env.CHATERO_DOCUMENTATION_TEST_GREP;
   const mocha = new Mocha({
     color: true,
     failZeroTests: true,

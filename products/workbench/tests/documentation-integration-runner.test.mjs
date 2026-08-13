@@ -74,7 +74,19 @@ test("uses the macOS code script directly and forwards only a bounded grep", asy
   });
   assert.equal(calls[0].file, "bash");
   assert.equal(calls[0].args[0], join(checkout, "scripts", "code.sh"));
-  assert.ok(calls[0].args.includes("--chatero-documentation-grep=shared-buffer"));
+  assert.equal(calls[0].env.CHATERO_DOCUMENTATION_TEST_GREP, "shared-buffer");
+  assert.equal(calls[0].args.some(arg => arg.startsWith("--chatero-documentation-grep=")), false);
+  const driver = await readFile(join(
+    repositoryRoot,
+    "products",
+    "workbench",
+    "integration",
+    "documentation",
+    "driver",
+    "run.cjs",
+  ), "utf8");
+  assert.match(driver, /process\.env\.CHATERO_DOCUMENTATION_TEST_GREP/);
+  assert.doesNotMatch(driver, /process\.argv.*chatero-documentation-grep/);
   assert.deepEqual(result, { target: "local", workspace: "<temporary-documentation-workspace>" });
   await assert.rejects(runDocumentationIntegration({
     root: repositoryRoot,

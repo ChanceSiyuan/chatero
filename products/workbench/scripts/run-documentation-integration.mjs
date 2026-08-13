@@ -44,7 +44,7 @@ async function verifySignedRemoteAgentFixture({ root, releaseDirectory }) {
   });
 }
 
-function environmentFor(fixture, target, root) {
+function environmentFor(fixture, target, root, grep) {
   const environment = {
     PATH: process.env.PATH ?? "",
     HOME: fixture.homeDir,
@@ -56,6 +56,7 @@ function environmentFor(fixture, target, root) {
   for (const key of ["DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"]) {
     if (process.env[key]) environment[key] = process.env[key];
   }
+  if (grep) environment.CHATERO_DOCUMENTATION_TEST_GREP = grep;
   if (fixture.remoteAgentReleaseDir) environment.CHATERO_REMOTE_AGENT_RELEASE_DIR = fixture.remoteAgentReleaseDir;
   return Object.freeze(environment);
 }
@@ -132,14 +133,13 @@ export async function runDocumentationIntegration({
       "--skip-welcome",
       `--folder-uri=${fixture.workspaceUri}`,
     ];
-    if (boundedGrep) codeArguments.push(`--chatero-documentation-grep=${boundedGrep}`);
     const invocation = platform === "linux"
       ? { file: "xvfb-run", args: ["-a", fixture.codeScript, ...codeArguments] }
       : { file: "bash", args: [fixture.codeScript, ...codeArguments] };
     await run({
       ...invocation,
       cwd: canonicalCheckout,
-      env: environmentFor(fixture, target, root),
+      env: environmentFor(fixture, target, root, boundedGrep),
     });
     return Object.freeze({ target, workspace: "<temporary-documentation-workspace>" });
   }

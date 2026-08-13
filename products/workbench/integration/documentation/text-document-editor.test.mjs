@@ -25,10 +25,19 @@ function fixtureUri() {
 }
 
 async function resetFixture() {
-  const uri = fixtureUri();
-  const bytes = new TextEncoder().encode("# Documentation integration fixture\n\nshared TextDocument\n");
-  await vscode.workspace.fs.writeFile(uri, bytes);
-  return vscode.workspace.openTextDocument(uri);
+  const document = await vscode.workspace.openTextDocument(fixtureUri());
+  const edit = new vscode.WorkspaceEdit();
+  edit.replace(
+    document.uri,
+    new vscode.Range(
+      new vscode.Position(0, 0),
+      document.positionAt(document.getText().length),
+    ),
+    "# Documentation integration fixture\n\nshared TextDocument\n",
+  );
+  assert.equal(await vscode.workspace.applyEdit(edit), true);
+  assert.equal(await document.save(), true);
+  return document;
 }
 
 async function importProductModule(name) {
