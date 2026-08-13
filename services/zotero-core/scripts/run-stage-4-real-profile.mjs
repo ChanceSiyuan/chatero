@@ -22,7 +22,13 @@ function normalized(value) {
 }
 
 async function request(client, method, params) {
-  return client.request(method, params, { timeoutMs: 60_000 });
+	try {
+		return await client.request(method, params, { timeoutMs: 60_000 });
+	}
+	catch (error) {
+		error.message = `${method}: ${error.message}`;
+		throw error;
+	}
 }
 
 async function uploadPdf(client, parentItemKey, bytes) {
@@ -71,9 +77,9 @@ async function oneRun(geckoExecutable, run) {
       attachmentKey: attachment.attachmentKey, expectedRevision: 0, expectedVersion: attachment.version,
       idempotencyKey: `stage4-reader-${randomUUID()}`, libraryId: 1, pageIndex: 0,
     });
-    const styles = await client.request("citation.styles", {}, { timeoutMs: 120_000 });
-    if (!styles.styles.length) throw new Error("real Zotero profile has no visible citation style");
-    const citation = await client.request("citation.render", { identities: [{ itemKey: item.itemKey, libraryId: 1 }], mode: "citation", styleId: styles.styles[0].styleId }, { timeoutMs: 120_000 });
+		const styles = await request(client, "citation.styles", {});
+		if (!styles.styles.length) throw new Error("real Zotero profile has no visible citation style");
+		const citation = await request(client, "citation.render", { identities: [{ itemKey: item.itemKey, libraryId: 1 }], mode: "citation", styleId: styles.styles[0].styleId });
     const first = {
       annotations: await request(client, "library.annotations", { attachmentKey: attachment.attachmentKey, libraryId: 1 }),
       citation,

@@ -634,8 +634,8 @@ function unavailable(message) {
 	throw error;
 }
 
-function lookupItem(Zotero, libraryId, key, label) {
-	let item = Zotero.Items.getByLibraryAndKey(libraryId, key);
+async function lookupItem(Zotero, libraryId, key, label) {
+	let item = await Zotero.Items.getByLibraryAndKeyAsync(libraryId, key);
 	if (!item || item.libraryID !== libraryId || item.key !== key) {
 		unavailable(`${label} ${libraryId}/${key} was not found`);
 	}
@@ -643,8 +643,8 @@ function lookupItem(Zotero, libraryId, key, label) {
 	return item;
 }
 
-function parentKey(Zotero, item, label) {
-	let parent = Zotero.Items.get(item.parentItemID);
+async function parentKey(Zotero, item, label) {
+	let parent = await Zotero.Items.getAsync(item.parentItemID);
 	if (itemIsUnavailable(parent)) unavailable(`${label} parent item is unavailable`);
 	if (!parent || parent.libraryID !== item.libraryID || !parent.isRegularItem?.()) {
 		throw new Error(`${label} has no valid parent item`);
@@ -718,7 +718,8 @@ function validateZotero(Zotero) {
 		[Zotero?.Collections, "getByLibraryAndKey"],
 		[Zotero?.Items, "getAll"],
 		[Zotero?.Items, "get"],
-		[Zotero?.Items, "getByLibraryAndKey"],
+		[Zotero?.Items, "getAsync"],
+		[Zotero?.Items, "getByLibraryAndKeyAsync"],
 		[Zotero?.ItemTypes, "getName"],
 		[Zotero?.Libraries, "getAll"],
 		[Zotero?.Libraries, "get"],
@@ -797,15 +798,15 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 				throw new Error("citation.render identities must be a non-empty bounded array");
 			}
 			let seen = new Set();
-			let items = params.identities.map(identity => {
+			let items = await Promise.all(params.identities.map(async identity => {
 				validateCompositeParams(identity, ITEM_METADATA_FIELDS, "itemKey", "citation.render identity");
 				let composite = `${identity.libraryId}/${identity.itemKey}`;
 				if (seen.has(composite)) throw new Error("citation.render identities must be unique");
 				seen.add(composite);
-				let item = lookupItem(Zotero, identity.libraryId, identity.itemKey, "Zotero citation item");
+				let item = await lookupItem(Zotero, identity.libraryId, identity.itemKey, "Zotero citation item");
 				if (!item.isRegularItem?.()) throw new Error("citation.render target must be a regular item");
 				return item;
-			});
+			}));
 			if (!Zotero.Styles.get(styleId)) unavailable("citation.render style is not installed");
 			let rendered = Zotero.QuickCopy.getContentFromItems(items, {
 				contentType: "",
@@ -826,19 +827,19 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 			exactObject(params, CITATION_ITEMS_FIELDS, "citation.items params");
 			if (!Array.isArray(params.identities) || params.identities.length < 1 || params.identities.length > MAX_CITATION_ITEMS) throw new Error("citation.items identities must be a non-empty bounded array");
 			let seen = new Set();
-			let items = params.identities.map(identity => {
+			let items = await Promise.all(params.identities.map(async identity => {
 				validateCompositeParams(identity, ITEM_METADATA_FIELDS, "itemKey", "citation.items identity");
 				let composite = `${identity.libraryId}/${identity.itemKey}`;
 				if (seen.has(composite)) throw new Error("citation.items identities must be unique");
 				seen.add(composite);
-				let item = lookupItem(Zotero, identity.libraryId, identity.itemKey, "Zotero citation item");
+				let item = await lookupItem(Zotero, identity.libraryId, identity.itemKey, "Zotero citation item");
 				if (!item.isRegularItem?.()) throw new Error("citation.items target must be a regular item");
 				let cslJson = boundedString(JSON.stringify(stableJSON(Zotero.Utilities.Item.itemToCSLJSON(item))), MAX_METADATA_FIELD_BYTES, "CSL item JSON");
 				return {
 					citationWarning: Boolean(Zotero.Retractions.shouldShowCitationWarning(item)), cslJson,
 					itemKey: item.key, libraryId: item.libraryID, retracted: Boolean(Zotero.Retractions.isRetracted(item)),
 				};
-			});
+			}));
 			return { items };
 		},
 
@@ -852,15 +853,15 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 			let exportType = Zotero.Translator?.TRANSLATOR_TYPES?.export || 2;
 			if (!translator || !(translator.translatorType & exportType)) unavailable("translation.export requires an installed export translator");
 			let seen = new Set();
-			let items = params.identities.map(identity => {
+			let items = await Promise.all(params.identities.map(async identity => {
 				validateCompositeParams(identity, ITEM_METADATA_FIELDS, "itemKey", "translation.export identity");
 				let composite = `${identity.libraryId}/${identity.itemKey}`;
 				if (seen.has(composite)) throw new Error("translation.export identities must be unique");
 				seen.add(composite);
-				let item = lookupItem(Zotero, identity.libraryId, identity.itemKey, "Zotero export item");
+				let item = await lookupItem(Zotero, identity.libraryId, identity.itemKey, "Zotero export item");
 				if (!item.isRegularItem?.() && !item.isNote?.()) throw new Error("translation.export target must be a regular item or Note");
 				return item;
-			});
+			}));
 			let translation = new Zotero.Translate.Export();
 			translation.setItems(items.slice());
 			translation.setTranslator(translator);
@@ -992,7 +993,7 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 			let ids;
 			try { ids = await search.search(); }
 			finally { await Zotero.DB.queryAsync(`DROP TABLE IF EXISTS ${tempTable}`, false, { noCache: true }); }
-			let matches = Zotero.Items.get(ids).filter(item => item?.libraryID === params.libraryId && item.isRegularItem?.() && !itemIsUnavailable(item))
+			let matches = (await Zotero.Items.getAsync(ids)).filter(item => item?.libraryID === params.libraryId && item.isRegularItem?.() && !itemIsUnavailable(item))
 				.map(item => itemSummary(Zotero, item)).sort((left, right) => compareText(left.title, right.title) || compareText(left.itemKey, right.itemKey));
 			let offset = Number(params.cursor || 0);
 			if (offset > matches.length) throw new Error("library.duplicates cursor is outside the result set");
@@ -1010,13 +1011,14 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 			if (params.cursor !== undefined && (typeof params.cursor !== "string" || !/^\d+$/.test(params.cursor))) throw new Error("library.fulltext-search cursor is invalid");
 			let candidates = (await Zotero.Items.getAll(params.libraryId, false, false, false)).filter(item => item?.isAttachment?.() && !itemIsUnavailable(item));
 			let found = await (Zotero.Fulltext || Zotero.FullText).findTextInItems(candidates.map(item => item.id), query);
-			let matches = found.map(value => Zotero.Items.get(value.id)).filter(item => item?.libraryID === params.libraryId && item.isAttachment?.())
-				.map(item => ({
+			let loaded = await Zotero.Items.getAsync(found.map(value => value.id));
+			let matches = (await Promise.all(loaded.filter(item => item?.libraryID === params.libraryId && item.isAttachment?.())
+				.map(async item => ({
 					attachmentKey: item.key,
 					libraryId: item.libraryID,
-					parentItemKey: parentKey(Zotero, item, "full-text attachment"),
+					parentItemKey: await parentKey(Zotero, item, "full-text attachment"),
 					title: item.getDisplayTitle?.() || item.attachmentFilename || "Untitled attachment",
-				})).sort((left, right) => compareText(left.title, right.title) || compareText(left.attachmentKey, right.attachmentKey));
+				})))).sort((left, right) => compareText(left.title, right.title) || compareText(left.attachmentKey, right.attachmentKey));
 			let offset = Number(params.cursor || 0);
 			if (offset > matches.length) throw new Error("library.fulltext-search cursor is outside the result set");
 			let page = matches.slice(offset, offset + params.limit);
@@ -1031,15 +1033,15 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 			}
 			if (typeof params.complete !== "boolean") throw new Error("library.fulltext-index complete must be boolean");
 			let seen = new Set();
-			let attachments = params.attachments.map(identity => {
+			let attachments = await Promise.all(params.attachments.map(async identity => {
 				validateCompositeParams(identity, ATTACHMENT_FIELDS, "attachmentKey", "library.fulltext-index identity");
 				let composite = `${identity.libraryId}/${identity.attachmentKey}`;
 				if (seen.has(composite)) throw new Error("library.fulltext-index attachments must be unique");
 				seen.add(composite);
-				let attachment = lookupItem(Zotero, identity.libraryId, identity.attachmentKey, "Zotero attachment");
+				let attachment = await lookupItem(Zotero, identity.libraryId, identity.attachmentKey, "Zotero attachment");
 				if (!attachment.isFileAttachment?.()) throw new Error("library.fulltext-index target must be a file attachment");
 				return attachment;
-			});
+			}));
 			await (Zotero.Fulltext || Zotero.FullText).indexItems(attachments.map(value => value.id), {
 				complete: params.complete,
 				ignoreErrors: false,
@@ -1121,7 +1123,7 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 			if (!Array.isArray(ids) || ids.some(value => !Number.isSafeInteger(value) || value < 1)) {
 				throw new Error("Zotero saved search returned invalid item ids");
 			}
-			let items = Zotero.Items.get(ids)
+			let items = (await Zotero.Items.getAsync(ids))
 				.filter(item => item?.libraryID === params.libraryId && item.isRegularItem?.() && !itemIsUnavailable(item))
 				.map(item => itemSummary(Zotero, item))
 				.sort((left, right) => compareText(left.title, right.title) || compareText(left.itemKey, right.itemKey));
@@ -1241,9 +1243,9 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 		},
 		async annotations(params) {
 			validateCompositeParams(params, ANNOTATION_FIELDS, "attachmentKey", "library.annotations");
-			let attachment = lookupItem(Zotero, params.libraryId, params.attachmentKey, "Zotero attachment");
+			let attachment = await lookupItem(Zotero, params.libraryId, params.attachmentKey, "Zotero attachment");
 			if (!attachment.isFileAttachment?.()) throw new Error("library.annotations target must be a file attachment");
-			let annotations = attachment.getAnnotations(false)
+			let annotations = (await Zotero.Items.getAsync(attachment.getAnnotations(false, true)))
 				.map(value => annotationSummary(Zotero, value, attachment))
 				.sort((left, right) => compareText(left.sortIndex, right.sortIndex)
 					|| compareText(left.annotationKey, right.annotationKey));
@@ -1252,12 +1254,10 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 
 		async updateAnnotations(params, { tx = true } = {}) {
 			validateAnnotationUpdates(params);
-			let attachment = lookupItem(Zotero, params.libraryId, params.attachmentKey, "Zotero attachment");
+			let attachment = await lookupItem(Zotero, params.libraryId, params.attachmentKey, "Zotero attachment");
 			if (!attachment.isFileAttachment?.()) throw new Error("library.annotations-update target must be a file attachment");
-			let byKey = new Map(attachment.getAnnotations(false).map(id => {
-				let annotation = Number.isSafeInteger(id) ? Zotero.Items.get(id) : id;
-				return [annotation?.key, annotation];
-			}));
+			let byKey = new Map((await Zotero.Items.getAsync(attachment.getAnnotations(false, true)))
+				.map(annotation => [annotation?.key, annotation]));
 			let prepared = params.updates.map(update => {
 				let annotation = byKey.get(update.annotationKey);
 				if (!annotation?.isAnnotation?.() || annotation.libraryID !== attachment.libraryID || annotation.parentItemID !== attachment.id) {
@@ -1291,7 +1291,7 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 
 		async mutateAnnotation(params, { tx = true } = {}) {
 			validateAnnotationMutation(params);
-			let attachment = lookupItem(Zotero, params.libraryId, params.attachmentKey, "Zotero attachment");
+			let attachment = await lookupItem(Zotero, params.libraryId, params.attachmentKey, "Zotero attachment");
 			if (!attachment.isFileAttachment?.()) throw new Error("library.annotation-mutate target must be a file attachment");
 			let annotation;
 			if (params.action === "create") {
@@ -1308,7 +1308,7 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 				annotation.setTags((params.tags || []).map(tag => ({ tag })));
 			}
 			else {
-				annotation = Zotero.Items.getByLibraryAndKey(params.libraryId, params.annotationKey);
+				annotation = await Zotero.Items.getByLibraryAndKeyAsync(params.libraryId, params.annotationKey);
 				if (!annotation || annotation.libraryID !== params.libraryId || annotation.key !== params.annotationKey) unavailable(`Zotero annotation ${params.libraryId}/${params.annotationKey} was not found`);
 				if (!annotation.isAnnotation?.() || annotation.parentItemID !== attachment.id) throw new Error("library.annotation-mutate annotation does not belong to attachment");
 				revisionConflict(annotation, params.expectedVersion, `Zotero annotation ${params.annotationKey}`);
@@ -1321,11 +1321,11 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 
 		async attachment(params) {
 			validateCompositeParams(params, ATTACHMENT_FIELDS, "attachmentKey", "library.attachment");
-			let attachment = lookupItem(Zotero, params.libraryId, params.attachmentKey, "Zotero attachment");
+			let attachment = await lookupItem(Zotero, params.libraryId, params.attachmentKey, "Zotero attachment");
 			if (!attachment.isAttachment?.() || !attachment.isFileAttachment?.()) {
 				throw new Error("library.attachment target must be a file attachment");
 			}
-			let parent = Zotero.Items.get(attachment.parentItemID);
+			let parent = await Zotero.Items.getAsync(attachment.parentItemID);
 			if (itemIsUnavailable(parent)) unavailable("Zotero attachment parent item is unavailable");
 			if (!parent || parent.libraryID !== attachment.libraryID || !parent.isRegularItem?.()) {
 				throw new Error("Zotero attachment has no valid parent item");
@@ -1337,7 +1337,7 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 
 		async attachmentState(params) {
 			validateCompositeParams(params, ATTACHMENT_STATE_FIELDS, "attachmentKey", "library.attachment-state");
-			let attachment = lookupItem(Zotero, params.libraryId, params.attachmentKey, "Zotero attachment");
+			let attachment = await lookupItem(Zotero, params.libraryId, params.attachmentKey, "Zotero attachment");
 			if (!attachment.isAttachment?.() || !attachment.isFileAttachment?.()) {
 				throw new Error("library.attachment-state target must be a file attachment");
 			}
@@ -1346,7 +1346,7 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 
 		async attachmentSource(params) {
 			validateCompositeParams(params, ATTACHMENT_FIELDS, "attachmentKey", "attachment.open");
-			let attachment = lookupItem(Zotero, params.libraryId, params.attachmentKey, "Zotero attachment");
+			let attachment = await lookupItem(Zotero, params.libraryId, params.attachmentKey, "Zotero attachment");
 			if (!attachment.isAttachment?.() || !attachment.isFileAttachment?.()) {
 				throw new Error("attachment.open target must be a file attachment");
 			}
@@ -1364,7 +1364,7 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 			let parent;
 			if (params.parentItemKey !== undefined) {
 				zoteroKey(params.parentItemKey, "attachment.upload-commit parentItemKey");
-				parent = lookupItem(Zotero, params.libraryId, params.parentItemKey, "Zotero attachment parent");
+				parent = await lookupItem(Zotero, params.libraryId, params.parentItemKey, "Zotero attachment parent");
 				if (!parent.isRegularItem?.()) throw new Error("attachment parent must be a regular item");
 			}
 			let collections = validateCollectionKeys(Zotero, params.libraryId, params.collectionKeys || [], "attachment.upload-commit collectionKeys");
@@ -1398,7 +1398,7 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 			if (!Number.isSafeInteger(params.expectedVersion) || params.expectedVersion < 0) throw new Error("library.attachment-mutate expectedVersion is invalid");
 			let library = Zotero.Libraries.get(params.libraryId);
 			if (!library || library.libraryType === "feed" || !library.filesEditable) unavailable("attachment target library files are not editable");
-			let attachment = Zotero.Items.getByLibraryAndKey(params.libraryId, params.attachmentKey);
+			let attachment = await Zotero.Items.getByLibraryAndKeyAsync(params.libraryId, params.attachmentKey);
 			if (!attachment || attachment.libraryID !== params.libraryId || !attachment.isAttachment?.()) unavailable("Zotero attachment is unavailable");
 			if (params.action !== "restore" && itemIsUnavailable(attachment)) unavailable("Zotero attachment is unavailable");
 			if (params.action === "restore" && !attachment.deleted && !attachment.isInTrash?.()) throw new Error("attachment restore target is not in trash");
@@ -1411,14 +1411,14 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 			}
 			return {
 				action: params.action, attachmentKey: attachment.key, deleted: Boolean(attachment.deleted), libraryId: attachment.libraryID,
-				...(attachment.parentItemID && { parentItemKey: parentKey(Zotero, attachment, "Zotero attachment") }),
+				...(attachment.parentItemID && { parentItemKey: await parentKey(Zotero, attachment, "Zotero attachment") }),
 				synced: Boolean(attachment.synced), version: Number.isSafeInteger(attachment.clientVersion) ? attachment.clientVersion : 0,
 			};
 		},
 
 		async readerState(params) {
 			validateCompositeParams(params, READER_STATE_FIELDS, "attachmentKey", "reader.state");
-			let attachment = lookupItem(Zotero, params.libraryId, params.attachmentKey, "Zotero Reader attachment");
+			let attachment = await lookupItem(Zotero, params.libraryId, params.attachmentKey, "Zotero Reader attachment");
 			if (!attachment.isAttachment?.() || !attachment.isFileAttachment?.()) throw new Error("reader.state target must be a file attachment");
 			return {
 				attachmentKey: attachment.key, libraryId: attachment.libraryID,
@@ -1432,7 +1432,7 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 			positiveLibraryId(params.libraryId, "reader.state-update");
 			zoteroKey(params.attachmentKey, "reader.state-update attachmentKey");
 			if (!Number.isSafeInteger(params.expectedVersion) || params.expectedVersion < 0) throw new Error("reader.state-update expectedVersion is invalid");
-			let attachment = lookupItem(Zotero, params.libraryId, params.attachmentKey, "Zotero Reader attachment");
+			let attachment = await lookupItem(Zotero, params.libraryId, params.attachmentKey, "Zotero Reader attachment");
 			if (!attachment.isAttachment?.() || !attachment.isFileAttachment?.()) throw new Error("reader.state-update target must be a file attachment");
 			revisionConflict(attachment, params.expectedVersion, "Zotero Reader attachment");
 			let location = readerLocation(attachment, params, true);
@@ -1516,14 +1516,14 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 
 		async itemChildren(params) {
 			validateCompositeParams(params, ITEM_CHILDREN_FIELDS, "itemKey", "library.item-children");
-			let item = lookupItem(Zotero, params.libraryId, params.itemKey, "Zotero item");
+			let item = await lookupItem(Zotero, params.libraryId, params.itemKey, "Zotero item");
 			if (!item.isRegularItem?.()) throw new Error("library.item-children target must be a regular item");
-			let attachments = (await Promise.all(Zotero.Items.get(item.getAttachments(false))
+			let attachments = (await Promise.all((await Zotero.Items.getAsync(item.getAttachments(false)))
 				.map(attachment => attachmentSummary(Zotero, attachment, item))))
 				.filter(Boolean)
 				.sort((left, right) => compareText(left.title, right.title)
 					|| compareText(left.attachmentKey, right.attachmentKey));
-			let notes = Zotero.Items.get(item.getNotes(false))
+			let notes = (await Zotero.Items.getAsync(item.getNotes(false)))
 				.map(note => noteSummary(Zotero, note, item))
 				.filter(Boolean)
 				.sort((left, right) => compareText(left.title, right.title)
@@ -1533,21 +1533,21 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 
 		async itemMetadata(params) {
 			validateCompositeParams(params, ITEM_METADATA_FIELDS, "itemKey", "library.item-metadata");
-			let item = lookupItem(Zotero, params.libraryId, params.itemKey, "Zotero item");
+			let item = await lookupItem(Zotero, params.libraryId, params.itemKey, "Zotero item");
 			if (!item.isRegularItem?.()) throw new Error("library.item-metadata target must be a regular item");
 			return itemMetadataSummary(Zotero, item);
 		},
 
 		async itemFacts(params) {
 			validateCompositeParams(params, ITEM_FACTS_FIELDS, "itemKey", "library.item-facts");
-			let item = lookupItem(Zotero, params.libraryId, params.itemKey, "Zotero item");
+			let item = await lookupItem(Zotero, params.libraryId, params.itemKey, "Zotero item");
 			if (!item.isRegularItem?.()) throw new Error("library.item-facts target must be a regular item");
 			return itemFactsSummary(Zotero, item);
 		},
 
 		async updateItem(params, { tx = true } = {}) {
 			validateItemUpdate(params);
-			let item = lookupItem(Zotero, params.libraryId, params.itemKey, "Zotero item");
+			let item = await lookupItem(Zotero, params.libraryId, params.itemKey, "Zotero item");
 			if (!item.isRegularItem?.()) throw new Error("library.item-update target must be a regular item");
 			if (item.clientVersion !== params.expectedVersion) {
 				let error = new Error("Zotero item version changed before update");
@@ -1586,7 +1586,7 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 				item.libraryID = params.libraryId;
 			}
 			else {
-				item = Zotero.Items.getByLibraryAndKey(params.libraryId, params.itemKey);
+				item = await Zotero.Items.getByLibraryAndKeyAsync(params.libraryId, params.itemKey);
 				if (!item || item.libraryID !== params.libraryId || item.key !== params.itemKey || !item.isRegularItem?.()) unavailable("Zotero item is unavailable");
 				if (params.action !== "restore" && itemIsUnavailable(item)) unavailable("Zotero item is unavailable");
 				if (params.action === "restore" && !item.deleted && !item.isInTrash?.()) throw new Error("library.item-mutate restore target is not in trash");
@@ -1623,12 +1623,12 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 
 		async note(params) {
 			validateCompositeParams(params, NOTE_FIELDS, "noteKey", "library.note");
-			let note = lookupItem(Zotero, params.libraryId, params.noteKey, "Zotero note");
+			let note = await lookupItem(Zotero, params.libraryId, params.noteKey, "Zotero note");
 			if (!note.isNote?.()) throw new Error("library.note target must be a Note");
 			let summary = {
 				libraryId: note.libraryID,
 				noteKey: note.key,
-				parentItemKey: parentKey(Zotero, note, "Zotero note"),
+				parentItemKey: await parentKey(Zotero, note, "Zotero note"),
 				title: note.getDisplayTitle?.() || "Untitled note",
 				version: Number.isSafeInteger(note.clientVersion) ? note.clientVersion : 0,
 			};
@@ -1644,7 +1644,7 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 				throw new Error("library.note-update expectedVersion must be a non-negative safe integer");
 			}
 			let html = boundedString(params.html, MAX_NOTE_BYTES, "Zotero Note HTML");
-			let note = lookupItem(Zotero, params.libraryId, params.noteKey, "Zotero note");
+			let note = await lookupItem(Zotero, params.libraryId, params.noteKey, "Zotero note");
 			if (!note.isNote?.()) throw new Error("library.note-update target must be a Note");
 			revisionConflict(note, params.expectedVersion, "Zotero Note");
 			try {
@@ -1673,14 +1673,14 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 				note = new Zotero.Item("note");
 				note.libraryID = params.libraryId;
 				if (params.parentItemKey) {
-					let parent = lookupItem(Zotero, params.libraryId, params.parentItemKey, "Zotero Note parent");
+					let parent = await lookupItem(Zotero, params.libraryId, params.parentItemKey, "Zotero Note parent");
 					if (!parent.isRegularItem?.()) throw new Error("library.note-mutate parent must be a regular item");
 					note.parentItemID = parent.id;
 				}
 				note.setNote(params.html);
 			}
 			else {
-				note = Zotero.Items.getByLibraryAndKey(params.libraryId, params.noteKey);
+				note = await Zotero.Items.getByLibraryAndKeyAsync(params.libraryId, params.noteKey);
 				if (!note || note.libraryID !== params.libraryId || !note.isNote?.()) unavailable("Zotero Note is unavailable");
 				if (params.action !== "restore" && itemIsUnavailable(note)) unavailable("Zotero Note is unavailable");
 				if (params.action === "restore" && !note.deleted && !note.isInTrash?.()) throw new Error("library.note-mutate restore target is not in trash");
@@ -1697,7 +1697,7 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 				action: params.action, deleted: Boolean(note.deleted), libraryId: note.libraryID, noteKey: note.key,
 				synced: Boolean(note.synced), version: Number.isSafeInteger(note.clientVersion) ? note.clientVersion : 0,
 			};
-			if (note.parentItemID) result.parentItemKey = parentKey(Zotero, note, "Zotero Note");
+			if (note.parentItemID) result.parentItemKey = await parentKey(Zotero, note, "Zotero Note");
 			return result;
 		},
 

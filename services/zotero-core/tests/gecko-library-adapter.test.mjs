@@ -84,7 +84,9 @@ function item({
     get annotationType() { return currentAnnotation.type || ""; },
     set annotationType(value) { currentAnnotation.type = value; },
     getAttachments: () => attachments.slice(),
-    getAnnotations: () => annotations.slice(),
+    getAnnotations: (_includeTrashed, asIDs = false) => asIDs
+			? annotations.map(value => Number.isSafeInteger(value) ? value : value.id)
+			: annotations.slice(),
     getCollections: () => currentCollectionIDs.slice(),
     getCreatorsJSON: () => structuredClone(currentCreators),
     getDisplayTitle: () => currentTitle,
@@ -305,8 +307,12 @@ function fixture({
       get: id => Array.isArray(id)
         ? id.map(value => items.find(itemValue => itemValue.id === value)).filter(Boolean)
         : items.find(value => value.id === id) || false,
+			getAsync: async id => Array.isArray(id)
+				? id.map(value => items.find(itemValue => itemValue.id === value)).filter(Boolean)
+				: items.find(value => value.id === id) || false,
 			getAll: async (libraryId, onlyTopLevel = false) => items.filter(value => value.libraryID === libraryId && (onlyTopLevel ? value.isRegularItem() : true)),
       getByLibraryAndKey: (libraryId, key) => items.find(value => value.libraryID === libraryId && value.key === key) || false,
+			getByLibraryAndKeyAsync: async (libraryId, key) => items.find(value => value.libraryID === libraryId && value.key === key) || false,
     },
     ItemTypes: { getID: itemType => itemType === "journalArticle" ? itemType : false, getName: itemTypeID => itemTypeID },
 		Libraries: {
