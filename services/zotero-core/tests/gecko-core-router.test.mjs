@@ -42,10 +42,13 @@ function createRouter(overrides = {}) {
     async collections(params) { calls.push(["collections", params]); return { collections: [] }; },
     async itemChildren(params) { calls.push(["itemChildren", params]); return { attachments: [], notes: [] }; },
     async itemMetadata(params) { calls.push(["itemMetadata", params]); return { itemKey: params.itemKey, libraryId: params.libraryId }; },
+    async libraries(params) { calls.push(["libraries", params]); return { libraries: [] }; },
     async note(params) { calls.push(["note", params]); return { html: "<p>Note</p>", libraryId: 1, noteKey: "NOTE0001", parentItemKey: "ITEM0001", title: "Note" }; },
     async profileBackup() { calls.push(["profileBackup"]); return { backupCreated: true, completedAt: 1234 }; },
     async profileStatus() { calls.push(["profileStatus"]); return { compatibilityVersion: 10, integrityCheckRequired: false, profileEpoch: "profile-epoch", profileName: "Disposable Profile", quickCheckPassed: true, readOnly: false, schemaVersion: 142, upstreamVersion: "7.1-real" }; },
+    async savedSearches(params) { calls.push(["savedSearches", params]); return { searches: [] }; },
     async search(params, options) { calls.push(["search", params, options]); return { items: [], total: 0 }; },
+    async tags(params) { calls.push(["tags", params]); return { tags: [], total: 0 }; },
   };
   const selectedAdapter = { ...adapter, ...(overrides.adapter || {}) };
   return {

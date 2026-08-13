@@ -176,6 +176,10 @@ function fixture({
   const group = collection({ id: 201, key: "SHARED01", libraryID: 2, name: "Team Physics", childItems: [note, groupAlpha] });
   const collections = [personal, nested, group];
   const items = [attachment, groupAttachment, highlight, childNote, alpha, beta, groupAlpha, note];
+  const searches = [
+    Object.freeze({ key: "SEARCH01", libraryID: 1, name: "Unread methods", synced: true, version: 4 }),
+    Object.freeze({ key: "SEARCH01", libraryID: 2, name: "Group unread", synced: false, version: 2 }),
+  ];
 
   const Zotero = {
     Collections: {
@@ -191,10 +195,33 @@ function fixture({
       getByLibraryAndKey: (libraryId, key) => items.find(value => value.libraryID === libraryId && value.key === key) || false,
     },
     ItemTypes: { getName: itemTypeID => itemTypeID },
-    Libraries: { getAll: () => [{ libraryID: 2, name: "Group" }, { libraryID: 1, name: "My Library" }] },
+    Libraries: { getAll: () => [
+      { allowsLinkedFiles: false, archived: false, editable: true, filesEditable: false, groupID: 20, lastSync: 200, libraryID: 2, libraryType: "group", libraryVersion: 8, name: "Group", storageVersion: 7, syncable: true },
+      { allowsLinkedFiles: true, archived: false, editable: true, filesEditable: true, lastSync: 100, libraryID: 1, libraryType: "user", libraryVersion: 10, name: "My Library", storageVersion: 9, syncable: true },
+    ] },
+    Searches: { getAll: async libraryId => searches.filter(value => value.libraryID === libraryId) },
+    Tags: { getAll: async libraryId => libraryId === 1
+      ? [{ tag: "Methods" }, { tag: "reading", type: 1 }, { tag: "Renormalization" }]
+      : [{ tag: "Group" }] },
   };
   return { Zotero };
 }
+
+test("lists libraries, saved searches, and paginated tags without database or path data", async () => {
+  const adapter = createZoteroLibraryAdapter(fixture());
+
+  assert.deepEqual(await adapter.libraries({}), { libraries: [
+    { allowsLinkedFiles: true, archived: false, editable: true, filesEditable: true, lastSync: 100, libraryId: 1, libraryType: "user", libraryVersion: 10, name: "My Library", storageVersion: 9, syncable: true },
+    { allowsLinkedFiles: false, archived: false, editable: true, filesEditable: false, groupId: 20, lastSync: 200, libraryId: 2, libraryType: "group", libraryVersion: 8, name: "Group", storageVersion: 7, syncable: true },
+  ] });
+  assert.deepEqual(await adapter.savedSearches({ libraryId: 2 }), { searches: [
+    { libraryId: 2, name: "Group unread", searchKey: "SEARCH01", synced: false, version: 2 },
+  ] });
+  assert.deepEqual(await adapter.tags({ cursor: "1", libraryId: 1, limit: 1, query: "r" }), {
+    tags: [{ name: "Renormalization", type: 0 }],
+    total: 2,
+  });
+});
 
 test("normalizes root and nested collections with composite library identity", async () => {
   const adapter = createZoteroLibraryAdapter(fixture());

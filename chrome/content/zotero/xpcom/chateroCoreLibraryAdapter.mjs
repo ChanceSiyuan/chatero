@@ -24,6 +24,9 @@ const ITEM_METADATA_FIELDS = new Set(["itemKey", "libraryId"]);
 const ANNOTATION_FIELDS = new Set(["attachmentKey", "libraryId"]);
 const ATTACHMENT_FIELDS = new Set(["attachmentKey", "libraryId"]);
 const NOTE_FIELDS = new Set(["libraryId", "noteKey"]);
+const LIBRARIES_FIELDS = new Set();
+const SAVED_SEARCH_FIELDS = new Set(["libraryId"]);
+const TAG_FIELDS = new Set(["cursor", "libraryId", "limit", "query"]);
 const MAX_PAGE_SIZE = 200;
 const MAX_NOTE_BYTES = 512 * 1024;
 const MAX_ANNOTATION_FIELD_BYTES = 256 * 1024;
@@ -119,6 +122,18 @@ function validateSearchParams(params) {
 	}
 	if (params.sortDirection !== undefined && !SEARCH_SORT_DIRECTIONS.has(params.sortDirection)) {
 		throw new Error("library.search sortDirection must be asc or desc");
+	}
+}
+
+function validateTagsParams(params) {
+	exactObject(params, TAG_FIELDS, "library.tags params");
+	positiveLibraryId(params.libraryId, "library.tags");
+	if (typeof params.query !== "string") throw new Error("library.tags query must be a string");
+	if (!Number.isSafeInteger(params.limit) || params.limit < 1 || params.limit > MAX_PAGE_SIZE) {
+		throw new Error(`library.tags limit must be an integer from 1 through ${MAX_PAGE_SIZE}`);
+	}
+	if (params.cursor !== undefined && (typeof params.cursor !== "string" || !/^\d+$/.test(params.cursor))) {
+		throw new Error("library.tags cursor must be a decimal offset");
 	}
 }
 
@@ -315,6 +330,8 @@ function validateZotero(Zotero) {
 		[Zotero?.Items, "getByLibraryAndKey"],
 		[Zotero?.ItemTypes, "getName"],
 		[Zotero?.Libraries, "getAll"],
+		[Zotero?.Searches, "getAll"],
+		[Zotero?.Tags, "getAll"],
 	];
 	for (let [owner, method] of required) {
 		if (typeof owner?.[method] !== "function") {
@@ -328,6 +345,54 @@ export function createZoteroLibraryAdapter({ Zotero, openAttachmentFile = openGe
 	if (typeof openAttachmentFile !== "function") throw new Error("attachment source opener is required");
 
 	return Object.freeze({
+		async libraries(params) {
+			exactObject(params, LIBRARIES_FIELDS, "library.libraries params");
+			let libraries = Zotero.Libraries.getAll().map(library => ({
+				allowsLinkedFiles: Boolean(library.allowsLinkedFiles),
+				archived: Boolean(library.archived),
+				editable: Boolean(library.editable),
+				filesEditable: Boolean(library.filesEditable),
+				...(Number.isSafeInteger(library.groupID) && { groupId: library.groupID }),
+				lastSync: Number.isSafeInteger(library.lastSync) ? library.lastSync : 0,
+				libraryId: library.libraryID,
+				libraryType: library.libraryType,
+				libraryVersion: Number.isSafeInteger(library.libraryVersion) ? library.libraryVersion : 0,
+				name: library.name,
+				storageVersion: Number.isSafeInteger(library.storageVersion) ? library.storageVersion : 0,
+				syncable: Boolean(library.syncable),
+			})).sort((left, right) => left.libraryId - right.libraryId);
+			return { libraries };
+		},
+
+		async savedSearches(params) {
+			exactObject(params, SAVED_SEARCH_FIELDS, "library.saved-searches params");
+			positiveLibraryId(params.libraryId, "library.saved-searches");
+			let searches = (await Zotero.Searches.getAll(params.libraryId))
+				.filter(value => !itemIsUnavailable(value))
+				.map(search => ({
+					libraryId: search.libraryID,
+					name: search.name,
+					searchKey: search.key,
+					synced: Boolean(search.synced),
+					version: Number.isSafeInteger(search.version) ? search.version : 0,
+				}))
+				.sort((left, right) => compareText(left.name, right.name) || compareText(left.searchKey, right.searchKey));
+			return { searches };
+		},
+
+		async tags(params) {
+			validateTagsParams(params);
+			let query = params.query.trim().toLocaleLowerCase("en-US");
+			let matches = (await Zotero.Tags.getAll(params.libraryId))
+				.map(tag => ({ name: tag.tag, type: Number.isSafeInteger(tag.type) ? tag.type : 0 }))
+				.filter(tag => !query || tag.name.toLocaleLowerCase("en-US").includes(query))
+				.sort((left, right) => compareText(left.name, right.name) || left.type - right.type);
+			let offset = Number(params.cursor || 0);
+			if (offset > matches.length) throw new Error("library.tags cursor is outside the result set");
+			let tags = matches.slice(offset, offset + params.limit);
+			let nextOffset = offset + tags.length;
+			return { tags, ...(nextOffset < matches.length && { nextCursor: String(nextOffset) }), total: matches.length };
+		},
 		async annotations(params) {
 			validateCompositeParams(params, ANNOTATION_FIELDS, "attachmentKey", "library.annotations");
 			let attachment = lookupItem(Zotero, params.libraryId, params.attachmentKey, "Zotero attachment");

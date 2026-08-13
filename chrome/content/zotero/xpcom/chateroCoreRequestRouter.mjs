@@ -51,10 +51,13 @@ function validateRouterOptions(options) {
 			|| typeof options.adapter.collections !== "function"
 			|| typeof options.adapter.itemChildren !== "function"
 			|| typeof options.adapter.itemMetadata !== "function"
+			|| typeof options.adapter.libraries !== "function"
 			|| typeof options.adapter.note !== "function"
 			|| typeof options.adapter.profileBackup !== "function"
 			|| typeof options.adapter.profileStatus !== "function"
-			|| typeof options.adapter.search !== "function") {
+			|| typeof options.adapter.savedSearches !== "function"
+			|| typeof options.adapter.search !== "function"
+			|| typeof options.adapter.tags !== "function") {
 		throw new Error("Gecko Core router requires Profile and Library adapters");
 	}
 	if (typeof options.bootstrapToken !== "string" || options.bootstrapToken.length < 24) {
@@ -229,7 +232,10 @@ export function createGeckoCoreRequestRouter(options = {}) {
 			if (message.method === "library.collections") return { result: await adapter.collections(message.params) };
 			if (message.method === "library.item-children") return { result: await adapter.itemChildren(message.params) };
 			if (message.method === "library.item-metadata") return { result: await adapter.itemMetadata(message.params) };
+			if (message.method === "library.libraries") return { result: await adapter.libraries(message.params) };
 			if (message.method === "library.note") return { result: await adapter.note(message.params) };
+			if (message.method === "library.saved-searches") return { result: await adapter.savedSearches(message.params) };
+			if (message.method === "library.tags") return { result: await adapter.tags(message.params) };
 			if (message.method === "library.search") {
 				if (typeof message.cancellationId !== "string" || !message.cancellationId) {
 					throw new Error("library.search cancellationId is required");

@@ -85,7 +85,10 @@ export async function startCore({
   fixtureItems = [],
   fixtureItemChildren = [],
   fixtureItemMetadata = [],
+  fixtureLibraries = [],
   fixtureNotes = [],
+  fixtureSavedSearches = [],
+  fixtureTags = [],
   fixtureCorePath = DEFAULT_FIXTURE_CORE,
   fixtureSearchDelayMs = 0,
   geckoExecutable,
@@ -112,7 +115,10 @@ export async function startCore({
     itemChildren: fixtureItemChildren,
     itemMetadata: fixtureItemMetadata,
     items: fixtureItems,
+    libraries: fixtureLibraries,
     notes: fixtureNotes,
+    savedSearches: fixtureSavedSearches,
+    tags: fixtureTags,
   })}\n`, { mode: 0o600 });
 
   const launch = buildCoreLaunchPlan({ fixtureCorePath, geckoExecutable, profileDirectory });

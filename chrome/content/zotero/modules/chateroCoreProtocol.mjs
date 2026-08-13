@@ -23,8 +23,11 @@ export const METHOD_CAPABILITIES = Object.freeze({
   "library.collections": "library:read",
   "library.item-children": "library:read",
   "library.item-metadata": "library:read",
+  "library.libraries": "library:read",
   "library.note": "library:read",
+  "library.saved-searches": "library:read",
   "library.search": "library:search",
+  "library.tags": "library:read",
   "profile.backup": "profile:write",
   "profile.status": "profile:read"
 });
@@ -73,13 +76,25 @@ export const METHOD_TYPES = Object.freeze({
     "params": "LibraryItemMetadataParams",
     "result": "LibraryItemMetadata"
   },
+  "library.libraries": {
+    "params": "LibraryLibrariesParams",
+    "result": "LibraryLibrariesResult"
+  },
   "library.note": {
     "params": "LibraryNoteParams",
     "result": "LibraryNoteResult"
   },
+  "library.saved-searches": {
+    "params": "LibrarySavedSearchesParams",
+    "result": "LibrarySavedSearchesResult"
+  },
   "library.search": {
     "params": "LibrarySearchParams",
     "result": "LibrarySearchResult"
+  },
+  "library.tags": {
+    "params": "LibraryTagsParams",
+    "result": "LibraryTagsResult"
   },
   "profile.backup": {
     "params": "ProfileBackupParams",

@@ -67,6 +67,24 @@
       "resultType": "LibraryCollectionsResult"
     },
     {
+      "name": "library.libraries",
+      "capability": "library:read",
+      "paramsType": "LibraryLibrariesParams",
+      "resultType": "LibraryLibrariesResult"
+    },
+    {
+      "name": "library.saved-searches",
+      "capability": "library:read",
+      "paramsType": "LibrarySavedSearchesParams",
+      "resultType": "LibrarySavedSearchesResult"
+    },
+    {
+      "name": "library.tags",
+      "capability": "library:read",
+      "paramsType": "LibraryTagsParams",
+      "resultType": "LibraryTagsResult"
+    },
+    {
       "name": "library.item-children",
       "capability": "library:read",
       "paramsType": "LibraryItemChildrenParams",
@@ -286,6 +304,79 @@
       "kind": "object",
       "fields": {
         "collections": "LibraryCollectionSummary[]"
+      }
+    },
+    "LibraryLibrariesParams": {
+      "kind": "object",
+      "fields": {}
+    },
+    "LibrarySummary": {
+      "kind": "object",
+      "fields": {
+        "allowsLinkedFiles": "boolean",
+        "archived": "boolean",
+        "editable": "boolean",
+        "filesEditable": "boolean",
+        "groupId?": "number",
+        "lastSync": "number",
+        "libraryId": "number",
+        "libraryType": "string",
+        "libraryVersion": "number",
+        "name": "string",
+        "storageVersion": "number",
+        "syncable": "boolean"
+      }
+    },
+    "LibraryLibrariesResult": {
+      "kind": "object",
+      "fields": {
+        "libraries": "LibrarySummary[]"
+      }
+    },
+    "LibrarySavedSearchesParams": {
+      "kind": "object",
+      "fields": {
+        "libraryId": "number"
+      }
+    },
+    "LibrarySavedSearchSummary": {
+      "kind": "object",
+      "fields": {
+        "libraryId": "number",
+        "name": "string",
+        "searchKey": "string",
+        "synced": "boolean",
+        "version": "number"
+      }
+    },
+    "LibrarySavedSearchesResult": {
+      "kind": "object",
+      "fields": {
+        "searches": "LibrarySavedSearchSummary[]"
+      }
+    },
+    "LibraryTagsParams": {
+      "kind": "object",
+      "fields": {
+        "cursor?": "string",
+        "libraryId": "number",
+        "limit": "number",
+        "query": "string"
+      }
+    },
+    "LibraryTagSummary": {
+      "kind": "object",
+      "fields": {
+        "name": "string",
+        "type": "number"
+      }
+    },
+    "LibraryTagsResult": {
+      "kind": "object",
+      "fields": {
+        "nextCursor?": "string",
+        "tags": "LibraryTagSummary[]",
+        "total": "number"
       }
     },
     "LibrarySearchResult": {

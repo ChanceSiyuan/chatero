@@ -110,7 +110,10 @@ async function main() {
   const fixtureCollections = Array.isArray(fixture?.collections) ? fixture.collections : [];
   const fixtureItemChildren = Array.isArray(fixture?.itemChildren) ? fixture.itemChildren : [];
   const fixtureItemMetadata = Array.isArray(fixture?.itemMetadata) ? fixture.itemMetadata : [];
+  const fixtureLibraries = Array.isArray(fixture?.libraries) ? fixture.libraries : [];
   const fixtureNotes = Array.isArray(fixture?.notes) ? fixture.notes : [];
+  const fixtureSavedSearches = Array.isArray(fixture?.savedSearches) ? fixture.savedSearches : [];
+  const fixtureTags = Array.isArray(fixture?.tags) ? fixture.tags : [];
   const fixtureAnnotations = Array.isArray(fixture?.annotations) ? fixture.annotations : [];
   const fixtureAttachmentContents = Array.isArray(fixture?.attachmentContents) ? fixture.attachmentContents : [];
   if (!Array.isArray(fixtureItems)) throw new Error("fixture items must be an array");
@@ -251,6 +254,35 @@ async function main() {
       const value = fixtureItemChildren.find(entry => entry.libraryId === message.params.libraryId && entry.itemKey === message.params.itemKey);
       if (!value) throw new Error(`fixture item ${message.params.libraryId}/${message.params.itemKey} was not found`);
       return { result: { attachments: value.attachments, notes: value.notes } };
+    }
+    if (message.method === "library.libraries") {
+      if (!message.params || typeof message.params !== "object" || Array.isArray(message.params) || Object.keys(message.params).length) {
+        throw new Error("library.libraries params must be an empty object");
+      }
+      return { result: { libraries: fixtureLibraries } };
+    }
+    if (message.method === "library.saved-searches") {
+      if (!message.params || typeof message.params !== "object" || Array.isArray(message.params)
+        || Object.keys(message.params).length !== 1 || !Number.isSafeInteger(message.params.libraryId) || message.params.libraryId < 1) {
+        throw new Error("library.saved-searches params require libraryId");
+      }
+      return { result: { searches: fixtureSavedSearches.filter(value => value.libraryId === message.params.libraryId) } };
+    }
+    if (message.method === "library.tags") {
+      if (!message.params || typeof message.params !== "object" || Array.isArray(message.params)
+        || !Number.isSafeInteger(message.params.libraryId) || message.params.libraryId < 1
+        || typeof message.params.query !== "string"
+        || !Number.isSafeInteger(message.params.limit) || message.params.limit < 1 || message.params.limit > 200
+        || (message.params.cursor !== undefined && (typeof message.params.cursor !== "string" || !/^\d+$/.test(message.params.cursor)))) {
+        throw new Error("library.tags params are invalid");
+      }
+      const matches = fixtureTags.filter(value => value.libraryId === message.params.libraryId)
+        .filter(value => !message.params.query || value.name.toLocaleLowerCase("en-US").includes(message.params.query.toLocaleLowerCase("en-US")))
+        .map(({ libraryId: _, ...value }) => value);
+      const offset = Number(message.params.cursor || 0);
+      const tags = matches.slice(offset, offset + message.params.limit);
+      const nextOffset = offset + tags.length;
+      return { result: { tags, ...(nextOffset < matches.length && { nextCursor: String(nextOffset) }), total: matches.length } };
     }
     if (message.method === "library.item-metadata") {
       validateIdentityParams(message.params, "itemKey", "library.item-metadata");
