@@ -263,7 +263,7 @@ test("the canonical series pins Chatero startup compatibility after native Codex
   assert.match(openAIIsolationBytes.toString("utf8"), /return source === 'openai' \? \[\] : \[copilotResource, repoResource\]/);
   assert.match(openAIIsolationBytes.toString("utf8"), /codexProtectedResourcesForUsageSource\('openai', copilot, repo\), \[\]/);
   assert.match(openAIIsolationBytes.toString("utf8"), /`features\.plugins=false`/);
-  assert.match(codexConnectionBytes.toString("utf8"), /this\._connection\.kind === 'ready'/);
+  assert.match(codexConnectionBytes.toString("utf8"), /connectionAfterValidation\.kind === 'ready'/);
   assert.match(codexConnectionBytes.toString("utf8"), /reuses a connection established while OpenAI validation was pending/);
   assert.match(codexOnlyBytes.toString("utf8"), /AgentHostClaudeAgentEnabledEnvVar\], false/);
 });

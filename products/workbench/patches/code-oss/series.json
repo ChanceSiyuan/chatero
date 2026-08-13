@@ -51,7 +51,7 @@
     },
     {
       "file": "0013-deduplicate-codex-connection-startup.patch",
-      "sha256": "61160022f211fc86552f1451d9049d425a70a208c5633d70593645c628010f28"
+      "sha256": "87dc7098beb22cd6dafe9a61295c9b0ecbfb1b1c45d7ab6008e2b7389a316405"
     },
     {
       "file": "0014-default-agent-host-to-codex-only.patch",

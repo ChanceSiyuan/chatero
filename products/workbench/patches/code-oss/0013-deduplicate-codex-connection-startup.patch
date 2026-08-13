@@ -9,11 +9,12 @@ index 665617a0d43..179ee422b70 100644
 +			// Validation can establish the shared connection while this caller is
 +			// suspended. Re-check the state before spawning so an earlier waiter and
 +			// the validation path cannot create two app-server processes.
-+			if (this._connection.kind === 'ready') {
-+				return this._connection;
++			const connectionAfterValidation = this._connection as ConnectionState;
++			if (connectionAfterValidation.kind === 'ready') {
++				return connectionAfterValidation;
 +			}
-+			if (this._connection.kind === 'starting') {
-+				return this._connection.promise;
++			if (connectionAfterValidation.kind === 'starting') {
++				return connectionAfterValidation.promise;
 +			}
  		}
  		const token = this._ensureAuthenticated();
