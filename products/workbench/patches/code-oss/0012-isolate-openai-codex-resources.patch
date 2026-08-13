@@ -1,0 +1,44 @@
+diff --git a/src/vs/platform/agentHost/node/codex/codexAccountState.ts b/src/vs/platform/agentHost/node/codex/codexAccountState.ts
+--- a/src/vs/platform/agentHost/node/codex/codexAccountState.ts
++++ b/src/vs/platform/agentHost/node/codex/codexAccountState.ts
+@@ -40,6 +40,6 @@ export function codexProtectedResourcesForUsageSource(
+ 	source: CodexUsageSource,
+ 	copilotResource: ProtectedResourceMetadata,
+ 	repoResource: ProtectedResourceMetadata,
+ ): ProtectedResourceMetadata[] {
+-	return source === 'openai' ? [repoResource] : [copilotResource, repoResource];
++	return source === 'openai' ? [] : [copilotResource, repoResource];
+ }
+diff --git a/src/vs/platform/agentHost/node/codex/codexLaunchConfig.ts b/src/vs/platform/agentHost/node/codex/codexLaunchConfig.ts
+--- a/src/vs/platform/agentHost/node/codex/codexLaunchConfig.ts
++++ b/src/vs/platform/agentHost/node/codex/codexLaunchConfig.ts
+@@ -73,6 +73,7 @@ export function buildCodexLaunchConfig(
+ 		// Codex filters its shell tool's env through `shell_environment_policy`,
+ 		// so pin the marker there too — a user policy (e.g. `inherit = "core"`)
+ 		// would otherwise drop it.
+ 		`shell_environment_policy.set.${AiAgentEnvVar}="${AiAgentEnvValue}"`,
+ 		`features.tool_call_mcp_elicitation=false`,
++		`features.plugins=false`,
+ 		...(proxy ? [`features.image_generation=false`] : []),
+ 		...productPermissionOverrides,
+diff --git a/src/vs/platform/agentHost/test/node/codex/codexAccountState.test.ts b/src/vs/platform/agentHost/test/node/codex/codexAccountState.test.ts
+--- a/src/vs/platform/agentHost/test/node/codex/codexAccountState.test.ts
++++ b/src/vs/platform/agentHost/test/node/codex/codexAccountState.test.ts
+@@ -52,6 +52,6 @@ suite('Codex account state', () => {
+ 	test('does not request a Copilot token while OpenAI is active', () => {
+ 		const copilot = { resource: 'https://api.github.com', required: true };
+ 		const repo = { resource: 'https://api.github.com/repos', required: false };
+-		assert.deepStrictEqual(codexProtectedResourcesForUsageSource('openai', copilot, repo), [repo]);
++		assert.deepStrictEqual(codexProtectedResourcesForUsageSource('openai', copilot, repo), []);
+ 		assert.deepStrictEqual(codexProtectedResourcesForUsageSource('copilot', copilot, repo), [copilot, repo]);
+ 	});
+diff --git a/src/vs/platform/agentHost/test/node/codex/codexLaunchConfig.test.ts b/src/vs/platform/agentHost/test/node/codex/codexLaunchConfig.test.ts
+--- a/src/vs/platform/agentHost/test/node/codex/codexLaunchConfig.test.ts
++++ b/src/vs/platform/agentHost/test/node/codex/codexLaunchConfig.test.ts
+@@ -24,5 +24,6 @@ suite('Codex launch configuration', () => {
+ 		assert.deepStrictEqual(config.args, [
+ 			'app-server',
+ 			'-c', 'shell_environment_policy.set.AI_AGENT="github_copilot_vscode_agent"',
+ 			'-c', 'features.tool_call_mcp_elicitation=false',
++			'-c', 'features.plugins=false',
+ 		]);

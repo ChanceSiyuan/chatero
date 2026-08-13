@@ -24,6 +24,9 @@
   "agentSdks": {},
   "builtInExtensions": [],
   "builtInExtensionsEnabledWithAutoUpdates": [],
+  "excludedSystemExtensionNames": [
+    "copilot-chat"
+  ],
   "defaultChatAgent": null,
   "extensionEnabledApiProposals": {
     "chatero.chatero-remote": [

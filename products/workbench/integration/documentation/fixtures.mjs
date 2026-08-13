@@ -18,6 +18,7 @@ export const TEXT_DOCUMENT_SCENARIOS = Object.freeze([
   "disconnect-reconnect-pending",
   "nonce-bound-codemirror-styles",
   "activation-failure-isolation",
+  "upstream-agent-extension-absent",
 ]);
 
 async function fixtureTempBase() {

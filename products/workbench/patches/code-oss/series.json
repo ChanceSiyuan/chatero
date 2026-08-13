@@ -40,6 +40,14 @@
     {
       "file": "0010-shallow-pin-live-codex-home.patch",
       "sha256": "bed28447470853311fe3738ebf03cb72106a18cabbaafb99b7e22b23298f1085"
+    },
+    {
+      "file": "0011-exclude-unshipped-system-extensions.patch",
+      "sha256": "350f750bc5c8dca19d22b6ce739b9349194a7c2455cad5f6ffdcbb0ab6c292f1"
+    },
+    {
+      "file": "0012-isolate-openai-codex-resources.patch",
+      "sha256": "b3b649d84d8e483a88c78ec5826c2d99b4a93d8170935e6b2ba07be4097d1dd0"
     }
   ]
 }

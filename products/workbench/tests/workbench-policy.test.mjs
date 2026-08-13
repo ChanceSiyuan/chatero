@@ -40,6 +40,7 @@ async function createPolicyFixture({
   await writeFile(join(root, "tests-are-outside-policy-scope.js"), outsideText);
   await writeFile(join(root, "extensions", "chatero-zotero", "extension.mjs"), "export const activate = () => {};\n");
   await mkdir(join(checkout, "build", "npm"), { recursive: true });
+  await mkdir(join(checkout, "extensions", "copilot"), { recursive: true });
   await writeFile(join(checkout, "package.json"), JSON.stringify({
     scripts: buildScripts,
     dependencies,
@@ -53,6 +54,11 @@ async function createPolicyFixture({
   await writeFile(join(checkout, "build", "gulpfile.vscode.ts"), packaging);
   await writeFile(join(checkout, "build", "gulpfile.extensions.ts"), packaging);
   await writeFile(join(checkout, "build", "gulpfile.reh.ts"), packaging);
+  await writeFile(join(checkout, "extensions", "copilot", "package.json"), JSON.stringify({
+    name: "copilot-chat",
+    publisher: "GitHub",
+    version: "0.0.1",
+  }));
   const productPath = join(generated, "product.json");
   await writeFile(productPath, JSON.stringify({
     nameShort: "Chatero",
@@ -61,6 +67,7 @@ async function createPolicyFixture({
       itemUrl: "https://open-vsx.org/vscode/item",
       resourceUrlTemplate: "https://open-vsx.org/vscode/asset/{publisher}/{name}/{version}/Microsoft.VisualStudio.Code.WebResources/extension",
     },
+    excludedSystemExtensionNames: ["copilot-chat"],
     ...productFields,
   }));
   return { checkout, productPath, root };
@@ -94,6 +101,32 @@ test("accepts Chatero identity, Open VSX, and an unrestricted patch set", async 
   assert.equal(report.ok, true);
   assert.ok(report.scannedFiles >= 3);
   assert.deepEqual(report.violations, []);
+});
+
+test("rejects an upstream system extension that is not excluded from Chatero", async () => {
+  const { verifyWorkbenchPolicy } = await import("../scripts/lib/workbench-policy.mjs");
+  const input = await createPolicyFixture({
+    productFields: { excludedSystemExtensionNames: [] },
+  });
+
+  const report = await verifyWorkbenchPolicy(input);
+
+  assert.equal(report.ok, false);
+  assert.deepEqual(report.violations.map(value => value.rule), ["unexcluded-system-extension"]);
+});
+
+test("rejects malformed or duplicate system extension exclusions", async () => {
+  const { verifyWorkbenchPolicy } = await import("../scripts/lib/workbench-policy.mjs");
+  for (const excludedSystemExtensionNames of [
+    ["copilot-chat", "copilot-chat"],
+    ["copilot-chat", 42],
+    "copilot-chat",
+  ]) {
+    const input = await createPolicyFixture({ productFields: { excludedSystemExtensionNames } });
+    const report = await verifyWorkbenchPolicy(input);
+    assert.equal(report.ok, false);
+    assert.ok(report.violations.some(value => value.rule === "invalid-system-extension-exclusions"));
+  }
 });
 
 test("does not scan arbitrary repository files or user workspace content", async () => {

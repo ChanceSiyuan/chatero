@@ -122,6 +122,11 @@ suite(`Documentation TextDocument editor (${target})`, () => {
         assert.ok(zotero, "Zotero extension is unavailable after Documentation activation");
         return;
       }
+      if (scenario === "upstream-agent-extension-absent") {
+        assert.equal(vscode.extensions.getExtension("GitHub.copilot-chat"), undefined);
+        assert.equal(vscode.extensions.getExtension("chatero.chatero-documentation")?.isActive, true);
+        return;
+      }
 
       const [changes, coordinator, bridge, rebase] = await Promise.all([
         importProductModule("text-change-set.mjs"),

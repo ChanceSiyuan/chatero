@@ -138,6 +138,7 @@ test("driver declares the complete shared local and SSH scenario matrix", async 
     "disconnect-reconnect-pending",
     "nonce-bound-codemirror-styles",
     "activation-failure-isolation",
+    "upstream-agent-extension-absent",
   ]);
   const runner = await readFile(join(repositoryRoot, "products/workbench/integration/documentation/driver/run.cjs"), "utf8");
   assert.match(runner, /forbidPending|failZeroTests|forbidOnly/);

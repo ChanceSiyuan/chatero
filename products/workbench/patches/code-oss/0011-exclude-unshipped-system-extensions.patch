@@ -1,0 +1,26 @@
+diff --git a/src/vs/base/common/product.ts b/src/vs/base/common/product.ts
+--- a/src/vs/base/common/product.ts
++++ b/src/vs/base/common/product.ts
+@@ -121,6 +121,7 @@ export interface IProductConfiguration {
+ 	readonly sharedDataFolderName: string; // location for shared data (e.g. ~/.vscode-insiders-shared)
+ 
+ 	readonly builtInExtensions?: IBuiltInExtension[];
++	readonly excludedSystemExtensionNames?: readonly string[];
+ 	readonly walkthroughMetadata?: IProductWalkthrough[];
+ 	readonly featuredExtensions?: IFeaturedExtension[];
+ 
+diff --git a/src/vs/platform/extensionManagement/common/extensionsScannerService.ts b/src/vs/platform/extensionManagement/common/extensionsScannerService.ts
+--- a/src/vs/platform/extensionManagement/common/extensionsScannerService.ts
++++ b/src/vs/platform/extensionManagement/common/extensionsScannerService.ts
+@@ -219,6 +219,11 @@ export class ExtensionsScannerService extends Disposable implements IExtensions
+ 		const [defaultSystemExtensions, devSystemExtensions] = await Promise.all(promises);
+ 		let allSystemExtensions = [...defaultSystemExtensions, ...devSystemExtensions];
+ 
++		if (this.productService.excludedSystemExtensionNames?.length) {
++			const excludedNames = new Set(this.productService.excludedSystemExtensionNames);
++			allSystemExtensions = allSystemExtensions.filter(extension => !excludedNames.has(extension.manifest.name));
++		}
++
+ 		if (this.environmentService.skipBuiltinExtensions?.length) {
+ 			const skipSet = new Set(this.environmentService.skipBuiltinExtensions.map(id => id.toLowerCase()));
+ 			allSystemExtensions = allSystemExtensions.filter(ext => !skipSet.has(ext.identifier.id.toLowerCase()));

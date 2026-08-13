@@ -286,6 +286,100 @@ function verifyGallery(root, productPath, text, violations) {
   }
 }
 
+async function verifySystemExtensionExclusions(root, productPath, text, checkout, violations) {
+  let product;
+  try {
+    product = JSON.parse(text);
+  }
+  catch {
+    return;
+  }
+  const configured = product?.excludedSystemExtensionNames;
+  const validNames = Array.isArray(configured)
+    ? configured.filter(value => typeof value === "string" && value.length > 0)
+    : [];
+  const valid = Array.isArray(configured)
+    && validNames.length === configured.length
+    && new Set(validNames).size === validNames.length;
+  if (!valid) {
+    const lines = text.split(/\r?\n/);
+    const lineIndex = Math.max(0, lines.findIndex(line => line.includes('"excludedSystemExtensionNames"')));
+    violations.push({
+      rule: "invalid-system-extension-exclusions",
+      path: displayPath(root, productPath),
+      line: lineIndex + 1,
+      excerpt: excerpt(lines[lineIndex] ?? "excludedSystemExtensionNames"),
+    });
+  }
+  if (!checkout) return;
+
+  const extensionDirectory = join(resolve(checkout), "extensions", "copilot");
+  const manifestPath = join(extensionDirectory, "package.json");
+  let directoryMetadata;
+  try {
+    directoryMetadata = await lstat(extensionDirectory);
+  }
+  catch (error) {
+    if (error?.code === "ENOENT") return;
+    throw error;
+  }
+  if (!directoryMetadata.isDirectory() || directoryMetadata.isSymbolicLink()) {
+    violations.push({
+      rule: "invalid-system-extension-manifest",
+      path: displayPath(root, extensionDirectory),
+      line: 1,
+      excerpt: "system extension directory must be a real directory",
+    });
+    return;
+  }
+  let manifestMetadata;
+  let manifestText;
+  try {
+    manifestMetadata = await lstat(manifestPath);
+    if (!manifestMetadata.isFile() || manifestMetadata.isSymbolicLink()) throw new Error("manifest must be a real file");
+    manifestText = await readFile(manifestPath, "utf8");
+  }
+  catch (error) {
+    violations.push({
+      rule: "invalid-system-extension-manifest",
+      path: displayPath(root, manifestPath),
+      line: 1,
+      excerpt: error.message.slice(0, 160),
+    });
+    return;
+  }
+  let manifest;
+  try {
+    manifest = JSON.parse(manifestText);
+  }
+  catch (error) {
+    violations.push({
+      rule: "invalid-system-extension-manifest",
+      path: displayPath(root, manifestPath),
+      line: 1,
+      excerpt: error.message.slice(0, 160),
+    });
+    return;
+  }
+  if (typeof manifest?.name !== "string" || manifest.name.length === 0) {
+    violations.push({
+      rule: "invalid-system-extension-manifest",
+      path: displayPath(root, manifestPath),
+      line: 1,
+      excerpt: "system extension manifest requires a non-empty name",
+    });
+    return;
+  }
+  if (!new Set(validNames).has(manifest.name)) {
+    violations.push({
+      rule: "unexcluded-system-extension",
+      path: displayPath(root, manifestPath),
+      line: 1,
+      excerpt: `system extension ${manifest.name} is not excluded by the Chatero product`,
+    });
+  }
+}
+
 export async function verifyWorkbenchPolicy({ root, productPath, checkout = null }) {
   const canonicalRoot = resolve(root);
   const canonicalProductPath = resolve(productPath);
@@ -338,6 +432,13 @@ export async function verifyWorkbenchPolicy({ root, productPath, checkout = null
   }
   else {
     verifyGallery(canonicalRoot, canonicalProductPath, productText, violations);
+    await verifySystemExtensionExclusions(
+      canonicalRoot,
+      canonicalProductPath,
+      productText,
+      checkout,
+      violations
+    );
   }
   await verifyBuildScripts(canonicalRoot, checkout, violations);
   await verifyAgentSupplyChain(canonicalRoot, checkout, violations);

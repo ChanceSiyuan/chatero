@@ -195,22 +195,26 @@ test("rejects traversal, absolute paths, duplicate files, and unknown fields", a
 
 test("the canonical series pins Chatero startup compatibility after native Codex and Documentation authority", async () => {
   const series = JSON.parse(await readFile(join(canonicalPatchDirectory, "series.json"), "utf8"));
-  const entry = series.patches.at(-7);
-  const compatibilityEntry = series.patches.at(-6);
-  const startupEntry = series.patches.at(-5);
-  const bundledSdkEntry = series.patches.at(-4);
-  const optionalCopilotEntry = series.patches.at(-3);
-  const codexIpcEntry = series.patches.at(-2);
-  const liveCodexHomeEntry = series.patches.at(-1);
+  const entry = series.patches.at(-9);
+  const compatibilityEntry = series.patches.at(-8);
+  const startupEntry = series.patches.at(-7);
+  const bundledSdkEntry = series.patches.at(-6);
+  const optionalCopilotEntry = series.patches.at(-5);
+  const codexIpcEntry = series.patches.at(-4);
+  const liveCodexHomeEntry = series.patches.at(-3);
+  const excludedSystemExtensionsEntry = series.patches.at(-2);
+  const openAIIsolationEntry = series.patches.at(-1);
 
   assert.equal(entry.file, "0004-chatero-documentation-agent-authority.patch");
-  assert.equal(series.patches.at(-8)?.file, "0003-chatero-native-codex.patch");
+  assert.equal(series.patches.at(-10)?.file, "0003-chatero-native-codex.patch");
   assert.equal(compatibilityEntry.file, "0005-fix-chatero-codex-tests.patch");
   assert.equal(startupEntry.file, "0006-disable-copilot-onboarding-without-agent.patch");
   assert.equal(bundledSdkEntry.file, "0007-bundle-chatero-codex-sdk.patch");
   assert.equal(optionalCopilotEntry.file, "0008-lazy-load-optional-copilot-api.patch");
   assert.equal(codexIpcEntry.file, "0009-allow-ephemeral-codex-ipc-sockets.patch");
   assert.equal(liveCodexHomeEntry.file, "0010-shallow-pin-live-codex-home.patch");
+  assert.equal(excludedSystemExtensionsEntry.file, "0011-exclude-unshipped-system-extensions.patch");
+  assert.equal(openAIIsolationEntry.file, "0012-isolate-openai-codex-resources.patch");
   const bytes = await readFile(join(canonicalPatchDirectory, entry.file));
   const compatibilityBytes = await readFile(join(canonicalPatchDirectory, compatibilityEntry.file));
   const startupBytes = await readFile(join(canonicalPatchDirectory, startupEntry.file));
@@ -218,6 +222,8 @@ test("the canonical series pins Chatero startup compatibility after native Codex
   const optionalCopilotBytes = await readFile(join(canonicalPatchDirectory, optionalCopilotEntry.file));
   const codexIpcBytes = await readFile(join(canonicalPatchDirectory, codexIpcEntry.file));
   const liveCodexHomeBytes = await readFile(join(canonicalPatchDirectory, liveCodexHomeEntry.file));
+  const excludedSystemExtensionsBytes = await readFile(join(canonicalPatchDirectory, excludedSystemExtensionsEntry.file));
+  const openAIIsolationBytes = await readFile(join(canonicalPatchDirectory, openAIIsolationEntry.file));
   assert.equal(entry.sha256, sha256(bytes));
   assert.equal(compatibilityEntry.sha256, sha256(compatibilityBytes));
   assert.equal(startupEntry.sha256, sha256(startupBytes));
@@ -225,6 +231,8 @@ test("the canonical series pins Chatero startup compatibility after native Codex
   assert.equal(optionalCopilotEntry.sha256, sha256(optionalCopilotBytes));
   assert.equal(codexIpcEntry.sha256, sha256(codexIpcBytes));
   assert.equal(liveCodexHomeEntry.sha256, sha256(liveCodexHomeBytes));
+  assert.equal(excludedSystemExtensionsEntry.sha256, sha256(excludedSystemExtensionsBytes));
+  assert.equal(openAIIsolationEntry.sha256, sha256(openAIIsolationBytes));
   assert.match(bytes.toString("utf8"), /acquireDocumentationWorkingCopyBarrier/);
   assert.match(compatibilityBytes.toString("utf8"), /chatero_workspace/);
   assert.match(startupBytes.toString("utf8"), /product\.defaultChatAgent \? OnboardingVariationA : DisabledOnboardingService/);
@@ -242,4 +250,9 @@ test("the canonical series pins Chatero startup compatibility after native Codex
   assert.match(liveCodexHomeBytes.toString("utf8"), /captureProtectedObjectInventory\(\[codexHome\], false\)/);
   assert.match(liveCodexHomeBytes.toString("utf8"), /allows ephemeral runtime links below a direct CODEX_HOME directory/);
   assert.match(liveCodexHomeBytes.toString("utf8"), /typeof fs\.realpathSync\.native === 'function'/);
+  assert.match(excludedSystemExtensionsBytes.toString("utf8"), /readonly excludedSystemExtensionNames\?: readonly string\[\]/);
+  assert.match(excludedSystemExtensionsBytes.toString("utf8"), /excludedNames\.has\(extension\.manifest\.name\)/);
+  assert.match(openAIIsolationBytes.toString("utf8"), /return source === 'openai' \? \[\] : \[copilotResource, repoResource\]/);
+  assert.match(openAIIsolationBytes.toString("utf8"), /codexProtectedResourcesForUsageSource\('openai', copilot, repo\), \[\]/);
+  assert.match(openAIIsolationBytes.toString("utf8"), /`features\.plugins=false`/);
 });

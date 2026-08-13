@@ -69,6 +69,7 @@ test("brands Code-OSS as Chatero and selects only Open VSX", async () => {
   });
   assert.deepEqual(product.builtInExtensions, []);
   assert.deepEqual(product.builtInExtensionsEnabledWithAutoUpdates, []);
+  assert.deepEqual(product.excludedSystemExtensionNames, ["copilot-chat"]);
   assert.equal(product.defaultChatAgent, null);
   assert.deepEqual(product.trustedExtensionAuthAccess, {});
   assert.deepEqual(product.preservedBuildField, { enabled: true });
