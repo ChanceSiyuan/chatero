@@ -511,6 +511,10 @@
           "destination": "extensions/chatero-zotero/upstream-reader-bridge.mjs"
         },
         {
+          "source": "products/workbench/extensions/chatero-zotero/zotero-profile-discovery.mjs",
+          "destination": "extensions/chatero-zotero/zotero-profile-discovery.mjs"
+        },
+        {
           "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/115.js",
           "destination": "extensions/chatero-zotero/media/zotero-reader/115.js"
         },
@@ -669,6 +673,10 @@
         {
           "source": "services/zotero-core/profile/profile-lease.mjs",
           "destination": "extensions/chatero-zotero/runtime/zotero-core/profile/profile-lease.mjs"
+        },
+        {
+          "source": "services/zotero-core/profile/profile-import.mjs",
+          "destination": "extensions/chatero-zotero/runtime/zotero-core/profile/profile-import.mjs"
         },
         {
           "source": "services/zotero-core/security/session-authority.mjs",

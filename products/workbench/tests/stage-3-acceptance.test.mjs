@@ -31,6 +31,7 @@ test("Stage 3 acceptance fails closed and writes bounded evidence", async () => 
     write: async (path, value) => written.push({ path, value }),
   });
   assert.equal(evidence.status, "failed");
+  assert.match(evidence.sourceCommit, /^[0-9a-f]{40}$/u);
   assert.equal(evidence.failure.checkId, "core-library-tests");
   assert.equal(evidence.checks.length, 2);
   assert.equal(evidence.checks[1].exitCode, 7);

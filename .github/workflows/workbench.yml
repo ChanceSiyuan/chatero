@@ -34,6 +34,9 @@ jobs:
         with:
           node-version: 24.18.0
           cache: npm
+      - uses: quarto-dev/quarto-actions/setup@v2
+        with:
+          version: 1.8.27
       - run: npm ci
       - run: npm run workbench:bootstrap
       - run: npm run workbench:install

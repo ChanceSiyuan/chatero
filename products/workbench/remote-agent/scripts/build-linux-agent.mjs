@@ -49,7 +49,7 @@ const BRIDGE_PATH = new URL("../runtime/chatero-process-bridge.mjs", import.meta
 const EVIDENCE_HELPER_PATH = new URL("../runtime/chatero-evidence-cache.mjs", import.meta.url);
 const INTEGRITY_VERIFIER_PATH = new URL("../runtime/chatero-install-integrity.mjs", import.meta.url);
 const NOTICE_SOURCE_DIRECTORY = fileURLToPath(new URL("../licenses/", import.meta.url));
-const REPOSITORY_ROOT = fileURLToPath(new URL("../../../../", import.meta.url));
+const REPOSITORY_ROOT = resolve(fileURLToPath(new URL("../../../../", import.meta.url)));
 const FIRST_PARTY_MANIFEST = fileURLToPath(new URL("../../first-party-extensions.json", import.meta.url));
 
 export const REMOTE_AGENT_NOTICE_FILES = Object.freeze([

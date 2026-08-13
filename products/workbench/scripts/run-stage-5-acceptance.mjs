@@ -193,7 +193,7 @@ export async function inspectRunnerReceipt({ root = ROOT, tuple, release, receip
   if (/\/(?:Users|home|tmp)\/|connectionToken|grantId|remotePath/iu.test(text)) {
     throw new Error(`Stage 5 runner receipt for ${tuple} exposes a path or secret-bearing field`);
   }
-  return freeze({ receiptSha256: digestText(text), tuple, checks: receipt.checks.length });
+  return freeze({ receiptSha256: digestText(text), sourceCommit, tuple, checks: receipt.checks.length });
 }
 
 export async function inspectStageFiveBoundary({ root = ROOT, release } = {}) {
@@ -241,6 +241,8 @@ export async function runStageFiveAcceptance({
   clock = Date.now,
 } = {}) {
   const contract = validateStageFiveRequirements(requirements ?? JSON.parse(await readFile(join(root, "products", "workbench", "acceptance", "stage-5.requirements.json"), "utf8")));
+  const sourceCommit = await currentCommit(root);
+  if (!/^[0-9a-f]{40}$/u.test(sourceCommit)) throw new Error("Stage 5 source provenance is invalid");
   const started = clock();
   const checks = [];
   const audit = {};
@@ -273,7 +275,7 @@ export async function runStageFiveAcceptance({
     if (failure) break;
   }
   const ended = clock();
-  const evidence = freeze({ schemaVersion: 1, stage: 5, status: failure ? "failed" : "passed", startedAt: new Date(started).toISOString(), endedAt: new Date(ended).toISOString(), durationMs: Math.max(0, ended - started), audit, checks, ...(failure && { failure }) });
+  const evidence = freeze({ schemaVersion: 1, stage: 5, status: failure ? "failed" : "passed", sourceCommit, startedAt: new Date(started).toISOString(), endedAt: new Date(ended).toISOString(), durationMs: Math.max(0, ended - started), audit, checks, ...(failure && { failure }) });
   await write(join(root, "products", "workbench", ".cache", "acceptance", "stage-5.json"), evidence);
   return evidence;
 }

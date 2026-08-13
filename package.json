@@ -39,6 +39,8 @@
     "verify:stage-4": "node products/workbench/scripts/run-stage-4-acceptance.mjs",
     "verify:stage-5": "node products/workbench/scripts/run-stage-5-acceptance.mjs",
     "verify:stage-6": "node products/workbench/scripts/run-stage-6-acceptance.mjs",
+    "verify:stage-7": "node products/workbench/scripts/run-stage-7-acceptance.mjs",
+    "release:local:macos": "node products/workbench/scripts/create-local-macos-release.mjs",
     "test:chatero:staged": "app/scripts/verify_chatero_bundle app/staging/Chatero.app"
   },
   "license": "",

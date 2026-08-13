@@ -1,0 +1,117 @@
+name: Stage 7 Atomic Chatero Release
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows:
+      - Stage 5 IDE and Remote SSH
+    types:
+      - completed
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  release-macos:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'codex/stage1-workbench-closure')
+    runs-on: macos-15
+    timeout-minutes: 240
+    environment: chatero-production
+    env:
+      CHATERO_SOURCE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          submodules: recursive
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.18.0
+          cache: npm
+      - uses: quarto-dev/quarto-actions/setup@v2
+        with:
+          version: 1.8.27
+      - run: npm ci
+      - run: npm run workbench:bootstrap
+      - run: npm ci --ignore-scripts --prefix vendor/code-oss
+      - run: npm ci --ignore-scripts --prefix vendor/code-oss/build/npm/gyp
+      - run: node products/workbench/scripts/prepare-code-oss-lifecycle.mjs vendor/code-oss --prepare
+      - run: CHATERO_NPM_COMMAND=ci npm rebuild --prefix vendor/code-oss
+      - if: always()
+        run: node products/workbench/scripts/prepare-code-oss-lifecycle.mjs vendor/code-oss --cleanup
+      - run: npm run verify:stage-1
+      - name: Build same-source headless Gecko Core
+        run: |
+          node scripts/chatero/generate-product.mjs --build-provenance --source-commit "$CHATERO_SOURCE_SHA"
+          NODE_OPTIONS=--openssl-legacy-provider node js-build/build.js
+          app/scripts/dir_build -f -p m
+      - run: npm run verify:stage-2
+      - run: npm run verify:stage-3
+      - run: npm run verify:stage-4
+      - name: Resolve successful same-source Stage 5 run
+        id: stage-5-run
+        env:
+          WORKFLOW_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          run_id="$WORKFLOW_RUN_ID"
+          if [ -z "$run_id" ]; then
+            run_id=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow stage-5.yml --commit "$CHATERO_SOURCE_SHA" --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+          fi
+          test -n "$run_id"
+          test "$(gh run view "$run_id" --repo "$GITHUB_REPOSITORY" --json headSha,conclusion --jq '.headSha + " " + .conclusion')" = "$CHATERO_SOURCE_SHA success"
+          echo "run-id=$run_id" >> "$GITHUB_OUTPUT"
+      - name: Download signed Stage 5 product and receipts
+        env:
+          STAGE_5_RUN_ID: ${{ steps.stage-5-run.outputs.run-id }}
+        run: |
+          gh run download "$STAGE_5_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "signed-stage-5-release-$CHATERO_SOURCE_SHA" --dir products/workbench/remote-agent/dist
+          gh run download "$STAGE_5_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "stage-5-receipt-linux-x86_64-$CHATERO_SOURCE_SHA" --dir products/workbench/.cache/acceptance/stage-5-runner-receipts
+          gh run download "$STAGE_5_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "stage-5-receipt-linux-aarch64-$CHATERO_SOURCE_SHA" --dir products/workbench/.cache/acceptance/stage-5-runner-receipts
+          gh run download "$STAGE_5_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "stage-5-acceptance-$CHATERO_SOURCE_SHA" --dir products/workbench/.cache/acceptance/stage-5-downloaded
+      - run: npm run verify:stage-5
+        env:
+          CHATERO_CODE_OSS_DIR: vendor/code-oss
+          CHATERO_REMOTE_AGENT_RELEASE_DIR: products/workbench/remote-agent/dist
+          CHATERO_STAGE_5_RECEIPT_DIR: products/workbench/.cache/acceptance/stage-5-runner-receipts
+      - run: npm run verify:stage-6
+        env:
+          CHATERO_CODE_OSS_DIR: vendor/code-oss
+          CHATERO_REMOTE_AGENT_RELEASE_DIR: products/workbench/remote-agent/dist
+      - run: npm run gulp vscode-darwin-arm64-min
+        working-directory: vendor/code-oss
+      - name: Sign, notarize, and verify Chatero Workbench
+        env:
+          CHATERO_APPLE_DEVELOPER_ID: ${{ secrets.CHATERO_APPLE_DEVELOPER_ID }}
+          CHATERO_APPLE_CERTIFICATE_BASE64: ${{ secrets.CHATERO_APPLE_CERTIFICATE_BASE64 }}
+          CHATERO_APPLE_CERTIFICATE_PASSWORD: ${{ secrets.CHATERO_APPLE_CERTIFICATE_PASSWORD }}
+          CHATERO_APPLE_NOTARY_KEY_ID: ${{ secrets.CHATERO_APPLE_NOTARY_KEY_ID }}
+          CHATERO_APPLE_NOTARY_ISSUER_ID: ${{ secrets.CHATERO_APPLE_NOTARY_ISSUER_ID }}
+          CHATERO_APPLE_NOTARY_KEY_BASE64: ${{ secrets.CHATERO_APPLE_NOTARY_KEY_BASE64 }}
+        run: node products/workbench/scripts/create-stage-7-macos-release.mjs
+      - name: Require accepted notarization and stapled ticket
+        run: >-
+          node -e 'const fs=require("fs");const p="products/workbench/.cache/acceptance/stage-7-release.json";
+          const r=JSON.parse(fs.readFileSync(p,"utf8"));
+          if(r.notarizationAccepted!==true||r.ticketStapled!==true)process.exit(1)'
+      - run: npm run verify:stage-7
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage-7-atomic-release-${{ env.CHATERO_SOURCE_SHA }}
+          path: |
+            products/workbench/.cache/acceptance/stage-1.json
+            products/workbench/.cache/acceptance/stage-2.json
+            products/workbench/.cache/acceptance/stage-3.json
+            products/workbench/.cache/acceptance/stage-4.json
+            products/workbench/.cache/acceptance/stage-5.json
+            products/workbench/.cache/acceptance/stage-6.json
+            products/workbench/.cache/acceptance/stage-7-release.json
+            products/workbench/.cache/acceptance/stage-7.json
+            products/workbench/dist/Chatero-${{ env.CHATERO_SOURCE_SHA }}.dmg
+          if-no-files-found: error
+          retention-days: 30

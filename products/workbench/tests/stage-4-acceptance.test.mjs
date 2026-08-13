@@ -32,7 +32,8 @@ test("Stage 4 acceptance fails closed before real profile parity and writes boun
     inspect: async () => { throw new Error("inspection must not run after failure"); },
     write: async (path, value) => written.push({ path, value }),
   });
-  assert.equal(evidence.status, "failed");
+	assert.equal(evidence.status, "failed");
+	assert.match(evidence.sourceCommit, /^[0-9a-f]{40}$/u);
   assert.equal(evidence.failure.checkId, "workbench-regression-tests");
   assert.equal(evidence.checks.length, 4);
   assert.equal(written.length, 1);

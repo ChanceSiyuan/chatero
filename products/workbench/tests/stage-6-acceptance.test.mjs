@@ -32,6 +32,7 @@ test("Stage 6 acceptance stops at the first failed real runtime and writes bound
     clock: (() => { let now = 1_700_000_000_000; return () => now += 5; })(),
   });
   assert.equal(evidence.status, "failed");
+  assert.match(evidence.sourceCommit, /^[0-9a-f]{40}$/u);
   assert.equal(evidence.failure.checkId, "local-research-loop-runtime");
   assert.equal(evidence.checks.length, 3);
   assert.equal(writes.length, 1);

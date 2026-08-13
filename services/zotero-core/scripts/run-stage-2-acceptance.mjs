@@ -1,10 +1,13 @@
 #!/usr/bin/env node
 
-import { spawn } from "node:child_process";
+import { execFile as execFileCallback, spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { promisify } from "node:util";
+
+const execFile = promisify(execFileCallback);
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const REQUIREMENTS = join(ROOT, "products", "workbench", "acceptance", "stage-2.requirements.json");
@@ -15,6 +18,7 @@ const EXPECTED = Object.freeze({
   checks: Object.freeze([
     Object.freeze({ id: "core-protocol", command: "npm", args: Object.freeze(["run", "core:check"]) }),
     Object.freeze({ id: "core-node-and-real-gecko", command: "npm", args: Object.freeze(["run", "test:zotero-core"]) }),
+    Object.freeze({ id: "profile-discovery-and-import", command: "node", args: Object.freeze(["products/workbench/scripts/run-node-tests.mjs", "products/workbench/tests/zotero-profile-discovery.test.mjs", "products/workbench/tests/zotero-profile-import.test.mjs"]) }),
     Object.freeze({ id: "signed-gecko-bundle", command: "npm", args: Object.freeze(["run", "verify:chatero-bundle"]) }),
     Object.freeze({ id: "core-boundary-audit", kind: "source-inspection" }),
   ]),
@@ -46,21 +50,27 @@ async function runCommand({ file, args, cwd }) {
 }
 
 export async function inspectStageTwoBoundaries({ root }) {
-  const [contract, generated, supervisor, extensionHost] = await Promise.all([
+  const [contract, generated, supervisor, extensionHost, profileImport, sourceCommitResult] = await Promise.all([
     readFile(join(root, "services", "zotero-core", "protocol", "chatero-core.protocol.json"), "utf8"),
     readFile(join(root, "services", "zotero-core", "generated", "protocol.mjs"), "utf8"),
     readFile(join(root, "services", "zotero-core", "supervisor", "core-supervisor.mjs"), "utf8"),
     readFile(join(root, "products", "workbench", "extensions", "chatero-zotero", "extension.cjs"), "utf8"),
+    readFile(join(root, "services", "zotero-core", "profile", "profile-import.mjs"), "utf8"),
+    execFile("git", ["rev-parse", "HEAD^{commit}"], { cwd: root, encoding: "utf8" }),
   ]);
   const parsed = JSON.parse(contract);
   if (parsed.methods.length < 53 || parsed.types && Object.keys(parsed.types).length < 133) throw new Error("Core protocol domain surface is incomplete");
   if (!supervisor.includes('"-datadir", "profile"')) throw new Error("Gecko Core data directory is not profile-isolated");
   if (/sqlite|zotero\.sqlite/iu.test(extensionHost)) throw new Error("Workbench Zotero extension contains direct Zotero database access");
+  if (!profileImport.includes("export async function importZoteroProfile")) throw new Error("Core-owned Zotero profile import is missing");
   if (!generated.includes('"library.batch-mutate"')) throw new Error("generated protocol is missing atomic batch mutation");
+  const sourceCommit = sourceCommitResult.stdout.trim();
+  if (!/^[0-9a-f]{40}$/u.test(sourceCommit)) throw new Error("Stage 2 source provenance is invalid");
   return freeze({
     methodCount: parsed.methods.length,
     protocolSha256: createHash("sha256").update(contract).digest("hex"),
     rendererDatabaseAccess: false,
+    sourceCommit,
     typeCount: Object.keys(parsed.types).length,
   });
 }
@@ -77,6 +87,8 @@ async function writeEvidence(path, value) {
 
 export async function runStageTwoAcceptance({ root = ROOT, requirements, run = runCommand, inspect = inspectStageTwoBoundaries, write = writeEvidence, clock = Date.now } = {}) {
   const contract = validateStageTwoRequirements(requirements ?? JSON.parse(await readFile(join(root, "products", "workbench", "acceptance", "stage-2.requirements.json"), "utf8")));
+  const sourceCommit = (await execFile("git", ["rev-parse", "HEAD^{commit}"], { cwd: root, encoding: "utf8" })).stdout.trim();
+  if (!/^[0-9a-f]{40}$/u.test(sourceCommit)) throw new Error("Stage 2 source provenance is invalid");
   const started = clock();
   const checks = [];
   let audit = null;
@@ -99,7 +111,7 @@ export async function runStageTwoAcceptance({ root = ROOT, requirements, run = r
     if (failure) break;
   }
   const ended = clock();
-  const evidence = freeze({ schemaVersion: 1, stage: 2, status: failure ? "failed" : "passed", startedAt: new Date(started).toISOString(), endedAt: new Date(ended).toISOString(), durationMs: Math.max(0, ended - started), audit, checks, ...(failure && { failure }) });
+  const evidence = freeze({ schemaVersion: 1, stage: 2, status: failure ? "failed" : "passed", sourceCommit, startedAt: new Date(started).toISOString(), endedAt: new Date(ended).toISOString(), durationMs: Math.max(0, ended - started), audit, checks, ...(failure && { failure }) });
   await write(join(root, "products", "workbench", ".cache", "acceptance", "stage-2.json"), evidence);
   return evidence;
 }

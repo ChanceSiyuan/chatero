@@ -4,6 +4,7 @@
   "checks": [
     { "id": "core-protocol", "command": "npm", "args": ["run", "core:check"] },
     { "id": "core-node-and-real-gecko", "command": "npm", "args": ["run", "test:zotero-core"] },
+    { "id": "profile-discovery-and-import", "command": "node", "args": ["products/workbench/scripts/run-node-tests.mjs", "products/workbench/tests/zotero-profile-discovery.test.mjs", "products/workbench/tests/zotero-profile-import.test.mjs"] },
     { "id": "signed-gecko-bundle", "command": "npm", "args": ["run", "verify:chatero-bundle"] },
     { "id": "core-boundary-audit", "kind": "source-inspection" }
   ]

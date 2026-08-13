@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "productionVisibleProduct": "electron-workbench",
+  "legacyGeckoUi": "developer-parity-oracle-only",
+  "requiresAllPriorStagesAtSameSource": true,
+  "requiresNotarizedProductDigest": true,
+  "rollbackPreservesProfile": true
+}

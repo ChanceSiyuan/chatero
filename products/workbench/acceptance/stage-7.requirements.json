@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "stage": 7,
+  "checks": [
+    { "id": "stage-1-same-source", "kind": "prior-stage", "stage": 1 },
+    { "id": "stage-2-same-source", "kind": "prior-stage", "stage": 2 },
+    { "id": "stage-3-same-source", "kind": "prior-stage", "stage": 3 },
+    { "id": "stage-4-same-source", "kind": "prior-stage", "stage": 4 },
+    { "id": "stage-5-same-source", "kind": "prior-stage", "stage": 5 },
+    { "id": "stage-6-same-source", "kind": "prior-stage", "stage": 6 },
+    { "id": "complete-parity-catalog", "kind": "parity-inspection" },
+    { "id": "recovery-security-license-suite", "command": "node", "args": ["products/workbench/scripts/run-node-tests.mjs", "products/workbench/tests/*.test.mjs", "services/zotero-core/tests/*.test.mjs"] },
+    { "id": "notarized-macos-release", "kind": "release-receipt" },
+    { "id": "atomic-cutover", "kind": "cutover-inspection" }
+  ]
+}

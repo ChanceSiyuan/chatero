@@ -714,6 +714,30 @@ test("remote workspace overrides cannot select a local Core executable or profil
   });
 });
 
+test("production Core resolution binds the packaged headless Gecko executable without a user setting", async () => {
+  const { resolveCoreExecutable } = await import("../extensions/chatero-zotero/evidence-editor-registry.mjs");
+  const extensionPath = "/Applications/Chatero.app/Contents/Resources/app/extensions/chatero-zotero";
+  const bundled = "/Applications/Chatero.app/Contents/Resources/chatero-core/Chatero Core.app/Contents/MacOS/zotero";
+  assert.equal(await resolveCoreExecutable({
+    configuredPath: "/tmp/hostile-user-core",
+    extensionPath,
+    platform: "darwin",
+    isFile: async path => path === bundled,
+  }), bundled);
+  assert.equal(await resolveCoreExecutable({
+    configuredPath: "/tmp/development-core",
+    extensionPath: "/tmp/code-oss/extensions/chatero-zotero",
+    platform: "darwin",
+    isFile: async path => path === "/tmp/development-core",
+  }), "/tmp/development-core");
+  await assert.rejects(resolveCoreExecutable({
+    configuredPath: "/tmp/missing",
+    extensionPath,
+    platform: "darwin",
+    isFile: async () => false,
+  }), /bundled Zotero Core is unavailable/iu);
+});
+
 test("Core setup pickers reject remote URIs before persisting local paths", async () => {
   const { selectLocalCoreConfigurationPath } = await import("../extensions/chatero-zotero/evidence-editor-registry.mjs");
   const localDefault = { authority: "", fsPath: "/Users/safe", scheme: "file" };

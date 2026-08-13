@@ -1,3 +1,6 @@
+import { lstat } from "node:fs/promises";
+import { join, resolve } from "node:path";
+
 const evidenceKinds = Object.freeze({
   note: Object.freeze({
     keyField: "noteKey",
@@ -103,6 +106,27 @@ export function readCoreLaunchConfiguration(configuration) {
     developerFixtureCore: globalValue("developerFixtureCore", false),
     profilePath: globalValue("profilePath", ""),
   });
+}
+
+export async function resolveCoreExecutable({
+  configuredPath,
+  extensionPath,
+  platform = process.platform,
+  isFile = async path => lstat(path).then(value => value.isFile() && !value.isSymbolicLink()).catch(() => false),
+} = {}) {
+  if (typeof configuredPath !== "string" || typeof extensionPath !== "string" || typeof isFile !== "function") {
+    throw new TypeError("Zotero Core executable resolution is invalid");
+  }
+  if (platform === "darwin") {
+    const resources = resolve(extensionPath, "..", "..", "..");
+    const bundled = join(resources, "chatero-core", "Chatero Core.app", "Contents", "MacOS", "zotero");
+    if (await isFile(bundled)) return bundled;
+    if (extensionPath.includes(".app/Contents/Resources/")) {
+      throw new Error("The bundled Zotero Core is unavailable; reinstall Chatero from the verified DMG");
+    }
+  }
+  if (configuredPath && resolve(configuredPath) === configuredPath) return configuredPath;
+  throw new Error("A development Zotero Core executable must be selected before Core can start");
 }
 
 function localFilePath(uri, label) {

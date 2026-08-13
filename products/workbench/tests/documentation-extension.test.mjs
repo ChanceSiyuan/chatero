@@ -41,6 +41,7 @@ test("isolated Workbench CI gates fast policy and complete macOS Stage 1 accepta
   assert.deepEqual(stageOne.steps.map(step => step.run ?? step.uses), [
     "actions/checkout@v4",
     "actions/setup-node@v4",
+    "quarto-dev/quarto-actions/setup@v2",
     "npm ci",
     "npm run workbench:bootstrap",
     "npm run workbench:install",
@@ -50,8 +51,9 @@ test("isolated Workbench CI gates fast policy and complete macOS Stage 1 accepta
   assert.deepEqual(stageOne.steps[0].with, { submodules: "recursive" });
   assert.equal(stageOne.steps[1].with["node-version"], "24.18.0");
   assert.equal(stageOne.steps[1].with.cache, "npm");
-  assert.equal(stageOne.steps[6].if, "always()");
-  assert.deepEqual(stageOne.steps[6].with, {
+  assert.equal(stageOne.steps[2].with.version, "1.8.27");
+  assert.equal(stageOne.steps[7].if, "always()");
+  assert.deepEqual(stageOne.steps[7].with, {
     name: "stage-1-acceptance-${{ github.sha }}",
     path: "products/workbench/.cache/acceptance/stage-1.json",
     "if-no-files-found": "warn",

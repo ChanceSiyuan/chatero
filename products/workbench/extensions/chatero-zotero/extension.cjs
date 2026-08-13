@@ -1,5 +1,6 @@
 const vscode = require("vscode");
 const { homedir } = require("node:os");
+const { join } = require("node:path");
 const { NoteEditorProvider, PdfEditorProvider } = require("./evidence-editors.cjs");
 
 let activeLifecycle = null;
@@ -144,7 +145,7 @@ class LibraryItemProvider {
 }
 
 async function activate(context) {
-  const [{ LibraryTreeModel }, { LibraryItemTableModel }, { LibrarySourceTreeModel }, { ReaderWorkflowModel }, readerBridge, { EvidenceRecordAuthority }, registryModule, html, metadataHtml, brokerModule, contextFormat, researchModule, authorizedPdfModule, fullPaperModule] = await Promise.all([
+  const [{ LibraryTreeModel }, { LibraryItemTableModel }, { LibrarySourceTreeModel }, { ReaderWorkflowModel }, readerBridge, { EvidenceRecordAuthority }, registryModule, html, metadataHtml, brokerModule, contextFormat, researchModule, authorizedPdfModule, fullPaperModule, profileDiscovery] = await Promise.all([
     import("./library-tree-model.mjs"),
     import("./library-item-table-model.mjs"),
     import("./library-source-tree-model.mjs"),
@@ -159,12 +160,14 @@ async function activate(context) {
     import("./research-api.mjs"),
     import("./authorized-pdf-source.mjs"),
     import("./full-paper-transfer.mjs"),
+    import("./zotero-profile-discovery.mjs"),
   ]);
   const {
     EvidenceDocumentRegistry,
     createCoreLifecycle,
     createEvidenceDocumentResolver,
     readCoreLaunchConfiguration,
+    resolveCoreExecutable,
     selectLocalCoreConfigurationPath,
   } = registryModule;
   const evidenceAuthority = new EvidenceRecordAuthority();
@@ -238,6 +241,41 @@ async function activate(context) {
 
   const selectProfile = async () => {
     try {
+      const profiles = await profileDiscovery.discoverZoteroProfiles({ homeDirectory: homedir() });
+      if (profiles.length) {
+        const discovered = await profileDiscovery.selectDiscoveredZoteroProfile({
+          profiles,
+          showQuickPick: (items, options) => vscode.window.showQuickPick(items, options),
+        });
+        if (!discovered) return null;
+        if (discovered.kind === "profile") {
+          const profileImport = await import("./runtime/zotero-core/profile/profile-import.mjs");
+          const action = "Import Private Copy";
+          const confirmed = await vscode.window.showWarningMessage(
+            `Import “${discovered.name}” into Chatero?`,
+            {
+              modal: true,
+              detail: "Close Zotero first. Chatero will verify available space and copy the profile and library into a separate private directory. The original Zotero library will not be changed; the private copy may be upgraded by the bundled Zotero Core.",
+            },
+            action,
+          );
+          if (confirmed !== action) return null;
+          const imported = await vscode.window.withProgress({
+            location: vscode.ProgressLocation.Window,
+            title: "Importing a verified private Zotero copy…",
+          }, () => profileImport.importZoteroProfile({
+            destinationRoot: join(homedir(), "Library", "Application Support", "Chatero", "Profiles"),
+            isSourceOwned: profileImport.isZoteroSourceOwned,
+            name: discovered.name,
+            sourceData: discovered.dataPath,
+            sourceProfile: discovered.path,
+          }));
+          await vscode.workspace.getConfiguration("chatero.zotero")
+            .update("profilePath", imported.profileDirectory, vscode.ConfigurationTarget.Global);
+          void vscode.window.showInformationMessage("Zotero was imported into a verified private Chatero profile. Your original Zotero library was not changed.");
+          return imported.profileDirectory;
+        }
+      }
       return await selectLocalCoreConfigurationPath({
         defaultUri: vscode.Uri.file(homedir()),
         dialogOptions: {
@@ -290,9 +328,20 @@ async function activate(context) {
     const fixture = configuration.developerFixtureCore;
     let geckoExecutable;
     if (!fixture) {
-      geckoExecutable = configuration.coreExecutable;
-      if (!geckoExecutable) geckoExecutable = await selectCoreExecutable();
-      if (!geckoExecutable) return null;
+      try {
+        const extensionPath = context.extensionPath || __dirname;
+        geckoExecutable = await resolveCoreExecutable({
+          configuredPath: configuration.coreExecutable,
+          extensionPath,
+        });
+      }
+      catch (error) {
+        const extensionPath = context.extensionPath || __dirname;
+        if (extensionPath.includes(".app/Contents/Resources/")) throw error;
+        const selected = await selectCoreExecutable();
+        if (!selected) return null;
+        geckoExecutable = await resolveCoreExecutable({ configuredPath: selected, extensionPath });
+      }
     }
     return vscode.window.withProgress({
       location: vscode.ProgressLocation.Window,

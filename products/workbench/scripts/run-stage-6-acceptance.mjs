@@ -110,6 +110,8 @@ export async function runStageSixAcceptance({
   write = writeEvidence, clock = Date.now,
 } = {}) {
   const contract = validateStageSixRequirements(requirements ?? JSON.parse(await readFile(join(root, "products", "workbench", "acceptance", "stage-6.requirements.json"), "utf8")));
+  const sourceCommit = (await execFile("git", ["rev-parse", "HEAD^{commit}"], { cwd: root, encoding: "utf8" })).stdout.trim();
+  if (!/^[0-9a-f]{40}$/u.test(sourceCommit)) throw new Error("Stage 6 source provenance is invalid");
   const started = clock();
   const checks = [];
   let audit = null;
@@ -132,7 +134,7 @@ export async function runStageSixAcceptance({
     if (failure) break;
   }
   const ended = clock();
-  const evidence = freeze({ schemaVersion: 1, stage: 6, status: failure ? "failed" : "passed", startedAt: new Date(started).toISOString(), endedAt: new Date(ended).toISOString(), durationMs: Math.max(0, ended - started), audit, checks, ...(failure && { failure }) });
+  const evidence = freeze({ schemaVersion: 1, stage: 6, status: failure ? "failed" : "passed", sourceCommit, startedAt: new Date(started).toISOString(), endedAt: new Date(ended).toISOString(), durationMs: Math.max(0, ended - started), audit, checks, ...(failure && { failure }) });
   await write(join(root, "products", "workbench", ".cache", "acceptance", "stage-6.json"), evidence);
   return evidence;
 }

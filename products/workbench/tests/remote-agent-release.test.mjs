@@ -985,5 +985,6 @@ test("Linux agent builder injects the exact first-party Documentation payload be
   assert.ok(copyIndex >= 0, "builder does not install Documentation payload");
   assert.ok(auditIndex > copyIndex, "builder audits Documentation before installing it");
   assert.match(source, /FIRST_PARTY_MANIFEST/u);
+  assert.match(source, /REPOSITORY_ROOT = resolve\(fileURLToPath/u);
   assert.match(source, /copyFile\(source, destination/u);
 });

@@ -1,10 +1,13 @@
 #!/usr/bin/env node
 
-import { spawn } from "node:child_process";
+import { execFile as execFileCallback, spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { promisify } from "node:util";
+
+const execFile = promisify(execFileCallback);
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const EXPECTED = Object.freeze({
@@ -47,13 +50,14 @@ async function runCommand({ file, args, cwd }) {
 
 export async function inspectStageThreeLibrary({ root }) {
   const extensionRoot = join(root, "products", "workbench", "extensions", "chatero-zotero");
-  const [manifestText, extension, catalogText, englishText, chineseText, firstPartyText] = await Promise.all([
+  const [manifestText, extension, catalogText, englishText, chineseText, firstPartyText, sourceCommitResult] = await Promise.all([
     readFile(join(extensionRoot, "package.json"), "utf8"),
     readFile(join(extensionRoot, "extension.cjs"), "utf8"),
     readFile(join(root, "products", "workbench", "acceptance", "stage-3-library-parity.json"), "utf8"),
     readFile(join(extensionRoot, "package.nls.json"), "utf8"),
     readFile(join(extensionRoot, "package.nls.zh-cn.json"), "utf8"),
     readFile(join(root, "products", "workbench", "first-party-extensions.json"), "utf8"),
+    execFile("git", ["rev-parse", "HEAD^{commit}"], { cwd: root, encoding: "utf8" }),
   ]);
   const manifest = JSON.parse(manifestText);
   const catalog = JSON.parse(catalogText);
@@ -77,12 +81,15 @@ export async function inspectStageThreeLibrary({ root }) {
     if (!firstParty.files.some(value => value.destination.endsWith(path))) throw new Error(`first-party Library package omits ${path}`);
   }
   if (/sqlite|zotero\.sqlite/iu.test(extension)) throw new Error("Library extension directly accesses Zotero database data");
+  const sourceCommit = sourceCommitResult.stdout.trim();
+  if (!/^[0-9a-f]{40}$/u.test(sourceCommit)) throw new Error("Stage 3 source provenance is invalid");
   return freeze({
     accessibilityStates: 2,
     commandCount: commands.size,
     localeCount: 2,
     parityEntries: catalog.entries.length,
     paritySha256: createHash("sha256").update(catalogText).digest("hex"),
+    sourceCommit,
     unsupportedEntries: 0,
   });
 }
@@ -99,6 +106,8 @@ async function writeEvidence(path, value) {
 
 export async function runStageThreeAcceptance({ root = ROOT, requirements, run = runCommand, inspect = inspectStageThreeLibrary, write = writeEvidence, clock = Date.now } = {}) {
   const contract = validateStageThreeRequirements(requirements ?? JSON.parse(await readFile(join(root, "products", "workbench", "acceptance", "stage-3.requirements.json"), "utf8")));
+  const sourceCommit = (await execFile("git", ["rev-parse", "HEAD^{commit}"], { cwd: root, encoding: "utf8" })).stdout.trim();
+  if (!/^[0-9a-f]{40}$/u.test(sourceCommit)) throw new Error("Stage 3 source provenance is invalid");
   const started = clock();
   const checks = [];
   let audit = null;
@@ -118,7 +127,7 @@ export async function runStageThreeAcceptance({ root = ROOT, requirements, run =
     if (failure) break;
   }
   const ended = clock();
-  const evidence = freeze({ schemaVersion: 1, stage: 3, status: failure ? "failed" : "passed", startedAt: new Date(started).toISOString(), endedAt: new Date(ended).toISOString(), durationMs: Math.max(0, ended - started), audit, checks, ...(failure && { failure }) });
+  const evidence = freeze({ schemaVersion: 1, stage: 3, status: failure ? "failed" : "passed", sourceCommit, startedAt: new Date(started).toISOString(), endedAt: new Date(ended).toISOString(), durationMs: Math.max(0, ended - started), audit, checks, ...(failure && { failure }) });
   await write(join(root, "products", "workbench", ".cache", "acceptance", "stage-3.json"), evidence);
   return evidence;
 }

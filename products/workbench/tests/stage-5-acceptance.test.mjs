@@ -39,6 +39,7 @@ test("Stage 5 acceptance fails closed on a missing signed release and writes bou
     clock: (() => { let time = 0; return () => time += 5; })(),
   });
   assert.equal(evidence.status, "failed");
+  assert.match(evidence.sourceCommit, /^[0-9a-f]{40}$/u);
   assert.equal(evidence.failure.checkId, "signed-agent-release");
   assert.doesNotMatch(JSON.stringify(evidence), new RegExp(root.replaceAll("/", "\\/"), "u"));
   assert.doesNotMatch(JSON.stringify(evidence), /private-value/u);
