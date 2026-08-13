@@ -129,6 +129,9 @@ test("the extension registers the native managed authority and publishes the bou
   assert.match(source, /createStatusBarItem/);
   assert.match(source, /chooseRemoteWorkspace/);
   assert.match(source, /new remoteProcess\.RemoteProcessService/);
+  assert.match(source, /new evidenceModule\.EvidenceCacheService/);
+  assert.match(source, /new evidenceControllerModule\.RemoteEvidenceController/);
+  assert.doesNotMatch(source, /pendingFeature\("Remote evidence cache"\)/);
   assert.match(source, /isWorkspaceTrusted:\s*\(\)\s*=>\s*vscode\.workspace\.isTrusted/);
   assert.match(source, /vscode\.Uri\.from/);
   assert.match(source, /vscode\.openFolder/);
@@ -218,12 +221,14 @@ test("first-party materialization and product proposal allowlist include chatero
   const destinations = remote.files.map(file => file.destination).sort();
   const actualFiles = [
     "authority.mjs",
+    "evidence-cache.mjs",
     "extension.cjs",
     "managed-connection.mjs",
     "media/remote.svg",
     "openssh-targets.mjs",
     "package.json",
     "remote-agent-installer.mjs",
+    "remote-evidence-controller.mjs",
     "remote-process.mjs",
     "remote-workspace.mjs",
     "runtime/release-contract.mjs",

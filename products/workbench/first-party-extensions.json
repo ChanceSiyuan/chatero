@@ -358,6 +358,10 @@
           "destination": "extensions/chatero-remote/authority.mjs"
         },
         {
+          "source": "products/workbench/extensions/chatero-remote/evidence-cache.mjs",
+          "destination": "extensions/chatero-remote/evidence-cache.mjs"
+        },
+        {
           "source": "products/workbench/extensions/chatero-remote/extension.cjs",
           "destination": "extensions/chatero-remote/extension.cjs"
         },
@@ -380,6 +384,10 @@
         {
           "source": "products/workbench/extensions/chatero-remote/remote-agent-installer.mjs",
           "destination": "extensions/chatero-remote/remote-agent-installer.mjs"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-remote/remote-evidence-controller.mjs",
+          "destination": "extensions/chatero-remote/remote-evidence-controller.mjs"
         },
         {
           "source": "products/workbench/extensions/chatero-remote/remote-process.mjs",
@@ -407,8 +415,16 @@
       "id": "chatero.zotero",
       "files": [
         {
+          "source": "products/workbench/extensions/chatero-zotero/authorized-pdf-source.mjs",
+          "destination": "extensions/chatero-zotero/authorized-pdf-source.mjs"
+        },
+        {
           "source": "products/workbench/extensions/chatero-zotero/extension.cjs",
           "destination": "extensions/chatero-zotero/extension.cjs"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/full-paper-transfer.mjs",
+          "destination": "extensions/chatero-zotero/full-paper-transfer.mjs"
         },
         {
           "source": "products/workbench/extensions/chatero-zotero/evidence-authority.mjs",

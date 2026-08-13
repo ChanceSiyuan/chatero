@@ -26,6 +26,7 @@ import {
   AuthorizedPdfSourceRegistry,
   openAuthorizedPdfSource,
 } from "../extensions/chatero-zotero/authorized-pdf-source.mjs";
+import { createFullPaperTransfer } from "../extensions/chatero-zotero/full-paper-transfer.mjs";
 import {
   EvidenceCacheService,
   assertRevokeEvidenceRequest,
@@ -55,6 +56,36 @@ const INSTALL_INTEGRITY_HELPER_PATH = fileURLToPath(new URL(
   import.meta.url,
 ));
 const linuxTest = process.platform === "linux" ? test : test.skip;
+
+test("full-paper transfer confirms one bounded grant and compensates a failed remote stage", async () => {
+  const events = [];
+  const source = { size: 5, read: async () => Uint8Array.of(1), close: async () => events.push("closed") };
+  const grants = {
+    issue(binding) { events.push(["issued", binding.targetId, binding.hostFingerprint]); return "g".repeat(43); },
+    async revoke(grantId) { events.push(["revoked", grantId]); },
+  };
+  const transfer = createFullPaperTransfer({
+    captureActive: () => Object.freeze({ attachmentKey: "PDF00001", libraryId: 7, title: "Paper" }),
+    getRemoteContext: async () => Object.freeze({
+      alias: "lab-a", targetId: TARGET_ID, hostFingerprint: FINGERPRINT,
+      stageEvidence: async request => { events.push(["staged", request]); throw new Error("offline"); },
+    }),
+    openSource: async record => {
+      assert.deepEqual(record, Object.freeze({ attachmentKey: "PDF00001", contentType: "application/pdf", libraryId: 7 }));
+      return source;
+    },
+    grants,
+    confirm: async details => { events.push(["confirmed", details]); return true; },
+    notify: () => assert.fail("failed transfer must not notify"),
+  });
+  await assert.rejects(transfer(), /offline/);
+  assert.deepEqual(events, [
+    ["confirmed", { alias: "lab-a", size: 5, title: "Paper", ttlSeconds: 86400 }],
+    ["issued", TARGET_ID, FINGERPRINT],
+    ["staged", { grantId: "g".repeat(43), targetId: TARGET_ID, ttlSeconds: 86400 }],
+    ["revoked", "g".repeat(43)],
+  ]);
+});
 
 function runShell(script, args, { home, env = {}, input = null } = {}) {
   const child = spawn("sh", ["-c", script, "chatero", ...args], {

@@ -527,7 +527,7 @@ test("extension activation exposes only one frozen path-free Research API", asyn
   const api = await extension.activate(context);
   assert.equal(Object.isFrozen(api), true);
   assert.deepEqual(Object.keys(api).sort(), [
-    "exportBibliographySnapshot", "getActiveNoteSnapshot", "getActiveResearchObject", "getSelectionSnapshot",
+    "exportBibliographySnapshot", "getActiveNoteSnapshot", "getActiveResearchObject", "getSelectionSnapshot", "redeemFullPdfGrant",
   ]);
   assert.doesNotMatch(JSON.stringify(api), /profilePath|coreExecutable|path|client|request/iu);
 });

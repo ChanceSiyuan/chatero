@@ -358,42 +358,49 @@ async function recoverDeadLock(root, key) {
       || metadata.nlink !== 2 || (metadata.mode & 0o777) !== 0o600) {
     throw new HelperError("unsafe-lock");
   }
-  const originalOwner = await readLockOwner(fixed, metadata);
-  const ownerPath = ownerCompanion(root, key, originalOwner.nonce);
-  let companion = await sameInode(ownerPath, metadata) ? ownerPath : null;
-  let activeOwner = originalOwner;
-  if (!companion) {
-    const entries = await readdir(root);
-    if (entries.length > MAX_ENTRIES) throw new HelperError("entry-limit");
-    for (const entry of entries) {
-      const claimant = parseClaimant(entry, key, originalOwner.nonce);
-      if (!claimant) continue;
-      const candidate = join(root, entry);
-      if (await sameInode(candidate, metadata)) {
-        if (companion) throw new HelperError("unsafe-lock");
-        companion = candidate;
-        activeOwner = claimant;
+  try {
+    const originalOwner = await readLockOwner(fixed, metadata);
+    const ownerPath = ownerCompanion(root, key, originalOwner.nonce);
+    let companion = await sameInode(ownerPath, metadata) ? ownerPath : null;
+    let activeOwner = originalOwner;
+    if (!companion) {
+      const entries = await readdir(root);
+      if (entries.length > MAX_ENTRIES) throw new HelperError("entry-limit");
+      for (const entry of entries) {
+        const claimant = parseClaimant(entry, key, originalOwner.nonce);
+        if (!claimant) continue;
+        const candidate = join(root, entry);
+        if (await sameInode(candidate, metadata)) {
+          if (companion) throw new HelperError("unsafe-lock");
+          companion = candidate;
+          activeOwner = claimant;
+        }
       }
     }
+    if (!companion) throw new HelperError("unsafe-lock");
+    if (await processIdentityIsAlive(activeOwner)) return false;
+    const claimant = await localProcessIdentity();
+    const claimed = claimCompanion(root, key, originalOwner.nonce, claimant);
+    try { await rename(companion, claimed); }
+    catch (error) {
+      if (error?.code === "ENOENT") return true;
+      throw error;
+    }
+    const fixedNow = await lstat(fixed).catch(error => error?.code === "ENOENT" ? null : Promise.reject(error));
+    const claimNow = await lstat(claimed);
+    if (!fixedNow || fixedNow.dev !== claimNow.dev || fixedNow.ino !== claimNow.ino
+        || fixedNow.dev !== metadata.dev || fixedNow.ino !== metadata.ino) {
+      throw new HelperError("unsafe-lock");
+    }
+    await unlink(fixed);
+    await unlink(claimed);
+    return true;
   }
-  if (!companion) throw new HelperError("unsafe-lock");
-  if (await processIdentityIsAlive(activeOwner)) return false;
-  const claimant = await localProcessIdentity();
-  const claimed = claimCompanion(root, key, originalOwner.nonce, claimant);
-  try { await rename(companion, claimed); }
   catch (error) {
-    if (error?.code === "ENOENT") return true;
+    const current = await lstat(fixed).catch(value => value?.code === "ENOENT" ? null : Promise.reject(value));
+    if (!current || current.dev !== metadata.dev || current.ino !== metadata.ino) return true;
     throw error;
   }
-  const fixedNow = await lstat(fixed).catch(error => error?.code === "ENOENT" ? null : Promise.reject(error));
-  const claimNow = await lstat(claimed);
-  if (!fixedNow || fixedNow.dev !== claimNow.dev || fixedNow.ino !== claimNow.ino
-      || fixedNow.dev !== metadata.dev || fixedNow.ino !== metadata.ino) {
-    throw new HelperError("unsafe-lock");
-  }
-  await unlink(fixed);
-  await unlink(claimed);
-  return true;
 }
 
 async function acquireDigestLock(root, key) {

@@ -144,7 +144,7 @@ class LibraryItemProvider {
 }
 
 async function activate(context) {
-  const [{ LibraryTreeModel }, { LibraryItemTableModel }, { LibrarySourceTreeModel }, { ReaderWorkflowModel }, readerBridge, { EvidenceRecordAuthority }, registryModule, html, metadataHtml, brokerModule, contextFormat, researchModule] = await Promise.all([
+  const [{ LibraryTreeModel }, { LibraryItemTableModel }, { LibrarySourceTreeModel }, { ReaderWorkflowModel }, readerBridge, { EvidenceRecordAuthority }, registryModule, html, metadataHtml, brokerModule, contextFormat, researchModule, authorizedPdfModule, fullPaperModule] = await Promise.all([
     import("./library-tree-model.mjs"),
     import("./library-item-table-model.mjs"),
     import("./library-source-tree-model.mjs"),
@@ -157,6 +157,8 @@ async function activate(context) {
     import("./pdf-context-broker.mjs"),
     import("./pdf-context-format.mjs"),
     import("./research-api.mjs"),
+    import("./authorized-pdf-source.mjs"),
+    import("./full-paper-transfer.mjs"),
   ]);
   const {
     EvidenceDocumentRegistry,
@@ -168,6 +170,7 @@ async function activate(context) {
   const evidenceAuthority = new EvidenceRecordAuthority();
   const evidenceDocuments = new EvidenceDocumentRegistry();
   const pdfContexts = new brokerModule.PdfContextBroker();
+  const fullPdfGrants = new authorizedPdfModule.AuthorizedPdfSourceRegistry();
   const sourceProvider = new LibrarySourceProvider();
   let activeNoteIdentity = null;
   const itemProvider = new LibraryItemProvider({
@@ -192,14 +195,16 @@ async function activate(context) {
     showCollapseAll: true,
     treeDataProvider: itemProvider,
   });
-  context.subscriptions.push(sourceProvider, itemProvider, pdfContexts, sourceView, itemView);
+  context.subscriptions.push(sourceProvider, itemProvider, pdfContexts, sourceView, itemView, {
+    dispose: () => { void fullPdfGrants.dispose(); },
+  });
   context.subscriptions.push(sourceView.onDidChangeSelection(event => {
     const source = sourceProvider.model?.toItemSource(event.selection[0]);
     if (source) void itemProvider.open(source).catch(error => vscode.window.showErrorMessage(`Could not load Zotero items: ${error.message}`));
   }));
   context.subscriptions.push(itemView.onDidChangeSelection(event => itemProvider.select(event.selection)));
 
-  const getRemoteAlias = async () => {
+  const getRemoteContext = async () => {
     const folder = vscode.workspace.workspaceFolders?.find(value =>
       value?.uri?.scheme === "vscode-remote"
       && typeof value.uri.authority === "string"
@@ -209,9 +214,18 @@ async function activate(context) {
     if (!remoteExtension) throw new Error("Chatero Remote is unavailable");
     const remote = remoteExtension.isActive ? remoteExtension.exports : await remoteExtension.activate();
     const session = remote?.getActiveSession?.(folder.uri.authority);
-    if (!session || typeof session.alias !== "string") throw new Error("The active Chatero SSH target is unavailable");
-    return session.alias;
+    if (!session || typeof session.alias !== "string" || typeof session.hostFingerprint !== "string"
+        || typeof remote.stageEvidence !== "function") {
+      throw new Error("The active Chatero SSH target is unavailable");
+    }
+    return Object.freeze({
+      alias: session.alias,
+      targetId: `profile:${session.alias}`,
+      hostFingerprint: session.hostFingerprint,
+      stageEvidence: request => remote.stageEvidence(request),
+    });
   };
+  const getRemoteAlias = async () => (await getRemoteContext())?.alias ?? null;
   const attachPdfSnapshot = async snapshot => {
     const attachment = contextFormat.makePdfContextAttachment(snapshot, await getRemoteAlias());
     return vscode.commands.executeCommand("chatero.chat.attachTextContext", attachment);
@@ -396,8 +410,36 @@ async function activate(context) {
       return null;
     }
   }));
-  context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.sendFullPaperToRemote", () =>
-    vscode.window.showInformationMessage("Full-paper transfer requires a separate explicit authorization and is not enabled yet.")));
+  const transferFullPaper = fullPaperModule.createFullPaperTransfer({
+    captureActive: () => pdfContexts.captureActive(),
+    getRemoteContext,
+    openSource: record => authorizedPdfModule.openAuthorizedPdfSource(record, {
+      request: (method, parameters, options) => sourceProvider.core.request(method, parameters, options),
+    }),
+    grants: fullPdfGrants,
+    confirm: async ({ alias, size, title }) => {
+      const action = "Send for 24 Hours";
+      const selected = await vscode.window.showWarningMessage(
+        `Send the complete PDF “${title}” to ${alias}?`,
+        {
+          modal: true,
+          detail: `${size.toLocaleString()} bytes will be copied to an owner-only remote cache and deleted after 24 hours.`,
+        },
+        action,
+      );
+      return selected === action;
+    },
+    notify: ({ alias, expiresAt }) => vscode.window.showInformationMessage(
+      `Full PDF is available to Chat on ${alias} until ${expiresAt}.`,
+    ),
+  });
+  context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.sendFullPaperToRemote", async () => {
+    try { return await transferFullPaper(); }
+    catch (error) {
+      void vscode.window.showErrorMessage(`Could not send the full Zotero PDF: ${error.message}`);
+      return null;
+    }
+  }));
   context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.openAttachment", record => {
     const trusted = evidenceAuthority.authorize(record, "attachment");
     const uri = vscode.Uri.parse(evidenceDocuments.stage("pdf", trusted));
@@ -670,7 +712,12 @@ async function activate(context) {
     api: researchApi,
     commands: vscode.commands,
   }));
-  return researchApi;
+  return Object.freeze({
+    ...researchApi,
+    redeemFullPdfGrant(request) {
+      return fullPdfGrants.redeem(request);
+    },
+  });
 }
 
 function deactivate() {

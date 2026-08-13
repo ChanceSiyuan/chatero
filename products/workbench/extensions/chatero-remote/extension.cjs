@@ -23,13 +23,15 @@ function openCodexLoginTerminal(session, folder) {
 }
 
 async function activate(context) {
-  const [authority, targets, sessionModule, managed, remoteWorkspace, remoteProcess] = await Promise.all([
+  const [authority, targets, sessionModule, managed, remoteWorkspace, remoteProcess, evidenceModule, evidenceControllerModule] = await Promise.all([
     import("./authority.mjs"),
     import("./openssh-targets.mjs"),
     import("./ssh-session.mjs"),
     import("./managed-connection.mjs"),
     import("./remote-workspace.mjs"),
     import("./remote-process.mjs"),
+    import("./evidence-cache.mjs"),
+    import("./remote-evidence-controller.mjs"),
   ]);
   const output = vscode.window.createOutputChannel("Chatero Remote", { log: true });
   const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
@@ -43,6 +45,7 @@ async function activate(context) {
   };
   let lastAlias = null;
   let releasePromise = null;
+  let evidenceService = null;
   let recentTargets = remoteWorkspace.sanitizeRecentTargets(
     context.globalState.get(RECENT_TARGETS_KEY, []),
   );
@@ -248,6 +251,15 @@ async function activate(context) {
         sessions.set(remoteAuthority, sshSession);
       }
       const ready = await sshSession.ensureReady({ target, release, signal });
+      if (evidenceService) {
+        const publicSession = sshSession.getPublicSession();
+        await evidenceService.cleanupSession({
+          targetId,
+          hostFingerprint: publicSession.hostFingerprint,
+          generation: publicSession.generation,
+          session: sshSession,
+        }, signal);
+      }
       setStatus("connected", { alias, path: workspacePath });
       return { alias, ready, session: sshSession, target };
     }
@@ -322,6 +334,49 @@ async function activate(context) {
     getWorkspaceFolder: activeRemoteFolder,
     isWorkspaceTrusted: () => vscode.workspace.isTrusted,
     canonicalizeWorkspaceCwd: remoteWorkspace.canonicalizeWorkspaceCwd,
+  });
+  const evidenceContext = targetId => {
+    const remoteAuthority = authority.encodeAuthority(targetId);
+    const session = sessions.get(remoteAuthority);
+    const publicSession = session?.getPublicSession();
+    if (!publicSession) throw new Error("The selected SSH target is unavailable");
+    return Object.freeze({
+      targetId,
+      hostFingerprint: publicSession.hostFingerprint,
+      generation: publicSession.generation,
+      session,
+    });
+  };
+  const reconnectEvidence = async targetId => {
+    const remoteAuthority = authority.encodeAuthority(targetId);
+    const existing = sessions.get(remoteAuthority);
+    if (existing) await existing.dispose();
+    await ensureAuthoritySession(remoteAuthority, { statusState: "reconnecting" });
+    return evidenceContext(targetId);
+  };
+  const getZoteroApi = async () => {
+    const extension = vscode.extensions.getExtension("chatero.chatero-zotero");
+    if (!extension) throw new Error("Chatero Zotero is unavailable");
+    const api = extension.isActive ? extension.exports : await extension.activate();
+    if (!api || typeof api.redeemFullPdfGrant !== "function") {
+      throw new Error("The authorized PDF source is unavailable");
+    }
+    return api;
+  };
+  let evidenceController;
+  evidenceService = new evidenceModule.EvidenceCacheService({
+    getContext: targetId => evidenceContext(targetId),
+    getZoteroApi,
+    reconnect: reconnectEvidence,
+    onExpired: event => evidenceController?.handleExpired(event),
+    onRevoked: event => evidenceController?.handleRevoked(event),
+  });
+  evidenceController = new evidenceControllerModule.RemoteEvidenceController({
+    service: evidenceService,
+    attachTextContext: attachment =>
+      vscode.commands.executeCommand("chatero.chat.attachTextContext", attachment),
+    removeTextContext: attachmentId =>
+      vscode.commands.executeCommand("chatero.chat.removeTextContext", attachmentId),
   });
   const openCodexLogin = () => {
     const folder = activeRemoteFolder();
@@ -464,8 +519,10 @@ async function activate(context) {
   }));
   context.subscriptions.push({
     dispose() {
-      for (const value of sessions.values()) void value.dispose();
-      sessions.clear();
+      void evidenceController.dispose().finally(() => {
+        for (const value of sessions.values()) void value.dispose();
+        sessions.clear();
+      });
     },
   });
 
@@ -481,12 +538,6 @@ async function activate(context) {
     }
   }
 
-  const pendingFeature = name => {
-    const error = new Error(`${name} is not registered by its feature module`);
-    error.code = "CHATERO_REMOTE_FEATURE_UNAVAILABLE";
-    throw error;
-  };
-
   return Object.freeze({
     getActiveSession(requestedAuthority) {
       const value = activeSession(requestedAuthority);
@@ -495,11 +546,11 @@ async function activate(context) {
     runProcess(request, observer, signal) {
       return processService.run(request, observer, signal);
     },
-    stageEvidence(_request, _signal) {
-      return pendingFeature("Remote evidence cache");
+    stageEvidence(request, signal) {
+      return evidenceController.stageEvidence(request, signal);
     },
-    revokeEvidence(_digest, _signal) {
-      return pendingFeature("Remote evidence cache");
+    revokeEvidence(request, signal) {
+      return evidenceController.revokeEvidence(request, signal);
     },
   });
 }

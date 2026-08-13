@@ -53,7 +53,13 @@ async function runCommand({ file, args, cwd }) {
 export async function inspectStageFourReader({ root, requireProductMatch = false, requireRealEvidence = false }) {
   const extensionRoot = join(root, "products", "workbench", "extensions", "chatero-zotero");
 	const omniPath = join(root, "app", "staging", "Chatero.app", "Contents", "Resources", "app", "omni.ja");
-	const [catalogText, extension, provider, workflow, pdf, noteHtml, readerHost, protocol, manifestText, firstPartyText, sourceCommitResult, omniBytes, provenanceResult, realProfileText] = await Promise.all([
+	const productAudit = requireProductMatch
+		? Promise.all([
+			readFile(omniPath),
+			execFile("unzip", ["-p", omniPath, "resource/chatero-build.mjs"], { encoding: "utf8", maxBuffer: 1024 * 1024 }),
+		])
+		: Promise.resolve(null);
+	const [catalogText, extension, provider, workflow, pdf, noteHtml, readerHost, protocol, manifestText, firstPartyText, sourceCommitResult, product, realProfileText] = await Promise.all([
     readFile(join(root, "products", "workbench", "acceptance", "stage-4-reader-parity.json"), "utf8"),
     readFile(join(extensionRoot, "extension.cjs"), "utf8"),
     readFile(join(extensionRoot, "evidence-editors.cjs"), "utf8"),
@@ -65,8 +71,7 @@ export async function inspectStageFourReader({ root, requireProductMatch = false
     readFile(join(extensionRoot, "package.json"), "utf8"),
     readFile(join(root, "products", "workbench", "first-party-extensions.json"), "utf8"),
 		execFile("git", ["rev-parse", "HEAD^{commit}"], { cwd: root, encoding: "utf8" }),
-		readFile(omniPath),
-		execFile("unzip", ["-p", omniPath, "resource/chatero-build.mjs"], { encoding: "utf8", maxBuffer: 1024 * 1024 }),
+		productAudit,
 		requireRealEvidence
 			? readFile(join(root, "products", "workbench", ".cache", "acceptance", "stage-4-real-profile.json"), "utf8")
 			: Promise.resolve(null),
@@ -89,10 +94,19 @@ export async function inspectStageFourReader({ root, requireProductMatch = false
   }
   if (!protocol.includes('"library.batch-mutate"') || !protocol.includes('"citation.render"')) throw new Error("Core protocol omits Stage 4 transactions");
 	const sourceCommit = sourceCommitResult.stdout.trim();
-	const packagedMatch = provenanceResult.stdout.match(/"sourceCommit":\s*"([0-9a-f]{40})"/u);
-	if (!/^[0-9a-f]{40}$/u.test(sourceCommit) || !packagedMatch) throw new Error("Stage 4 product provenance is invalid");
-	const packagedSourceCommit = packagedMatch[1];
-	if (requireProductMatch && packagedSourceCommit !== sourceCommit) throw new Error("Stage 4 signed product does not match repository HEAD");
+	if (!/^[0-9a-f]{40}$/u.test(sourceCommit)) throw new Error("Stage 4 source provenance is invalid");
+	let productEvidence = null;
+	if (product) {
+		const [omniBytes, provenanceResult] = product;
+		const packagedMatch = provenanceResult.stdout.match(/"sourceCommit":\s*"([0-9a-f]{40})"/u);
+		if (!packagedMatch) throw new Error("Stage 4 product provenance is invalid");
+		const packagedSourceCommit = packagedMatch[1];
+		if (packagedSourceCommit !== sourceCommit) throw new Error("Stage 4 signed product does not match repository HEAD");
+		productEvidence = Object.freeze({
+			bundleOmniSha256: createHash("sha256").update(omniBytes).digest("hex"),
+			packagedSourceCommit,
+		});
+	}
 	let realProfile = null;
 	if (requireRealEvidence) {
 		realProfile = JSON.parse(realProfileText);
@@ -101,11 +115,10 @@ export async function inspectStageFourReader({ root, requireProductMatch = false
 		}
 	}
   return freeze({
-		bundleOmniSha256: createHash("sha256").update(omniBytes).digest("hex"),
+		...(productEvidence ?? {}),
     commandCount: commands.size,
     parityEntries: catalog.entries.length,
     paritySha256: createHash("sha256").update(catalogText).digest("hex"),
-		packagedSourceCommit,
 		...(realProfile && { realProfile }),
     rendererDatabaseAccess: false,
     remoteReaderFetches: 0,
