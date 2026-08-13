@@ -20,6 +20,9 @@ window.addEventListener("load", () => {
 			"chrome://zotero/content/xpcom/chateroCoreHost.mjs"
 		);
 		await Zotero.initializationPromise;
+		// Headless Core has no Zotero pane to signal UI readiness. The upstream
+		// schema uses this barrier before installing bundled translators/styles.
+		Zotero.uiIsReady();
 		await startGeckoCoreHost({ Zotero, window });
 	})().catch(error => {
 		dump(`Chatero Core startup failed: ${error?.stack || error}\n`);

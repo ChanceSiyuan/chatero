@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "stage": 4,
+  "checks": [
+    { "id": "core-protocol", "command": "npm", "args": ["run", "core:check"] },
+    { "id": "reader-note-citation-tests", "command": "node", "args": ["--test", "products/workbench/tests/reader-workflow-model.test.mjs", "products/workbench/tests/upstream-reader-bridge.test.mjs", "products/workbench/tests/zotero-evidence-editors.test.mjs", "products/workbench/tests/native-library-extension.test.mjs"] },
+    { "id": "core-mutation-tests", "command": "node", "args": ["--test", "services/zotero-core/tests/gecko-library-adapter.test.mjs", "services/zotero-core/tests/gecko-core-router.test.mjs", "services/zotero-core/tests/core-supervisor.integration.test.mjs"] },
+    { "id": "workbench-regression-tests", "command": "npm", "args": ["run", "test:workbench-bootstrap"] },
+    { "id": "real-profile-parity-twice", "command": "node", "args": ["services/zotero-core/scripts/run-stage-4-real-profile.mjs"] },
+    { "id": "code-oss-compile", "command": "npm", "args": ["run", "workbench:compile"] },
+    { "id": "signed-gecko-bundle", "command": "npm", "args": ["run", "verify:chatero-bundle"] },
+    { "id": "reader-boundary-audit", "kind": "source-inspection" }
+  ]
+}

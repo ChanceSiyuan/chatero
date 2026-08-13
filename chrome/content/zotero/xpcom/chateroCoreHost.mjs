@@ -15,6 +15,7 @@
 
 import { SCHEMA_VERSION } from "../modules/chateroCoreProtocol.mjs";
 import { createCoreAttachmentSourceRegistry } from "./chateroCoreAttachmentSourceRegistry.mjs";
+import { createCoreAttachmentUploadRegistry } from "./chateroCoreAttachmentUploadRegistry.mjs";
 import { GeckoFrameDecoder, encodeGeckoFrame } from "./chateroCoreFrameCodec.mjs";
 import { createZoteroLibraryAdapter } from "./chateroCoreLibraryAdapter.mjs";
 import { createZoteroProfileAdapter } from "./chateroCoreProfileAdapter.mjs";
@@ -264,6 +265,10 @@ export async function startGeckoCoreHost({ Zotero, window } = {}) {
 	let router = createGeckoCoreRequestRouter({
 		adapter,
 		attachmentSources: createCoreAttachmentSourceRegistry({
+			clearTimeout: timers.clearTimeout,
+			setTimeout: timers.setTimeout,
+		}),
+		attachmentUploads: createCoreAttachmentUploadRegistry({
 			clearTimeout: timers.clearTimeout,
 			setTimeout: timers.setTimeout,
 		}),

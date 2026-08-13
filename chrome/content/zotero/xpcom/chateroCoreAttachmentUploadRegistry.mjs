@@ -74,9 +74,15 @@ function defaultSink(byteCount) {
 			binary.flush();
 			binary.close();
 			finished = true;
-			let input = Cc["@mozilla.org/network/file-input-stream;1"].createInstance(Ci.nsIFileInputStream);
-			input.init(file, 0x01, 0o400, 0);
-			return input;
+			let fileInput = Cc["@mozilla.org/network/file-input-stream;1"].createInstance(Ci.nsIFileInputStream);
+			fileInput.init(file, 0x01, 0o400, 0);
+			let pipe = Cc["@mozilla.org/pipe;1"].createInstance(Ci.nsIPipe);
+			pipe.init(true, true, 0, 0xffffffff, null);
+			let { NetUtil } = ChromeUtils.importESModule("resource://gre/modules/NetUtil.sys.mjs");
+			NetUtil.asyncCopy(fileInput, pipe.outputStream, status => {
+				if (!Components.isSuccessCode(status)) try { pipe.outputStream.close(); } catch (_) {}
+			});
+			return pipe.inputStream.QueryInterface(Ci.nsIAsyncInputStream);
 		},
 		close() {
 			if (!finished) try { binary.close(); } catch (_) {}

@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "stage": 4,
+  "entries": [
+    { "id": "pdf-text-geometry-images", "status": "supported", "evidence": "products/workbench/tests/zotero-evidence-editors.test.mjs" },
+    { "id": "pdf-navigation-search-outline-thumbnails", "status": "supported", "evidence": "products/workbench/tests/zotero-evidence-editors.test.mjs" },
+    { "id": "pdf-zoom-rotation-links-print-export-restore", "status": "supported", "evidence": "products/workbench/tests/zotero-evidence-editors.test.mjs" },
+    { "id": "epub-navigation-annotations-restore", "status": "supported", "evidence": "products/workbench/tests/upstream-reader-bridge.test.mjs" },
+    { "id": "snapshot-navigation-annotations-restore", "status": "supported", "evidence": "products/workbench/tests/upstream-reader-bridge.test.mjs" },
+    { "id": "highlight-underline-note-image", "status": "supported", "evidence": "products/workbench/tests/zotero-evidence-editors.test.mjs" },
+    { "id": "annotation-comments-colors-tags-edit-delete", "status": "supported", "evidence": "products/workbench/tests/zotero-evidence-editors.test.mjs" },
+    { "id": "annotation-batch-atomicity-undo-conflict", "status": "supported", "evidence": "products/workbench/tests/reader-workflow-model.test.mjs" },
+    { "id": "reviewed-agent-proposals", "status": "supported", "evidence": "products/workbench/tests/reader-workflow-model.test.mjs" },
+    { "id": "note-rich-text-roundtrip-conflict", "status": "supported", "evidence": "products/workbench/tests/zotero-evidence-editors.test.mjs" },
+    { "id": "citation-copy-bibliography-insert", "status": "supported", "evidence": "products/workbench/tests/native-library-extension.test.mjs" },
+    { "id": "offline-reconnect-stale-interruption-crash-restart", "status": "supported", "evidence": "services/zotero-core/tests/core-supervisor.integration.test.mjs" },
+    { "id": "real-disposable-profile-parity-twice", "status": "supported", "evidence": "services/zotero-core/scripts/run-stage-4-real-profile.mjs" },
+    { "id": "accessibility-localization-performance", "status": "supported", "evidence": "products/workbench/tests/stage-4-acceptance.test.mjs" }
+  ]
+}

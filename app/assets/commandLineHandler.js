@@ -45,6 +45,9 @@ if (CommandLineOptions.chateroCore) {
 			"chrome://zotero/content/xpcom/chateroCoreHost.mjs"
 		);
 		await Zotero.initializationPromise;
+		// No Zotero pane exists in Core mode. Release the upstream UI-readiness
+		// barrier so schema setup can install bundled translators and CSL styles.
+		Zotero.uiIsReady();
 		dump("Chatero Core: Zotero services initialized\n");
 		let host = await startGeckoCoreHost({ Zotero });
 		dump("Chatero Core: RPC socket ready\n");

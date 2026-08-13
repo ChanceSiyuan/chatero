@@ -776,6 +776,7 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 
 		async citationStyles(params) {
 			exactObject(params, CITATION_STYLES_FIELDS, "citation.styles params");
+			if (typeof Zotero.Styles.initialized === "function" && !Zotero.Styles.initialized()) await Zotero.Styles.init();
 			let styles = Zotero.Styles.getVisible().map(style => ({
 				citationFormat: optionalBoundedString(style.citationFormat, 256, "CSL citation format"),
 				styleId: boundedString(style.styleID, 16 * 1024, "CSL style id"),
@@ -786,6 +787,7 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 
 		async renderCitation(params) {
 			exactObject(params, CITATION_RENDER_FIELDS, "citation.render params");
+			if (typeof Zotero.Styles.initialized === "function" && !Zotero.Styles.initialized()) await Zotero.Styles.init();
 			let styleId = boundedString(params.styleId, 16 * 1024, "citation.render styleId");
 			if (!CITATION_MODES.has(params.mode)) throw new Error("citation.render mode must be bibliography or citation");
 			if (params.locale !== undefined && (typeof params.locale !== "string" || !/^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/.test(params.locale))) {
@@ -1296,13 +1298,13 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 				annotation = new Zotero.Item("annotation");
 				annotation.libraryID = params.libraryId;
 				annotation.parentItemID = attachment.id;
+				annotation.annotationType = params.type;
 				annotation.annotationColor = params.color;
 				annotation.annotationComment = params.comment || "";
 				annotation.annotationPageLabel = params.pageLabel || "";
 				annotation.annotationPosition = canonicalPosition(params.positionJson);
 				annotation.annotationSortIndex = params.sortIndex;
 				annotation.annotationText = params.text || "";
-				annotation.annotationType = params.type;
 				annotation.setTags((params.tags || []).map(tag => ({ tag })));
 			}
 			else {

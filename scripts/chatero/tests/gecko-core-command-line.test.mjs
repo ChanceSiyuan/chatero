@@ -16,7 +16,9 @@ test("-ChateroCore selects only the hidden Core host and suppresses the legacy m
 
   assert.match(options, /chateroCore:\s*false/);
   assert.match(early, /handleFlag\("ChateroCore", false\)/);
-  assert.match(early, /chrome:\/\/zotero\/content\/chateroCore\.xhtml/);
+  assert.doesNotMatch(early, /chrome:\/\/zotero\/content\/chateroCore\.xhtml/);
+  assert.match(early, /enterLastWindowClosingSurvivalArea/);
+  assert.match(early, /Zotero\.uiIsReady\(\)/);
   assert.match(early, /CommandLineOptions\.chateroCore[\s\S]*cmdLine\.preventDefault = true/);
   assert.match(late, /!CommandLineOptions\.chateroCore[\s\S]*!Zotero\.getMainWindow\(\)/);
   assert.doesNotMatch(document, /zoteroPane\.xhtml|standalone\.js/);
