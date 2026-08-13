@@ -119,6 +119,13 @@ async function main() {
   const fixtureAnnotations = Array.isArray(fixture?.annotations) ? fixture.annotations : [];
   const fixtureAttachmentContents = Array.isArray(fixture?.attachmentContents) ? fixture.attachmentContents : [];
   const fixtureAttachmentStates = Array.isArray(fixture?.attachmentStates) ? fixture.attachmentStates : [];
+  const fixtureCitationStyles = Array.isArray(fixture?.citationStyles) ? fixture.citationStyles : [];
+  const fixtureCitationRenders = Array.isArray(fixture?.citationRenders) ? fixture.citationRenders : [];
+  const fixtureExports = Array.isArray(fixture?.exports) ? fixture.exports : [];
+  const fixtureImportResults = Array.isArray(fixture?.importResults) ? fixture.importResults : [];
+  const fixtureSyncConflicts = Array.isArray(fixture?.syncConflicts) ? fixture.syncConflicts : [];
+  const fixtureSyncStorageStatuses = Array.isArray(fixture?.syncStorageStatuses) ? fixture.syncStorageStatuses : [];
+  const fixtureTranslators = Array.isArray(fixture?.translators) ? fixture.translators : [];
   if (!Array.isArray(fixtureItems)) throw new Error("fixture items must be an array");
   const bootstrapToken = await readBootstrapToken();
   const searchDelayMs = Number(rawSearchDelayMs);
@@ -371,10 +378,126 @@ async function main() {
       if (!value) throw new Error(`fixture note ${message.params.libraryId}/${message.params.noteKey} was not found`);
       return { result: value };
     }
+    if (message.method === "library.note-update") {
+      const { expectedRevision, idempotencyKey, ...operation } = message.params || {};
+      validateIdentityParams({ libraryId: operation.libraryId, noteKey: operation.noteKey }, "noteKey", "library.note-update");
+      const completed = await transactionRegistry.execute({
+        expectedRevision, idempotencyKey, operation,
+        scope: `library:${operation.libraryId}/note:${operation.noteKey}`,
+      }, async value => {
+        const note = fixtureNotes.find(entry => entry.libraryId === value.libraryId && entry.noteKey === value.noteKey);
+        if (!note) throw new Error(`fixture note ${value.libraryId}/${value.noteKey} was not found`);
+        if (note.version !== value.expectedVersion) {
+          const error = new Error("fixture Note version changed before update");
+          error.code = "REVISION_CONFLICT";
+          error.actualRevision = note.version;
+          error.expectedRevision = value.expectedVersion;
+          throw error;
+        }
+        if (typeof value.html !== "string") throw new Error("library.note-update html must be a string");
+        note.html = value.html;
+        note.version += 1;
+        return { libraryId: note.libraryId, noteKey: note.noteKey, synced: false, version: note.version };
+      });
+      return {
+        ...(!completed.replayed && { event: eventJournal.publish("library.note.changed", {
+          identities: [{ itemKey: operation.noteKey, libraryId: operation.libraryId }], revision: completed.revision,
+        }) }),
+        result: { ...completed.result, replayed: completed.replayed, revision: completed.revision },
+      };
+    }
     if (message.method === "library.annotations") {
       validateIdentityParams(message.params, "attachmentKey", "library.annotations");
       const value = fixtureAnnotations.find(entry => entry.libraryId === message.params.libraryId && entry.attachmentKey === message.params.attachmentKey);
       return { result: { annotations: value?.annotations || [] } };
+    }
+    if (message.method === "library.annotations-update") {
+      const { expectedRevision, idempotencyKey, ...operation } = message.params || {};
+      validateIdentityParams({ attachmentKey: operation.attachmentKey, libraryId: operation.libraryId }, "attachmentKey", "library.annotations-update");
+      const completed = await transactionRegistry.execute({
+        expectedRevision, idempotencyKey, operation,
+        scope: `library:${operation.libraryId}/attachment:${operation.attachmentKey}`,
+      }, async value => {
+        const record = fixtureAnnotations.find(entry => entry.libraryId === value.libraryId && entry.attachmentKey === value.attachmentKey);
+        if (!record || !Array.isArray(value.updates) || !value.updates.length) throw new Error("library.annotations-update params are invalid");
+        const prepared = value.updates.map(update => {
+          const annotation = record.annotations.find(entry => entry.annotationKey === update.annotationKey);
+          if (!annotation) throw new Error(`fixture annotation ${value.libraryId}/${update.annotationKey} was not found`);
+          if (annotation.version !== update.expectedVersion) {
+            const error = new Error("fixture annotation version changed before update");
+            error.code = "REVISION_CONFLICT";
+            error.actualRevision = annotation.version;
+            error.expectedRevision = update.expectedVersion;
+            throw error;
+          }
+          return { annotation, update };
+        });
+        for (const { annotation, update } of prepared) {
+          for (const field of ["color", "comment", "text"]) if (update[field] !== undefined) annotation[field] = update[field];
+          annotation.version += 1;
+        }
+        return { annotations: prepared.map(({ annotation }) => ({ annotationKey: annotation.annotationKey, libraryId: annotation.libraryId, synced: false, version: annotation.version })) };
+      });
+      return {
+        ...(!completed.replayed && { event: eventJournal.publish("library.annotation.changed", {
+          identities: completed.result.annotations.map(value => ({ itemKey: value.annotationKey, libraryId: value.libraryId })), revision: completed.revision,
+        }) }),
+        result: { ...completed.result, replayed: completed.replayed, revision: completed.revision },
+      };
+    }
+    if (message.method === "sync.status") {
+      return { result: fixture.syncStatus || { enabled: true, inProgress: false, libraries: [], offline: false, status: "" } };
+    }
+    if (message.method === "sync.storage-status") {
+      const value = fixtureSyncStorageStatuses.find(entry => entry.libraryId === message.params?.libraryId);
+      return { result: value || { conflictCount: 0, downloadAsNeeded: false, enabled: false, libraryId: message.params.libraryId, mode: "zfs" } };
+    }
+    if (message.method === "sync.conflicts") {
+      return { result: { conflicts: fixtureSyncConflicts.filter(entry => entry.libraryId === message.params?.libraryId) } };
+    }
+    if (message.method === "sync.retry") {
+      const { expectedRevision, idempotencyKey, ...operation } = message.params || {};
+      const completed = await transactionRegistry.execute({ expectedRevision, idempotencyKey, operation, scope: "sync:retry" }, async value => ({
+        completed: true,
+        libraryIds: [...new Set(value.libraryIds)].sort((left, right) => left - right),
+      }));
+      return {
+        ...(!completed.replayed && { event: eventJournal.publish("sync.completed", { ...completed.result, revision: completed.revision }) }),
+        result: { ...completed.result, replayed: completed.replayed, revision: completed.revision },
+      };
+    }
+    if (message.method === "translation.translators") {
+      return { result: { translators: fixtureTranslators.filter(value => value.kind === message.params?.kind) } };
+    }
+    if (message.method === "citation.styles") return { result: { styles: fixtureCitationStyles } };
+    if (message.method === "citation.render") {
+      const serialized = JSON.stringify(message.params);
+      const value = fixtureCitationRenders.find(entry => JSON.stringify(entry.params) === serialized);
+      if (!value) throw new Error("fixture citation.render params were not configured");
+      return { result: value.result };
+    }
+    if (message.method === "translation.export") {
+      const serialized = JSON.stringify(message.params);
+      const value = fixtureExports.find(entry => JSON.stringify(entry.params) === serialized);
+      if (!value) throw new Error("fixture translation.export params were not configured");
+      return { result: value.result };
+    }
+    if (message.method === "translation.import") {
+      const { expectedRevision, idempotencyKey, ...operation } = message.params || {};
+      const completed = await transactionRegistry.execute({
+        expectedRevision, idempotencyKey, operation,
+        scope: `library:${operation.libraryId}/translation:import`,
+      }, async value => {
+        const configured = fixtureImportResults.find(entry => JSON.stringify(entry.params) === JSON.stringify(value));
+        if (!configured) throw new Error("fixture translation.import params were not configured");
+        return configured.result;
+      });
+      return {
+        ...(!completed.replayed && { event: eventJournal.publish("library.items.imported", {
+          identities: completed.result.items.map(value => ({ itemKey: value.itemKey, libraryId: value.libraryId })), revision: completed.revision,
+        }) }),
+        result: { ...completed.result, replayed: completed.replayed, revision: completed.revision },
+      };
     }
     if (message.method === "library.search") {
       validateSearchParams(message.params);

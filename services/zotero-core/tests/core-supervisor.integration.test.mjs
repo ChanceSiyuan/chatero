@@ -225,6 +225,45 @@ test("supervises an authenticated fixture Core over an owner-only Unix socket", 
   assert.deepEqual(await core.client.request("attachment.close", { sourceId: opened.sourceId }), { closed: true });
 });
 
+test("fixture Core implements every new mutation, citation, translation, and sync route", async () => {
+	const { startCore } = await import("../supervisor/core-supervisor.mjs");
+	const { profileDirectory } = await createProfile();
+	const citationParams = { identities: [{ itemKey: "FISHER01", libraryId: 1 }], mode: "bibliography", styleId: "apa" };
+	const exportParams = { identities: [{ itemKey: "FISHER01", libraryId: 1 }], translatorId: "bibtex" };
+	const importOperation = { content: "TY  - JOUR\nER  -", libraryId: 1, translatorId: "ris" };
+	const core = await startCore({
+		profileDirectory,
+		fixtureAnnotations,
+		fixtureCitationRenders: [{ params: citationParams, result: { html: "<div>Reference</div>", text: "Reference" } }],
+		fixtureCitationStyles: [{ citationFormat: "author-date", styleId: "apa", title: "APA" }],
+		fixtureExports: [{ params: exportParams, result: { content: "@article{}", itemCount: 1, translatorId: "bibtex" } }],
+		fixtureImportResults: [{ params: importOperation, result: { items: [{ itemKey: "IMPORT01", libraryId: 1, title: "Imported", version: 1 }], translatorId: "ris" } }],
+		fixtureNotes,
+		fixtureSyncConflicts: [{ attachmentKey: "PDF00001", libraryId: 1, localModifiedAt: "a", remoteModifiedAt: "b" }],
+		fixtureSyncStorageStatuses: [{ conflictCount: 1, downloadAsNeeded: true, enabled: true, libraryId: 1, mode: "zfs" }],
+		fixtureTranslators: [{ browserSupport: "g", creator: "Zotero", kind: "export", label: "BibTeX", lastUpdated: "now", priority: 100, target: "bib", translatorId: "bibtex" }],
+	});
+	running.push(core);
+
+	assert.equal((await core.client.request("library.note-update", {
+		expectedRevision: 0, expectedVersion: 1, html: "<p>Changed</p>", idempotencyKey: "fixture-note-update-0001", libraryId: 1, noteKey: "NOTE0001",
+	})).version, 2);
+	assert.equal((await core.client.request("library.annotations-update", {
+		attachmentKey: "PDF00001", expectedRevision: 0, idempotencyKey: "fixture-annotation-update-0001", libraryId: 1,
+		updates: [{ annotationKey: "ANN00001", comment: "Changed", expectedVersion: 1 }],
+	})).annotations[0].version, 2);
+	assert.deepEqual(await core.client.request("sync.storage-status", { libraryId: 1 }), { conflictCount: 1, downloadAsNeeded: true, enabled: true, libraryId: 1, mode: "zfs" });
+	assert.equal((await core.client.request("sync.conflicts", { libraryId: 1 })).conflicts.length, 1);
+	assert.equal((await core.client.request("sync.retry", { expectedRevision: 0, idempotencyKey: "fixture-sync-retry-0001", libraryIds: [1] })).completed, true);
+	assert.equal((await core.client.request("translation.translators", { kind: "export" })).translators.length, 1);
+	assert.equal((await core.client.request("translation.export", exportParams)).content, "@article{}");
+	assert.equal((await core.client.request("citation.styles", {})).styles[0].styleId, "apa");
+	assert.equal((await core.client.request("citation.render", citationParams)).text, "Reference");
+	assert.equal((await core.client.request("translation.import", {
+		...importOperation, expectedRevision: 0, idempotencyKey: "fixture-translation-import-0001",
+	})).items[0].itemKey, "IMPORT01");
+});
+
 test("keeps one profile owner and removes only disposable state on stop", async () => {
   const { startCore } = await import("../supervisor/core-supervisor.mjs");
   const { profileDirectory } = await createProfile();
