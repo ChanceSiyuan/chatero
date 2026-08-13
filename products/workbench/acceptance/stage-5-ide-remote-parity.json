@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "stage": 5,
+  "languages": [
+    { "id": "python", "extension": "python", "fixture": "main.py" },
+    { "id": "latex", "extension": "latex", "fixture": "paper.tex" },
+    { "id": "quarto", "extension": "chatero-documentation", "fixture": "paper.qmd" },
+    { "id": "javascript", "extension": "javascript", "fixture": "main.js" },
+    { "id": "typescript", "extension": "typescript-basics", "fixture": "main.ts" },
+    { "id": "markdown", "extension": "markdown-basics", "fixture": "README.md" },
+    { "id": "json", "extension": "json", "fixture": "data.json" },
+    { "id": "yaml", "extension": "yaml", "fixture": "data.yaml" },
+    { "id": "shellscript", "extension": "shellscript", "fixture": "run.sh" },
+    { "id": "cpp", "extension": "cpp", "fixture": "main.cpp" },
+    { "id": "java", "extension": "java", "fixture": "Main.java" },
+    { "id": "go", "extension": "go", "fixture": "main.go" },
+    { "id": "rust", "extension": "rust", "fixture": "main.rs" }
+  ],
+  "workbench": [
+    "files", "search", "scm-git", "pty-terminal", "tasks", "debug",
+    "notebooks", "settings", "extensions", "file-watching", "workspace-trust",
+    "extension-host-restart", "session-restore"
+  ],
+  "remote": [
+    "openssh-config", "proxy-jump", "host-key-identity", "reconnect",
+    "cancellation", "arbitrary-folder", "empty-folder", "authority-persistence",
+    "bounded-diagnostics", "signed-x64-agent", "signed-arm64-agent",
+    "codex-sdk", "fixed-helpers", "notices", "one-use-pdf-grant",
+    "resumable-24h-cache", "target-bound-expiry", "target-bound-revoke"
+  ]
+}

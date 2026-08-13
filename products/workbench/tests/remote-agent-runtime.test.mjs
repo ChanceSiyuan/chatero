@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 
@@ -19,7 +19,9 @@ const remoteExtensionManifestPath = join(
   "chatero-remote",
   "package.json",
 );
-const generatedCheckout = join(workbenchRoot, "..", "..", "vendor", "code-oss");
+const generatedCheckout = process.env.CHATERO_CODE_OSS_DIR
+  ? resolve(process.env.CHATERO_CODE_OSS_DIR)
+  : join(workbenchRoot, "..", "..", "vendor", "code-oss");
 
 async function runtimeContract() {
   const [patch, productText, extensionText] = await Promise.all([

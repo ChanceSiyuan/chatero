@@ -1,0 +1,160 @@
+name: Stage 5 IDE and Remote SSH
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - codex/stage1-workbench-closure
+
+permissions:
+  contents: read
+
+jobs:
+  build-agent:
+    name: Build ${{ matrix.tuple }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: x64
+            tuple: linux-x86_64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+            tuple: linux-aarch64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.18.0
+          cache: npm
+      - run: npm ci
+      - run: npm run workbench:bootstrap
+      - run: >-
+          node products/workbench/remote-agent/scripts/build-linux-agent.mjs
+          --arch ${{ matrix.arch }}
+          --checkout vendor/code-oss
+          --out products/workbench/remote-agent/dist/chatero-agent-${{ matrix.tuple }}.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-${{ matrix.tuple }}-${{ github.sha }}
+          path: products/workbench/remote-agent/dist/chatero-agent-${{ matrix.tuple }}.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
+  sign-agent:
+    name: Sign complete Remote Agent release
+    needs: build-agent
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.18.0
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: unsigned-*-${{ github.sha }}
+          path: products/workbench/remote-agent/unsigned
+          merge-multiple: true
+      - name: Materialize protected signing key
+        env:
+          CHATERO_SIGNING_KEY_BASE64: ${{ secrets.CHATERO_REMOTE_AGENT_SIGNING_KEY_BASE64 }}
+        run: |
+          test -n "$CHATERO_SIGNING_KEY_BASE64"
+          install -m 600 /dev/null "$RUNNER_TEMP/chatero-release.private.pem"
+          printf '%s' "$CHATERO_SIGNING_KEY_BASE64" | base64 --decode > "$RUNNER_TEMP/chatero-release.private.pem"
+          openssl pkey -in "$RUNNER_TEMP/chatero-release.private.pem" -pubout | cmp - products/workbench/remote-agent/release-public-key.pem
+      - run: >-
+          npm run remote-agent:stage --
+          --x64 products/workbench/remote-agent/unsigned/chatero-agent-linux-x86_64.tar.gz
+          --arm64 products/workbench/remote-agent/unsigned/chatero-agent-linux-aarch64.tar.gz
+          --private-key "$RUNNER_TEMP/chatero-release.private.pem"
+          --out products/workbench/remote-agent/dist
+      - if: always()
+        run: rm -f -- "$RUNNER_TEMP/chatero-release.private.pem"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: signed-stage-5-release-${{ github.sha }}
+          path: |
+            products/workbench/remote-agent/dist/chatero-agent-linux-x86_64.tar.gz
+            products/workbench/remote-agent/dist/chatero-agent-linux-aarch64.tar.gz
+            products/workbench/remote-agent/dist/manifest.json
+            products/workbench/remote-agent/dist/manifest.sig
+          if-no-files-found: error
+          retention-days: 1
+
+  real-ssh:
+    name: Real SSH ${{ matrix.tuple }}
+    needs: sign-agent
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            tuple: linux-x86_64
+          - runner: ubuntu-24.04-arm
+            tuple: linux-aarch64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.18.0
+      - uses: actions/download-artifact@v4
+        with:
+          name: signed-stage-5-release-${{ github.sha }}
+          path: products/workbench/remote-agent/dist
+      - run: sudo apt-get update && sudo apt-get install -y openssh-server
+      - run: node products/workbench/scripts/prepare-stage-5-ci-ssh.mjs
+      - run: >-
+          node products/workbench/scripts/run-stage-5-real-ssh.mjs
+          --alias stage5-target
+          --release products/workbench/remote-agent/dist
+          --receipt products/workbench/.cache/acceptance/stage-5-runner-receipts/${{ matrix.tuple }}.json
+          --tuple ${{ matrix.tuple }}
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage-5-receipt-${{ matrix.tuple }}-${{ github.sha }}
+          path: products/workbench/.cache/acceptance/stage-5-runner-receipts/${{ matrix.tuple }}.json
+          if-no-files-found: error
+          retention-days: 1
+
+  stage-5-gate:
+    name: Immutable Stage 5 gate
+    needs: real-ssh
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.18.0
+          cache: npm
+      - uses: actions/download-artifact@v4
+        with:
+          name: signed-stage-5-release-${{ github.sha }}
+          path: products/workbench/remote-agent/dist
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: stage-5-receipt-*-${{ github.sha }}
+          path: products/workbench/.cache/acceptance/stage-5-runner-receipts
+          merge-multiple: true
+      - run: npm ci
+      - run: npm run workbench:bootstrap
+      - run: npm run verify:stage-5
+        env:
+          CHATERO_CODE_OSS_DIR: vendor/code-oss
+          CHATERO_REMOTE_AGENT_RELEASE_DIR: products/workbench/remote-agent/dist
+          CHATERO_STAGE_5_RECEIPT_DIR: products/workbench/.cache/acceptance/stage-5-runner-receipts
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage-5-acceptance-${{ github.sha }}
+          path: products/workbench/.cache/acceptance/stage-5.json
+          if-no-files-found: error
+          retention-days: 30

@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "stage": 5,
+  "checks": [
+    { "id": "ide-language-product-audit", "kind": "source-inspection" },
+    { "id": "remote-contract-tests", "command": "node", "args": ["products/workbench/scripts/run-node-tests.mjs", "products/workbench/tests/chatero-remote-*.test.mjs", "products/workbench/tests/remote-agent-*.test.mjs", "products/workbench/tests/documentation-remote-transaction.test.mjs"] },
+    { "id": "code-oss-compile", "command": "npm", "args": ["run", "workbench:compile"] },
+    { "id": "signed-agent-release", "kind": "release-inspection" },
+    { "id": "linux-x64-real-ssh", "kind": "runner-receipt", "tuple": "linux-x86_64" },
+    { "id": "linux-arm64-real-ssh", "kind": "runner-receipt", "tuple": "linux-aarch64" },
+    { "id": "stage-five-boundary-audit", "kind": "boundary-inspection" }
+  ]
+}
