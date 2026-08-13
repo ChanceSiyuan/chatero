@@ -237,6 +237,7 @@ test("fixture Core implements every new mutation, citation, translation, and syn
 		fixtureAnnotations,
 		fixtureCitationRenders: [{ params: citationParams, result: { html: "<div>Reference</div>", text: "Reference" } }],
 		fixtureCitationStyles: [{ citationFormat: "author-date", styleId: "apa", title: "APA" }],
+		fixtureAttachmentStates,
 		fixtureDuplicates: [fixtureItems[0]],
 		fixtureExports: [{ params: exportParams, result: { content: "@article{}", itemCount: 1, translatorId: "bibtex" } }],
 		fixtureFulltextMatches: [{ attachmentKey: "PDF00001", libraryId: 1, parentItemKey: "FISHER01", query: "critical", title: "Paper PDF" }],
@@ -268,6 +269,10 @@ test("fixture Core implements every new mutation, citation, translation, and syn
 		action: "trash", attachmentKey: "PDF00001", expectedRevision: 0, expectedVersion: 1,
 		idempotencyKey: "fixture-attachment-trash-0001", libraryId: 1,
 	})).deleted, true);
+	assert.equal((await core.client.request("reader.state", { attachmentKey: "PDF00001", libraryId: 1 })).pageIndex, 0);
+	assert.equal((await core.client.request("reader.state-update", {
+		attachmentKey: "PDF00001", expectedRevision: 0, expectedVersion: 1, idempotencyKey: "fixture-reader-state-0001", libraryId: 1, pageIndex: 3,
+	})).pageIndex, 3);
 	assert.equal((await core.client.request("library.collection-mutate", {
 		action: "create", expectedRevision: 0, idempotencyKey: "fixture-collection-create-0001", libraryId: 1, name: "Reading",
 	})).name, "Reading");

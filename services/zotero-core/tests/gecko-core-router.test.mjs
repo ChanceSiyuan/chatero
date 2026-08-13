@@ -64,6 +64,8 @@ function createRouter(overrides = {}) {
 		async note(params) { calls.push(["note", params]); return { html: "<p>Note</p>", libraryId: 1, noteKey: "NOTE0001", parentItemKey: "ITEM0001", title: "Note", version: 1 }; },
     async updateNote(params) { calls.push(["updateNote", params]); return { libraryId: params.libraryId, noteKey: params.noteKey, synced: false, version: params.expectedVersion + 1 }; },
     async mutateNote(params) { calls.push(["mutateNote", params]); return { action: params.action, deleted: false, libraryId: params.libraryId, noteKey: "NEWNOTE1", parentItemKey: params.parentItemKey, synced: false, version: 1 }; },
+    async readerState(params) { calls.push(["readerState", params]); return { attachmentKey: params.attachmentKey, contentType: "application/pdf", libraryId: params.libraryId, pageIndex: 0, version: 1 }; },
+    async updateReaderState(params) { calls.push(["updateReaderState", params]); return { attachmentKey: params.attachmentKey, contentType: "application/pdf", libraryId: params.libraryId, pageIndex: params.pageIndex, synced: false, version: params.expectedVersion + 1 }; },
     async profileBackup() { calls.push(["profileBackup"]); return { backupCreated: true, completedAt: 1234 }; },
 		async profileMigrate() { calls.push(["profileMigrate"]); return { compatibilityVersion: 10, migrated: true, schemaVersion: 142 }; },
     async profileStatus() { calls.push(["profileStatus"]); return { compatibilityVersion: 10, integrityCheckRequired: false, profileEpoch: "profile-epoch", profileName: "Disposable Profile", quickCheckPassed: true, readOnly: false, schemaVersion: 142, upstreamVersion: "7.1-real" }; },
@@ -245,6 +247,18 @@ test("Note lifecycle mutations are one idempotent evented transaction", async ()
   assert.equal(first.event.topic, "library.note.changed");
   assert.equal(replay.result.replayed, true);
   assert.equal(calls.filter(value => value[0] === "mutateNote").length, 1);
+});
+
+test("Reader state read and update use separate capabilities and one versioned transaction", async () => {
+  const { calls, router } = createRouter();
+  const readSession = await handshake(router, ["library:read", "library:write"]);
+  assert.equal((await router.handle(request(readSession, "reader.state", { attachmentKey: "PDF00001", libraryId: 1 }))).result.pageIndex, 0);
+  const params = { attachmentKey: "PDF00001", expectedRevision: 0, expectedVersion: 1, idempotencyKey: "reader-state-key-0001", libraryId: 1, pageIndex: 4 };
+  const first = await router.handle(request(readSession, "reader.state-update", params));
+  const replay = await router.handle(request(readSession, "reader.state-update", params));
+  assert.equal(first.event.topic, "reader.state.changed");
+  assert.equal(replay.result.replayed, true);
+  assert.equal(calls.filter(value => value[0] === "updateReaderState").length, 1);
 });
 
 test("annotation batches are one idempotent transaction with one event", async () => {

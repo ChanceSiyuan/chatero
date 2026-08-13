@@ -68,6 +68,8 @@ function validateRouterOptions(options) {
 			|| typeof options.adapter.note !== "function"
 			|| typeof options.adapter.updateNote !== "function"
 			|| typeof options.adapter.mutateNote !== "function"
+			|| typeof options.adapter.readerState !== "function"
+			|| typeof options.adapter.updateReaderState !== "function"
 			|| typeof options.adapter.profileBackup !== "function"
 			|| typeof options.adapter.profileStatus !== "function"
 			|| typeof options.adapter.profileMigrate !== "function"
@@ -444,6 +446,19 @@ export function createGeckoCoreRequestRouter(options = {}) {
 				return {
 					...(!completed.replayed && { event: eventJournal.publish("library.note.changed", {
 						action: result.action, identities: [{ itemKey: result.noteKey, libraryId: result.libraryId }], revision: completed.revision,
+					}) }), result,
+				};
+			}
+			if (message.method === "reader.state") return { result: await adapter.readerState(message.params) };
+			if (message.method === "reader.state-update") {
+				let { expectedRevision, idempotencyKey, ...operation } = message.params || {};
+				let completed = await transactionRegistry.execute({
+					expectedRevision, idempotencyKey, operation, scope: `library:${operation.libraryId}/reader:${operation.attachmentKey}`,
+				}, value => adapter.updateReaderState(value));
+				let result = { ...completed.result, replayed: completed.replayed, revision: completed.revision };
+				return {
+					...(!completed.replayed && { event: eventJournal.publish("reader.state.changed", {
+						attachmentKey: result.attachmentKey, libraryId: result.libraryId, revision: completed.revision,
 					}) }), result,
 				};
 			}

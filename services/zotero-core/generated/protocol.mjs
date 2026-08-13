@@ -60,6 +60,8 @@ export const METHOD_CAPABILITIES = Object.freeze({
   "profile.backup": "profile:write",
   "profile.migrate": "profile:write",
   "profile.status": "profile:read",
+  "reader.state": "library:read",
+  "reader.state-update": "library:write",
   "sync.conflicts": "sync:read",
   "sync.retry": "sync:write",
   "sync.status": "sync:read",
@@ -233,6 +235,14 @@ export const METHOD_TYPES = Object.freeze({
   "profile.status": {
     "params": "ProfileStatusParams",
     "result": "ProfileStatusResult"
+  },
+  "reader.state": {
+    "params": "ReaderStateParams",
+    "result": "ReaderStateResult"
+  },
+  "reader.state-update": {
+    "params": "ReaderStateUpdateParams",
+    "result": "ReaderStateUpdateResult"
   },
   "sync.conflicts": {
     "params": "SyncLibraryParams",

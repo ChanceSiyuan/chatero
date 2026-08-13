@@ -248,6 +248,18 @@
       "resultType": "LibraryNoteMutationResult"
     },
     {
+      "name": "reader.state",
+      "capability": "library:read",
+      "paramsType": "ReaderStateParams",
+      "resultType": "ReaderStateResult"
+    },
+    {
+      "name": "reader.state-update",
+      "capability": "library:write",
+      "paramsType": "ReaderStateUpdateParams",
+      "resultType": "ReaderStateUpdateResult"
+    },
+    {
       "name": "library.search",
       "capability": "library:search",
       "paramsType": "LibrarySearchParams",
@@ -1185,6 +1197,53 @@
         "parentItemKey?": "string",
         "replayed": "boolean",
         "revision": "number",
+        "synced": "boolean",
+        "version": "number"
+      }
+    },
+    "ReaderStateParams": {
+      "kind": "object",
+      "fields": {
+        "attachmentKey": "string",
+        "libraryId": "number"
+      }
+    },
+    "ReaderStateResult": {
+      "kind": "object",
+      "fields": {
+        "attachmentKey": "string",
+        "cfi?": "string",
+        "contentType": "string",
+        "libraryId": "number",
+        "pageIndex?": "number",
+        "scrollYPercent?": "number",
+        "version": "number"
+      }
+    },
+    "ReaderStateUpdateParams": {
+      "kind": "object",
+      "fields": {
+        "attachmentKey": "string",
+        "cfi?": "string",
+        "expectedRevision": "number",
+        "expectedVersion": "number",
+        "idempotencyKey": "string",
+        "libraryId": "number",
+        "pageIndex?": "number",
+        "scrollYPercent?": "number"
+      }
+    },
+    "ReaderStateUpdateResult": {
+      "kind": "object",
+      "fields": {
+        "attachmentKey": "string",
+        "cfi?": "string",
+        "contentType": "string",
+        "libraryId": "number",
+        "pageIndex?": "number",
+        "replayed": "boolean",
+        "revision": "number",
+        "scrollYPercent?": "number",
         "synced": "boolean",
         "version": "number"
       }

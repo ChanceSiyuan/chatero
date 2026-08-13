@@ -33,6 +33,8 @@ const ATTACHMENT_FIELDS = new Set(["attachmentKey", "libraryId"]);
 const ATTACHMENT_STATE_FIELDS = new Set(["attachmentKey", "libraryId"]);
 const ATTACHMENT_UPLOAD_COMMIT_FIELDS = new Set(["collectionKeys", "libraryId", "parentItemKey", "title"]);
 const ATTACHMENT_MUTATION_FIELDS = new Set(["action", "attachmentKey", "expectedVersion", "libraryId"]);
+const READER_STATE_FIELDS = new Set(["attachmentKey", "libraryId"]);
+const READER_STATE_UPDATE_FIELDS = new Set(["attachmentKey", "cfi", "expectedVersion", "libraryId", "pageIndex", "scrollYPercent"]);
 const NOTE_FIELDS = new Set(["libraryId", "noteKey"]);
 const UPDATE_NOTE_FIELDS = new Set(["expectedVersion", "html", "libraryId", "noteKey"]);
 const NOTE_MUTATION_FIELDS = new Set(["action", "expectedVersion", "html", "libraryId", "noteKey", "parentItemKey"]);
@@ -547,6 +549,25 @@ function validateNoteMutation(params) {
 		if (!Number.isSafeInteger(params.expectedVersion) || params.expectedVersion < 0) throw new Error("library.note-mutate expectedVersion is invalid");
 		if (params.html !== undefined || params.parentItemKey !== undefined) throw new Error("library.note-mutate trash and restore do not accept Note content");
 	}
+}
+
+function readerLocation(attachment, params, write = false) {
+	let contentType = attachment.attachmentContentType || "application/octet-stream";
+	let keys = ["pageIndex", "cfi", "scrollYPercent"].filter(key => params?.[key] !== undefined);
+	if (write && keys.length !== 1) throw new Error("reader state update requires exactly one typed location");
+	if (contentType === "application/pdf") {
+		let value = write ? params.pageIndex : attachment.getAttachmentLastPageIndex();
+		if (!Number.isSafeInteger(value) || value < 0 || (write && keys[0] !== "pageIndex")) throw new Error("PDF reader state requires a non-negative pageIndex");
+		return { contentType, pageIndex: value };
+	}
+	if (contentType === "application/epub+zip") {
+		let value = write ? params.cfi : attachment.getAttachmentLastPageIndex();
+		if (typeof value !== "string" || !/^epubcfi\(.{1,16384}\)$/.test(value) || (write && keys[0] !== "cfi")) throw new Error("EPUB reader state requires a bounded CFI");
+		return { cfi: value, contentType };
+	}
+	let value = write ? params.scrollYPercent : attachment.getAttachmentLastPageIndex();
+	if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 100 || (write && keys[0] !== "scrollYPercent")) throw new Error("snapshot reader state requires scrollYPercent from 0 through 100");
+	return { contentType, scrollYPercent: value };
 }
 
 function itemIsUnavailable(item) {
@@ -1260,6 +1281,39 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(S
 			return {
 				action: params.action, attachmentKey: attachment.key, deleted: Boolean(attachment.deleted), libraryId: attachment.libraryID,
 				...(attachment.parentItemID && { parentItemKey: parentKey(Zotero, attachment, "Zotero attachment") }),
+				synced: Boolean(attachment.synced), version: Number.isSafeInteger(attachment.clientVersion) ? attachment.clientVersion : 0,
+			};
+		},
+
+		async readerState(params) {
+			validateCompositeParams(params, READER_STATE_FIELDS, "attachmentKey", "reader.state");
+			let attachment = lookupItem(Zotero, params.libraryId, params.attachmentKey, "Zotero Reader attachment");
+			if (!attachment.isAttachment?.() || !attachment.isFileAttachment?.()) throw new Error("reader.state target must be a file attachment");
+			return {
+				attachmentKey: attachment.key, libraryId: attachment.libraryID,
+				...readerLocation(attachment),
+				version: Number.isSafeInteger(attachment.clientVersion) ? attachment.clientVersion : 0,
+			};
+		},
+
+		async updateReaderState(params) {
+			exactObject(params, READER_STATE_UPDATE_FIELDS, "reader.state-update params");
+			positiveLibraryId(params.libraryId, "reader.state-update");
+			zoteroKey(params.attachmentKey, "reader.state-update attachmentKey");
+			if (!Number.isSafeInteger(params.expectedVersion) || params.expectedVersion < 0) throw new Error("reader.state-update expectedVersion is invalid");
+			let attachment = lookupItem(Zotero, params.libraryId, params.attachmentKey, "Zotero Reader attachment");
+			if (!attachment.isAttachment?.() || !attachment.isFileAttachment?.()) throw new Error("reader.state-update target must be a file attachment");
+			revisionConflict(attachment, params.expectedVersion, "Zotero Reader attachment");
+			let location = readerLocation(attachment, params, true);
+			let value = location.pageIndex ?? location.cfi ?? location.scrollYPercent;
+			try { attachment.setAttachmentLastPageIndex(value); await attachment.saveTx(); }
+			catch (error) {
+				try { await attachment.reload?.(null, true); }
+				catch (_) {}
+				throw error;
+			}
+			return {
+				attachmentKey: attachment.key, libraryId: attachment.libraryID, ...location,
 				synced: Boolean(attachment.synced), version: Number.isSafeInteger(attachment.clientVersion) ? attachment.clientVersion : 0,
 			};
 		},

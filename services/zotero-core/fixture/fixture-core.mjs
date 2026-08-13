@@ -644,6 +644,24 @@ async function main() {
         }) }), result: { ...completed.result, replayed: completed.replayed, revision: completed.revision },
       };
     }
+    if (message.method === "reader.state") {
+      const state = fixtureAttachmentStates.find(entry => entry.libraryId === message.params?.libraryId && entry.attachmentKey === message.params?.attachmentKey);
+      if (!state) throw new Error("fixture Reader attachment was not found");
+      return { result: { attachmentKey: state.attachmentKey, contentType: "application/pdf", libraryId: state.libraryId, pageIndex: state.pageIndex || 0, version: state.version || 1 } };
+    }
+    if (message.method === "reader.state-update") {
+      const { expectedRevision, idempotencyKey, ...operation } = message.params || {};
+      const completed = await transactionRegistry.execute({
+        expectedRevision, idempotencyKey, operation, scope: `library:${operation.libraryId}/reader:${operation.attachmentKey}`,
+      }, async value => {
+        const state = fixtureAttachmentStates.find(entry => entry.libraryId === value.libraryId && entry.attachmentKey === value.attachmentKey);
+        if (!state || (state.version || 1) !== value.expectedVersion) throw new Error("fixture Reader state changed");
+        state.pageIndex = value.pageIndex;
+        state.version = value.expectedVersion + 1;
+        return { attachmentKey: state.attachmentKey, contentType: "application/pdf", libraryId: state.libraryId, pageIndex: state.pageIndex, synced: false, version: state.version };
+      });
+      return { ...(!completed.replayed && { event: eventJournal.publish("reader.state.changed", { attachmentKey: completed.result.attachmentKey, libraryId: completed.result.libraryId, revision: completed.revision }) }), result: { ...completed.result, replayed: completed.replayed, revision: completed.revision } };
+    }
     if (message.method === "library.annotations") {
       validateIdentityParams(message.params, "attachmentKey", "library.annotations");
       const value = fixtureAnnotations.find(entry => entry.libraryId === message.params.libraryId && entry.attachmentKey === message.params.attachmentKey);

@@ -40,6 +40,7 @@ function item({
   version = 1,
 	clientVersion = version,
   attachmentSyncState = 2,
+  lastPageIndex = 0,
 }) {
   let currentTitle = title;
   let currentLibraryID = libraryID;
@@ -54,6 +55,7 @@ function item({
   let currentVersion = version;
 	let currentClientVersion = clientVersion;
   let currentSynced = synced;
+  let currentLastPageIndex = lastPageIndex;
   const value = {
     attachmentSyncState,
     id,
@@ -91,6 +93,7 @@ function item({
       year,
     }[field] ?? ""),
     getFilePathAsync: async () => path || false,
+    getAttachmentLastPageIndex: () => currentLastPageIndex,
     getNote: () => currentNoteHTML,
     getNotes: () => notes.slice(),
     getRelations: () => structuredClone(currentRelations),
@@ -106,6 +109,7 @@ function item({
     async saveTx() { return value.save(); },
     setCreators: values => { currentCreators = structuredClone(values); },
     setCollections: values => { currentCollectionIDs = values.slice(); },
+    setAttachmentLastPageIndex: value => { currentLastPageIndex = value; },
     setField: (field, value) => {
       if (field === "title") currentTitle = value;
       else throw new Error(`Unknown field '${field}'`);
@@ -580,6 +584,18 @@ test("trashes and restores attachments at exact object versions", async () => {
     action: "restore", attachmentKey: "PDF00001", deleted: false, libraryId: 1, parentItemKey: "ITEM0001", synced: false, version: 3,
   });
   await assert.rejects(adapter.mutateAttachment({ action: "trash", attachmentKey: "PDF00001", expectedVersion: 2, libraryId: 1 }), error => error.code === "REVISION_CONFLICT");
+});
+
+test("reads and updates typed Reader locations at exact attachment versions", async () => {
+  const adapter = createZoteroLibraryAdapter(fixture());
+  assert.deepEqual(await adapter.readerState({ attachmentKey: "PDF00001", libraryId: 1 }), {
+    attachmentKey: "PDF00001", contentType: "application/pdf", libraryId: 1, pageIndex: 0, version: 1,
+  });
+  assert.deepEqual(await adapter.updateReaderState({ attachmentKey: "PDF00001", expectedVersion: 1, libraryId: 1, pageIndex: 12 }), {
+    attachmentKey: "PDF00001", contentType: "application/pdf", libraryId: 1, pageIndex: 12, synced: false, version: 2,
+  });
+  await assert.rejects(adapter.updateReaderState({ attachmentKey: "PDF00001", cfi: "epubcfi(/6/2)", expectedVersion: 2, libraryId: 1 }), /pageIndex/);
+  await assert.rejects(adapter.updateReaderState({ attachmentKey: "PDF00001", expectedVersion: 1, libraryId: 1, pageIndex: 13 }), error => error.code === "REVISION_CONFLICT");
 });
 
 test("atomically updates fields, creators, tags, and relations at an expected Zotero client version", async () => {
