@@ -127,9 +127,10 @@ export async function runDocumentationIntegration({
       `--extensions-dir=${fixture.extensionsDir}`,
       `--extensionDevelopmentPath=${fixture.driverExtensionPath}`,
       `--extensionTestsPath=${fixture.testRunnerPath}`,
+      "--disable-workspace-trust",
       "--disable-updates",
       "--skip-welcome",
-      fixture.workspaceUri,
+      `--folder-uri=${fixture.workspaceUri}`,
     ];
     if (boundedGrep) codeArguments.push(`--chatero-documentation-grep=${boundedGrep}`);
     const invocation = platform === "linux"

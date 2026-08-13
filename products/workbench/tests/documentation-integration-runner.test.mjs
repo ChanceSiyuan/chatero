@@ -50,8 +50,10 @@ test("builds one offline pinned Code-OSS launch with fresh isolated directories"
   assert.ok(calls[0].args.some(arg => arg.startsWith("--extensions-dir=")));
   assert.ok(calls[0].args.some(arg => arg.startsWith("--extensionDevelopmentPath=")));
   assert.ok(calls[0].args.some(arg => arg.startsWith("--extensionTestsPath=")));
+  assert.ok(calls[0].args.includes("--disable-workspace-trust"));
   assert.ok(calls[0].args.includes("--disable-updates"));
   assert.ok(calls[0].args.includes("--skip-welcome"));
+  assert.ok(calls[0].args.some(arg => arg.startsWith("--folder-uri=")));
   assert.equal(calls[0].env.CHATERO_DOCUMENTATION_TEST_TARGET, "local");
   assert.match(calls[0].fixtureSource, /# Documentation integration fixture/);
   assert.doesNotMatch(JSON.stringify(calls), /download|update\.code\.visualstudio|marketplace\.visualstudio/i);
@@ -128,4 +130,19 @@ test("driver declares the complete shared local and SSH scenario matrix", async 
   const runner = await readFile(join(repositoryRoot, "products/workbench/integration/documentation/driver/run.cjs"), "utf8");
   assert.match(runner, /forbidPending|failZeroTests|forbidOnly/);
   assert.doesNotMatch(runner, /@vscode\/test-electron|download/i);
+});
+
+test("fixture keeps the macOS user-data socket path within the Unix-domain limit", async () => {
+  const { createTemporaryDocumentationWorkspace } = await import("../integration/documentation/fixtures.mjs");
+  const checkout = await createCheckoutFixture();
+  const fixture = await createTemporaryDocumentationWorkspace({
+    root: repositoryRoot,
+    checkout,
+    target: "local",
+  });
+  temporaryDirectories.push(fixture.fixtureRoot);
+  // Code-OSS appends per-process .sock names under user-data; a representative
+  // socket path must stay below the macOS ~104-byte Unix-domain limit.
+  const socketPath = join(fixture.userDataDir, "1.13-main.sock");
+  assert.ok(Buffer.byteLength(socketPath) < 104, `${socketPath} is too long`);
 });

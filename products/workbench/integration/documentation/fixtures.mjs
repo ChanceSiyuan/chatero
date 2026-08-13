@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -20,9 +20,18 @@ export const TEXT_DOCUMENT_SCENARIOS = Object.freeze([
   "activation-failure-isolation",
 ]);
 
+async function fixtureTempBase() {
+  // Code-OSS Unix-domain IPC sockets are capped near 104 bytes on macOS, and
+  // the default tmpdir() under /var/folders is already too deep once the
+  // workspace, user-data, and per-connection socket paths are appended. Use
+  // the short /tmp root there and canonicalize it; keep tmpdir() elsewhere.
+  const base = process.platform === "darwin" ? "/tmp" : tmpdir();
+  return realpath(base);
+}
+
 export async function createTemporaryDocumentationWorkspace({ root, checkout, target, remoteAgentReleaseDir }) {
   if (!new Set(["local", "ssh-fixture"]).has(target)) throw new TypeError("invalid Documentation integration target");
-  const fixtureRoot = await mkdtemp(join(tmpdir(), "chatero-documentation-integration-"));
+  const fixtureRoot = await mkdtemp(join(await fixtureTempBase(), "chatero-doc-"));
   const workspacePath = join(fixtureRoot, "workspace");
   const userDataDir = join(fixtureRoot, "user-data");
   const extensionsDir = join(fixtureRoot, "extensions");
