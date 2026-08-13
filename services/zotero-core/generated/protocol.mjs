@@ -45,8 +45,10 @@ export const METHOD_CAPABILITIES = Object.freeze({
   "library.tags": "library:read",
   "profile.backup": "profile:write",
   "profile.status": "profile:read",
+  "sync.conflicts": "sync:read",
   "sync.retry": "sync:write",
   "sync.status": "sync:read",
+  "sync.storage-status": "sync:read",
   "translation.export": "translation:read",
   "translation.import": "translation:write",
   "translation.translators": "translation:read"
@@ -160,6 +162,10 @@ export const METHOD_TYPES = Object.freeze({
     "params": "ProfileStatusParams",
     "result": "ProfileStatusResult"
   },
+  "sync.conflicts": {
+    "params": "SyncLibraryParams",
+    "result": "SyncConflictsResult"
+  },
   "sync.retry": {
     "params": "SyncRetryParams",
     "result": "SyncRetryResult"
@@ -167,6 +173,10 @@ export const METHOD_TYPES = Object.freeze({
   "sync.status": {
     "params": "SyncStatusParams",
     "result": "SyncStatusResult"
+  },
+  "sync.storage-status": {
+    "params": "SyncLibraryParams",
+    "result": "SyncStorageStatusResult"
   },
   "translation.export": {
     "params": "TranslationExportParams",

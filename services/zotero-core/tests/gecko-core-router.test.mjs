@@ -60,6 +60,8 @@ function createRouter(overrides = {}) {
     async savedSearchItems(params) { calls.push(["savedSearchItems", params]); return { items: [], total: 0 }; },
     async search(params, options) { calls.push(["search", params, options]); return { items: [], total: 0 }; },
     async syncStatus(params) { calls.push(["syncStatus", params]); return { enabled: true, inProgress: false, libraries: [], offline: false, status: "" }; },
+		async syncStorageStatus(params) { calls.push(["syncStorageStatus", params]); return { conflictCount: 0, downloadAsNeeded: true, enabled: true, libraryId: params.libraryId, mode: "zfs" }; },
+		async syncConflicts(params) { calls.push(["syncConflicts", params]); return { conflicts: [] }; },
     async retrySync(params) { calls.push(["retrySync", params]); return { completed: true, libraryIds: params.libraryIds }; },
     async tags(params) { calls.push(["tags", params]); return { tags: [], total: 0 }; },
 		async translators(params) { calls.push(["translators", params]); return { translators: [] }; },
@@ -208,6 +210,10 @@ test("sync status has a separate read capability and returns no credentials", as
   assert.deepEqual(result, { enabled: true, inProgress: false, libraries: [], offline: false, status: "" });
   assert.equal(JSON.stringify(result).includes("apiKey"), false);
   assert.deepEqual(calls, [["syncStatus", {}]]);
+	assert.deepEqual((await router.handle(request(session, "sync.storage-status", { libraryId: 1 }))).result, {
+		conflictCount: 0, downloadAsNeeded: true, enabled: true, libraryId: 1, mode: "zfs",
+	});
+	assert.deepEqual((await router.handle(request(session, "sync.conflicts", { libraryId: 1 }))).result, { conflicts: [] });
 });
 
 test("sync retry is a separately authorized idempotent transaction", async () => {

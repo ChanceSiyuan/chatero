@@ -317,7 +317,7 @@ function fixture({
 		},
     DB: { executeTransaction: async callback => callback() },
     Sync: {
-      Data: { Local: { getLastSyncTime: () => new Date(400_000) } },
+			Data: { Local: { getLastSyncTime: () => new Date(400_000) } },
       Runner: {
         enabled: true,
         getErrorsByLibrary: libraryId => libraryId === 2 ? [{ errorType: "warning", message: "Storage quota warning" }] : [],
@@ -325,13 +325,20 @@ function fixture({
         syncInProgress: false,
         async sync(options) { syncCalls.push(structuredClone(options)); return true; },
       },
-      Storage: { Local: {
+			Storage: { Local: {
         SYNC_STATE_FORCE_DOWNLOAD: 4,
         SYNC_STATE_FORCE_UPLOAD: 3,
         SYNC_STATE_IN_CONFLICT: 5,
         SYNC_STATE_IN_SYNC: 2,
         SYNC_STATE_TO_DOWNLOAD: 1,
         SYNC_STATE_TO_UPLOAD: 0,
+				downloadAsNeeded: libraryId => libraryId === 1,
+				getConflicts: async libraryId => libraryId === 1 ? [{
+					left: { dateModified: "2026-08-13T10:00:00Z", key: "PDF00001" },
+					right: { dateModified: "2026-08-13T11:00:00Z", key: "PDF00001" },
+				}] : [],
+				getEnabledForLibrary: libraryId => libraryId === 1,
+				getModeForLibrary: libraryId => libraryId === 1 ? "webdav" : "zfs",
       } },
     },
   };
@@ -520,6 +527,26 @@ test("runs an explicit sync only for validated syncable libraries", async () => 
   await assert.rejects(adapter.retrySync({ libraryIds: [99] }), /not syncable/);
   const offline = createZoteroLibraryAdapter({ ...fixture(), isOffline: () => true });
   await assert.rejects(offline.retrySync({ libraryIds: [1] }), error => error.code === "UNAVAILABLE");
+});
+
+test("reports storage mode and bounded file conflicts without credentials or paths", async () => {
+	const adapter = createZoteroLibraryAdapter(fixture());
+	assert.deepEqual(await adapter.syncStorageStatus({ libraryId: 1 }), {
+		conflictCount: 1,
+		downloadAsNeeded: true,
+		enabled: true,
+		libraryId: 1,
+		mode: "webdav",
+	});
+	assert.deepEqual(await adapter.syncConflicts({ libraryId: 1 }), { conflicts: [{
+		attachmentKey: "PDF00001",
+		libraryId: 1,
+		localModifiedAt: "2026-08-13T10:00:00Z",
+		remoteModifiedAt: "2026-08-13T11:00:00Z",
+	}] });
+	const serialized = JSON.stringify(await adapter.syncConflicts({ libraryId: 1 }));
+	assert.equal(serialized.includes("password"), false);
+	assert.equal(serialized.includes("path"), false);
 });
 
 test("lists bounded Zotero translator metadata without executable code or paths", async () => {

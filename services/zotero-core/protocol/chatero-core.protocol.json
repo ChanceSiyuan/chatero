@@ -175,6 +175,18 @@
       "resultType": "SyncStatusResult"
     },
     {
+      "name": "sync.storage-status",
+      "capability": "sync:read",
+      "paramsType": "SyncLibraryParams",
+      "resultType": "SyncStorageStatusResult"
+    },
+    {
+      "name": "sync.conflicts",
+      "capability": "sync:read",
+      "paramsType": "SyncLibraryParams",
+      "resultType": "SyncConflictsResult"
+    },
+    {
       "name": "sync.retry",
       "capability": "sync:write",
       "paramsType": "SyncRetryParams",
@@ -798,6 +810,37 @@
         "libraries": "SyncLibraryStatus[]",
         "offline": "boolean",
         "status": "string"
+      }
+    },
+    "SyncLibraryParams": {
+      "kind": "object",
+      "fields": {
+        "libraryId": "number"
+      }
+    },
+    "SyncStorageStatusResult": {
+      "kind": "object",
+      "fields": {
+        "conflictCount": "number",
+        "downloadAsNeeded": "boolean",
+        "enabled": "boolean",
+        "libraryId": "number",
+        "mode": "string"
+      }
+    },
+    "SyncConflictSummary": {
+      "kind": "object",
+      "fields": {
+        "attachmentKey": "string",
+        "libraryId": "number",
+        "localModifiedAt": "string",
+        "remoteModifiedAt": "string"
+      }
+    },
+    "SyncConflictsResult": {
+      "kind": "object",
+      "fields": {
+        "conflicts": "SyncConflictSummary[]"
       }
     },
     "SyncRetryParams": {

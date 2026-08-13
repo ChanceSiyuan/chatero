@@ -33,6 +33,7 @@ const LIBRARIES_FIELDS = new Set();
 const FEEDS_FIELDS = new Set();
 const SYNC_STATUS_FIELDS = new Set();
 const SYNC_RETRY_FIELDS = new Set(["libraryIds"]);
+const SYNC_LIBRARY_FIELDS = new Set(["libraryId"]);
 const TRANSLATOR_FIELDS = new Set(["kind"]);
 const TRANSLATOR_KINDS = new Set(["export", "import", "search", "web"]);
 const CITATION_STYLES_FIELDS = new Set();
@@ -782,6 +783,43 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(S
 				offline: Boolean(isOffline()),
 				status: typeof Zotero.Sync.Runner.lastSyncStatus === "string" ? Zotero.Sync.Runner.lastSyncStatus : "",
 			};
+		},
+
+		async syncStorageStatus(params) {
+			exactObject(params, SYNC_LIBRARY_FIELDS, "sync.storage-status params");
+			positiveLibraryId(params.libraryId, "sync.storage-status");
+			let library = Zotero.Libraries.get(params.libraryId);
+			if (!library || library.libraryType === "feed") unavailable("sync.storage-status library is unavailable");
+			let storage = Zotero.Sync.Storage.Local;
+			let conflicts = await storage.getConflicts(params.libraryId);
+			return {
+				conflictCount: Array.isArray(conflicts) ? conflicts.length : 0,
+				downloadAsNeeded: Boolean(storage.downloadAsNeeded(params.libraryId)),
+				enabled: Boolean(storage.getEnabledForLibrary(params.libraryId)),
+				libraryId: params.libraryId,
+				mode: boundedString(storage.getModeForLibrary(params.libraryId), 256, "storage mode"),
+			};
+		},
+
+		async syncConflicts(params) {
+			exactObject(params, SYNC_LIBRARY_FIELDS, "sync.conflicts params");
+			positiveLibraryId(params.libraryId, "sync.conflicts");
+			let library = Zotero.Libraries.get(params.libraryId);
+			if (!library || library.libraryType === "feed") unavailable("sync.conflicts library is unavailable");
+			let conflicts = await Zotero.Sync.Storage.Local.getConflicts(params.libraryId);
+			if (!Array.isArray(conflicts) || conflicts.length > MAX_MUTATION_ENTRIES) throw new Error("Zotero storage conflicts are invalid or oversized");
+			return { conflicts: conflicts.map(conflict => {
+				let leftKey = conflict?.left?.key;
+				let rightKey = conflict?.right?.key;
+				if (leftKey !== rightKey) throw new Error("Zotero storage conflict identities disagree");
+				zoteroKey(leftKey, "sync conflict attachmentKey");
+				return {
+					attachmentKey: leftKey,
+					libraryId: params.libraryId,
+					localModifiedAt: optionalBoundedString(conflict.left.dateModified, 256, "local conflict date"),
+					remoteModifiedAt: optionalBoundedString(conflict.right.dateModified, 256, "remote conflict date"),
+				};
+			}) };
 		},
 
 		async retrySync(params) {

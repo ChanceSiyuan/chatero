@@ -66,6 +66,8 @@ function validateRouterOptions(options) {
 			|| typeof options.adapter.search !== "function"
 			|| typeof options.adapter.tags !== "function"
 			|| typeof options.adapter.syncStatus !== "function"
+			|| typeof options.adapter.syncStorageStatus !== "function"
+			|| typeof options.adapter.syncConflicts !== "function"
 			|| typeof options.adapter.retrySync !== "function"
 			|| typeof options.adapter.translators !== "function"
 			|| typeof options.adapter.citationStyles !== "function"
@@ -327,6 +329,8 @@ export function createGeckoCoreRequestRouter(options = {}) {
 			if (message.method === "citation.styles") return { result: await adapter.citationStyles(message.params) };
 			if (message.method === "citation.render") return { result: await adapter.renderCitation(message.params) };
 			if (message.method === "sync.status") return { result: await adapter.syncStatus(message.params) };
+			if (message.method === "sync.storage-status") return { result: await adapter.syncStorageStatus(message.params) };
+			if (message.method === "sync.conflicts") return { result: await adapter.syncConflicts(message.params) };
 			if (message.method === "sync.retry") {
 				let { expectedRevision, idempotencyKey, ...operation } = message.params || {};
 				let completed = await transactionRegistry.execute({
