@@ -207,7 +207,7 @@ async function runScenario({ alias, releaseDirectory, receiptPath, expectedTuple
       args: ["--eval", [
         "const fs=require('node:fs'),path=require('node:path');",
         `const root=${JSON.stringify(installPath)};`,
-        "const required=['chatero-documentation','chatero-remote','chatero-zotero','git','ipynb','notebook-renderers','python','latex','javascript','typescript-basics','markdown-basics','json','yaml','shellscript','cpp','java','go','rust'];",
+        "const required=['chatero-documentation','git','ipynb'];",
         "for(const id of required){const p=path.join(root,'extensions',id,'package.json');if(!fs.statSync(p).isFile())throw new Error('missing '+id);}",
         "process.stdout.write('product-extensions');",
       ].join("")],

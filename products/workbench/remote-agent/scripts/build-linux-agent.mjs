@@ -51,11 +51,10 @@ const INTEGRITY_VERIFIER_PATH = new URL("../runtime/chatero-install-integrity.mj
 const NOTICE_SOURCE_DIRECTORY = fileURLToPath(new URL("../licenses/", import.meta.url));
 const REPOSITORY_ROOT = resolve(fileURLToPath(new URL("../../../../", import.meta.url)));
 const FIRST_PARTY_MANIFEST = fileURLToPath(new URL("../../first-party-extensions.json", import.meta.url));
-const REQUIRED_EXTENSION_IDS = Object.freeze([
-  "chatero-documentation", "chatero-remote", "chatero-zotero", "git", "ipynb",
-  "notebook-renderers", "python", "latex", "javascript", "typescript-basics",
-  "markdown-basics", "json", "yaml", "shellscript", "cpp", "java", "go", "rust",
-]);
+// Remote Extension Host packages workspace extensions only. UI renderers,
+// syntax grammars, Zotero/PDF surfaces, and SSH resolver UI remain in the
+// signed desktop client, matching VS Code Remote's client/server split.
+const REQUIRED_EXTENSION_IDS = Object.freeze(["chatero-documentation", "git", "ipynb"]);
 
 export const REMOTE_AGENT_NOTICE_FILES = Object.freeze([
   "LICENSE.txt",
