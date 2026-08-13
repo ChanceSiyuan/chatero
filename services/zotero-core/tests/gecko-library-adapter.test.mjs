@@ -1148,17 +1148,25 @@ test("exact attachment and Note lookup rejects deleted or trashed Zotero items a
 });
 
 test("returns a Note and PDF annotations without crossing libraries", async () => {
-  const adapter = createZoteroLibraryAdapter(fixture());
+	const environment = fixture();
+	const loads = [];
+	const getAsync = environment.Zotero.Items.getAsync;
+	environment.Zotero.Items.getAsync = async value => {
+		loads.push(Array.isArray(value) ? value.slice() : value);
+		return getAsync(value);
+	};
+	const adapter = createZoteroLibraryAdapter(environment);
 
-  assert.deepEqual(await adapter.note({ libraryId: 1, noteKey: "NOTE0002" }), {
+	assert.deepEqual(await adapter.note({ libraryId: 1, noteKey: "NOTE0002" }), {
     html: "<div data-schema-version=\"9\"><p>Trusted Zotero note</p></div>",
     libraryId: 1,
     noteKey: "NOTE0002",
     parentItemKey: "ITEM0001",
     title: "RG reading note",
 		version: 1,
-  });
-  assert.deepEqual(await adapter.annotations({ libraryId: 1, attachmentKey: "PDF00001" }), {
+	});
+	loads.length = 0;
+	assert.deepEqual(await adapter.annotations({ libraryId: 1, attachmentKey: "PDF00001" }), {
     annotations: [{
       annotationKey: "ANN00001",
       color: "#ffd400",
@@ -1173,7 +1181,8 @@ test("returns a Note and PDF annotations without crossing libraries", async () =
 		version: 1,
     }],
   });
-  assert.deepEqual(await adapter.annotations({ libraryId: 2, attachmentKey: "PDF00001" }), { annotations: [] });
+	assert.deepEqual(await adapter.annotations({ libraryId: 2, attachmentKey: "PDF00001" }), { annotations: [] });
+	assert.deepEqual(loads.slice(0, 2), [11, [92]], "the regular parent loads before annotation children");
 });
 
 test("rejects malformed requests before touching Zotero APIs", async () => {
