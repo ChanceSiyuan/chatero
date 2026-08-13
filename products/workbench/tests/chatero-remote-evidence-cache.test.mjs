@@ -387,38 +387,26 @@ test("invalid public requests are rejected before session, Zotero, or SSH lookup
   await service.dispose();
 });
 
-test("local PDF source opens once with no-follow and sanitizes every local-path failure", async () => {
+test("local PDF source delegates only to the bounded Core attachment capability", async () => {
   const calls = [];
   const bytes = Buffer.from("%PDF fixture");
   const source = await openAuthorizedPdfSource(Object.freeze({
+    attachmentKey: "ABCD1234",
     contentType: "application/pdf",
-    path: "/private/alice/Zotero/storage/ABCD1234/paper.pdf",
+    libraryId: 1,
   }), {
-    open: async (path, flags) => {
-      calls.push({ path, flags });
-      return {
-        async stat() { return { isFile: () => true, size: bytes.length }; },
-        async read(buffer, _offset, length, position) {
-          bytes.copy(buffer, 0, position, position + length);
-          return { bytesRead: Math.min(length, bytes.length - position) };
-        },
-        async close() {},
-      };
+    request: async (method, params) => {
+      calls.push({ method, params });
+      if (method === "attachment.open") return { expiresAt: Date.now() + 60_000, size: bytes.length, sourceId: Buffer.alloc(32, 3).toString("base64url") };
+      if (method === "attachment.read") return { bytesBase64url: bytes.subarray(params.offset, params.offset + params.length).toString("base64url"), eof: true };
+      if (method === "attachment.close") return { closed: true };
     },
   });
-  assert.equal(calls.length, 1);
-  assert.equal(typeof calls[0].flags, "number");
   assert.deepEqual(Object.keys(source).sort(), ["close", "read", "size"]);
   assert.doesNotMatch(JSON.stringify(source), /private|Zotero|paper\.pdf/);
+  assert.deepEqual(await source.read(0, bytes.length), Uint8Array.from(bytes));
   await source.close();
-
-  await assert.rejects(openAuthorizedPdfSource(Object.freeze({
-    contentType: "application/pdf",
-    path: "/private/alice/Zotero/storage/ABCD1234/paper.pdf",
-  }), { open: async () => { throw new Error("ENOENT /private/alice/Zotero/storage/ABCD1234/paper.pdf"); } }), error => {
-    assert.doesNotMatch(error.message, /private|Zotero|paper\.pdf/);
-    return error.code === "UNAVAILABLE";
-  });
+  assert.deepEqual(calls.map(value => value.method), ["attachment.open", "attachment.read", "attachment.close"]);
 });
 
 test("grant issuance failures close the already-open source", async () => {

@@ -81,6 +81,7 @@ export async function startCore({
   profileDirectory,
   fixtureCollections = [],
   fixtureAnnotations = [],
+  fixtureAttachmentContents = [],
   fixtureItems = [],
   fixtureItemChildren = [],
   fixtureItemMetadata = [],
@@ -106,6 +107,7 @@ export async function startCore({
   await writeFile(bootstrapPath, `${bootstrapToken}\n`, { mode: 0o600 });
   await writeFile(fixturePath, `${JSON.stringify({
     annotations: fixtureAnnotations,
+    attachmentContents: fixtureAttachmentContents,
     collections: fixtureCollections,
     itemChildren: fixtureItemChildren,
     itemMetadata: fixtureItemMetadata,

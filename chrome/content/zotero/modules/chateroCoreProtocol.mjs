@@ -4,6 +4,7 @@ export const PROTOCOL_VERSION = "1.0";
 export const MAX_FRAME_BYTES = 1048576;
 export const DEFAULT_DEADLINE_MS = 5000;
 export const CAPABILITIES = Object.freeze([
+  "attachment:read",
   "events:read",
   "library:read",
   "library:search",
@@ -11,6 +12,9 @@ export const CAPABILITIES = Object.freeze([
   "profile:write"
 ]);
 export const METHOD_CAPABILITIES = Object.freeze({
+  "attachment.close": "attachment:read",
+  "attachment.open": "attachment:read",
+  "attachment.read": "attachment:read",
   "core.cancel": null,
   "core.events": "events:read",
   "core.handshake": null,
@@ -25,6 +29,18 @@ export const METHOD_CAPABILITIES = Object.freeze({
   "profile.status": "profile:read"
 });
 export const METHOD_TYPES = Object.freeze({
+  "attachment.close": {
+    "params": "AttachmentCloseParams",
+    "result": "AttachmentCloseResult"
+  },
+  "attachment.open": {
+    "params": "AttachmentOpenParams",
+    "result": "AttachmentOpenResult"
+  },
+  "attachment.read": {
+    "params": "AttachmentReadParams",
+    "result": "AttachmentReadResult"
+  },
   "core.cancel": {
     "params": "CoreCancelParams",
     "result": "CoreCancelResult"

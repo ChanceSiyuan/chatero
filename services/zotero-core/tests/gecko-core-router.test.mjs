@@ -37,9 +37,11 @@ function createRouter(overrides = {}) {
   const calls = [];
   const adapter = {
     async annotations(params) { calls.push(["annotations", params]); return { annotations: [] }; },
-    async attachment(params) { calls.push(["attachment", params]); return { annotationCount: 0, attachmentKey: "PDF00001", contentType: "application/pdf", filename: "paper.pdf", libraryId: 1, parentItemKey: "ITEM0001", path: "/tmp/paper.pdf", title: "Paper" }; },
+    async attachment(params) { calls.push(["attachment", params]); return { annotationCount: 0, attachmentKey: "PDF00001", contentType: "application/pdf", filename: "paper.pdf", libraryId: 1, parentItemKey: "ITEM0001", title: "Paper" }; },
+    async attachmentSource(params) { calls.push(["attachmentSource", params]); return { size: 4, async read(offset, length) { return Uint8Array.from([1, 2, 3, 4]).slice(offset, offset + length); }, async close() {} }; },
     async collections(params) { calls.push(["collections", params]); return { collections: [] }; },
     async itemChildren(params) { calls.push(["itemChildren", params]); return { attachments: [], notes: [] }; },
+    async itemMetadata(params) { calls.push(["itemMetadata", params]); return { itemKey: params.itemKey, libraryId: params.libraryId }; },
     async note(params) { calls.push(["note", params]); return { html: "<p>Note</p>", libraryId: 1, noteKey: "NOTE0001", parentItemKey: "ITEM0001", title: "Note" }; },
     async profileBackup() { calls.push(["profileBackup"]); return { backupCreated: true, completedAt: 1234 }; },
     async profileStatus() { calls.push(["profileStatus"]); return { compatibilityVersion: 10, integrityCheckRequired: false, profileEpoch: "profile-epoch", profileName: "Disposable Profile", quickCheckPassed: true, readOnly: false, schemaVersion: 142, upstreamVersion: "7.1-real" }; },
@@ -130,10 +132,25 @@ test("routes read-only PDF children, Note, and annotation methods through librar
   const session = await handshake(router);
 
   assert.deepEqual((await router.handle(request(session, "library.item-children", { libraryId: 1, itemKey: "ITEM0001" }))).result, { attachments: [], notes: [] });
-  assert.equal((await router.handle(request(session, "library.attachment", { attachmentKey: "PDF00001", libraryId: 1 }))).result.path, "/tmp/paper.pdf");
+  assert.equal(Object.hasOwn((await router.handle(request(session, "library.attachment", { attachmentKey: "PDF00001", libraryId: 1 }))).result, "path"), false);
   assert.deepEqual((await router.handle(request(session, "library.annotations", { attachmentKey: "PDF00001", libraryId: 1 }))).result, { annotations: [] });
   assert.equal((await router.handle(request(session, "library.note", { libraryId: 1, noteKey: "NOTE0001" }))).result.html, "<p>Note</p>");
   assert.deepEqual(calls.map(value => value[0]), ["itemChildren", "attachment", "annotations", "note"]);
+});
+
+test("routes attachment chunks through a session-bound attachment:read capability", async () => {
+  const { calls, router } = createRouter();
+  const session = await handshake(router, ["attachment:read"]);
+  const opened = (await router.handle(request(session, "attachment.open", { attachmentKey: "PDF00001", libraryId: 1 }))).result;
+
+  assert.equal(opened.size, 4);
+  assert.equal(typeof opened.sourceId, "string");
+  assert.deepEqual((await router.handle(request(session, "attachment.read", {
+    attachmentKey: "PDF00001", length: 2, libraryId: 1, offset: 1, sourceId: opened.sourceId,
+  }))).result, { bytesBase64url: "AgM", eof: false });
+  assert.deepEqual((await router.handle(request(session, "attachment.close", { sourceId: opened.sourceId }))).result, { closed: true });
+  assert.deepEqual(calls.map(value => value[0]), ["attachmentSource"]);
+  await router.dispose();
 });
 
 test("maps deleted or trashed exact-item failures to an unavailable response", async () => {

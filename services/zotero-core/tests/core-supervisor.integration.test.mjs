@@ -55,7 +55,6 @@ const fixtureItemChildren = [{
     filename: "paper.pdf",
     libraryId: 1,
     parentItemKey: "FISHER01",
-    path: "/tmp/paper.pdf",
     title: "Paper PDF",
   }],
   itemKey: "FISHER01",
@@ -82,6 +81,12 @@ const fixtureAnnotations = [{
     type: "highlight",
   }],
   attachmentKey: "PDF00001",
+  libraryId: 1,
+}];
+const fixturePdfBytes = Buffer.from("%PDF-1.4\n%%EOF\n");
+const fixtureAttachmentContents = [{
+  attachmentKey: "PDF00001",
+  bytesBase64url: fixturePdfBytes.toString("base64url"),
   libraryId: 1,
 }];
 
@@ -120,6 +125,7 @@ test("supervises an authenticated fixture Core over an owner-only Unix socket", 
   const core = await startCore({
     profileDirectory,
     fixtureAnnotations,
+    fixtureAttachmentContents,
     fixtureCollections,
     fixtureItemChildren,
     fixtureItems,
@@ -165,6 +171,18 @@ test("supervises an authenticated fixture Core over an owner-only Unix socket", 
   assert.deepEqual(await core.client.request("library.annotations", { attachmentKey: "PDF00001", libraryId: 1 }), {
     annotations: fixtureAnnotations[0].annotations,
   });
+  const opened = await core.client.request("attachment.open", { attachmentKey: "PDF00001", libraryId: 1 });
+  assert.equal(opened.size, fixturePdfBytes.length);
+  const chunk = await core.client.request("attachment.read", {
+    attachmentKey: "PDF00001",
+    length: fixturePdfBytes.length,
+    libraryId: 1,
+    offset: 0,
+    sourceId: opened.sourceId,
+  });
+  assert.deepEqual(Buffer.from(chunk.bytesBase64url, "base64url"), fixturePdfBytes);
+  assert.equal(chunk.eof, true);
+  assert.deepEqual(await core.client.request("attachment.close", { sourceId: opened.sourceId }), { closed: true });
 });
 
 test("keeps one profile owner and removes only disposable state on stop", async () => {

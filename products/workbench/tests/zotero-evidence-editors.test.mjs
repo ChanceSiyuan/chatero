@@ -113,7 +113,6 @@ const attachment = Object.freeze({
   filename: "paper.pdf",
   libraryId: 7,
   parentItemKey: "ITEM0001",
-  path: "/tmp/private/paper.pdf",
   title: "Paper <PDF>",
 });
 
@@ -158,7 +157,8 @@ test("strict evidence URIs restore exact PDF and Note identities after the regis
     }),
   ]);
 
-  assert.equal(restoredPdf.path, "/tmp/private/paper.pdf");
+  assert.equal(restoredPdf, attachment);
+  assert.equal(Object.hasOwn(restoredPdf, "path"), false);
   assert.equal(restoredNote, note);
   assert.deepEqual(calls, [
     { kind: "pdf", libraryId: 7, key: "PDF00001" },
@@ -587,7 +587,7 @@ test("a fresh tree record can replace a rehydrated identity and reopen after clo
   assert.equal(restored.record, attachment);
   const fresh = Object.freeze({
     ...attachment,
-    path: "/tmp/private/refreshed-paper.pdf",
+    filename: "refreshed-paper.pdf",
     title: "Refreshed Paper",
   });
   hydrationRecord = fresh;
@@ -628,7 +628,7 @@ test("restored document resolver fetches only the exact Core identity and discar
 
   const restoredPdf = await resolveDocument(pdfUri, "pdf");
   const restoredNote = await resolveDocument(noteUri, "note");
-  assert.equal(restoredPdf.path, attachment.path);
+  assert.equal(Object.hasOwn(restoredPdf, "path"), false);
   assert.deepEqual(restoredNote, note);
   assert.equal(Object.hasOwn(restoredNote, "html"), false);
   assert.deepEqual(calls, [
@@ -829,6 +829,7 @@ test("PDF provider exposes only the authorized file and packaged viewer roots", 
       return [];
     } }),
     registry,
+    materializePdf: async () => ({ path: "/tmp/private/materialized-paper.pdf", async dispose() {} }),
     renderPdfEditorHTML: value => { rendering = value; return "<html>PDF</html>"; },
     vscode,
   });
@@ -849,8 +850,8 @@ test("PDF provider exposes only the authorized file and packaged viewer roots", 
     "/tmp/private",
     "/extension/media/pdf-viewer",
   ]);
-  assert.equal(rendering.pdfUri, "vscode-webview:/tmp/private/paper.pdf");
-  const pdfSource = exposedUris.find(value => value.value === attachment.path);
+  assert.equal(rendering.pdfUri, "vscode-webview:/tmp/private/materialized-paper.pdf");
+  const pdfSource = exposedUris.find(value => value.value === "/tmp/private/materialized-paper.pdf");
   assert.equal(pdfSource.scheme, "file");
   assert.equal(pdfSource.authority, "");
   assert.equal(rendering.viewerUri, "vscode-webview:/extension/media/pdf-viewer/pdf-viewer.mjs");
@@ -895,6 +896,7 @@ test("PDF editor messages use the host document identity and never attach on pas
     extensionUri: fileUri("/extension"),
     getModel: () => ({ annotations: async () => trustedAnnotations }),
     makePanelNonce: () => panelNonce,
+    materializePdf: async () => ({ path: "/tmp/private/materialized-paper.pdf", async dispose() {} }),
     registry: { release: () => true },
     renderPdfEditorHTML: value => { brokerCalls.push(["render", value]); return "<html>PDF</html>"; },
     vscode: { Uri: { file: fileUri, joinPath: (base, ...parts) => fileUri(`${base.value}/${parts.join("/")}`) } },
@@ -968,6 +970,7 @@ test("PDF context setup rolls back its broker lease and listeners when editor re
       extensionUri: fileUri("/extension"),
       getModel: () => ({ annotations: async () => Object.freeze([]) }),
       makePanelNonce: () => "AAAAAAAAAAAAAAAAAAAAAAAA",
+      materializePdf: async () => ({ path: "/tmp/private/materialized-paper.pdf", async dispose() {} }),
       registry: { release: () => true },
       renderPdfEditorHTML: () => {
         if (failure === "render") throw new Error("render failed");

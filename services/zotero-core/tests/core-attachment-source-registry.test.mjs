@@ -26,6 +26,7 @@ test("attachment sources are opaque, identity-bound, chunked, expiring, and expl
     attachmentKey: "PDF00001",
     libraryId: 1,
     profileEpoch: "epoch-1",
+    sessionToken: "session-token-0001",
     source: source(Uint8Array.from([1, 2, 3, 4]), closed),
   });
   assert.equal(opened.size, 4);
@@ -37,6 +38,7 @@ test("attachment sources are opaque, identity-bound, chunked, expiring, and expl
     libraryId: 1,
     offset: 1,
     profileEpoch: "epoch-1",
+    sessionToken: "session-token-0001",
     sourceId: opened.sourceId,
   }), { bytesBase64url: "AgM", eof: false });
   assert.deepEqual(await registry.read({
@@ -45,12 +47,13 @@ test("attachment sources are opaque, identity-bound, chunked, expiring, and expl
     libraryId: 1,
     offset: 3,
     profileEpoch: "epoch-1",
+    sessionToken: "session-token-0001",
     sourceId: opened.sourceId,
   }), { bytesBase64url: "BA", eof: true });
-  assert.deepEqual(await registry.close({ profileEpoch: "epoch-1", sourceId: opened.sourceId }), { closed: true });
+  assert.deepEqual(await registry.close({ profileEpoch: "epoch-1", sessionToken: "session-token-0001", sourceId: opened.sourceId }), { closed: true });
   assert.equal(closed.count, 1);
   await assert.rejects(registry.read({
-    attachmentKey: "PDF00001", length: 1, libraryId: 1, offset: 0, profileEpoch: "epoch-1", sourceId: opened.sourceId,
+    attachmentKey: "PDF00001", length: 1, libraryId: 1, offset: 0, profileEpoch: "epoch-1", sessionToken: "session-token-0001", sourceId: opened.sourceId,
   }), error => error.code === "UNAVAILABLE");
 });
 
@@ -63,29 +66,29 @@ test("wrong identity consumes a source and expiry closes it exactly once", async
     setTimeout: callback => { timers.push(callback); return timers.length; },
     clearTimeout: () => {},
   });
-  const opened = registry.open({ attachmentKey: "PDF00001", libraryId: 1, profileEpoch: "epoch-1", source: source(Uint8Array.of(1), closed) });
+  const opened = registry.open({ attachmentKey: "PDF00001", libraryId: 1, profileEpoch: "epoch-1", sessionToken: "session-token-0001", source: source(Uint8Array.of(1), closed) });
 
   await assert.rejects(registry.read({
-    attachmentKey: "PDF00002", length: 1, libraryId: 1, offset: 0, profileEpoch: "epoch-1", sourceId: opened.sourceId,
+    attachmentKey: "PDF00002", length: 1, libraryId: 1, offset: 0, profileEpoch: "epoch-1", sessionToken: "session-token-0001", sourceId: opened.sourceId,
   }), error => error.code === "UNAVAILABLE");
   await Promise.resolve();
   assert.equal(closed.count, 1);
 
-  const expiring = registry.open({ attachmentKey: "PDF00001", libraryId: 1, profileEpoch: "epoch-1", source: source(Uint8Array.of(1), closed) });
+  const expiring = registry.open({ attachmentKey: "PDF00001", libraryId: 1, profileEpoch: "epoch-1", sessionToken: "session-token-0001", source: source(Uint8Array.of(1), closed) });
   timers.at(-1)();
   await Promise.resolve();
   assert.equal(closed.count, 2);
-  assert.deepEqual(await registry.close({ profileEpoch: "epoch-1", sourceId: expiring.sourceId }), { closed: false });
+  assert.deepEqual(await registry.close({ profileEpoch: "epoch-1", sessionToken: "session-token-0001", sourceId: expiring.sourceId }), { closed: false });
 });
 
 test("attachment source requests reject unknown fields and oversized reads", async () => {
   const registry = createCoreAttachmentSourceRegistry({ randomBytes: () => new Uint8Array(32).fill(9) });
-  const opened = registry.open({ attachmentKey: "PDF00001", libraryId: 1, profileEpoch: "epoch-1", source: source(Uint8Array.of(1), { count: 0 }) });
+  const opened = registry.open({ attachmentKey: "PDF00001", libraryId: 1, profileEpoch: "epoch-1", sessionToken: "session-token-0001", source: source(Uint8Array.of(1), { count: 0 }) });
   await assert.rejects(registry.read({
-    attachmentKey: "PDF00001", extra: true, length: 1, libraryId: 1, offset: 0, profileEpoch: "epoch-1", sourceId: opened.sourceId,
+    attachmentKey: "PDF00001", extra: true, length: 1, libraryId: 1, offset: 0, profileEpoch: "epoch-1", sessionToken: "session-token-0001", sourceId: opened.sourceId,
   }), /unknown field/);
   await assert.rejects(registry.read({
-    attachmentKey: "PDF00001", length: 262145, libraryId: 1, offset: 0, profileEpoch: "epoch-1", sourceId: opened.sourceId,
+    attachmentKey: "PDF00001", length: 262145, libraryId: 1, offset: 0, profileEpoch: "epoch-1", sessionToken: "session-token-0001", sourceId: opened.sourceId,
   }), /length/);
   await registry.dispose();
 });

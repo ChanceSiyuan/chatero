@@ -275,11 +275,15 @@ export async function startGeckoCoreHost({ Zotero, window } = {}) {
 		},
 	});
 	await IOUtils.setPermissions(socketPath, 0o600);
+	let closed = false;
 	let close = () => {
+		if (closed) return;
+		closed = true;
 		notifierBridge.dispose();
 		for (let connection of connections) connection.close();
 		connections.clear();
 		try { server.close(); } catch (_) {}
+		void router.dispose().catch(error => Zotero.logError(error));
 	};
 	window?.addEventListener("unload", close, { once: true });
 	Zotero.addShutdownListener(close);

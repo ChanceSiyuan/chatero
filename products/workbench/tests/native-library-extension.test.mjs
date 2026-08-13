@@ -54,7 +54,6 @@ test("Library model lazily loads validated PDF, Note, and annotation records", a
             filename: "paper.pdf",
             libraryId: 7,
             parentItemKey: "ITEM0001",
-            path: "/tmp/paper.pdf",
             title: "Paper PDF",
           }],
           notes: [{ libraryId: 7, noteKey: "NOTE0001", parentItemKey: "ITEM0001", title: "Reading note" }],
@@ -176,7 +175,7 @@ test("Library open commands keep Core-originated evidence inside native workbenc
 test("evidence command authority accepts only the exact active Core record", async () => {
   const { EvidenceRecordAuthority } = await import("../extensions/chatero-zotero/evidence-authority.mjs");
   const authority = new EvidenceRecordAuthority();
-  const attachment = Object.freeze({ attachmentKey: "PDF00001", libraryId: 7, path: "/tmp/paper.pdf" });
+  const attachment = Object.freeze({ attachmentKey: "PDF00001", libraryId: 7 });
   authority.register(attachment, "attachment");
 
   assert.equal(authority.authorize(attachment, "attachment"), attachment);

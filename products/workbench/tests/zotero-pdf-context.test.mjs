@@ -17,14 +17,13 @@ const attachment = Object.freeze({
   filename: "private-paper.pdf",
   libraryId: 7,
   parentItemKey: "ITEM0001",
-  path: "/Users/research/Zotero/storage/PDF00001/private-paper.pdf",
   title: "A bounded paper title",
 });
 
 const secondAttachment = Object.freeze({
   ...attachment,
   attachmentKey: "PDF00002",
-  path: "/Users/research/Zotero/storage/PDF00002/second.pdf",
+  filename: "second.pdf",
   title: "Second paper",
 });
 

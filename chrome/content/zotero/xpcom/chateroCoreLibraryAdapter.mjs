@@ -13,6 +13,8 @@
     ***** END LICENSE BLOCK *****
 */
 
+import { openGeckoAttachmentSource } from "./chateroCoreGeckoAttachmentSource.mjs";
+
 const COLLECTION_FIELDS = new Set(["libraryId", "parentKey"]);
 const SEARCH_FIELDS = new Set(["collectionKey", "cursor", "libraryId", "limit", "query", "sortBy", "sortDirection"]);
 const SEARCH_SORT_FIELDS = new Set(["creators", "itemType", "title", "year"]);
@@ -268,7 +270,6 @@ async function attachmentSummary(Zotero, attachment, expectedParent) {
 		filename,
 		libraryId: attachment.libraryID,
 		parentItemKey: expectedParent.key,
-		path,
 		title,
 	};
 }
@@ -322,8 +323,9 @@ function validateZotero(Zotero) {
 	}
 }
 
-export function createZoteroLibraryAdapter({ Zotero } = {}) {
+export function createZoteroLibraryAdapter({ Zotero, openAttachmentFile = openGeckoAttachmentSource } = {}) {
 	validateZotero(Zotero);
+	if (typeof openAttachmentFile !== "function") throw new Error("attachment source opener is required");
 
 	return Object.freeze({
 		async annotations(params) {
@@ -351,6 +353,17 @@ export function createZoteroLibraryAdapter({ Zotero } = {}) {
 			let summary = await attachmentSummary(Zotero, attachment, parent);
 			if (!summary) throw new Error("library.attachment target must be an available file attachment");
 			return summary;
+		},
+
+		async attachmentSource(params) {
+			validateCompositeParams(params, ATTACHMENT_FIELDS, "attachmentKey", "attachment.open");
+			let attachment = lookupItem(Zotero, params.libraryId, params.attachmentKey, "Zotero attachment");
+			if (!attachment.isAttachment?.() || !attachment.isFileAttachment?.()) {
+				throw new Error("attachment.open target must be a file attachment");
+			}
+			let path = await attachment.getFilePathAsync();
+			if (typeof path !== "string" || !path) unavailable("Zotero attachment file is unavailable");
+			return openAttachmentFile(path);
 		},
 
 		async collections(params) {

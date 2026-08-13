@@ -27,6 +27,7 @@ class PdfEditorProvider {
     resolveDocument,
     renderPdfEditorHTML,
     extensionUri,
+    materializePdf = async () => { throw new Error("Zotero PDF materialization is unavailable"); },
     contextBroker = null,
     attachPdfContext = null,
     makePanelNonce = nonce,
@@ -37,6 +38,7 @@ class PdfEditorProvider {
     this.getModel = getModel;
     this.resolveDocument = resolveDocument || ((uri, kind) => registry.resolve(uri, kind));
     this.renderPdfEditorHTML = renderPdfEditorHTML;
+    this.materializePdf = materializePdf;
     this.viewerRoot = vscode.Uri.joinPath(extensionUri, "media", "pdf-viewer");
     this.contextBroker = contextBroker;
     this.attachPdfContext = attachPdfContext;
@@ -57,12 +59,10 @@ class PdfEditorProvider {
     const model = this.getModel();
     if (!model) throw new Error("Start Zotero Core before opening a PDF");
     const record = document.record;
-    const file = this.vscode.Uri.file(record.path);
-    panel.webview.options = {
-      enableScripts: true,
-      localResourceRoots: [this.vscode.Uri.file(dirname(record.path)), this.viewerRoot],
-    };
     const annotations = await model.annotations({ attachmentKey: record.attachmentKey, libraryId: record.libraryId });
+    const materialized = await this.materializePdf(record);
+    const file = this.vscode.Uri.file(materialized.path);
+    panel.webview.options = { enableScripts: true, localResourceRoots: [this.vscode.Uri.file(dirname(materialized.path)), this.viewerRoot] };
     const panelNonce = this.makePanelNonce();
     const contextLease = this.contextBroker?.open(document.uri, document.record, panelNonce, annotations) ?? null;
     let lastSequence = 0;
@@ -79,6 +79,7 @@ class PdfEditorProvider {
       for (const disposable of [messageSubscription, viewStateSubscription, panelDisposeSubscription, contextLease]) {
         try { disposable?.dispose(); } catch (error) { failure ||= error; }
       }
+      void materialized.dispose().catch(this.onContextError);
       lastSnapshot = null;
       if (failure) throw failure;
     };

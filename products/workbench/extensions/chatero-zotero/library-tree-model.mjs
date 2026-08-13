@@ -20,7 +20,7 @@ function validateAttachment(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)
     || typeof value.attachmentKey !== "string" || value.attachmentKey.length === 0
     || typeof value.title !== "string" || value.title.length === 0
-    || typeof value.path !== "string" || !value.path.startsWith("/")
+    || Object.hasOwn(value, "path")
     || typeof value.contentType !== "string" || value.contentType.length === 0
     || !Number.isSafeInteger(value.annotationCount) || value.annotationCount < 0
     || !Number.isSafeInteger(value.libraryId) || value.libraryId < 1

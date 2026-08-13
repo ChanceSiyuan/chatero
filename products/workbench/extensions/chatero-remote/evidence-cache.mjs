@@ -9,7 +9,7 @@ const DIGEST = /^[0-9a-f]{64}$/u;
 const TRANSFER_ID = /^[0-9a-f]{32}$/u;
 const FINGERPRINT = /^SHA256:[A-Za-z0-9+/]{43}=?$/u;
 const TTL_SECONDS = 86400;
-const MAX_SOURCE_READ = 1024 * 1024;
+const MAX_SOURCE_READ = 256 * 1024;
 const MAX_HELPER_LINE = 1024 * 1024;
 const MAX_HELPER_TRANSCRIPT = 2 * 1024 * 1024;
 const MAX_HELPER_FRAMES = 16;

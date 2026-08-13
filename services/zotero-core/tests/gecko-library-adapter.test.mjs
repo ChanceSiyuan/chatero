@@ -308,7 +308,6 @@ test("returns PDF and Note children with Zotero composite identity", async () =>
       filename: "paper.pdf",
       libraryId: 1,
       parentItemKey: "ITEM0001",
-      path: "/Users/example/Zotero/storage/PDF00001/paper.pdf",
       title: "Accepted manuscript",
     }],
     notes: [{
@@ -318,7 +317,7 @@ test("returns PDF and Note children with Zotero composite identity", async () =>
       title: "RG reading note",
     }],
   });
-  assert.equal((await adapter.itemChildren({ libraryId: 2, itemKey: "ITEM0001" })).attachments[0].path.endsWith("group.pdf"), true);
+  assert.equal(Object.hasOwn((await adapter.itemChildren({ libraryId: 2, itemKey: "ITEM0001" })).attachments[0], "path"), false);
 });
 
 test("returns full read-only metadata for a regular item", async () => {
@@ -351,7 +350,6 @@ test("looks up one file attachment by exact composite identity", async () => {
     filename: "paper.pdf",
     libraryId: 1,
     parentItemKey: "ITEM0001",
-    path: "/Users/example/Zotero/storage/PDF00001/paper.pdf",
     title: "Accepted manuscript",
   });
   assert.equal((await adapter.attachment({ libraryId: 2, attachmentKey: "PDF00001" })).title, "Group PDF");
@@ -360,6 +358,21 @@ test("looks up one file attachment by exact composite identity", async () => {
     adapter.attachment({ libraryId: 3, attachmentKey: "PDF00001" }),
     error => error?.code === "UNAVAILABLE" && /not found/.test(error.message),
   );
+});
+
+test("opens attachment bytes internally without returning a filesystem path", async () => {
+  const opened = [];
+  const attachmentSource = Object.freeze({ size: 4, async read() {}, async close() {} });
+  const adapter = createZoteroLibraryAdapter({
+    ...fixture(),
+    openAttachmentFile(path) {
+      opened.push(path);
+      return attachmentSource;
+    },
+  });
+
+  assert.equal(await adapter.attachmentSource({ libraryId: 1, attachmentKey: "PDF00001" }), attachmentSource);
+  assert.deepEqual(opened, ["/Users/example/Zotero/storage/PDF00001/paper.pdf"]);
 });
 
 test("exact attachment and Note lookup rejects deleted or trashed Zotero items as unavailable", async () => {

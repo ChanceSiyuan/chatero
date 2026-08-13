@@ -31,6 +31,7 @@ function exactObject(value, fields, label) {
 
 function validateBinding(value) {
 	if (typeof value.profileEpoch !== "string" || !value.profileEpoch
+			|| typeof value.sessionToken !== "string" || value.sessionToken.length < 16
 			|| !Number.isSafeInteger(value.libraryId) || value.libraryId < 1
 			|| typeof value.attachmentKey !== "string" || !KEY_PATTERN.test(value.attachmentKey)) {
 		throw unavailable();
@@ -85,7 +86,7 @@ export function createCoreAttachmentSourceRegistry({
 	return Object.freeze({
 		open(value) {
 			if (disposed) throw unavailable();
-			exactObject(value, new Set(["attachmentKey", "libraryId", "profileEpoch", "source"]), "attachment source");
+			exactObject(value, new Set(["attachmentKey", "libraryId", "profileEpoch", "sessionToken", "source"]), "attachment source");
 			validateBinding(value);
 			if (!value.source || typeof value.source.read !== "function" || typeof value.source.close !== "function"
 					|| !Number.isSafeInteger(value.source.size) || value.source.size < 1) throw unavailable();
@@ -105,7 +106,7 @@ export function createCoreAttachmentSourceRegistry({
 			return Object.freeze({ expiresAt, size: value.source.size, sourceId });
 		},
 		async read(value) {
-			exactObject(value, new Set(["attachmentKey", "length", "libraryId", "offset", "profileEpoch", "sourceId"]), "attachment source read");
+			exactObject(value, new Set(["attachmentKey", "length", "libraryId", "offset", "profileEpoch", "sessionToken", "sourceId"]), "attachment source read");
 			validateBinding(value);
 			if (typeof value.sourceId !== "string" || !SOURCE_ID_PATTERN.test(value.sourceId)
 					|| !Number.isSafeInteger(value.offset) || value.offset < 0
@@ -115,6 +116,7 @@ export function createCoreAttachmentSourceRegistry({
 			let entry = entries.get(value.sourceId);
 			if (!entry) throw unavailable();
 			if (now() >= entry.expiresAt || entry.profileEpoch !== value.profileEpoch
+					|| entry.sessionToken !== value.sessionToken
 					|| entry.libraryId !== value.libraryId || entry.attachmentKey !== value.attachmentKey
 					|| value.offset >= entry.source.size || value.offset + value.length > entry.source.size) {
 				consume(value.sourceId, true);
@@ -129,11 +131,16 @@ export function createCoreAttachmentSourceRegistry({
 			return Object.freeze({ bytesBase64url: encode(bytes), eof: value.offset + bytes.byteLength === entry.source.size });
 		},
 		async close(value) {
-			exactObject(value, new Set(["profileEpoch", "sourceId"]), "attachment source close");
+			exactObject(value, new Set(["profileEpoch", "sessionToken", "sourceId"]), "attachment source close");
 			if (typeof value.profileEpoch !== "string" || !value.profileEpoch
+					|| typeof value.sessionToken !== "string" || value.sessionToken.length < 16
 					|| typeof value.sourceId !== "string" || !SOURCE_ID_PATTERN.test(value.sourceId)) throw unavailable();
 			let entry = entries.get(value.sourceId);
-			if (!entry || entry.profileEpoch !== value.profileEpoch) return { closed: false };
+			if (!entry) return { closed: false };
+			if (entry.profileEpoch !== value.profileEpoch || entry.sessionToken !== value.sessionToken) {
+				consume(value.sourceId, true);
+				throw unavailable();
+			}
 			consume(value.sourceId);
 			await closeSource(entry.source);
 			return { closed: true };

@@ -122,6 +122,7 @@ async function activate(context) {
   const evidenceDocuments = new EvidenceDocumentRegistry();
   const pdfContexts = new brokerModule.PdfContextBroker();
   const provider = new LibraryProvider(evidenceAuthority);
+  let pdfMaterializer = null;
   context.subscriptions.push(provider, pdfContexts);
   context.subscriptions.push(vscode.window.registerTreeDataProvider("chatero.zotero.library", provider));
 
@@ -214,7 +215,7 @@ async function activate(context) {
       return startCore({
         profileDirectory,
         ...(geckoExecutable && { geckoExecutable }),
-        requestedCapabilities: ["events:read", "library:read", "library:search", "profile:read"],
+        requestedCapabilities: ["attachment:read", "events:read", "library:read", "library:search", "profile:read"],
       });
     });
   };
@@ -222,10 +223,12 @@ async function activate(context) {
     start: launchCore,
     publish: startedCore => {
       const model = new LibraryTreeModel({ request: startedCore.client.request });
+      pdfMaterializer = null;
       provider.setConnection(model);
       return startedCore.client.onEvent(() => provider.refresh());
     },
     unpublish: () => {
+      pdfMaterializer = null;
       evidenceDocuments.reset();
       provider.setConnection(null);
     },
@@ -241,6 +244,16 @@ async function activate(context) {
     getModel: () => provider.model,
     registry: evidenceDocuments,
   });
+  const materializePdf = async record => {
+    const startedCore = await ensureCore();
+    if (!startedCore) throw new Error("Zotero Core setup is required before opening a PDF");
+    if (!pdfMaterializer) {
+      const { CorePdfMaterializer } = await import("./pdf-materializer.mjs");
+      const rootDirectory = (context.storageUri || context.globalStorageUri)?.fsPath;
+      pdfMaterializer = new CorePdfMaterializer({ request: startedCore.client.request, rootDirectory });
+    }
+    return pdfMaterializer.materialize(record);
+  };
 
   context.subscriptions.push(vscode.window.registerCustomEditorProvider("chatero.zotero.pdf", new PdfEditorProvider({
     vscode,
@@ -249,6 +262,7 @@ async function activate(context) {
     resolveDocument,
     renderPdfEditorHTML: html.renderPdfEditorHTML,
     extensionUri: context.extensionUri,
+    materializePdf,
     contextBroker: pdfContexts,
     attachPdfContext: attachPdfSnapshot,
     onContextError: () => {

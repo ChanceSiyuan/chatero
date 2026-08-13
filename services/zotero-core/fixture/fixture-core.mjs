@@ -11,6 +11,7 @@ import {
 import { SessionAuthority } from "../security/session-authority.mjs";
 import { FrameDecoder, writeFrame } from "../transport/frame-codec.mjs";
 import { createCoreEventJournal } from "../../../chrome/content/zotero/xpcom/chateroCoreEventJournal.mjs";
+import { createCoreAttachmentSourceRegistry } from "../../../chrome/content/zotero/xpcom/chateroCoreAttachmentSourceRegistry.mjs";
 import { createCoreTransactionRegistry } from "../../../chrome/content/zotero/xpcom/chateroCoreTransactionRegistry.mjs";
 
 const MAX_BOOTSTRAP_BYTES = 1024;
@@ -111,6 +112,7 @@ async function main() {
   const fixtureItemMetadata = Array.isArray(fixture?.itemMetadata) ? fixture.itemMetadata : [];
   const fixtureNotes = Array.isArray(fixture?.notes) ? fixture.notes : [];
   const fixtureAnnotations = Array.isArray(fixture?.annotations) ? fixture.annotations : [];
+  const fixtureAttachmentContents = Array.isArray(fixture?.attachmentContents) ? fixture.attachmentContents : [];
   if (!Array.isArray(fixtureItems)) throw new Error("fixture items must be an array");
   const bootstrapToken = await readBootstrapToken();
   const searchDelayMs = Number(rawSearchDelayMs);
@@ -119,6 +121,7 @@ async function main() {
   }
   const eventJournal = createCoreEventJournal({ profileEpoch });
   const transactionRegistry = createCoreTransactionRegistry();
+  const attachmentSources = createCoreAttachmentSourceRegistry();
   const authority = new SessionAuthority({
     bootstrapToken,
     profileEpoch,
@@ -148,7 +151,7 @@ async function main() {
       } };
     }
     if (!Object.hasOwn(METHOD_CAPABILITIES, message.method)) throw new Error(`unknown method ${message.method}`);
-    authority.authorize(message, METHOD_CAPABILITIES[message.method]);
+    const authorizedSession = authority.authorize(message, METHOD_CAPABILITIES[message.method]);
     if (message.method === "core.cancel") {
       if (!message.params || typeof message.params.cancellationId !== "string") {
         throw new Error("core.cancel params must include cancellationId");
@@ -165,6 +168,38 @@ async function main() {
         throw new Error("core.events params require a valid afterSequence and limit");
       }
       return { result: eventJournal.replay(message.params) };
+    }
+    if (message.method === "attachment.open") {
+      validateIdentityParams(message.params, "attachmentKey", "attachment.open");
+      const metadata = fixtureItemChildren.flatMap(entry => entry.attachments || [])
+        .find(entry => entry.libraryId === message.params.libraryId && entry.attachmentKey === message.params.attachmentKey);
+      if (!metadata) throw new Error(`fixture attachment ${message.params.libraryId}/${message.params.attachmentKey} was not found`);
+      const content = fixtureAttachmentContents.find(entry => entry.libraryId === message.params.libraryId && entry.attachmentKey === message.params.attachmentKey);
+      const bytes = Buffer.from(content?.bytesBase64url || "JVBERi0xLjQKJSVFT0YK", "base64url");
+      return { result: attachmentSources.open({
+        ...message.params,
+        profileEpoch,
+        sessionToken: authorizedSession.sessionToken,
+        source: {
+          size: bytes.length,
+          async read(offset, length) { return Uint8Array.from(bytes.subarray(offset, offset + length)); },
+          async close() {},
+        },
+      }) };
+    }
+    if (message.method === "attachment.read") {
+      return { result: await attachmentSources.read({
+        ...message.params,
+        profileEpoch,
+        sessionToken: authorizedSession.sessionToken,
+      }) };
+    }
+    if (message.method === "attachment.close") {
+      return { result: await attachmentSources.close({
+        ...message.params,
+        profileEpoch,
+        sessionToken: authorizedSession.sessionToken,
+      }) };
     }
     if (message.method === "profile.status") {
       if (!message.params || typeof message.params !== "object" || Array.isArray(message.params) || Object.keys(message.params).length !== 0) {
@@ -357,7 +392,9 @@ async function main() {
   });
   await chmod(socketPath, 0o600);
 
-  const shutdown = () => server.close(() => process.exit(0));
+  const shutdown = () => server.close(() => {
+    void attachmentSources.dispose().finally(() => process.exit(0));
+  });
   process.once("SIGTERM", shutdown);
   process.once("SIGINT", shutdown);
 }

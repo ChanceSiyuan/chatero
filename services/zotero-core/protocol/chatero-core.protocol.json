@@ -4,6 +4,7 @@
   "maxFrameBytes": 1048576,
   "defaultDeadlineMs": 5000,
   "capabilities": [
+    "attachment:read",
     "events:read",
     "library:read",
     "library:search",
@@ -40,6 +41,24 @@
       "capability": "profile:write",
       "paramsType": "ProfileBackupParams",
       "resultType": "ProfileBackupResult"
+    },
+    {
+      "name": "attachment.open",
+      "capability": "attachment:read",
+      "paramsType": "AttachmentOpenParams",
+      "resultType": "AttachmentOpenResult"
+    },
+    {
+      "name": "attachment.read",
+      "capability": "attachment:read",
+      "paramsType": "AttachmentReadParams",
+      "resultType": "AttachmentReadResult"
+    },
+    {
+      "name": "attachment.close",
+      "capability": "attachment:read",
+      "paramsType": "AttachmentCloseParams",
+      "resultType": "AttachmentCloseResult"
     },
     {
       "name": "library.collections",
@@ -176,6 +195,50 @@
         "upstreamVersion": "string"
       }
     },
+    "AttachmentOpenParams": {
+      "kind": "object",
+      "fields": {
+        "attachmentKey": "string",
+        "libraryId": "number"
+      }
+    },
+    "AttachmentOpenResult": {
+      "kind": "object",
+      "fields": {
+        "expiresAt": "number",
+        "size": "number",
+        "sourceId": "string"
+      }
+    },
+    "AttachmentReadParams": {
+      "kind": "object",
+      "fields": {
+        "attachmentKey": "string",
+        "length": "number",
+        "libraryId": "number",
+        "offset": "number",
+        "sourceId": "string"
+      }
+    },
+    "AttachmentReadResult": {
+      "kind": "object",
+      "fields": {
+        "bytesBase64url": "string",
+        "eof": "boolean"
+      }
+    },
+    "AttachmentCloseParams": {
+      "kind": "object",
+      "fields": {
+        "sourceId": "string"
+      }
+    },
+    "AttachmentCloseResult": {
+      "kind": "object",
+      "fields": {
+        "closed": "boolean"
+      }
+    },
     "LibrarySearchParams": {
       "kind": "object",
       "fields": {
@@ -249,7 +312,6 @@
         "filename": "string",
         "libraryId": "number",
         "parentItemKey": "string",
-        "path": "string",
         "title": "string"
       }
     },

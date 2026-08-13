@@ -1,10 +1,8 @@
 import { randomBytes as nodeRandomBytes } from "node:crypto";
-import { constants } from "node:fs";
-import { open as openFile } from "node:fs/promises";
-import { isAbsolute } from "node:path";
+import { openCoreAttachmentSource } from "./core-attachment-source.mjs";
 
 const GRANT_LIFETIME_MS = 60_000;
-const MAX_READ_BYTES = 1024 * 1024;
+const MAX_READ_BYTES = 256 * 1024;
 const GRANT_ID = /^[A-Za-z0-9_-]{43}$/u;
 const TARGET_ID = /^profile:[A-Za-z0-9](?:[A-Za-z0-9._:@-]{0,253}[A-Za-z0-9])?$/u;
 const HOST_FINGERPRINT = /^SHA256:[A-Za-z0-9+/]{43}=?$/u;
@@ -79,53 +77,8 @@ function makeControlledSource(source, onClose) {
   });
 }
 
-export async function openAuthorizedPdfSource(record, { open = openFile } = {}) {
-  if (!record || typeof record !== "object" || !Object.isFrozen(record)
-      || record.contentType !== "application/pdf"
-      || typeof record.path !== "string" || !isAbsolute(record.path)
-      || /[\0\r\n]/u.test(record.path) || typeof open !== "function") {
-    throw unavailable();
-  }
-  let handle;
-  try {
-    handle = await open(record.path, constants.O_RDONLY | constants.O_NOFOLLOW);
-  }
-  catch (_) {
-    throw unavailable();
-  }
-  let closed = false;
-  const close = async () => {
-    if (closed) return;
-    closed = true;
-    try { await handle.close(); }
-    catch (_) { throw unavailable(); }
-  };
-  try {
-    const metadata = await handle.stat();
-    if (!metadata.isFile() || !Number.isSafeInteger(metadata.size) || metadata.size < 1) {
-      throw unavailable();
-    }
-    return Object.freeze({
-      size: metadata.size,
-      async read(offset, length) {
-        if (closed) throw unavailable();
-        try {
-          const buffer = Buffer.allocUnsafe(length);
-          const { bytesRead } = await handle.read(buffer, 0, length, offset);
-          if (bytesRead < 1) throw unavailable();
-          return Uint8Array.from(buffer.subarray(0, bytesRead));
-        }
-        catch (_) {
-          throw unavailable();
-        }
-      },
-      close,
-    });
-  }
-  catch (error) {
-    await close().catch(() => {});
-    throw unavailable();
-  }
+export async function openAuthorizedPdfSource(record, { request } = {}) {
+  return openCoreAttachmentSource(record, { request });
 }
 
 export class AuthorizedPdfSourceRegistry {

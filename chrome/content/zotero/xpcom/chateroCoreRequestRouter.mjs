@@ -19,6 +19,7 @@ import {
 	PROTOCOL_VERSION,
 } from "../modules/chateroCoreProtocol.mjs";
 import { createCoreEventJournal } from "./chateroCoreEventJournal.mjs";
+import { createCoreAttachmentSourceRegistry } from "./chateroCoreAttachmentSourceRegistry.mjs";
 import { createCoreTransactionRegistry } from "./chateroCoreTransactionRegistry.mjs";
 
 const SESSION_TTL_MS = 5 * 60 * 1000;
@@ -46,8 +47,10 @@ function validateRouterOptions(options) {
 	if (!options?.adapter
 			|| typeof options.adapter.annotations !== "function"
 			|| typeof options.adapter.attachment !== "function"
+			|| typeof options.adapter.attachmentSource !== "function"
 			|| typeof options.adapter.collections !== "function"
 			|| typeof options.adapter.itemChildren !== "function"
+			|| typeof options.adapter.itemMetadata !== "function"
 			|| typeof options.adapter.note !== "function"
 			|| typeof options.adapter.profileBackup !== "function"
 			|| typeof options.adapter.profileStatus !== "function"
@@ -83,7 +86,7 @@ export function mapGeckoCoreError(error) {
 	if (/deadline|profile epoch|session|authentication|bootstrap|protocol version/.test(message)) {
 		return { code: "UNAUTHORIZED", message, retriable: false };
 	}
-	if (/params|query|limit|cursor|libraryId|parentKey|collectionKey/.test(message)) {
+	if (/params|query|limit|cursor|libraryId|parentKey|collectionKey|attachmentKey|offset|length|sourceId/.test(message)) {
 		return { code: "INVALID_PARAMS", message, retriable: false };
 	}
 	if (/unknown method/.test(message)) return { code: "METHOD_NOT_FOUND", message, retriable: false };
@@ -106,6 +109,7 @@ export function createGeckoCoreRequestRouter(options = {}) {
 	let sessions = new Map();
 	let active = new Map();
 	let eventJournal = options.eventJournal || createCoreEventJournal({ profileEpoch, now });
+	let attachmentSources = options.attachmentSources || createCoreAttachmentSourceRegistry({ now });
 	let transactionRegistry = options.transactionRegistry || createCoreTransactionRegistry();
 
 	function authorize(message, capability) {
@@ -157,6 +161,7 @@ export function createGeckoCoreRequestRouter(options = {}) {
 	}
 
 	return Object.freeze({
+		async dispose() { await attachmentSources.dispose(); },
 		publishEvent(topic, payload) { return eventJournal.publish(topic, payload); },
 		subscribeEvents(listener) { return eventJournal.subscribe(listener); },
 		async handle(message) {
@@ -173,6 +178,35 @@ export function createGeckoCoreRequestRouter(options = {}) {
 			}
 			if (message.method === "core.events") {
 				return { result: eventJournal.replay(message.params) };
+			}
+			if (message.method === "attachment.open") {
+				let source = await adapter.attachmentSource(message.params);
+				try {
+					return { result: attachmentSources.open({
+						...message.params,
+						profileEpoch,
+						sessionToken: message.sessionToken,
+						source,
+					}) };
+				}
+				catch (error) {
+					await source.close().catch(() => {});
+					throw error;
+				}
+			}
+			if (message.method === "attachment.read") {
+				return { result: await attachmentSources.read({
+					...message.params,
+					profileEpoch,
+					sessionToken: message.sessionToken,
+				}) };
+			}
+			if (message.method === "attachment.close") {
+				return { result: await attachmentSources.close({
+					...message.params,
+					profileEpoch,
+					sessionToken: message.sessionToken,
+				}) };
 			}
 			if (message.method === "profile.status") {
 				return { result: await adapter.profileStatus(message.params) };
