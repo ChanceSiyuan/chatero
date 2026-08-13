@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "stage": 2,
+  "checks": [
+    { "id": "core-protocol", "command": "npm", "args": ["run", "core:check"] },
+    { "id": "core-node-and-real-gecko", "command": "npm", "args": ["run", "test:zotero-core"] },
+    { "id": "signed-gecko-bundle", "command": "npm", "args": ["run", "verify:chatero-bundle"] },
+    { "id": "core-boundary-audit", "kind": "source-inspection" }
+  ]
+}
