@@ -73,6 +73,31 @@ function treeSha256(files) {
   return sha256(files.map(file => `${file.path}\0${file.size}\0${file.sha256}\n`).join(""));
 }
 
+export async function inspectFirstPartyExtensionSources({ root, manifestPath }) {
+  const canonicalRoot = resolve(root);
+  const extensions = await loadManifest(canonicalRoot, manifestPath);
+  const inspected = [];
+  for (const extension of extensions) {
+    const files = [];
+    for (const file of extension.files) {
+      await assertSourceFile(canonicalRoot, file.sourceRelative);
+      const bytes = await readFile(file.source);
+      files.push({ path: file.destinationUnix, sha256: sha256(bytes), size: bytes.length });
+    }
+    files.sort((left, right) => compareUtf8Bytes(left.path, right.path));
+    inspected.push({
+      destinationRoot: extension.destinationRootUnix,
+      files,
+      id: extension.id,
+      treeSha256: treeSha256(files),
+    });
+  }
+  return Object.freeze(inspected.map(extension => Object.freeze({
+    ...extension,
+    files: Object.freeze(extension.files.map(file => Object.freeze(file))),
+  })));
+}
+
 async function loadManifest(root, manifestPath) {
   const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
   exactObject(manifest, TOP_FIELDS, "first-party extension manifest");

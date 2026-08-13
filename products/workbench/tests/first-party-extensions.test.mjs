@@ -36,7 +36,7 @@ async function createFixture() {
 }
 
 test("materializes declared regular files with deterministic provenance", async () => {
-  const { materializeFirstPartyExtensions, verifyFirstPartyExtensions } = await import("../scripts/lib/first-party-extensions.mjs");
+  const { inspectFirstPartyExtensionSources, materializeFirstPartyExtensions, verifyFirstPartyExtensions } = await import("../scripts/lib/first-party-extensions.mjs");
   const input = await createFixture();
 
   const result = await materializeFirstPartyExtensions(input);
@@ -52,6 +52,7 @@ test("materializes declared regular files with deterministic provenance", async 
     "extensions/chatero-documentation/package.json",
   ]);
   assert.match(documentation.treeSha256, /^[0-9a-f]{64}$/);
+  assert.deepEqual(await inspectFirstPartyExtensionSources({ root: input.root, manifestPath: input.manifestPath }), result.extensions);
   assert.equal(await readFile(join(input.checkout, "extensions", "chatero-zotero", "extension.mjs"), "utf8"), 'export const activate = () => {};\n');
   assert.deepEqual(await verifyFirstPartyExtensions({
     checkout: input.checkout,

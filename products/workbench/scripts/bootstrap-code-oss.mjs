@@ -7,7 +7,7 @@ import { promisify } from "node:util";
 
 import { ensureCheckout } from "./lib/git-checkout.mjs";
 import { buildDocumentationWebview } from "./build-documentation-webview.mjs";
-import { materializeFirstPartyExtensions } from "./lib/first-party-extensions.mjs";
+import { inspectFirstPartyExtensionSources, materializeFirstPartyExtensions } from "./lib/first-party-extensions.mjs";
 import { applyPatchSeries } from "./lib/patch-series.mjs";
 import { materializeProduct } from "./lib/product-materializer.mjs";
 import { loadUpstreamContract } from "./lib/upstream-contract.mjs";
@@ -96,6 +96,10 @@ export async function bootstrapCodeOss({
   if (await exists(provenancePath)) {
     try {
       const report = await verifyCodeOss(verificationInput);
+      const currentSources = await inspectFirstPartyExtensionSources({ root, manifestPath: firstPartyManifestPath });
+      if (JSON.stringify(currentSources) !== JSON.stringify(report.firstPartyExtensions)) {
+        throw new Error("first-party extension sources differ from the generated checkout; create a new generated checkout");
+      }
       return { ...report, reused: true };
     }
     catch (error) {
