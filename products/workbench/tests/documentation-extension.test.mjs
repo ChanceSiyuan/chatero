@@ -52,6 +52,7 @@ test("isolated Workbench CI gates fast policy and complete macOS Stage 1 accepta
   assert.equal(stageOne.steps[1].with["node-version"], "24.18.0");
   assert.equal(stageOne.steps[1].with.cache, "npm");
   assert.equal(stageOne.steps[2].with.version, "1.8.27");
+  assert.deepEqual(stageOne.steps[5].env, { GITHUB_TOKEN: "${{ github.token }}" });
   assert.equal(stageOne.steps[7].if, "always()");
   assert.deepEqual(stageOne.steps[7].with, {
     name: "stage-1-acceptance-${{ github.sha }}",

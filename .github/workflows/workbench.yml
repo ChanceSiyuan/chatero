@@ -40,6 +40,8 @@ jobs:
       - run: npm ci
       - run: npm run workbench:bootstrap
       - run: npm run workbench:install
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
       - run: npm run verify:stage-1
       - if: always()
         uses: actions/upload-artifact@v4
