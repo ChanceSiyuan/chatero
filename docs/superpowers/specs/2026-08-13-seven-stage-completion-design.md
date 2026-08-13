@@ -105,6 +105,17 @@ All Bootstrap, legacy Chatero, Core foundation, and local Electron integration
 tests pass with no unexpected extension activation errors or policy/network
 attempts. A freshly generated installed app matches committed provenance.
 
+### Acceptance record
+
+Stage 1 source, compile, and local-runtime acceptance is complete only when
+`npm run verify:stage-1` produces a passing, nine-check record at
+`products/workbench/.cache/acceptance/stage-1.json` from the same clean source
+commit. The contract is checked in at
+`products/workbench/acceptance/stage-1.requirements.json`, and the macOS CI job
+uploads the ignored record for audit even on failure. No required command has a
+skip or optional mode; signed release packaging and installed-app cutover
+remain independently required by the later release stages.
+
 ## Stage 2: Complete Zotero Core Protocol and Headless Harness
 
 ### Product result

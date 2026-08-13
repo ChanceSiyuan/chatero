@@ -9,12 +9,12 @@ import { createDocumentationCapabilityIssuer } from "../extensions/chatero-docum
 
 const extensionRoot = new URL("../extensions/chatero-documentation/", import.meta.url);
 
-test("isolated Workbench CI gates Documentation and exact Code-OSS provenance", async () => {
+test("isolated Workbench CI gates fast policy and complete macOS Stage 1 acceptance", async () => {
   const source = await readFile(new URL("../../../.github/workflows/workbench.yml", import.meta.url), "utf8");
   const workflow = parse(source);
   assert.equal(workflow.name, "Workbench");
   assert.deepEqual(workflow.on, ["push", "pull_request"]);
-  assert.deepEqual(Object.keys(workflow.jobs), ["workbench"]);
+  assert.deepEqual(Object.keys(workflow.jobs), ["workbench", "stage-1-macos"]);
   const job = workflow.jobs.workbench;
   assert.equal(job["runs-on"], "ubuntu-24.04");
   assert.deepEqual(job.steps.map(step => step.run ?? step.uses), [
@@ -35,6 +35,28 @@ test("isolated Workbench CI gates Documentation and exact Code-OSS provenance", 
   assert.equal(job.steps[5].with.key,
     "workbench-${{ runner.os }}-${{ hashFiles('products/workbench/upstreams.json', 'products/workbench/patches/code-oss/**', 'products/workbench/first-party-extensions.json', 'package-lock.json') }}");
   assert.equal(job.steps[6].if, "steps.code-oss-cache.outputs.cache-hit == 'true'");
+
+  const stageOne = workflow.jobs["stage-1-macos"];
+  assert.equal(stageOne["runs-on"], "macos-15");
+  assert.deepEqual(stageOne.steps.map(step => step.run ?? step.uses), [
+    "actions/checkout@v4",
+    "actions/setup-node@v4",
+    "npm ci",
+    "npm run workbench:bootstrap",
+    "npm run workbench:install",
+    "npm run verify:stage-1",
+    "actions/upload-artifact@v4",
+  ]);
+  assert.equal(stageOne.steps[1].with["node-version"], "24.18.0");
+  assert.equal(stageOne.steps[1].with.cache, "npm");
+  assert.equal(stageOne.steps[6].if, "always()");
+  assert.deepEqual(stageOne.steps[6].with, {
+    name: "stage-1-acceptance-${{ github.sha }}",
+    path: "products/workbench/.cache/acceptance/stage-1.json",
+    "if-no-files-found": "warn",
+  });
+  assert.doesNotMatch(source, /marketplace\.visualstudio\.com|gallerycdn\.vsassets\.io|ms-python\.vscode-pylance|ms-vscode-remote\.remote-ssh/iu);
+  assert.doesNotMatch(source, /\/Users\/|zotero\.sqlite|CHATERO_CODE_OSS_DIR/iu);
 });
 
 test("Documentation is the default workspace surface with optional Live Preview", async () => {

@@ -60,6 +60,33 @@ Run the committed bootstrap gate with:
 npm run verify:workbench-bootstrap
 ```
 
+## Stage 1 acceptance
+
+The complete Stage 1 source, compile, and local-runtime gate is one closed
+command:
+
+```bash
+npm run verify:stage-1
+```
+
+Before invoking it, use Node `24.18.0`, run `npm ci`, and materialize the pinned
+checkout and its dependencies with `npm run workbench:bootstrap` followed by
+`npm run workbench:install`. The command executes every descriptor in
+`acceptance/stage-1.requirements.json` in order; it has no skip or optional
+flags and stops at the first failed requirement.
+
+The machine-readable result is written atomically to
+`products/workbench/.cache/acceptance/stage-1.json`. It contains source,
+upstream, product, and patch-series digests plus check status and timing, but no
+command output, environment, credential, or personal path. The stage is not
+accepted when a required command is absent, skipped, failed, run from dirty
+tracked source, or represented by evidence from another source commit.
+
+The disposable integration profile intentionally has no personal Agent
+credentials, so the bounded `No default agent registered` startup message is
+allowed. Upstream Agent extension activation failures, duplicate providers,
+or GitHub protected-resource requests are not allowed.
+
 ## Generated paths
 
 The following paths are build inputs or outputs and remain outside Git:

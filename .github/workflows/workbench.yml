@@ -22,3 +22,23 @@ jobs:
         run: npm run workbench:verify
       - run: npm run workbench:bootstrap
       - run: npm run workbench:verify
+
+  stage-1-macos:
+    runs-on: macos-15
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.18.0
+          cache: npm
+      - run: npm ci
+      - run: npm run workbench:bootstrap
+      - run: npm run workbench:install
+      - run: npm run verify:stage-1
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage-1-acceptance-${{ github.sha }}
+          path: products/workbench/.cache/acceptance/stage-1.json
+          if-no-files-found: warn
