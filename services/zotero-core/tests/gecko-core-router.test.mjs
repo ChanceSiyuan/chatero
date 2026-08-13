@@ -56,6 +56,7 @@ function createRouter(overrides = {}) {
     async savedSearchItems(params) { calls.push(["savedSearchItems", params]); return { items: [], total: 0 }; },
     async search(params, options) { calls.push(["search", params, options]); return { items: [], total: 0 }; },
     async syncStatus(params) { calls.push(["syncStatus", params]); return { enabled: true, inProgress: false, libraries: [], offline: false, status: "" }; },
+    async retrySync(params) { calls.push(["retrySync", params]); return { completed: true, libraryIds: params.libraryIds }; },
     async tags(params) { calls.push(["tags", params]); return { tags: [], total: 0 }; },
   };
   const selectedAdapter = { ...adapter, ...(overrides.adapter || {}) };
@@ -202,6 +203,18 @@ test("sync status has a separate read capability and returns no credentials", as
   assert.deepEqual(result, { enabled: true, inProgress: false, libraries: [], offline: false, status: "" });
   assert.equal(JSON.stringify(result).includes("apiKey"), false);
   assert.deepEqual(calls, [["syncStatus", {}]]);
+});
+
+test("sync retry is a separately authorized idempotent transaction", async () => {
+  const { calls, router } = createRouter();
+  const session = await handshake(router, ["sync:write"]);
+  const params = { expectedRevision: 0, idempotencyKey: "sync-retry-key-0001", libraryIds: [1, 2] };
+  const first = await router.handle(request(session, "sync.retry", params));
+  const replay = await router.handle(request(session, "sync.retry", params));
+  assert.deepEqual(first.result, { completed: true, libraryIds: [1, 2], replayed: false, revision: 1 });
+  assert.equal(first.event.topic, "sync.completed");
+  assert.equal(replay.result.replayed, true);
+  assert.equal(calls.filter(value => value[0] === "retrySync").length, 1);
 });
 
 test("routes read-only PDF, item facts, Note, and annotation methods through library:read", async () => {

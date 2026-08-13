@@ -127,6 +127,7 @@ function fixture({
   noteDeleted = false,
   noteInTrash = false,
 } = {}) {
+  const syncCalls = [];
   const highlight = item({
     id: 92,
     key: "ANN00001",
@@ -274,6 +275,7 @@ function fixture({
         getErrorsByLibrary: libraryId => libraryId === 2 ? [{ errorType: "warning", message: "Storage quota warning" }] : [],
         lastSyncStatus: "Waiting",
         syncInProgress: false,
+        async sync(options) { syncCalls.push(structuredClone(options)); return true; },
       },
       Storage: { Local: {
         SYNC_STATE_FORCE_DOWNLOAD: 4,
@@ -285,7 +287,7 @@ function fixture({
       } },
     },
   };
-  return { Zotero };
+  return { syncCalls, Zotero };
 }
 
 test("lists libraries, saved searches, and paginated tags without database or path data", async () => {
@@ -457,6 +459,19 @@ test("reports bounded offline-aware sync status without credentials", async () =
     status: "Waiting",
   });
   assert.equal(JSON.stringify(await adapter.syncStatus({})).includes("apiKey"), false);
+});
+
+test("runs an explicit sync only for validated syncable libraries", async () => {
+  const source = fixture();
+  const adapter = createZoteroLibraryAdapter({ ...source, isOffline: () => false });
+  assert.deepEqual(await adapter.retrySync({ libraryIds: [2, 1] }), {
+    completed: true,
+    libraryIds: [1, 2],
+  });
+  assert.deepEqual(source.syncCalls, [{ background: true, libraries: [1, 2] }]);
+  await assert.rejects(adapter.retrySync({ libraryIds: [99] }), /not syncable/);
+  const offline = createZoteroLibraryAdapter({ ...fixture(), isOffline: () => true });
+  await assert.rejects(offline.retrySync({ libraryIds: [1] }), error => error.code === "UNAVAILABLE");
 });
 
 test("search isolates duplicate collection keys and emits protocol-exact item summaries", async () => {

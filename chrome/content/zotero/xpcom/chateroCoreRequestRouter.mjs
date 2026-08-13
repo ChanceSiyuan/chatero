@@ -65,7 +65,8 @@ function validateRouterOptions(options) {
 			|| typeof options.adapter.savedSearchItems !== "function"
 			|| typeof options.adapter.search !== "function"
 			|| typeof options.adapter.tags !== "function"
-			|| typeof options.adapter.syncStatus !== "function") {
+			|| typeof options.adapter.syncStatus !== "function"
+			|| typeof options.adapter.retrySync !== "function") {
 		throw new Error("Gecko Core router requires Profile and Library adapters");
 	}
 	if (typeof options.bootstrapToken !== "string" || options.bootstrapToken.length < 24) {
@@ -300,6 +301,24 @@ export function createGeckoCoreRequestRouter(options = {}) {
 			if (message.method === "library.saved-search-items") return { result: await adapter.savedSearchItems(message.params) };
 			if (message.method === "library.tags") return { result: await adapter.tags(message.params) };
 			if (message.method === "sync.status") return { result: await adapter.syncStatus(message.params) };
+			if (message.method === "sync.retry") {
+				let { expectedRevision, idempotencyKey, ...operation } = message.params || {};
+				let completed = await transactionRegistry.execute({
+					expectedRevision,
+					idempotencyKey,
+					operation,
+					scope: "sync:retry",
+				}, value => adapter.retrySync(value));
+				let result = { ...completed.result, replayed: completed.replayed, revision: completed.revision };
+				return {
+					...(!completed.replayed && { event: eventJournal.publish("sync.completed", {
+						completed: result.completed,
+						libraryIds: result.libraryIds,
+						revision: completed.revision,
+					}) }),
+					result,
+				};
+			}
 			if (message.method === "library.search") {
 				if (typeof message.cancellationId !== "string" || !message.cancellationId) {
 					throw new Error("library.search cancellationId is required");

@@ -11,7 +11,8 @@
     "library:write",
     "profile:read",
     "profile:write",
-    "sync:read"
+    "sync:read",
+    "sync:write"
   ],
   "methods": [
     {
@@ -169,6 +170,12 @@
       "capability": "sync:read",
       "paramsType": "SyncStatusParams",
       "resultType": "SyncStatusResult"
+    },
+    {
+      "name": "sync.retry",
+      "capability": "sync:write",
+      "paramsType": "SyncRetryParams",
+      "resultType": "SyncRetryResult"
     }
   ],
   "types": {
@@ -758,6 +765,23 @@
         "libraries": "SyncLibraryStatus[]",
         "offline": "boolean",
         "status": "string"
+      }
+    },
+    "SyncRetryParams": {
+      "kind": "object",
+      "fields": {
+        "expectedRevision": "number",
+        "idempotencyKey": "string",
+        "libraryIds": "number[]"
+      }
+    },
+    "SyncRetryResult": {
+      "kind": "object",
+      "fields": {
+        "completed": "boolean",
+        "libraryIds": "number[]",
+        "replayed": "boolean",
+        "revision": "number"
       }
     }
   }

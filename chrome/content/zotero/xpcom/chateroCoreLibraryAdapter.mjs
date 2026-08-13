@@ -32,6 +32,7 @@ const UPDATE_NOTE_FIELDS = new Set(["expectedVersion", "html", "libraryId", "not
 const LIBRARIES_FIELDS = new Set();
 const FEEDS_FIELDS = new Set();
 const SYNC_STATUS_FIELDS = new Set();
+const SYNC_RETRY_FIELDS = new Set(["libraryIds"]);
 const SAVED_SEARCH_FIELDS = new Set(["libraryId"]);
 const SAVED_SEARCH_ITEMS_FIELDS = new Set(["cursor", "libraryId", "limit", "searchKey"]);
 const TAG_FIELDS = new Set(["cursor", "libraryId", "limit", "query"]);
@@ -638,6 +639,24 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(S
 				offline: Boolean(isOffline()),
 				status: typeof Zotero.Sync.Runner.lastSyncStatus === "string" ? Zotero.Sync.Runner.lastSyncStatus : "",
 			};
+		},
+
+		async retrySync(params) {
+			exactObject(params, SYNC_RETRY_FIELDS, "sync.retry params");
+			if (!Array.isArray(params.libraryIds) || params.libraryIds.length < 1 || params.libraryIds.length > MAX_PAGE_SIZE
+					|| params.libraryIds.some(value => !Number.isSafeInteger(value) || value < 1)) {
+				throw new Error("sync.retry libraryIds must be a non-empty bounded array of positive integers");
+			}
+			if (isOffline()) unavailable("Zotero sync is unavailable while offline");
+			if (!Zotero.Sync.Runner.enabled) unavailable("Zotero sync is not configured");
+			if (Zotero.Sync.Runner.syncInProgress) unavailable("Zotero sync is already in progress");
+			let libraryIds = [...new Set(params.libraryIds)].sort((left, right) => left - right);
+			let syncable = new Set(Zotero.Libraries.getAll()
+				.filter(library => library.libraryType !== "feed" && library.syncable)
+				.map(library => library.libraryID));
+			if (libraryIds.some(value => !syncable.has(value))) throw new Error("sync.retry library is not syncable");
+			let completed = await Zotero.Sync.Runner.sync({ background: true, libraries: libraryIds });
+			return { completed: completed !== false, libraryIds };
 		},
 		async annotations(params) {
 			validateCompositeParams(params, ANNOTATION_FIELDS, "attachmentKey", "library.annotations");
