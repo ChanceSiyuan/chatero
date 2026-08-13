@@ -304,6 +304,18 @@ async function main() {
       const nextOffset = offset + page.length;
       return { result: { matches: page, ...(nextOffset < matches.length && { nextCursor: String(nextOffset) }), total: matches.length } };
     }
+    if (message.method === "library.fulltext-index") {
+      const { expectedRevision, idempotencyKey, ...operation } = message.params || {};
+      const completed = await transactionRegistry.execute({
+        expectedRevision, idempotencyKey, operation, scope: "library:fulltext-index",
+      }, async value => ({ attachments: value.attachments, complete: value.complete }));
+      return {
+        ...(!completed.replayed && { event: eventJournal.publish("library.fulltext.indexed", {
+          count: completed.result.attachments.length, revision: completed.revision,
+        }) }),
+        result: { ...completed.result, replayed: completed.replayed, revision: completed.revision },
+      };
+    }
     if (message.method === "library.item-children") {
       validateIdentityParams(message.params, "itemKey", "library.item-children");
       const value = fixtureItemChildren.find(entry => entry.libraryId === message.params.libraryId && entry.itemKey === message.params.itemKey);

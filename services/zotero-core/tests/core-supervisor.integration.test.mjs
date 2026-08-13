@@ -253,6 +253,10 @@ test("fixture Core implements every new mutation, citation, translation, and syn
 	assert.equal((await core.client.request("profile.migrate", { expectedRevision: 0, idempotencyKey: "fixture-profile-migrate-0001" })).schemaVersion, 142);
 	assert.equal((await core.client.request("library.duplicates", { libraryId: 1, limit: 10 })).total, 1);
 	assert.equal((await core.client.request("library.fulltext-search", { libraryId: 1, limit: 10, query: "critical" })).total, 1);
+	assert.equal((await core.client.request("library.fulltext-index", {
+		attachments: [{ attachmentKey: "PDF00001", libraryId: 1 }], complete: true,
+		expectedRevision: 0, idempotencyKey: "fixture-fulltext-index-0001",
+	})).complete, true);
 	assert.equal((await core.client.request("library.annotations-update", {
 		attachmentKey: "PDF00001", expectedRevision: 0, idempotencyKey: "fixture-annotation-update-0001", libraryId: 1,
 		updates: [{ annotationKey: "ANN00001", comment: "Changed", expectedVersion: 1 }],

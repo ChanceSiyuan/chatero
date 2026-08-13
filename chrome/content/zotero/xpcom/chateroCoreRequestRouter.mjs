@@ -54,6 +54,7 @@ function validateRouterOptions(options) {
 			|| typeof options.adapter.feeds !== "function"
 			|| typeof options.adapter.duplicates !== "function"
 			|| typeof options.adapter.fulltextSearch !== "function"
+			|| typeof options.adapter.indexFulltext !== "function"
 			|| typeof options.adapter.itemChildren !== "function"
 			|| typeof options.adapter.itemMetadata !== "function"
 			|| typeof options.adapter.itemFacts !== "function"
@@ -311,6 +312,19 @@ export function createGeckoCoreRequestRouter(options = {}) {
 			if (message.method === "library.feeds") return { result: await adapter.feeds(message.params) };
 			if (message.method === "library.duplicates") return { result: await adapter.duplicates(message.params) };
 			if (message.method === "library.fulltext-search") return { result: await adapter.fulltextSearch(message.params) };
+			if (message.method === "library.fulltext-index") {
+				let { expectedRevision, idempotencyKey, ...operation } = message.params || {};
+				let completed = await transactionRegistry.execute({
+					expectedRevision, idempotencyKey, operation, scope: "library:fulltext-index",
+				}, value => adapter.indexFulltext(value));
+				let result = { ...completed.result, replayed: completed.replayed, revision: completed.revision };
+				return {
+					...(!completed.replayed && { event: eventJournal.publish("library.fulltext.indexed", {
+						count: result.attachments.length, revision: completed.revision,
+					}) }),
+					result,
+				};
+			}
 			if (message.method === "library.item-children") return { result: await adapter.itemChildren(message.params) };
 			if (message.method === "library.item-metadata") return { result: await adapter.itemMetadata(message.params) };
 			if (message.method === "library.item-facts") return { result: await adapter.itemFacts(message.params) };

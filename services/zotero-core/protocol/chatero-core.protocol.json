@@ -103,6 +103,12 @@
       "resultType": "LibraryFulltextSearchResult"
     },
     {
+      "name": "library.fulltext-index",
+      "capability": "library:write",
+      "paramsType": "LibraryFulltextIndexParams",
+      "resultType": "LibraryFulltextIndexResult"
+    },
+    {
       "name": "library.libraries",
       "capability": "library:read",
       "paramsType": "LibraryLibrariesParams",
@@ -536,6 +542,31 @@
         "matches": "LibraryFulltextMatch[]",
         "nextCursor?": "string",
         "total": "number"
+      }
+    },
+    "LibraryAttachmentIdentity": {
+      "kind": "object",
+      "fields": {
+        "attachmentKey": "string",
+        "libraryId": "number"
+      }
+    },
+    "LibraryFulltextIndexParams": {
+      "kind": "object",
+      "fields": {
+        "attachments": "LibraryAttachmentIdentity[]",
+        "complete": "boolean",
+        "expectedRevision": "number",
+        "idempotencyKey": "string"
+      }
+    },
+    "LibraryFulltextIndexResult": {
+      "kind": "object",
+      "fields": {
+        "attachments": "LibraryAttachmentIdentity[]",
+        "complete": "boolean",
+        "replayed": "boolean",
+        "revision": "number"
       }
     },
     "LibrarySummary": {

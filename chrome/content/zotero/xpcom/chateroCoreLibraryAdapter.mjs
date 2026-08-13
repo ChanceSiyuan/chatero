@@ -46,6 +46,7 @@ const SAVED_SEARCH_ITEMS_FIELDS = new Set(["cursor", "libraryId", "limit", "sear
 const TAG_FIELDS = new Set(["cursor", "libraryId", "limit", "query"]);
 const DUPLICATE_FIELDS = new Set(["cursor", "libraryId", "limit"]);
 const FULLTEXT_SEARCH_FIELDS = new Set(["cursor", "libraryId", "limit", "query"]);
+const FULLTEXT_INDEX_FIELDS = new Set(["attachments", "complete"]);
 const MAX_PAGE_SIZE = 200;
 const MAX_NOTE_BYTES = 512 * 1024;
 const MAX_ANNOTATION_FIELD_BYTES = 256 * 1024;
@@ -529,6 +530,7 @@ function validateZotero(Zotero) {
 		[Zotero?.Fulltext || Zotero?.FullText, "getItemVersion"],
 		[Zotero?.Fulltext || Zotero?.FullText, "getPages"],
 		[Zotero?.Fulltext || Zotero?.FullText, "findTextInItems"],
+		[Zotero?.Fulltext || Zotero?.FullText, "indexItems"],
 		[Zotero?.Retractions, "isRetracted"],
 		[Zotero?.Retractions, "shouldShowCitationWarning"],
 		[Zotero?.Translators, "getAllForType"],
@@ -750,6 +752,32 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(S
 			let page = matches.slice(offset, offset + params.limit);
 			let nextOffset = offset + page.length;
 			return { matches: page, ...(nextOffset < matches.length && { nextCursor: String(nextOffset) }), total: matches.length };
+		},
+
+		async indexFulltext(params) {
+			exactObject(params, FULLTEXT_INDEX_FIELDS, "library.fulltext-index params");
+			if (!Array.isArray(params.attachments) || params.attachments.length < 1 || params.attachments.length > MAX_PAGE_SIZE) {
+				throw new Error("library.fulltext-index attachments must be a non-empty bounded array");
+			}
+			if (typeof params.complete !== "boolean") throw new Error("library.fulltext-index complete must be boolean");
+			let seen = new Set();
+			let attachments = params.attachments.map(identity => {
+				validateCompositeParams(identity, ATTACHMENT_FIELDS, "attachmentKey", "library.fulltext-index identity");
+				let composite = `${identity.libraryId}/${identity.attachmentKey}`;
+				if (seen.has(composite)) throw new Error("library.fulltext-index attachments must be unique");
+				seen.add(composite);
+				let attachment = lookupItem(Zotero, identity.libraryId, identity.attachmentKey, "Zotero attachment");
+				if (!attachment.isFileAttachment?.()) throw new Error("library.fulltext-index target must be a file attachment");
+				return attachment;
+			});
+			await (Zotero.Fulltext || Zotero.FullText).indexItems(attachments.map(value => value.id), {
+				complete: params.complete,
+				ignoreErrors: false,
+			});
+			return {
+				attachments: attachments.map(value => ({ attachmentKey: value.key, libraryId: value.libraryID })),
+				complete: params.complete,
+			};
 		},
 
 		async savedSearches(params) {

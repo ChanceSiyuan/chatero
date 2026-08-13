@@ -134,6 +134,7 @@ function fixture({
 	const exportCalls = [];
   const importCalls = [];
 	const droppedTables = [];
+	const indexCalls = [];
   const highlight = item({
     id: 92,
     key: "ANN00001",
@@ -271,7 +272,8 @@ function fixture({
       getIndexedState: async value => value.id === 90 ? 3 : 1,
       getItemVersion: async value => value === 90 ? 6 : false,
       getPages: async value => value === 90 ? { indexedPages: 12, total: 12 } : false,
-			findTextInItems: async (ids, query) => query === "flow" && ids.includes(90) ? [{ id: 90 }] : [],
+      findTextInItems: async (ids, query) => query === "flow" && ids.includes(90) ? [{ id: 90 }] : [],
+			indexItems: async (ids, options) => { indexCalls.push({ ids: ids.slice(), options: structuredClone(options) }); },
     },
 		Duplicates: class {
 			constructor(libraryId) { this.libraryId = libraryId; }
@@ -356,7 +358,7 @@ function fixture({
       } },
     },
   };
-  return { droppedTables, exportCalls, importCalls, syncCalls, Zotero };
+  return { droppedTables, exportCalls, importCalls, indexCalls, syncCalls, Zotero };
 }
 
 test("lists libraries, saved searches, and paginated tags without database or path data", async () => {
@@ -585,6 +587,20 @@ test("searches bounded full text and returns attachment-parent identities withou
 		total: 1,
 	});
 	await assert.rejects(adapter.fulltextSearch({ libraryId: 1, limit: 10, query: "" }), /query/);
+});
+
+test("reindexes an exact bounded attachment batch through Zotero Fulltext", async () => {
+	const source = fixture();
+	const adapter = createZoteroLibraryAdapter(source);
+	assert.deepEqual(await adapter.indexFulltext({
+		attachments: [{ attachmentKey: "PDF00001", libraryId: 1 }, { attachmentKey: "PDF00001", libraryId: 2 }],
+		complete: true,
+	}), {
+		attachments: [{ attachmentKey: "PDF00001", libraryId: 1 }, { attachmentKey: "PDF00001", libraryId: 2 }],
+		complete: true,
+	});
+	assert.deepEqual(source.indexCalls, [{ ids: [90, 91], options: { complete: true, ignoreErrors: false } }]);
+	await assert.rejects(adapter.indexFulltext({ attachments: [{ attachmentKey: "NOTE0002", libraryId: 1 }], complete: false }), /file attachment/);
 });
 
 test("lists bounded Zotero translator metadata without executable code or paths", async () => {

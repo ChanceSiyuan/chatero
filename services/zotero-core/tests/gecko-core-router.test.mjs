@@ -49,6 +49,7 @@ function createRouter(overrides = {}) {
     async feeds(params) { calls.push(["feeds", params]); return { feeds: [] }; },
 		async duplicates(params) { calls.push(["duplicates", params]); return { items: [], total: 0 }; },
 		async fulltextSearch(params) { calls.push(["fulltextSearch", params]); return { matches: [], total: 0 }; },
+		async indexFulltext(params) { calls.push(["indexFulltext", params]); return { attachments: params.attachments, complete: params.complete }; },
     async itemChildren(params) { calls.push(["itemChildren", params]); return { attachments: [], notes: [] }; },
     async itemMetadata(params) { calls.push(["itemMetadata", params]); return { itemKey: params.itemKey, libraryId: params.libraryId }; },
     async itemFacts(params) { calls.push(["itemFacts", params]); return { citationWarning: false, itemKey: params.itemKey, libraryId: params.libraryId, relations: [], retracted: false, synced: true, version: 1 }; },
@@ -301,6 +302,21 @@ test("routes duplicates and full-text search through read and search capabilitie
 	assert.deepEqual((await router.handle(request(session, "library.duplicates", { libraryId: 1, limit: 50 }))).result, { items: [], total: 0 });
 	assert.deepEqual((await router.handle(request(session, "library.fulltext-search", { libraryId: 1, limit: 50, query: "flow" }))).result, { matches: [], total: 0 });
 	assert.deepEqual(calls.map(value => value[0]), ["duplicates", "fulltextSearch"]);
+});
+
+test("full-text indexing is an idempotent, evented write transaction", async () => {
+	const { calls, router } = createRouter();
+	const session = await handshake(router, ["library:write"]);
+	const params = {
+		attachments: [{ attachmentKey: "PDF00001", libraryId: 1 }], complete: true,
+		expectedRevision: 0, idempotencyKey: "fulltext-index-key-0001",
+	};
+	const first = await router.handle(request(session, "library.fulltext-index", params));
+	const replay = await router.handle(request(session, "library.fulltext-index", params));
+	assert.deepEqual(first.result, { attachments: params.attachments, complete: true, replayed: false, revision: 1 });
+	assert.equal(first.event.topic, "library.fulltext.indexed");
+	assert.equal(replay.result.replayed, true);
+	assert.equal(calls.filter(value => value[0] === "indexFulltext").length, 1);
 });
 
 test("routes attachment chunks through a session-bound attachment:read capability", async () => {

@@ -34,6 +34,7 @@ export const METHOD_CAPABILITIES = Object.freeze({
   "library.collections": "library:read",
   "library.duplicates": "library:read",
   "library.feeds": "library:read",
+  "library.fulltext-index": "library:write",
   "library.fulltext-search": "library:search",
   "library.item-children": "library:read",
   "library.item-facts": "library:read",
@@ -121,6 +122,10 @@ export const METHOD_TYPES = Object.freeze({
   "library.feeds": {
     "params": "LibraryFeedsParams",
     "result": "LibraryFeedsResult"
+  },
+  "library.fulltext-index": {
+    "params": "LibraryFulltextIndexParams",
+    "result": "LibraryFulltextIndexResult"
   },
   "library.fulltext-search": {
     "params": "LibraryFulltextSearchParams",
