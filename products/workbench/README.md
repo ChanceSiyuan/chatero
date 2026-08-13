@@ -69,9 +69,12 @@ command:
 npm run verify:stage-1
 ```
 
-Before invoking it, use Node `24.18.0`, run `npm ci`, and materialize the pinned
-checkout and its dependencies with `npm run workbench:bootstrap` followed by
-`npm run workbench:install`. The command executes every descriptor in
+Before invoking it, use Node `24.18.0`, initialize the repository's pinned
+submodules with `git submodule update --init --recursive`, run `npm ci`, and
+materialize the pinned checkout and its dependencies with
+`npm run workbench:bootstrap` followed by `npm run workbench:install`. Keep the
+normal system executable paths available so the real Quarto starter tests can
+invoke the installed `quarto` binary. The command executes every descriptor in
 `acceptance/stage-1.requirements.json` in order; it has no skip or optional
 flags and stops at the first failed requirement.
 

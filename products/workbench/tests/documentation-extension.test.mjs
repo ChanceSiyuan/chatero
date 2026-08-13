@@ -47,6 +47,7 @@ test("isolated Workbench CI gates fast policy and complete macOS Stage 1 accepta
     "npm run verify:stage-1",
     "actions/upload-artifact@v4",
   ]);
+  assert.deepEqual(stageOne.steps[0].with, { submodules: "recursive" });
   assert.equal(stageOne.steps[1].with["node-version"], "24.18.0");
   assert.equal(stageOne.steps[1].with.cache, "npm");
   assert.equal(stageOne.steps[6].if, "always()");
