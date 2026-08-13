@@ -8,6 +8,7 @@ app/dist/
 app/staging/
 resource/chatero-build.mjs
 vendor/code-oss/
+vendor/VSCode-*/
 products/workbench/.cache/
 products/workbench/dist/
 products/workbench/remote-agent/dist/
