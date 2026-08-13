@@ -85,6 +85,12 @@
       "resultType": "LibraryCollectionsResult"
     },
     {
+      "name": "library.collection-mutate",
+      "capability": "library:write",
+      "paramsType": "LibraryCollectionMutationParams",
+      "resultType": "LibraryCollectionMutationResult"
+    },
+    {
       "name": "library.feeds",
       "capability": "library:read",
       "paramsType": "LibraryFeedsParams",
@@ -470,7 +476,9 @@
         "itemCount": "number",
         "libraryId": "number",
         "name": "string",
-        "parentKey?": "string"
+        "parentKey?": "string",
+        "synced": "boolean",
+        "version": "number"
       }
     },
     "LibraryCollectionsParams": {
@@ -484,6 +492,34 @@
       "kind": "object",
       "fields": {
         "collections": "LibraryCollectionSummary[]"
+      }
+    },
+    "LibraryCollectionMutationParams": {
+      "kind": "object",
+      "fields": {
+        "action": "string",
+        "collectionKey?": "string",
+        "expectedRevision": "number",
+        "expectedVersion?": "number",
+        "idempotencyKey": "string",
+        "libraryId": "number",
+        "name?": "string",
+        "parentKey?": "string"
+      }
+    },
+    "LibraryCollectionMutationResult": {
+      "kind": "object",
+      "fields": {
+        "action": "string",
+        "collectionKey": "string",
+        "deleted": "boolean",
+        "libraryId": "number",
+        "name?": "string",
+        "parentKey?": "string",
+        "replayed": "boolean",
+        "revision": "number",
+        "synced?": "boolean",
+        "version?": "number"
       }
     },
     "LibraryLibrariesParams": {

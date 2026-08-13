@@ -51,6 +51,7 @@ function validateRouterOptions(options) {
 			|| typeof options.adapter.attachmentState !== "function"
 			|| typeof options.adapter.attachmentSource !== "function"
 			|| typeof options.adapter.collections !== "function"
+			|| typeof options.adapter.mutateCollection !== "function"
 			|| typeof options.adapter.feeds !== "function"
 			|| typeof options.adapter.duplicates !== "function"
 			|| typeof options.adapter.fulltextSearch !== "function"
@@ -310,6 +311,20 @@ export function createGeckoCoreRequestRouter(options = {}) {
 			if (message.method === "library.attachment") return { result: await adapter.attachment(message.params) };
 			if (message.method === "library.attachment-state") return { result: await adapter.attachmentState(message.params) };
 			if (message.method === "library.collections") return { result: await adapter.collections(message.params) };
+			if (message.method === "library.collection-mutate") {
+				let { expectedRevision, idempotencyKey, ...operation } = message.params || {};
+				let completed = await transactionRegistry.execute({
+					expectedRevision, idempotencyKey, operation, scope: `library:${operation.libraryId}/collection:catalog`,
+				}, value => adapter.mutateCollection(value));
+				let result = { ...completed.result, replayed: completed.replayed, revision: completed.revision };
+				return {
+					...(!completed.replayed && { event: eventJournal.publish("library.collection.changed", {
+						action: result.action, collectionKey: result.collectionKey,
+						libraryId: result.libraryId, revision: completed.revision,
+					}) }),
+					result,
+				};
+			}
 			if (message.method === "library.feeds") return { result: await adapter.feeds(message.params) };
 			if (message.method === "library.duplicates") return { result: await adapter.duplicates(message.params) };
 			if (message.method === "library.fulltext-search") return { result: await adapter.fulltextSearch(message.params) };

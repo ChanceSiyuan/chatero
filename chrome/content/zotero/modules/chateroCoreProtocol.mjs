@@ -31,6 +31,7 @@ export const METHOD_CAPABILITIES = Object.freeze({
   "library.annotations-update": "library:write",
   "library.attachment": "library:read",
   "library.attachment-state": "library:read",
+  "library.collection-mutate": "library:write",
   "library.collections": "library:read",
   "library.duplicates": "library:read",
   "library.feeds": "library:read",
@@ -111,6 +112,10 @@ export const METHOD_TYPES = Object.freeze({
   "library.attachment-state": {
     "params": "LibraryAttachmentParams",
     "result": "LibraryAttachmentState"
+  },
+  "library.collection-mutate": {
+    "params": "LibraryCollectionMutationParams",
+    "result": "LibraryCollectionMutationResult"
   },
   "library.collections": {
     "params": "LibraryCollectionsParams",

@@ -42,6 +42,7 @@ function createRouter(overrides = {}) {
     async attachmentState(params) { calls.push(["attachmentState", params]); return { attachmentKey: params.attachmentKey, fileAvailable: true, fulltextIndexState: "indexed", libraryId: params.libraryId, storageSyncState: "in-sync" }; },
     async attachmentSource(params) { calls.push(["attachmentSource", params]); return { size: 4, async read(offset, length) { return Uint8Array.from([1, 2, 3, 4]).slice(offset, offset + length); }, async close() {} }; },
     async collections(params) { calls.push(["collections", params]); return { collections: [] }; },
+    async mutateCollection(params) { calls.push(["mutateCollection", params]); return { action: params.action, collectionKey: "NEWCOL01", deleted: false, libraryId: params.libraryId, name: params.name, synced: false, version: 1 }; },
 		async citationStyles(params) { calls.push(["citationStyles", params]); return { styles: [] }; },
 		async renderCitation(params) { calls.push(["renderCitation", params]); return { html: "<div>Reference</div>", text: "Reference" }; },
 		async exportItems(params) { calls.push(["exportItems", params]); return { content: "@article{}", itemCount: params.identities.length, translatorId: params.translatorId }; },
@@ -138,6 +139,18 @@ test("profile backup is idempotent, revision-checked, capability-gated, and even
     router.handle(request(session, "profile.backup", { expectedRevision: 0, idempotencyKey: "profile-backup-key-0002" })),
     error => error.code === "REVISION_CONFLICT",
   );
+});
+
+test("collection mutations are idempotent, capability-gated, and evented", async () => {
+  const { calls, router } = createRouter();
+  const session = await handshake(router, ["library:write"]);
+  const params = { action: "create", expectedRevision: 0, idempotencyKey: "collection-create-key-0001", libraryId: 1, name: "Reading" };
+  const first = await router.handle(request(session, "library.collection-mutate", params));
+  const replay = await router.handle(request(session, "library.collection-mutate", params));
+  assert.deepEqual(first.result, { action: "create", collectionKey: "NEWCOL01", deleted: false, libraryId: 1, name: "Reading", replayed: false, revision: 1, synced: false, version: 1 });
+  assert.equal(first.event.topic, "library.collection.changed");
+  assert.equal(replay.result.replayed, true);
+  assert.equal(calls.filter(value => value[0] === "mutateCollection").length, 1);
 });
 
 test("profile migration is an idempotent Zotero-owned schema transaction", async () => {

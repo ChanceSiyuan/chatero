@@ -112,8 +112,10 @@ function item({
   return Object.freeze(value);
 }
 
-function collection({ id, key, libraryID, name, parentKey, childCollections = [], childItems = [] }) {
-  return Object.freeze({
+function collection({ id, key, libraryID, name, parentKey, childCollections = [], childItems = [], version = 1 }) {
+  let erased = false;
+  let currentVersion = version;
+  const value = {
     id,
     key,
     libraryID,
@@ -121,7 +123,14 @@ function collection({ id, key, libraryID, name, parentKey, childCollections = []
     parentKey,
     getChildCollections: asIDs => asIDs ? childCollections.map(value => value.id) : childCollections.slice(),
     getChildItems: asIDs => asIDs ? childItems.map(value => value.id) : childItems.slice(),
-  });
+    get clientVersion() { return currentVersion; },
+    get erased() { return erased; },
+    async eraseTx(options) { assert.deepEqual(options, { deleteItems: false }); erased = true; },
+    async reload() {},
+    async saveTx() { currentVersion += 1; return id; },
+    synced: true,
+  };
+  return value;
 }
 
 function fixture({
@@ -227,6 +236,11 @@ function fixture({
   ];
 
   const Zotero = {
+    Collection: class {
+      constructor(params) {
+        return collection({ id: 1000 + collections.length, key: `NEWCOL0${collections.length}`, version: 0, ...params });
+      }
+    },
     Collections: {
       get: id => collections.find(value => value.id === id) || false,
       getByLibrary: libraryId => collections.filter(value => value.libraryID === libraryId && !value.parentKey),
@@ -421,16 +435,41 @@ test("normalizes root and nested collections with composite library identity", a
 
   assert.deepEqual(await adapter.collections({}), {
     collections: [
-      { childCount: 1, collectionKey: "SHARED01", itemCount: 2, libraryId: 1, name: "Physics" },
-      { childCount: 0, collectionKey: "SHARED01", itemCount: 2, libraryId: 2, name: "Team Physics" },
+      { childCount: 1, collectionKey: "SHARED01", itemCount: 2, libraryId: 1, name: "Physics", synced: true, version: 1 },
+      { childCount: 0, collectionKey: "SHARED01", itemCount: 2, libraryId: 2, name: "Team Physics", synced: true, version: 1 },
     ],
   });
   assert.deepEqual(await adapter.collections({ libraryId: 1, parentKey: "SHARED01" }), {
     collections: [
-      { childCount: 0, collectionKey: "NESTED01", itemCount: 1, libraryId: 1, name: "Renormalization", parentKey: "SHARED01" },
+      { childCount: 0, collectionKey: "NESTED01", itemCount: 1, libraryId: 1, name: "Renormalization", parentKey: "SHARED01", synced: true, version: 1 },
     ],
   });
   await assert.rejects(adapter.collections({ parentKey: "SHARED01" }), /libraryId/);
+});
+
+test("creates, renames, moves, and deletes collections at exact object versions", async () => {
+  const environment = fixture();
+  const adapter = createZoteroLibraryAdapter(environment);
+  const created = await adapter.mutateCollection({ action: "create", libraryId: 1, name: "Reading", parentKey: "SHARED01" });
+  assert.deepEqual(created, {
+    action: "create", collectionKey: "NEWCOL03", deleted: false, libraryId: 1,
+    name: "Reading", parentKey: "SHARED01", synced: true, version: 1,
+  });
+  const updated = await adapter.mutateCollection({
+    action: "update", collectionKey: "NESTED01", expectedVersion: 1,
+    libraryId: 1, name: "Field Theory", parentKey: "",
+  });
+  assert.deepEqual(updated, {
+    action: "update", collectionKey: "NESTED01", deleted: false, libraryId: 1,
+    name: "Field Theory", synced: true, version: 2,
+  });
+  await assert.rejects(adapter.mutateCollection({
+    action: "update", collectionKey: "NESTED01", expectedVersion: 1,
+    libraryId: 1, name: "Stale",
+  }), error => error.code === "REVISION_CONFLICT" && error.actualRevision === 2);
+  assert.deepEqual(await adapter.mutateCollection({
+    action: "delete", collectionKey: "NESTED01", expectedVersion: 2, libraryId: 1,
+  }), { action: "delete", collectionKey: "NESTED01", deleted: true, libraryId: 1 });
 });
 
 test("exposes bounded item facts and attachment availability without leaking paths", async () => {

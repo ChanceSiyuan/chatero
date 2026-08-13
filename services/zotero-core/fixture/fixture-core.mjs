@@ -284,6 +284,47 @@ async function main() {
         .sort((left, right) => String(left.name).localeCompare(String(right.name)) || String(left.collectionKey).localeCompare(String(right.collectionKey)));
       return { result: { collections } };
     }
+    if (message.method === "library.collection-mutate") {
+      const { expectedRevision, idempotencyKey, ...operation } = message.params || {};
+      const completed = await transactionRegistry.execute({
+        expectedRevision, idempotencyKey, operation, scope: `library:${operation.libraryId}/collection:catalog`,
+      }, async value => {
+        let collection;
+        if (value.action === "create") {
+          const sequence = fixtureCollections.length + 1;
+          collection = {
+            childCount: 0, collectionKey: `COL${String(sequence).padStart(5, "0")}`,
+            itemCount: 0, libraryId: value.libraryId, name: value.name,
+            ...(value.parentKey && { parentKey: value.parentKey }), synced: false, version: 1,
+          };
+          fixtureCollections.push(collection);
+        }
+        else {
+          collection = fixtureCollections.find(entry => entry.libraryId === value.libraryId && entry.collectionKey === value.collectionKey);
+          if (!collection) throw new Error("fixture collection was not found");
+          if (collection.version !== value.expectedVersion) throw new Error("fixture collection version changed");
+          if (value.action === "delete") fixtureCollections.splice(fixtureCollections.indexOf(collection), 1);
+          else {
+            if (value.name !== undefined) collection.name = value.name;
+            if (value.parentKey !== undefined) value.parentKey ? collection.parentKey = value.parentKey : delete collection.parentKey;
+            collection.synced = false;
+            collection.version += 1;
+          }
+        }
+        return {
+          action: value.action, collectionKey: collection.collectionKey, deleted: value.action === "delete",
+          libraryId: collection.libraryId,
+          ...(value.action !== "delete" && { name: collection.name, ...(collection.parentKey && { parentKey: collection.parentKey }), synced: collection.synced, version: collection.version }),
+        };
+      });
+      return {
+        ...(!completed.replayed && { event: eventJournal.publish("library.collection.changed", {
+          action: completed.result.action, collectionKey: completed.result.collectionKey,
+          libraryId: completed.result.libraryId, revision: completed.revision,
+        }) }),
+        result: { ...completed.result, replayed: completed.replayed, revision: completed.revision },
+      };
+    }
     if (message.method === "library.feeds") {
       if (!message.params || typeof message.params !== "object" || Array.isArray(message.params) || Object.keys(message.params).length) {
         throw new Error("library.feeds params must be an empty object");

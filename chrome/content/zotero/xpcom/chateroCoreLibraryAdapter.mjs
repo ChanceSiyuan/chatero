@@ -16,6 +16,8 @@
 import { openGeckoAttachmentSource } from "./chateroCoreGeckoAttachmentSource.mjs";
 
 const COLLECTION_FIELDS = new Set(["libraryId", "parentKey"]);
+const COLLECTION_MUTATION_FIELDS = new Set(["action", "collectionKey", "expectedVersion", "libraryId", "name", "parentKey"]);
+const COLLECTION_MUTATION_ACTIONS = new Set(["create", "update", "delete"]);
 const SEARCH_FIELDS = new Set(["collectionKey", "cursor", "libraryId", "limit", "query", "sortBy", "sortDirection"]);
 const SEARCH_SORT_FIELDS = new Set(["creators", "itemType", "title", "year"]);
 const SEARCH_SORT_DIRECTIONS = new Set(["asc", "desc"]);
@@ -199,9 +201,41 @@ function collectionSummary(collection) {
 		itemCount: collection.getChildItems(true, false).length,
 		libraryId: collection.libraryID,
 		name: collection.name,
+		synced: Boolean(collection.synced),
+		version: Number.isSafeInteger(collection.clientVersion) ? collection.clientVersion : 0,
 	};
 	if (collection.parentKey) summary.parentKey = collection.parentKey;
 	return summary;
+}
+
+function validateCollectionMutation(params) {
+	exactObject(params, COLLECTION_MUTATION_FIELDS, "library.collection-mutate params");
+	positiveLibraryId(params.libraryId, "library.collection-mutate");
+	if (!COLLECTION_MUTATION_ACTIONS.has(params.action)) throw new Error("library.collection-mutate action is invalid");
+	if (params.collectionKey !== undefined) zoteroKey(params.collectionKey, "library.collection-mutate collectionKey");
+	if (params.expectedVersion !== undefined && (!Number.isSafeInteger(params.expectedVersion) || params.expectedVersion < 0)) {
+		throw new Error("library.collection-mutate expectedVersion must be a non-negative safe integer");
+	}
+	if (params.name !== undefined && !boundedString(params.name, 16 * 1024, "collection name").trim()) {
+		throw new Error("library.collection-mutate name must not be empty");
+	}
+	if (params.parentKey !== undefined && params.parentKey !== "") zoteroKey(params.parentKey, "library.collection-mutate parentKey");
+	if (params.action === "create") {
+		if (params.collectionKey !== undefined || params.expectedVersion !== undefined || params.name === undefined) {
+			throw new Error("library.collection-mutate create requires only a new collection name");
+		}
+	}
+	else {
+		if (params.collectionKey === undefined || params.expectedVersion === undefined) {
+			throw new Error("library.collection-mutate update and delete require collectionKey and expectedVersion");
+		}
+		if (params.action === "update" && params.name === undefined && params.parentKey === undefined) {
+			throw new Error("library.collection-mutate update requires a name or parentKey change");
+		}
+		if (params.action === "delete" && (params.name !== undefined || params.parentKey !== undefined)) {
+			throw new Error("library.collection-mutate delete does not accept changes");
+		}
+	}
 }
 
 function creatorName(creator) {
@@ -1061,6 +1095,51 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(S
 					compareText(left.name, right.name)
 					|| left.libraryId - right.libraryId
 					|| compareText(left.collectionKey, right.collectionKey)),
+			};
+		},
+
+		async mutateCollection(params) {
+			validateCollectionMutation(params);
+			let library = Zotero.Libraries.get(params.libraryId);
+			if (!library || library.libraryType === "feed" || !library.editable) unavailable("collection target library is not editable");
+			let collection;
+			if (params.action === "create") {
+				collection = new Zotero.Collection({ libraryID: params.libraryId, name: params.name.trim() });
+			}
+			else {
+				collection = Zotero.Collections.getByLibraryAndKey(params.libraryId, params.collectionKey);
+				if (!collection || collection.deleted) unavailable(`Zotero collection ${params.libraryId}/${params.collectionKey} is unavailable`);
+				revisionConflict(collection, params.expectedVersion, "Zotero collection");
+			}
+			if (params.parentKey !== undefined && params.parentKey !== "") {
+				let parent = Zotero.Collections.getByLibraryAndKey(params.libraryId, params.parentKey);
+				if (!parent || parent.deleted) unavailable("collection parent is unavailable");
+				if (parent === collection) throw new Error("collection cannot be its own parent");
+			}
+			try {
+				if (params.action === "delete") collection.deleted = true;
+				else {
+					if (params.name !== undefined) collection.name = params.name.trim();
+					if (params.parentKey !== undefined) collection.parentKey = params.parentKey || false;
+				}
+				await collection.saveTx();
+			}
+			catch (error) {
+				try { await collection.reload?.(null, true); }
+				catch (_) {}
+				throw error;
+			}
+			return {
+				action: params.action,
+				collectionKey: collection.key,
+				deleted: Boolean(collection.deleted),
+				libraryId: collection.libraryID,
+				...(params.action !== "delete" && {
+					name: collection.name,
+					...(collection.parentKey && { parentKey: collection.parentKey }),
+					synced: Boolean(collection.synced),
+					version: Number.isSafeInteger(collection.clientVersion) ? collection.clientVersion : 0,
+				}),
 			};
 		},
 
