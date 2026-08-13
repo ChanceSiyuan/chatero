@@ -57,6 +57,7 @@ function createRouter(overrides = {}) {
 		async note(params) { calls.push(["note", params]); return { html: "<p>Note</p>", libraryId: 1, noteKey: "NOTE0001", parentItemKey: "ITEM0001", title: "Note", version: 1 }; },
     async updateNote(params) { calls.push(["updateNote", params]); return { libraryId: params.libraryId, noteKey: params.noteKey, synced: false, version: params.expectedVersion + 1 }; },
     async profileBackup() { calls.push(["profileBackup"]); return { backupCreated: true, completedAt: 1234 }; },
+		async profileMigrate() { calls.push(["profileMigrate"]); return { compatibilityVersion: 10, migrated: true, schemaVersion: 142 }; },
     async profileStatus() { calls.push(["profileStatus"]); return { compatibilityVersion: 10, integrityCheckRequired: false, profileEpoch: "profile-epoch", profileName: "Disposable Profile", quickCheckPassed: true, readOnly: false, schemaVersion: 142, upstreamVersion: "7.1-real" }; },
     async savedSearches(params) { calls.push(["savedSearches", params]); return { searches: [] }; },
     async savedSearchItems(params) { calls.push(["savedSearchItems", params]); return { items: [], total: 0 }; },
@@ -135,6 +136,18 @@ test("profile backup is idempotent, revision-checked, capability-gated, and even
     router.handle(request(session, "profile.backup", { expectedRevision: 0, idempotencyKey: "profile-backup-key-0002" })),
     error => error.code === "REVISION_CONFLICT",
   );
+});
+
+test("profile migration is an idempotent Zotero-owned schema transaction", async () => {
+	const { calls, router } = createRouter();
+	const session = await handshake(router, ["profile:write"]);
+	const params = { expectedRevision: 0, idempotencyKey: "profile-migrate-key-0001" };
+	const first = await router.handle(request(session, "profile.migrate", params));
+	const replay = await router.handle(request(session, "profile.migrate", params));
+	assert.deepEqual(first.result, { compatibilityVersion: 10, migrated: true, replayed: false, revision: 1, schemaVersion: 142 });
+	assert.equal(first.event.topic, "profile.migration.completed");
+	assert.equal(replay.result.replayed, true);
+	assert.equal(calls.filter(value => value[0] === "profileMigrate").length, 1);
 });
 
 test("item update is capability-gated, idempotent, revision-checked, and evented", async () => {

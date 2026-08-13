@@ -46,6 +46,7 @@ export const METHOD_CAPABILITIES = Object.freeze({
   "library.search": "library:search",
   "library.tags": "library:read",
   "profile.backup": "profile:write",
+  "profile.migrate": "profile:write",
   "profile.status": "profile:read",
   "sync.conflicts": "sync:read",
   "sync.retry": "sync:write",
@@ -167,6 +168,10 @@ export const METHOD_TYPES = Object.freeze({
   "profile.backup": {
     "params": "ProfileBackupParams",
     "result": "ProfileBackupResult"
+  },
+  "profile.migrate": {
+    "params": "ProfileMigrateParams",
+    "result": "ProfileMigrateResult"
   },
   "profile.status": {
     "params": "ProfileStatusParams",

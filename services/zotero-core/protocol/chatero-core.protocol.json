@@ -49,6 +49,12 @@
       "resultType": "ProfileBackupResult"
     },
     {
+      "name": "profile.migrate",
+      "capability": "profile:write",
+      "paramsType": "ProfileMigrateParams",
+      "resultType": "ProfileMigrateResult"
+    },
+    {
       "name": "attachment.open",
       "capability": "attachment:read",
       "paramsType": "AttachmentOpenParams",
@@ -312,6 +318,23 @@
         "completedAt": "number",
         "replayed": "boolean",
         "revision": "number"
+      }
+    },
+    "ProfileMigrateParams": {
+      "kind": "object",
+      "fields": {
+        "expectedRevision": "number",
+        "idempotencyKey": "string"
+      }
+    },
+    "ProfileMigrateResult": {
+      "kind": "object",
+      "fields": {
+        "compatibilityVersion": "number",
+        "migrated": "boolean",
+        "replayed": "boolean",
+        "revision": "number",
+        "schemaVersion": "number"
       }
     },
     "ProfileStatusResult": {

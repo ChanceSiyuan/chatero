@@ -31,6 +31,18 @@ export function createZoteroProfileAdapter({ Zotero, profileEpoch, profileName, 
 			let backupCreated = await Zotero.DB.backUpDatabase({ force: true, online: true, suffix: "chatero-core" });
 			return { backupCreated: Boolean(backupCreated), completedAt: now() };
 		},
+		async migrate() {
+			let migrated = await Zotero.Schema.updateSchema();
+			let [schemaVersion, compatibilityVersion] = await Promise.all([
+				Zotero.Schema.getDBVersion("userdata"),
+				Zotero.Schema.getDBVersion("compatibility"),
+			]);
+			if (!Number.isSafeInteger(schemaVersion) || schemaVersion < 1
+					|| !Number.isSafeInteger(compatibilityVersion) || compatibilityVersion < 1) {
+				throw new Error("Zotero Profile migration returned invalid schema versions");
+			}
+			return { compatibilityVersion, migrated: Boolean(migrated), schemaVersion };
+		},
 		async status(params) {
 			emptyObject(params, "profile.status");
 			let [schemaVersion, compatibilityVersion, integrityCheckRequired, quickCheckPassed] = await Promise.all([

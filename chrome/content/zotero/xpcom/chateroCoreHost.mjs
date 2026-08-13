@@ -253,6 +253,7 @@ export async function startGeckoCoreHost({ Zotero, window } = {}) {
 	adapter = Object.freeze({
 		...adapter,
 		profileBackup: () => profileAdapter.backup(),
+		profileMigrate: () => profileAdapter.migrate(),
 		profileStatus: params => profileAdapter.status(params),
 	});
 	let router = createGeckoCoreRequestRouter({

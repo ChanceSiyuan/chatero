@@ -245,6 +245,20 @@ async function main() {
         result: { ...completed.result, replayed: completed.replayed, revision: completed.revision },
       };
     }
+    if (message.method === "profile.migrate") {
+      const completed = await transactionRegistry.execute({
+        expectedRevision: message.params?.expectedRevision,
+        idempotencyKey: message.params?.idempotencyKey,
+        operation: { kind: "profile-migrate" },
+        scope: "profile:migrate",
+      }, async () => ({ compatibilityVersion: 10, migrated: false, schemaVersion: 142 }));
+      return {
+        ...(!completed.replayed && { event: eventJournal.publish("profile.migration.completed", {
+          migrated: completed.result.migrated, revision: completed.revision, schemaVersion: completed.result.schemaVersion,
+        }) }),
+        result: { ...completed.result, replayed: completed.replayed, revision: completed.revision },
+      };
+    }
     if (message.method === "library.collections") {
       if (!message.params || typeof message.params !== "object" || Array.isArray(message.params)
         || Object.keys(message.params).some(key => !["libraryId", "parentKey"].includes(key))

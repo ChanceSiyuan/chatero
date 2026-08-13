@@ -63,6 +63,7 @@ function validateRouterOptions(options) {
 			|| typeof options.adapter.updateNote !== "function"
 			|| typeof options.adapter.profileBackup !== "function"
 			|| typeof options.adapter.profileStatus !== "function"
+			|| typeof options.adapter.profileMigrate !== "function"
 			|| typeof options.adapter.savedSearches !== "function"
 			|| typeof options.adapter.savedSearchItems !== "function"
 			|| typeof options.adapter.search !== "function"
@@ -242,6 +243,21 @@ export function createGeckoCoreRequestRouter(options = {}) {
 				let result = { ...completed.result, replayed: completed.replayed, revision: completed.revision };
 				return {
 					...(!completed.replayed && { event: eventJournal.publish("profile.backup.completed", { revision: completed.revision }) }),
+					result,
+				};
+			}
+			if (message.method === "profile.migrate") {
+				let completed = await transactionRegistry.execute({
+					expectedRevision: message.params?.expectedRevision,
+					idempotencyKey: message.params?.idempotencyKey,
+					operation: { kind: "profile-migrate" },
+					scope: "profile:migrate",
+				}, () => adapter.profileMigrate());
+				let result = { ...completed.result, replayed: completed.replayed, revision: completed.revision };
+				return {
+					...(!completed.replayed && { event: eventJournal.publish("profile.migration.completed", {
+						migrated: result.migrated, revision: completed.revision, schemaVersion: result.schemaVersion,
+					}) }),
 					result,
 				};
 			}

@@ -49,3 +49,27 @@ test("profile backup delegates only to Zotero DB and returns content-free eviden
   assert.deepEqual(await adapter.backup(), { backupCreated: true, completedAt: 1234 });
   assert.deepEqual(calls, [{ force: true, online: true, suffix: "chatero-core" }]);
 });
+
+test("profile migration delegates to Zotero Schema and reports post-migration versions", async () => {
+	const calls = [];
+	const versions = { compatibility: 10, userdata: 141 };
+	const adapter = createZoteroProfileAdapter({
+		Zotero: {
+			DB: {},
+			Schema: {
+				async getDBVersion(name) { return versions[name]; },
+				async updateSchema() { calls.push("updateSchema"); versions.userdata = 142; return true; },
+			},
+			version: "8.0-test",
+		},
+		profileEpoch: "epoch-1",
+		profileName: "Disposable Profile",
+	});
+
+	assert.deepEqual(await adapter.migrate(), {
+		compatibilityVersion: 10,
+		migrated: true,
+		schemaVersion: 142,
+	});
+	assert.deepEqual(calls, ["updateSchema"]);
+});
