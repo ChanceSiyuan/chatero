@@ -26,6 +26,7 @@ export const METHOD_CAPABILITIES = Object.freeze({
   "core.cancel": null,
   "core.events": "events:read",
   "core.handshake": null,
+  "core.resume": null,
   "library.annotations": "library:read",
   "library.annotations-update": "library:write",
   "library.attachment": "library:read",
@@ -88,6 +89,10 @@ export const METHOD_TYPES = Object.freeze({
   "core.handshake": {
     "params": "CoreHandshakeParams",
     "result": "CoreHandshakeResult"
+  },
+  "core.resume": {
+    "params": "CoreResumeParams",
+    "result": "CoreResumeResult"
   },
   "library.annotations": {
     "params": "LibraryAnnotationsParams",

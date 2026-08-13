@@ -134,6 +134,28 @@ export class SessionAuthority {
     });
   }
 
+  resume({ sessionToken, profileEpoch, protocolVersion, afterSequence, limit }) {
+    if (protocolVersion !== this.#protocolVersion) throw new Error(`protocol version ${protocolVersion} is incompatible with ${this.#protocolVersion}`);
+    if (profileEpoch !== this.#profileEpoch) throw new Error("resume profile epoch does not match");
+    if (typeof sessionToken !== "string") throw new Error("resume session token is required");
+    if (!Number.isSafeInteger(afterSequence) || afterSequence < 0) throw new Error("resume afterSequence is invalid");
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) throw new Error("resume limit is invalid");
+    const session = this.#sessions.get(sessionToken);
+    const currentTime = this.#now();
+    if (!session) throw new Error("session authentication failed");
+    if (session.expiresAt <= currentTime) {
+      this.#sessions.delete(sessionToken);
+      throw new Error("session expired");
+    }
+    return Object.freeze({
+      capabilities: Object.freeze([...session.capabilities].sort()),
+      expiresAt: session.expiresAt,
+      profileEpoch: this.#profileEpoch,
+      protocolVersion: this.#protocolVersion,
+      sessionToken,
+    });
+  }
+
   revoke(sessionToken) {
     return this.#sessions.delete(sessionToken);
   }

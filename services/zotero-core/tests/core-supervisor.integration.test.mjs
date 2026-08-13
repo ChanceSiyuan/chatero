@@ -357,6 +357,20 @@ test("delivers monotonic Core events independently of request responses", async 
   });
 });
 
+test("reconnects with the short-lived session token without reusing bootstrap", async () => {
+	const { startCore } = await import("../supervisor/core-supervisor.mjs");
+	const { profileDirectory } = await createProfile();
+	const core = await startCore({ profileDirectory, fixtureItems });
+	running.push(core);
+	assert.equal((await core.client.request("library.search", { limit: 10, query: "white" })).total, 1);
+	await new Promise(resolvePromise => setTimeout(resolvePromise, 10));
+	const resumed = await core.client.reconnect();
+	assert.deepEqual(resumed.capabilities, core.client.capabilities);
+	assert.equal(resumed.profileEpoch, core.profileEpoch);
+	assert.equal((await resumed.request("library.search", { limit: 10, query: "fisher" })).total, 1);
+	resumed.close();
+});
+
 test("cleans the profile lease and session after an unexpected Core crash", async () => {
   const { startCore } = await import("../supervisor/core-supervisor.mjs");
   const { profileDirectory } = await createProfile();

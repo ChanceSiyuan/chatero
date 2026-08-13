@@ -113,3 +113,29 @@ test("rejects malformed or unbounded request deadlines", async () => {
   assert.throws(() => authority.authorize({ ...base, deadline: 2_000_001 }, "library:search"), /deadline exceeds/);
   assert.throws(() => authority.authorize({ ...base, id: "", deadline: 1_000_100 }, "library:search"), /request id/);
 });
+
+test("resumes an unexpired session without reusing the bootstrap secret", async () => {
+	const fixture = createAuthority();
+	const authority = await fixture.authority();
+	const session = authority.handshake({
+		bootstrapToken: "bootstrap-secret-with-enough-entropy",
+		protocolVersion: "1.0",
+		requestedCapabilities: ["library:search"],
+	});
+	assert.deepEqual(authority.resume({
+		afterSequence: 7,
+		limit: 100,
+		profileEpoch: "epoch-1",
+		protocolVersion: "1.0",
+		sessionToken: session.sessionToken,
+	}), {
+		capabilities: ["library:search"],
+		expiresAt: 1_001_000,
+		profileEpoch: "epoch-1",
+		protocolVersion: "1.0",
+		sessionToken: "session-token-value-1",
+	});
+	assert.throws(() => authority.resume({ afterSequence: 0, limit: 100, profileEpoch: "other", protocolVersion: "1.0", sessionToken: session.sessionToken }), /profile epoch/);
+	fixture.advance(1001);
+	assert.throws(() => authority.resume({ afterSequence: 0, limit: 100, profileEpoch: "epoch-1", protocolVersion: "1.0", sessionToken: session.sessionToken }), /expired/);
+});

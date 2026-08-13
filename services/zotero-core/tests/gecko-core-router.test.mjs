@@ -384,3 +384,27 @@ test("publishes Core-global events and serves capability-gated bounded replay", 
     /missing capability events:read/,
   );
 });
+
+test("resumes an authenticated session and returns bounded missed events", async () => {
+	const { router } = createRouter();
+	const session = await handshake(router, ["library:search"]);
+	await router.handle(request(session, "library.search", { limit: 50, query: "tensor" }));
+	const resumed = (await router.handle({
+		id: "resume-1",
+		method: "core.resume",
+		params: {
+			afterSequence: 0,
+			limit: 100,
+			profileEpoch: session.profileEpoch,
+			protocolVersion: "1.0",
+			sessionToken: session.sessionToken,
+		},
+	})).result;
+	assert.equal(resumed.events.length, 1);
+	assert.equal(resumed.events[0].topic, "library.search.completed");
+	assert.equal(resumed.latestSequence, 1);
+	assert.deepEqual(resumed.capabilities, ["library:search"]);
+	await assert.rejects(router.handle({ id: "resume-bad", method: "core.resume", params: {
+		afterSequence: 0, limit: 100, profileEpoch: "other", protocolVersion: "1.0", sessionToken: session.sessionToken,
+	} }), /profile epoch/);
+});

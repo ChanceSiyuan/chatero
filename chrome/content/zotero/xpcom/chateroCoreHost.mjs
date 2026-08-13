@@ -69,11 +69,11 @@ export function createGeckoCoreConnection({ onFatal = () => {}, profileEpoch, ro
 					let handled = await router.handle(message);
 					response = { id: message.id, ok: true, result: handled.result };
 					event = handled.event;
-					if (message.method === "core.handshake") {
-						if (!Number.isSafeInteger(handled.result?.eventSequence) || handled.result.eventSequence < 0) {
-							throw new Error("Core handshake returned an invalid event sequence");
-						}
-						lastEventSequence = handled.result.eventSequence;
+					if (message.method === "core.handshake" || message.method === "core.resume") {
+						let sequence = message.method === "core.handshake"
+							? handled.result?.eventSequence : handled.result?.latestSequence;
+						if (!Number.isSafeInteger(sequence) || sequence < 0) throw new Error("Core authentication returned an invalid event sequence");
+						lastEventSequence = sequence;
 						authenticated = true;
 					}
 				}

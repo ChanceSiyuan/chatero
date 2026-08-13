@@ -182,12 +182,38 @@ export function createGeckoCoreRequestRouter(options = {}) {
 		};
 	}
 
+	function resume(params) {
+		if (!params || typeof params !== "object" || Array.isArray(params)) throw new Error("core.resume params must be an object");
+		let allowed = new Set(["afterSequence", "limit", "profileEpoch", "protocolVersion", "sessionToken"]);
+		if (Object.keys(params).some(key => !allowed.has(key))) throw new Error("core.resume params contain an unknown field");
+		if (params.protocolVersion !== PROTOCOL_VERSION) throw new Error(`protocol version ${params.protocolVersion} is incompatible with ${PROTOCOL_VERSION}`);
+		if (params.profileEpoch !== profileEpoch) throw new Error("resume profile epoch does not match");
+		let session = sessions.get(params.sessionToken);
+		let current = now();
+		if (!session) throw new Error("session authentication failed");
+		if (session.expiresAt <= current) {
+			sessions.delete(params.sessionToken);
+			throw new Error("session expired");
+		}
+		let replay = eventJournal.replay({ afterSequence: params.afterSequence, limit: params.limit });
+		return {
+			capabilities: [...session.capabilities].sort(),
+			expiresAt: session.expiresAt,
+			profileEpoch,
+			protocolVersion: PROTOCOL_VERSION,
+			sessionToken: params.sessionToken,
+			upstreamVersion,
+			...replay,
+		};
+	}
+
 	return Object.freeze({
 		async dispose() { await attachmentSources.dispose(); },
 		publishEvent(topic, payload) { return eventJournal.publish(topic, payload); },
 		subscribeEvents(listener) { return eventJournal.subscribe(listener); },
 		async handle(message) {
 			if (message?.method === "core.handshake") return { result: handshake(message.params) };
+			if (message?.method === "core.resume") return { result: resume(message.params) };
 			if (!Object.hasOwn(METHOD_CAPABILITIES, message?.method)) throw new Error(`unknown method ${message?.method}`);
 			authorize(message, METHOD_CAPABILITIES[message.method]);
 			if (message.method === "core.cancel") {

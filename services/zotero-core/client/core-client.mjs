@@ -46,6 +46,7 @@ function connectSocket(socketPath, timeoutMs) {
 export async function connectCore({
   socketPath,
   bootstrapToken,
+  resumeSession,
   requestedCapabilities,
   connectTimeoutMs = 1000,
   defaultDeadlineMs = DEFAULT_DEADLINE_MS,
@@ -58,6 +59,7 @@ export async function connectCore({
   let closed = false;
   let lastEventSequence = 0;
   let session = null;
+  let missedEvents = [];
 
   const rejectPending = error => {
     for (const request of pending.values()) request.reject(error);
@@ -157,15 +159,36 @@ export async function connectCore({
   }
 
   try {
-    session = await send("core.handshake", {
-      bootstrapToken,
-      protocolVersion: PROTOCOL_VERSION,
-      requestedCapabilities,
-    }, { handshake: true, timeoutMs: connectTimeoutMs });
-    if (!Number.isSafeInteger(session.eventSequence) || session.eventSequence < 0) {
-      throw new Error("Zotero Core handshake returned an invalid event sequence");
-    }
-    lastEventSequence = session.eventSequence;
+		if (resumeSession) {
+			if (!resumeSession || typeof resumeSession !== "object" || !Number.isSafeInteger(resumeSession.afterSequence) || resumeSession.afterSequence < 0) {
+				throw new Error("Zotero Core resumeSession is invalid");
+			}
+			session = { profileEpoch: resumeSession.profileEpoch, sessionToken: resumeSession.sessionToken };
+			const resumed = await send("core.resume", {
+				afterSequence: resumeSession.afterSequence,
+				limit: 1000,
+				profileEpoch: resumeSession.profileEpoch,
+				protocolVersion: PROTOCOL_VERSION,
+				sessionToken: resumeSession.sessionToken,
+			}, { handshake: true, timeoutMs: connectTimeoutMs });
+			if (!Number.isSafeInteger(resumed.latestSequence) || resumed.latestSequence < resumeSession.afterSequence || !Array.isArray(resumed.events)) {
+				throw new Error("Zotero Core resume returned invalid event state");
+			}
+			session = resumed;
+			missedEvents = resumed.events;
+			lastEventSequence = resumed.latestSequence;
+		}
+		else {
+			session = await send("core.handshake", {
+				bootstrapToken,
+				protocolVersion: PROTOCOL_VERSION,
+				requestedCapabilities,
+			}, { handshake: true, timeoutMs: connectTimeoutMs });
+			if (!Number.isSafeInteger(session.eventSequence) || session.eventSequence < 0) {
+				throw new Error("Zotero Core handshake returned an invalid event sequence");
+			}
+			lastEventSequence = session.eventSequence;
+		}
   }
   catch (error) {
     socket.destroy();
@@ -174,6 +197,7 @@ export async function connectCore({
 
   return Object.freeze({
     capabilities: Object.freeze([...session.capabilities]),
+		missedEvents: Object.freeze(missedEvents.map(value => Object.freeze(value))),
     profileEpoch: session.profileEpoch,
     request(method, params, options) {
       return send(method, params, options);
@@ -183,6 +207,19 @@ export async function connectCore({
       eventListeners.add(listener);
       return () => eventListeners.delete(listener);
     },
+		reconnect(options = {}) {
+			return connectCore({
+				connectTimeoutMs: options.connectTimeoutMs ?? connectTimeoutMs,
+				defaultDeadlineMs,
+				now,
+				resumeSession: {
+					afterSequence: lastEventSequence,
+					profileEpoch: session.profileEpoch,
+					sessionToken: session.sessionToken,
+				},
+				socketPath: options.socketPath ?? socketPath,
+			});
+		},
     close() {
       if (closed) return;
       closed = true;

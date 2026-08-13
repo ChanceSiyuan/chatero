@@ -37,6 +37,12 @@
       "resultType": "CoreHandshakeResult"
     },
     {
+      "name": "core.resume",
+      "capability": null,
+      "paramsType": "CoreResumeParams",
+      "resultType": "CoreResumeResult"
+    },
+    {
       "name": "profile.status",
       "capability": "profile:read",
       "paramsType": "ProfileStatusParams",
@@ -297,6 +303,31 @@
         "profileEpoch": "string",
         "protocolVersion": "string",
         "sessionToken": "string",
+        "upstreamVersion": "string"
+      }
+    },
+    "CoreResumeParams": {
+      "kind": "object",
+      "fields": {
+        "afterSequence": "number",
+        "limit": "number",
+        "profileEpoch": "string",
+        "protocolVersion": "string",
+        "sessionToken": "string"
+      }
+    },
+    "CoreResumeResult": {
+      "kind": "object",
+      "fields": {
+        "capabilities": "string[]",
+        "events": "CoreEventRecord[]",
+        "expiresAt": "number",
+        "latestSequence": "number",
+        "oldestSequence": "number",
+        "profileEpoch": "string",
+        "protocolVersion": "string",
+        "sessionToken": "string",
+        "truncated": "boolean",
         "upstreamVersion": "string"
       }
     },

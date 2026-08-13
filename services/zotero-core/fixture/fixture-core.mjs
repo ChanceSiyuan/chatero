@@ -165,6 +165,14 @@ async function main() {
         upstreamVersion,
       } };
     }
+    if (message.method === "core.resume") {
+      const resumed = authority.resume(message.params);
+      return { result: {
+        ...resumed,
+        ...eventJournal.replay({ afterSequence: message.params.afterSequence, limit: message.params.limit }),
+        upstreamVersion,
+      } };
+    }
     if (!Object.hasOwn(METHOD_CAPABILITIES, message.method)) throw new Error(`unknown method ${message.method}`);
     const authorizedSession = authority.authorize(message, METHOD_CAPABILITIES[message.method]);
     if (message.method === "core.cancel") {
