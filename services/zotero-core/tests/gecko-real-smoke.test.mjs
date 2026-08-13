@@ -52,8 +52,10 @@ test(
     assert.ok(core.child.spawnargs.includes("-ChateroCore"));
 
     const status = await core.client.request("profile.status", {});
-    assert.equal(status.readOnly, true);
-    assert.equal(status.schemaVersion, 1);
+    assert.equal(status.readOnly, false);
+    assert.ok(status.schemaVersion >= 76);
+    assert.ok(status.compatibilityVersion >= 1);
+    assert.equal(status.quickCheckPassed, true);
     assert.match(status.upstreamVersion, /^11\.0\.SOURCE\./);
 
     const collections = await core.client.request("library.collections", {});

@@ -134,10 +134,13 @@ test("supervises an authenticated fixture Core over an owner-only Unix socket", 
   assert.equal((await stat(core.socketPath)).mode & 0o777, 0o600);
 
   assert.deepEqual(await core.client.request("profile.status", {}), {
+    compatibilityVersion: 10,
+    integrityCheckRequired: false,
     profileEpoch: core.profileEpoch,
     profileName: "profile",
-    readOnly: true,
-    schemaVersion: 1,
+    quickCheckPassed: true,
+    readOnly: false,
+    schemaVersion: 142,
     upstreamVersion: "7.0-fixture",
   });
   assert.deepEqual(await core.client.request("library.search", {
@@ -207,7 +210,7 @@ test("returns bounded structured validation errors without stopping Core", async
     core.client.request("library.search", { query: "x", limit: 1000 }),
     error => error.code === "INVALID_PARAMS" && /limit/.test(error.message)
   );
-  assert.equal((await core.client.request("profile.status", {})).readOnly, true);
+  assert.equal((await core.client.request("profile.status", {})).readOnly, false);
 });
 
 test("cancels in-flight work and keeps the authenticated session usable", async () => {
@@ -223,7 +226,7 @@ test("cancels in-flight work and keeps the authenticated session usable", async 
   setTimeout(() => controller.abort(), 20);
 
   await assert.rejects(pending, error => error.code === "CANCELLED");
-  assert.equal((await core.client.request("profile.status", {})).readOnly, true);
+  assert.equal((await core.client.request("profile.status", {})).readOnly, false);
 });
 
 test("delivers monotonic Core events independently of request responses", async () => {

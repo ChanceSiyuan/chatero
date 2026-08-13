@@ -7,11 +7,11 @@ import {
   CAPABILITIES,
   METHOD_CAPABILITIES,
   PROTOCOL_VERSION,
-  SCHEMA_VERSION,
 } from "../generated/protocol.mjs";
 import { SessionAuthority } from "../security/session-authority.mjs";
 import { FrameDecoder, writeFrame } from "../transport/frame-codec.mjs";
 import { createCoreEventJournal } from "../../../chrome/content/zotero/xpcom/chateroCoreEventJournal.mjs";
+import { createCoreTransactionRegistry } from "../../../chrome/content/zotero/xpcom/chateroCoreTransactionRegistry.mjs";
 
 const MAX_BOOTSTRAP_BYTES = 1024;
 const MAX_ERROR_MESSAGE = 512;
@@ -34,6 +34,18 @@ function rpcError(error) {
   const message = String(error?.message || error).slice(0, MAX_ERROR_MESSAGE);
   if (error?.code === "CANCELLED") return { code: "CANCELLED", message, retriable: false };
   if (error?.code === "UNAVAILABLE") return { code: "UNAVAILABLE", message, retriable: false };
+  if (error?.code === "REVISION_CONFLICT" || error?.code === "IDEMPOTENCY_CONFLICT") {
+    return {
+      code: "CONFLICT",
+      details: {
+        ...(Number.isSafeInteger(error.actualRevision) && { actualRevision: error.actualRevision }),
+        ...(Number.isSafeInteger(error.expectedRevision) && { expectedRevision: error.expectedRevision }),
+        kind: error.code,
+      },
+      message,
+      retriable: false,
+    };
+  }
   if (/missing capability/.test(message)) return { code: "FORBIDDEN", message, retriable: false };
   if (/deadline|profile epoch|session|authentication|protocol version/.test(message)) {
     return { code: "UNAUTHORIZED", message, retriable: false };
@@ -106,6 +118,7 @@ async function main() {
     throw new Error("fixture search delay is invalid");
   }
   const eventJournal = createCoreEventJournal({ profileEpoch });
+  const transactionRegistry = createCoreTransactionRegistry();
   const authority = new SessionAuthority({
     bootstrapToken,
     profileEpoch,
@@ -158,12 +171,29 @@ async function main() {
         throw new Error("profile.status params must be an empty object");
       }
       return { result: {
+        compatibilityVersion: 10,
+        integrityCheckRequired: false,
         profileEpoch,
         profileName: basename(profileDirectory),
-        readOnly: true,
-        schemaVersion: SCHEMA_VERSION,
+        quickCheckPassed: true,
+        readOnly: false,
+        schemaVersion: 142,
         upstreamVersion,
       } };
+    }
+    if (message.method === "profile.backup") {
+      const completed = await transactionRegistry.execute({
+        expectedRevision: message.params?.expectedRevision,
+        idempotencyKey: message.params?.idempotencyKey,
+        operation: { kind: "profile-backup" },
+        scope: "profile:backup",
+      }, async () => ({ backupCreated: true, completedAt: Date.now() }));
+      return {
+        ...(!completed.replayed && {
+          event: eventJournal.publish("profile.backup.completed", { revision: completed.revision }),
+        }),
+        result: { ...completed.result, replayed: completed.replayed, revision: completed.revision },
+      };
     }
     if (message.method === "library.collections") {
       if (!message.params || typeof message.params !== "object" || Array.isArray(message.params)

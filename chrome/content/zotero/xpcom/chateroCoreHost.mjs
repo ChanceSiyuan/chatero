@@ -16,6 +16,7 @@
 import { SCHEMA_VERSION } from "../modules/chateroCoreProtocol.mjs";
 import { GeckoFrameDecoder, encodeGeckoFrame } from "./chateroCoreFrameCodec.mjs";
 import { createZoteroLibraryAdapter } from "./chateroCoreLibraryAdapter.mjs";
+import { createZoteroProfileAdapter } from "./chateroCoreProfileAdapter.mjs";
 import { createGeckoCoreRequestRouter, mapGeckoCoreError } from "./chateroCoreRequestRouter.mjs";
 
 const MAX_BOOTSTRAP_BYTES = 1024;
@@ -208,6 +209,16 @@ export async function startGeckoCoreHost({ Zotero, window } = {}) {
 
 	let bootstrapToken = readInheritedBootstrapToken();
 	let adapter = createZoteroLibraryAdapter({ Zotero });
+	let profileAdapter = createZoteroProfileAdapter({
+		Zotero,
+		profileEpoch,
+		profileName: PathUtils.filename(actualProfile),
+	});
+	adapter = Object.freeze({
+		...adapter,
+		profileBackup: () => profileAdapter.backup(),
+		profileStatus: params => profileAdapter.status(params),
+	});
 	let router = createGeckoCoreRequestRouter({
 		adapter,
 		bootstrapToken,

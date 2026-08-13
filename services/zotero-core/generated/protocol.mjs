@@ -7,7 +7,8 @@ export const CAPABILITIES = Object.freeze([
   "events:read",
   "library:read",
   "library:search",
-  "profile:read"
+  "profile:read",
+  "profile:write"
 ]);
 export const METHOD_CAPABILITIES = Object.freeze({
   "core.cancel": null,
@@ -20,6 +21,7 @@ export const METHOD_CAPABILITIES = Object.freeze({
   "library.item-metadata": "library:read",
   "library.note": "library:read",
   "library.search": "library:search",
+  "profile.backup": "profile:write",
   "profile.status": "profile:read"
 });
 export const METHOD_TYPES = Object.freeze({
@@ -62,6 +64,10 @@ export const METHOD_TYPES = Object.freeze({
   "library.search": {
     "params": "LibrarySearchParams",
     "result": "LibrarySearchResult"
+  },
+  "profile.backup": {
+    "params": "ProfileBackupParams",
+    "result": "ProfileBackupResult"
   },
   "profile.status": {
     "params": "ProfileStatusParams",

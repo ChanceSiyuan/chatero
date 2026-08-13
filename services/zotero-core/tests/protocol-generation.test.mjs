@@ -44,12 +44,14 @@ test("generates deterministic runtime constants and TypeScript declarations", as
   assert.match(firstJavaScript, /"library\.annotations": "library:read"/);
   assert.match(firstJavaScript, /"library\.note": "library:read"/);
   assert.match(firstJavaScript, /"core\.events": "events:read"/);
+  assert.match(firstJavaScript, /"profile\.backup": "profile:write"/);
   assert.match(firstDeclarations, /export interface LibrarySearchParams/);
   assert.match(firstDeclarations, /export interface LibraryAttachmentSummary/);
   assert.match(firstDeclarations, /export interface LibraryAttachmentParams/);
   assert.match(firstDeclarations, /export interface LibraryNoteSummary/);
   assert.match(firstDeclarations, /export interface LibraryAnnotationSummary/);
   assert.match(firstDeclarations, /export interface ProfileStatusResult/);
+  assert.match(firstDeclarations, /export interface ProfileBackupParams/);
   assert.match(firstDeclarations, /export interface CoreEventRecord/);
   assert.match(firstDeclarations, /export interface CoreEventsResult/);
 });

@@ -7,7 +7,8 @@
     "events:read",
     "library:read",
     "library:search",
-    "profile:read"
+    "profile:read",
+    "profile:write"
   ],
   "methods": [
     {
@@ -33,6 +34,12 @@
       "capability": "profile:read",
       "paramsType": "ProfileStatusParams",
       "resultType": "ProfileStatusResult"
+    },
+    {
+      "name": "profile.backup",
+      "capability": "profile:write",
+      "paramsType": "ProfileBackupParams",
+      "resultType": "ProfileBackupResult"
     },
     {
       "name": "library.collections",
@@ -140,11 +147,30 @@
       "kind": "object",
       "fields": {}
     },
+    "ProfileBackupParams": {
+      "kind": "object",
+      "fields": {
+        "expectedRevision": "number",
+        "idempotencyKey": "string"
+      }
+    },
+    "ProfileBackupResult": {
+      "kind": "object",
+      "fields": {
+        "backupCreated": "boolean",
+        "completedAt": "number",
+        "replayed": "boolean",
+        "revision": "number"
+      }
+    },
     "ProfileStatusResult": {
       "kind": "object",
       "fields": {
+        "compatibilityVersion": "number",
+        "integrityCheckRequired": "boolean",
         "profileEpoch": "string",
         "profileName": "string",
+        "quickCheckPassed": "boolean",
         "readOnly": "boolean",
         "schemaVersion": "number",
         "upstreamVersion": "string"

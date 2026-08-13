@@ -41,6 +41,8 @@ function createRouter(overrides = {}) {
     async collections(params) { calls.push(["collections", params]); return { collections: [] }; },
     async itemChildren(params) { calls.push(["itemChildren", params]); return { attachments: [], notes: [] }; },
     async note(params) { calls.push(["note", params]); return { html: "<p>Note</p>", libraryId: 1, noteKey: "NOTE0001", parentItemKey: "ITEM0001", title: "Note" }; },
+    async profileBackup() { calls.push(["profileBackup"]); return { backupCreated: true, completedAt: 1234 }; },
+    async profileStatus() { calls.push(["profileStatus"]); return { compatibilityVersion: 10, integrityCheckRequired: false, profileEpoch: "profile-epoch", profileName: "Disposable Profile", quickCheckPassed: true, readOnly: false, schemaVersion: 142, upstreamVersion: "7.1-real" }; },
     async search(params, options) { calls.push(["search", params, options]); return { items: [], total: 0 }; },
   };
   const selectedAdapter = { ...adapter, ...(overrides.adapter || {}) };
@@ -74,19 +76,42 @@ test("exchanges the one-time bootstrap token and routes authenticated read metho
     upstreamVersion: "7.1-real",
   });
   assert.deepEqual((await router.handle(request(session, "profile.status"))).result, {
+    compatibilityVersion: 10,
+    integrityCheckRequired: false,
     profileEpoch: "profile-epoch",
     profileName: "Disposable Profile",
-    readOnly: true,
-    schemaVersion: 1,
+    quickCheckPassed: true,
+    readOnly: false,
+    schemaVersion: 142,
     upstreamVersion: "7.1-real",
   });
   assert.deepEqual((await router.handle(request(session, "library.collections", { libraryId: 1, parentKey: "ROOT" }))).result, { collections: [] });
   assert.deepEqual((await router.handle(request(session, "library.search", { limit: 50, query: "tensor" }))).result, { items: [], total: 0 });
   assert.deepEqual(calls.map(value => value.slice(0, 2)), [
+    ["profileStatus"],
     ["collections", { libraryId: 1, parentKey: "ROOT" }],
     ["search", { limit: 50, query: "tensor" }],
   ]);
   await assert.rejects(handshake(router), /already consumed/);
+});
+
+test("profile backup is idempotent, revision-checked, capability-gated, and evented", async () => {
+  const { calls, router } = createRouter();
+  const session = await handshake(router, ["events:read", "profile:write"]);
+  const params = { expectedRevision: 0, idempotencyKey: "profile-backup-key-0001" };
+
+  const first = await router.handle(request(session, "profile.backup", params));
+  const replay = await router.handle(request(session, "profile.backup", params));
+  assert.deepEqual(first.result, { backupCreated: true, completedAt: 1234, replayed: false, revision: 1 });
+  assert.deepEqual(replay.result, { backupCreated: true, completedAt: 1234, replayed: true, revision: 1 });
+  assert.equal(first.event.topic, "profile.backup.completed");
+  assert.equal(replay.event, undefined);
+  assert.equal(calls.filter(value => value[0] === "profileBackup").length, 1);
+
+  await assert.rejects(
+    router.handle(request(session, "profile.backup", { expectedRevision: 0, idempotencyKey: "profile-backup-key-0002" })),
+    error => error.code === "REVISION_CONFLICT",
+  );
 });
 
 test("enforces capabilities, profile epoch, session, and deadline before adapter access", async () => {

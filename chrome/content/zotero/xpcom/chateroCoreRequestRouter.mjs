@@ -19,6 +19,7 @@ import {
 	PROTOCOL_VERSION,
 } from "../modules/chateroCoreProtocol.mjs";
 import { createCoreEventJournal } from "./chateroCoreEventJournal.mjs";
+import { createCoreTransactionRegistry } from "./chateroCoreTransactionRegistry.mjs";
 
 const SESSION_TTL_MS = 5 * 60 * 1000;
 const MAX_DEADLINE_HORIZON_MS = 2 * 60 * 1000;
@@ -48,8 +49,10 @@ function validateRouterOptions(options) {
 			|| typeof options.adapter.collections !== "function"
 			|| typeof options.adapter.itemChildren !== "function"
 			|| typeof options.adapter.note !== "function"
+			|| typeof options.adapter.profileBackup !== "function"
+			|| typeof options.adapter.profileStatus !== "function"
 			|| typeof options.adapter.search !== "function") {
-		throw new Error("Gecko Core router requires a read-only Library adapter");
+		throw new Error("Gecko Core router requires Profile and Library adapters");
 	}
 	if (typeof options.bootstrapToken !== "string" || options.bootstrapToken.length < 24) {
 		throw new Error("Gecko Core bootstrapToken must contain at least 24 characters");
@@ -64,6 +67,18 @@ export function mapGeckoCoreError(error) {
 	let message = String(error?.message || error).slice(0, MAX_ERROR_MESSAGE);
 	if (error?.code === "CANCELLED") return { code: "CANCELLED", message, retriable: false };
 	if (error?.code === "UNAVAILABLE") return { code: "UNAVAILABLE", message, retriable: false };
+	if (error?.code === "REVISION_CONFLICT" || error?.code === "IDEMPOTENCY_CONFLICT") {
+		return {
+			code: "CONFLICT",
+			details: {
+				...(Number.isSafeInteger(error.actualRevision) && { actualRevision: error.actualRevision }),
+				...(Number.isSafeInteger(error.expectedRevision) && { expectedRevision: error.expectedRevision }),
+				kind: error.code,
+			},
+			message,
+			retriable: false,
+		};
+	}
 	if (/missing capability/.test(message)) return { code: "FORBIDDEN", message, retriable: false };
 	if (/deadline|profile epoch|session|authentication|bootstrap|protocol version/.test(message)) {
 		return { code: "UNAUTHORIZED", message, retriable: false };
@@ -91,6 +106,7 @@ export function createGeckoCoreRequestRouter(options = {}) {
 	let sessions = new Map();
 	let active = new Map();
 	let eventJournal = options.eventJournal || createCoreEventJournal({ profileEpoch, now });
+	let transactionRegistry = options.transactionRegistry || createCoreTransactionRegistry();
 
 	function authorize(message, capability) {
 		if (!message || typeof message !== "object" || Array.isArray(message)) throw new Error("request must be an object");
@@ -157,11 +173,20 @@ export function createGeckoCoreRequestRouter(options = {}) {
 				return { result: eventJournal.replay(message.params) };
 			}
 			if (message.method === "profile.status") {
-				if (!message.params || typeof message.params !== "object" || Array.isArray(message.params)
-						|| Object.keys(message.params).length) {
-					throw new Error("profile.status params must be an empty object");
-				}
-				return { result: { profileEpoch, profileName, readOnly: true, schemaVersion, upstreamVersion } };
+				return { result: await adapter.profileStatus(message.params) };
+			}
+			if (message.method === "profile.backup") {
+				let completed = await transactionRegistry.execute({
+					expectedRevision: message.params?.expectedRevision,
+					idempotencyKey: message.params?.idempotencyKey,
+					operation: { kind: "profile-backup" },
+					scope: "profile:backup",
+				}, () => adapter.profileBackup());
+				let result = { ...completed.result, replayed: completed.replayed, revision: completed.revision };
+				return {
+					...(!completed.replayed && { event: eventJournal.publish("profile.backup.completed", { revision: completed.revision }) }),
+					result,
+				};
 			}
 			if (message.method === "library.annotations") return { result: await adapter.annotations(message.params) };
 			if (message.method === "library.attachment") return { result: await adapter.attachment(message.params) };
