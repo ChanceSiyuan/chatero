@@ -67,6 +67,10 @@ function fakeVscode(withProgress) {
       parse: value => ({ toString: () => value }),
     },
     window: {
+      createTreeView: () => ({
+        dispose() {},
+        onDidChangeSelection: () => ({ dispose() {} }),
+      }),
       registerCustomEditorProvider: () => ({ dispose() {} }),
       registerTreeDataProvider: () => ({ dispose() {} }),
       showErrorMessage: async () => {},
@@ -78,6 +82,7 @@ function fakeVscode(withProgress) {
     workspace: {
       workspaceFolders: [],
       getConfiguration: () => ({
+        get: (_key, fallback) => fallback,
         inspect: key => ({
           globalValue: key === "profilePath" ? "/tmp/chatero-profile"
             : key === "coreExecutable" ? "/tmp/chatero-core"
@@ -482,6 +487,10 @@ test("extension deactivate awaits the same cleanup for pending and ready Core re
     const context = {
       extensionUri: { authority: "", path: "/extension", scheme: "file" },
       subscriptions: [],
+      workspaceState: {
+        get: () => undefined,
+        update: async () => {},
+      },
     };
     await extension.activate(context);
     const starting = vscode.commandsForTest.get("chatero.zotero.startCore")();
