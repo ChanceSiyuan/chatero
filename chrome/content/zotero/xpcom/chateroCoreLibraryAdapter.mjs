@@ -61,6 +61,12 @@ const TAG_FIELDS = new Set(["cursor", "libraryId", "limit", "query"]);
 const DUPLICATE_FIELDS = new Set(["cursor", "libraryId", "limit"]);
 const FULLTEXT_SEARCH_FIELDS = new Set(["cursor", "libraryId", "limit", "query"]);
 const FULLTEXT_INDEX_FIELDS = new Set(["attachments", "complete"]);
+const BATCH_FIELDS = new Set(["libraryId", "operations"]);
+const BATCH_OPERATION_FIELDS = new Set(["kind", "params"]);
+const BATCH_KINDS = new Set([
+	"annotations-update", "attachment-mutate", "collection-mutate", "item-mutate", "item-update",
+	"note-mutate", "note-update", "reader-state-update", "saved-search-mutate",
+]);
 const MAX_PAGE_SIZE = 200;
 const MAX_NOTE_BYTES = 512 * 1024;
 const MAX_ANNOTATION_FIELD_BYTES = 256 * 1024;
@@ -699,7 +705,7 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 	if (typeof openAttachmentFile !== "function") throw new Error("attachment source opener is required");
 	if (typeof isOffline !== "function") throw new Error("offline state provider is required");
 
-	return Object.freeze({
+	let adapter = {
 		async translators(params) {
 			exactObject(params, TRANSLATOR_FIELDS, "translation.translators params");
 			if (!TRANSLATOR_KINDS.has(params.kind)) {
@@ -1008,7 +1014,7 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 			return { searches };
 		},
 
-		async mutateSavedSearch(params) {
+		async mutateSavedSearch(params, { tx = true } = {}) {
 			validateSavedSearchMutation(params);
 			let library = Zotero.Libraries.get(params.libraryId);
 			if (!library || library.libraryType === "feed" || !library.editable) unavailable("saved search target library is not editable");
@@ -1031,7 +1037,7 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 				}, { strict: true });
 				if (params.action === "trash") search.deleted = true;
 				if (params.action === "restore") search.deleted = false;
-				await search.saveTx();
+				await (tx ? search.saveTx() : search.save({ tx: false }));
 			}
 			catch (error) {
 				try { await search.reload?.(null, true); }
@@ -1192,7 +1198,7 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 			return { annotations };
 		},
 
-		async updateAnnotations(params) {
+		async updateAnnotations(params, { tx = true } = {}) {
 			validateAnnotationUpdates(params);
 			let attachment = lookupItem(Zotero, params.libraryId, params.attachmentKey, "Zotero attachment");
 			if (!attachment.isFileAttachment?.()) throw new Error("library.annotations-update target must be a file attachment");
@@ -1208,14 +1214,16 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 				revisionConflict(annotation, update.expectedVersion, `Zotero annotation ${update.annotationKey}`);
 				return { annotation, update };
 			});
-			await Zotero.DB.executeTransaction(async () => {
+			let save = async () => {
 				for (let { annotation, update } of prepared) {
 					if (update.color !== undefined) annotation.annotationColor = update.color;
 					if (update.comment !== undefined) annotation.annotationComment = update.comment;
 					if (update.text !== undefined) annotation.annotationText = update.text;
 					await annotation.save({ tx: false });
 				}
-			});
+			};
+			if (tx) await Zotero.DB.executeTransaction(save);
+			else await save();
 			return { annotations: prepared.map(({ annotation }) => ({
 				annotationKey: annotation.key,
 				libraryId: annotation.libraryID,
@@ -1295,7 +1303,7 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 			};
 		},
 
-		async mutateAttachment(params) {
+		async mutateAttachment(params, { tx = true } = {}) {
 			exactObject(params, ATTACHMENT_MUTATION_FIELDS, "library.attachment-mutate params");
 			positiveLibraryId(params.libraryId, "library.attachment-mutate");
 			zoteroKey(params.attachmentKey, "library.attachment-mutate attachmentKey");
@@ -1308,7 +1316,7 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 			if (params.action !== "restore" && itemIsUnavailable(attachment)) unavailable("Zotero attachment is unavailable");
 			if (params.action === "restore" && !attachment.deleted && !attachment.isInTrash?.()) throw new Error("attachment restore target is not in trash");
 			revisionConflict(attachment, params.expectedVersion, "Zotero attachment");
-			try { attachment.deleted = params.action === "trash"; await attachment.saveTx(); }
+			try { attachment.deleted = params.action === "trash"; await (tx ? attachment.saveTx() : attachment.save({ tx: false })); }
 			catch (error) {
 				try { await attachment.reload?.(null, true); }
 				catch (_) {}
@@ -1332,7 +1340,7 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 			};
 		},
 
-		async updateReaderState(params) {
+		async updateReaderState(params, { tx = true } = {}) {
 			exactObject(params, READER_STATE_UPDATE_FIELDS, "reader.state-update params");
 			positiveLibraryId(params.libraryId, "reader.state-update");
 			zoteroKey(params.attachmentKey, "reader.state-update attachmentKey");
@@ -1342,7 +1350,7 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 			revisionConflict(attachment, params.expectedVersion, "Zotero Reader attachment");
 			let location = readerLocation(attachment, params, true);
 			let value = location.pageIndex ?? location.cfi ?? location.scrollYPercent;
-			try { attachment.setAttachmentLastPageIndex(value); await attachment.saveTx(); }
+			try { attachment.setAttachmentLastPageIndex(value); await (tx ? attachment.saveTx() : attachment.save({ tx: false })); }
 			catch (error) {
 				try { await attachment.reload?.(null, true); }
 				catch (_) {}
@@ -1374,7 +1382,7 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 			};
 		},
 
-		async mutateCollection(params) {
+		async mutateCollection(params, { tx = true } = {}) {
 			validateCollectionMutation(params);
 			let library = Zotero.Libraries.get(params.libraryId);
 			if (!library || library.libraryType === "feed" || !library.editable) unavailable("collection target library is not editable");
@@ -1398,7 +1406,7 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 					if (params.name !== undefined) collection.name = params.name.trim();
 					if (params.parentKey !== undefined) collection.parentKey = params.parentKey || false;
 				}
-				await collection.saveTx();
+				await (tx ? collection.saveTx() : collection.save({ tx: false }));
 			}
 			catch (error) {
 				try { await collection.reload?.(null, true); }
@@ -1450,7 +1458,7 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 			return itemFactsSummary(Zotero, item);
 		},
 
-		async updateItem(params) {
+		async updateItem(params, { tx = true } = {}) {
 			validateItemUpdate(params);
 			let item = lookupItem(Zotero, params.libraryId, params.itemKey, "Zotero item");
 			if (!item.isRegularItem?.()) throw new Error("library.item-update target must be a regular item");
@@ -1466,7 +1474,7 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 				if (params.creators !== undefined) item.setCreators(params.creators, { strict: true });
 				if (params.tags !== undefined) item.setTags(params.tags.map(tag => ({ tag: tag.name, type: tag.type })));
 				if (params.relations !== undefined) item.setRelations(relationObject(params.relations));
-				await item.saveTx();
+				await (tx ? item.saveTx() : item.save({ tx: false }));
 			}
 			catch (error) {
 				try { await item.reload?.(null, true); }
@@ -1481,7 +1489,7 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 			};
 		},
 
-		async mutateItem(params) {
+		async mutateItem(params, { tx = true } = {}) {
 			validateItemMutation(Zotero, params);
 			let library = Zotero.Libraries.get(params.libraryId);
 			if (!library || library.libraryType === "feed" || !library.editable) unavailable("item target library is not editable");
@@ -1510,7 +1518,7 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 				}
 				if (params.action === "trash") item.deleted = true;
 				if (params.action === "restore") item.deleted = false;
-				await item.saveTx();
+				await (tx ? item.saveTx() : item.save({ tx: false }));
 			}
 			catch (error) {
 				try { await item.reload?.(null, true); }
@@ -1543,7 +1551,7 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 			};
 		},
 
-		async updateNote(params) {
+		async updateNote(params, { tx = true } = {}) {
 			validateCompositeParams(params, UPDATE_NOTE_FIELDS, "noteKey", "library.note-update");
 			if (!Number.isSafeInteger(params.expectedVersion) || params.expectedVersion < 0) {
 				throw new Error("library.note-update expectedVersion must be a non-negative safe integer");
@@ -1554,7 +1562,7 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 			revisionConflict(note, params.expectedVersion, "Zotero Note");
 			try {
 				note.setNote(html);
-				await note.saveTx();
+				await (tx ? note.saveTx() : note.save({ tx: false }));
 			}
 			catch (error) {
 				try { await note.reload?.(null, true); }
@@ -1569,7 +1577,7 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 			};
 		},
 
-		async mutateNote(params) {
+		async mutateNote(params, { tx = true } = {}) {
 			validateNoteMutation(params);
 			let library = Zotero.Libraries.get(params.libraryId);
 			if (!library || library.libraryType === "feed" || !library.editable) unavailable("Note target library is not editable");
@@ -1592,7 +1600,7 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 				revisionConflict(note, params.expectedVersion, "Zotero Note");
 				note.deleted = params.action === "trash";
 			}
-			try { await note.saveTx(); }
+			try { await (tx ? note.saveTx() : note.save({ tx: false })); }
 			catch (error) {
 				try { await note.reload?.(null, true); }
 				catch (_) {}
@@ -1643,5 +1651,40 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 				total: matches.length,
 			};
 		},
-	});
+
+		async mutateBatch(params) {
+			exactObject(params, BATCH_FIELDS, "library.batch-mutate params");
+			positiveLibraryId(params.libraryId, "library.batch-mutate");
+			if (!Array.isArray(params.operations) || params.operations.length < 1 || params.operations.length > 100) {
+				throw new Error("library.batch-mutate operations must be a non-empty array of at most 100 entries");
+			}
+			let operations = params.operations.map((operation, index) => {
+				exactObject(operation, BATCH_OPERATION_FIELDS, `library.batch-mutate operation ${index}`);
+				if (!BATCH_KINDS.has(operation.kind)) throw new Error(`library.batch-mutate operation ${index} kind is invalid`);
+				if (!operation.params || typeof operation.params !== "object" || Array.isArray(operation.params)) throw new Error(`library.batch-mutate operation ${index} params must be an object`);
+				if (operation.params.libraryId !== params.libraryId) throw new Error("library.batch-mutate operations must target the same library");
+				return { kind: operation.kind, params: operation.params };
+			});
+			let handlers = {
+				"annotations-update": adapter.updateAnnotations,
+				"attachment-mutate": adapter.mutateAttachment,
+				"collection-mutate": adapter.mutateCollection,
+				"item-mutate": adapter.mutateItem,
+				"item-update": adapter.updateItem,
+				"note-mutate": adapter.mutateNote,
+				"note-update": adapter.updateNote,
+				"reader-state-update": adapter.updateReaderState,
+				"saved-search-mutate": adapter.mutateSavedSearch,
+			};
+			return Zotero.DB.executeTransaction(async () => {
+				let results = [];
+				for (let operation of operations) {
+					let result = await handlers[operation.kind](operation.params, { tx: false });
+					results.push({ kind: operation.kind, result });
+				}
+				return { results };
+			});
+		},
+	};
+	return Object.freeze(adapter);
 }

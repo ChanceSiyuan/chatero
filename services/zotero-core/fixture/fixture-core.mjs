@@ -359,6 +359,31 @@ async function main() {
         result: { ...completed.result, replayed: completed.replayed, revision: completed.revision },
       };
     }
+    if (message.method === "library.batch-mutate") {
+      const { expectedRevision, idempotencyKey, ...operation } = message.params || {};
+      const completed = await transactionRegistry.execute({
+        expectedRevision, idempotencyKey, operation, scope: `library:${operation.libraryId}/batch:catalog`,
+      }, async value => {
+        if (!Number.isSafeInteger(value.libraryId) || value.libraryId < 1
+          || !Array.isArray(value.operations) || value.operations.length < 1 || value.operations.length > 100) {
+          throw new Error("library.batch-mutate params are invalid");
+        }
+        const results = value.operations.map((entry, index) => {
+          if (!entry || typeof entry !== "object" || Array.isArray(entry)
+            || typeof entry.kind !== "string" || !entry.params || entry.params.libraryId !== value.libraryId) {
+            throw new Error(`library.batch-mutate operation ${index} must target the same library`);
+          }
+          return { kind: entry.kind, result: { libraryId: value.libraryId } };
+        });
+        return { results };
+      });
+      return {
+        ...(!completed.replayed && { event: eventJournal.publish("library.batch.changed", {
+          libraryId: operation.libraryId, operationCount: completed.result.results.length, revision: completed.revision,
+        }) }),
+        result: { ...completed.result, replayed: completed.replayed, revision: completed.revision },
+      };
+    }
     if (message.method === "library.feeds") {
       if (!message.params || typeof message.params !== "object" || Array.isArray(message.params) || Object.keys(message.params).length) {
         throw new Error("library.feeds params must be an empty object");

@@ -110,6 +110,12 @@
       "resultType": "LibraryCollectionsResult"
     },
     {
+      "name": "library.batch-mutate",
+      "capability": "library:write",
+      "paramsType": "LibraryMutationBatchParams",
+      "resultType": "LibraryMutationBatchResult"
+    },
+    {
       "name": "library.collection-mutate",
       "capability": "library:write",
       "paramsType": "LibraryCollectionMutationParams",
@@ -587,6 +593,37 @@
         "query": "string",
         "sortBy?": "string",
         "sortDirection?": "string"
+      }
+    },
+    "LibraryMutationBatchOperation": {
+      "kind": "object",
+      "fields": {
+        "kind": "string",
+        "params": "unknown"
+      }
+    },
+    "LibraryMutationBatchResultEntry": {
+      "kind": "object",
+      "fields": {
+        "kind": "string",
+        "result": "unknown"
+      }
+    },
+    "LibraryMutationBatchParams": {
+      "kind": "object",
+      "fields": {
+        "expectedRevision": "number",
+        "idempotencyKey": "string",
+        "libraryId": "number",
+        "operations": "LibraryMutationBatchOperation[]"
+      }
+    },
+    "LibraryMutationBatchResult": {
+      "kind": "object",
+      "fields": {
+        "replayed": "boolean",
+        "results": "LibraryMutationBatchResultEntry[]",
+        "revision": "number"
       }
     },
     "LibraryItemSummary": {

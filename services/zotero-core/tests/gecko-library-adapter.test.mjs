@@ -683,6 +683,31 @@ test("creates, trashes, and restores child Notes at exact object versions", asyn
   assert.equal((await adapter.mutateNote({ action: "restore", expectedVersion: 2, libraryId: 1, noteKey: "NOTE0002" })).deleted, false);
 });
 
+test("runs a bounded same-library mutation batch inside one Zotero DB transaction", async () => {
+  const environment = fixture();
+  let transactionCalls = 0;
+  environment.Zotero.DB.executeTransaction = async callback => {
+    transactionCalls += 1;
+    return callback();
+  };
+  const adapter = createZoteroLibraryAdapter(environment);
+  const result = await adapter.mutateBatch({
+    libraryId: 1,
+    operations: [
+      { kind: "item-update", params: { expectedVersion: 17, fields: [{ field: "title", value: "Batched title" }], itemKey: "ITEM0001", libraryId: 1 } },
+      { kind: "reader-state-update", params: { attachmentKey: "PDF00001", expectedVersion: 1, libraryId: 1, pageIndex: 21 } },
+    ],
+  });
+  assert.equal(transactionCalls, 1);
+  assert.equal(result.results.length, 2);
+  assert.deepEqual(result.results.map(value => value.kind), ["item-update", "reader-state-update"]);
+
+  await assert.rejects(adapter.mutateBatch({
+    libraryId: 1,
+    operations: [{ kind: "item-update", params: { expectedVersion: 1, fields: [], itemKey: "ITEM0001", libraryId: 2 } }],
+  }), /same library/);
+});
+
 test("updates a batch of annotations after validating every object version", async () => {
   const adapter = createZoteroLibraryAdapter(fixture());
   assert.deepEqual(await adapter.updateAnnotations({

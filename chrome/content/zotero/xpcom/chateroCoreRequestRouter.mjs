@@ -53,6 +53,7 @@ function validateRouterOptions(options) {
 			|| typeof options.adapter.attachmentSource !== "function"
 			|| typeof options.adapter.importAttachment !== "function"
 			|| typeof options.adapter.mutateAttachment !== "function"
+			|| typeof options.adapter.mutateBatch !== "function"
 			|| typeof options.adapter.collections !== "function"
 			|| typeof options.adapter.mutateCollection !== "function"
 			|| typeof options.adapter.feeds !== "function"
@@ -366,6 +367,19 @@ export function createGeckoCoreRequestRouter(options = {}) {
 				};
 			}
 			if (message.method === "library.collections") return { result: await adapter.collections(message.params) };
+			if (message.method === "library.batch-mutate") {
+				let { expectedRevision, idempotencyKey, ...operation } = message.params || {};
+				let completed = await transactionRegistry.execute({
+					expectedRevision, idempotencyKey, operation, scope: `library:${operation.libraryId}/batch:catalog`,
+				}, value => adapter.mutateBatch(value));
+				let result = { ...completed.result, replayed: completed.replayed, revision: completed.revision };
+				return {
+					...(!completed.replayed && { event: eventJournal.publish("library.batch.changed", {
+						libraryId: operation.libraryId, operationCount: result.results.length, revision: completed.revision,
+					}) }),
+					result,
+				};
+			}
 			if (message.method === "library.collection-mutate") {
 				let { expectedRevision, idempotencyKey, ...operation } = message.params || {};
 				let completed = await transactionRegistry.execute({
