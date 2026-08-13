@@ -9,6 +9,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 import { CUTOVER_FIELDS, sha256File, validateReleaseReceipt } from "./stage-7-release-contract.mjs";
+import { embedRemoteAgentRelease, verifyEmbeddedRemoteAgentRelease } from "./embed-remote-agent-release.mjs";
 
 const execFile = promisify(execFileCallback);
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
@@ -72,6 +73,7 @@ export async function verifyAppShape(appPath) {
   if (!await stat(coreExecutable).then(value => value.isFile()).catch(() => false)) throw new Error("packaged Workbench omits the headless Gecko Core");
   const coreIdentifier = (await command("/usr/libexec/PlistBuddy", ["-c", "Print :CFBundleIdentifier", corePlist])).stdout.trim();
   if (coreIdentifier !== "io.github.chancesiyuan.chatero.core") throw new Error("packaged headless Gecko Core identity is invalid");
+  await verifyEmbeddedRemoteAgentRelease(appPath);
 }
 
 export async function embedCore(appPath) {
@@ -155,6 +157,7 @@ async function main() {
 
     const builtApp = await findBuiltApp();
     await embedCore(builtApp);
+    await embedRemoteAgentRelease(builtApp);
     await verifyAppShape(builtApp);
     await signApp({ appPath: builtApp, keychain, identity });
     await mkdir(DIST, { recursive: true });

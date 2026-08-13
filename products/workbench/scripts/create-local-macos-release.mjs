@@ -13,6 +13,7 @@ import {
   verifyAppShape,
 } from "./create-stage-7-macos-release.mjs";
 import { sha256File } from "./stage-7-release-contract.mjs";
+import { embedRemoteAgentRelease, verifyEmbeddedRemoteAgentRelease } from "./embed-remote-agent-release.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const DEFAULT_DIST = join(ROOT, "products", "workbench", "dist");
@@ -59,6 +60,7 @@ async function verifyDmg(dmg, scratch) {
     const apps = (await readdir(mount, { withFileTypes: true })).filter(value => value.isDirectory() && value.name.endsWith(".app"));
     if (apps.length !== 1) throw new Error("local DMG must expose exactly one Chatero app");
     await verifyAppShape(join(mount, apps[0].name));
+    await verifyEmbeddedRemoteAgentRelease(join(mount, apps[0].name));
     await command("/usr/bin/codesign", ["--verify", "--deep", "--strict", join(mount, apps[0].name)]);
   }
   finally { await command("/usr/bin/hdiutil", ["detach", mount]); }
@@ -75,6 +77,7 @@ async function main() {
     const app = join(scratch, "Chatero.app");
     await cp(builtApp, app, { recursive: true, force: false, errorOnExist: true });
     await embedCore(app);
+    await embedRemoteAgentRelease(app);
     await verifyAppShape(app);
     await command("/usr/bin/codesign", ["--force", "--deep", "--sign", "-", app]);
     await command("/usr/bin/codesign", ["--verify", "--deep", "--strict", app]);

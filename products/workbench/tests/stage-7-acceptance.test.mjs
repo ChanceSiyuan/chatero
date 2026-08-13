@@ -103,6 +103,22 @@ test("Stage 7 release workflow is protected, macOS-native, notarizes, verifies, 
   assert.doesNotMatch(source, /continue-on-error|skip-notari|SIGN=0/iu);
 });
 
+test("both macOS release paths embed and reverify the signed dual-architecture Remote Agent", async () => {
+  const [production, local, embedding] = await Promise.all([
+    readFile(new URL("../scripts/create-stage-7-macos-release.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../scripts/create-local-macos-release.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../scripts/embed-remote-agent-release.mjs", import.meta.url), "utf8"),
+  ]);
+  for (const source of [production, local]) {
+    assert.match(source, /embedRemoteAgentRelease\(app|embedRemoteAgentRelease\(builtApp/u);
+    assert.match(source, /verifyEmbeddedRemoteAgentRelease/u);
+  }
+  assert.match(embedding, /verifyRelease/u);
+  assert.match(embedding, /REMOTE_AGENT_TUPLES/u);
+  assert.match(embedding, /nlink !== 1/u);
+  assert.match(embedding, /remote-agent/u);
+});
+
 test("local macOS release stays distinct from notarized Stage 7 and performs a real cold-start probe", async () => {
   const source = await readFile(new URL("../scripts/create-local-macos-release.mjs", import.meta.url), "utf8");
   assert.match(source, /codesign[\s\S]*--sign[\s\S]*"-"/u);
