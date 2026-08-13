@@ -67,6 +67,12 @@
       "resultType": "LibraryCollectionsResult"
     },
     {
+      "name": "library.feeds",
+      "capability": "library:read",
+      "paramsType": "LibraryFeedsParams",
+      "resultType": "LibraryFeedsResult"
+    },
+    {
       "name": "library.libraries",
       "capability": "library:read",
       "paramsType": "LibraryLibrariesParams",
@@ -315,6 +321,32 @@
     "LibraryLibrariesParams": {
       "kind": "object",
       "fields": {}
+    },
+    "LibraryFeedsParams": {
+      "kind": "object",
+      "fields": {}
+    },
+    "LibraryFeedSummary": {
+      "kind": "object",
+      "fields": {
+        "cleanupReadAfter": "number",
+        "cleanupUnreadAfter": "number",
+        "lastCheck": "number",
+        "lastCheckError": "string",
+        "lastUpdate": "number",
+        "libraryId": "number",
+        "name": "string",
+        "refreshInterval": "number",
+        "unreadCount": "number",
+        "updating": "boolean",
+        "url": "string"
+      }
+    },
+    "LibraryFeedsResult": {
+      "kind": "object",
+      "fields": {
+        "feeds": "LibraryFeedSummary[]"
+      }
     },
     "LibrarySummary": {
       "kind": "object",

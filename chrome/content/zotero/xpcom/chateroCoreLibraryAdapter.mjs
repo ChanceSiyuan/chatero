@@ -25,6 +25,7 @@ const ANNOTATION_FIELDS = new Set(["attachmentKey", "libraryId"]);
 const ATTACHMENT_FIELDS = new Set(["attachmentKey", "libraryId"]);
 const NOTE_FIELDS = new Set(["libraryId", "noteKey"]);
 const LIBRARIES_FIELDS = new Set();
+const FEEDS_FIELDS = new Set();
 const SAVED_SEARCH_FIELDS = new Set(["libraryId"]);
 const SAVED_SEARCH_ITEMS_FIELDS = new Set(["cursor", "libraryId", "limit", "searchKey"]);
 const TAG_FIELDS = new Set(["cursor", "libraryId", "limit", "query"]);
@@ -334,6 +335,7 @@ function validateZotero(Zotero) {
 		[Zotero?.Searches, "getAll"],
 		[Zotero?.Searches, "getByLibraryAndKey"],
 		[Zotero?.Tags, "getAll"],
+		[Zotero?.Feeds, "getAll"],
 	];
 	for (let [owner, method] of required) {
 		if (typeof owner?.[method] !== "function") {
@@ -347,6 +349,24 @@ export function createZoteroLibraryAdapter({ Zotero, openAttachmentFile = openGe
 	if (typeof openAttachmentFile !== "function") throw new Error("attachment source opener is required");
 
 	return Object.freeze({
+		async feeds(params) {
+			exactObject(params, FEEDS_FIELDS, "library.feeds params");
+			let feeds = Zotero.Feeds.getAll().map(feed => ({
+				cleanupReadAfter: Number.isSafeInteger(feed.cleanupReadAfter) ? feed.cleanupReadAfter : 0,
+				cleanupUnreadAfter: Number.isSafeInteger(feed.cleanupUnreadAfter) ? feed.cleanupUnreadAfter : 0,
+				lastCheck: Number.isSafeInteger(feed.lastCheck) ? feed.lastCheck : 0,
+				lastCheckError: typeof feed.lastCheckError === "string" ? feed.lastCheckError : "",
+				lastUpdate: Number.isSafeInteger(feed.lastUpdate) ? feed.lastUpdate : 0,
+				libraryId: feed.libraryID,
+				name: feed.name,
+				refreshInterval: Number.isSafeInteger(feed.refreshInterval) ? feed.refreshInterval : 0,
+				unreadCount: Number.isSafeInteger(feed.unreadCount) ? feed.unreadCount : 0,
+				updating: Boolean(feed.updating),
+				url: feed.url,
+			})).sort((left, right) => compareText(left.name, right.name) || left.libraryId - right.libraryId);
+			return { feeds };
+		},
+
 		async libraries(params) {
 			exactObject(params, LIBRARIES_FIELDS, "library.libraries params");
 			let libraries = Zotero.Libraries.getAll().map(library => ({

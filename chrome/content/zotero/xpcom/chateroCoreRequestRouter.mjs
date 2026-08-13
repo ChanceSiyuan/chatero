@@ -49,6 +49,7 @@ function validateRouterOptions(options) {
 			|| typeof options.adapter.attachment !== "function"
 			|| typeof options.adapter.attachmentSource !== "function"
 			|| typeof options.adapter.collections !== "function"
+			|| typeof options.adapter.feeds !== "function"
 			|| typeof options.adapter.itemChildren !== "function"
 			|| typeof options.adapter.itemMetadata !== "function"
 			|| typeof options.adapter.libraries !== "function"
@@ -231,6 +232,7 @@ export function createGeckoCoreRequestRouter(options = {}) {
 			if (message.method === "library.annotations") return { result: await adapter.annotations(message.params) };
 			if (message.method === "library.attachment") return { result: await adapter.attachment(message.params) };
 			if (message.method === "library.collections") return { result: await adapter.collections(message.params) };
+			if (message.method === "library.feeds") return { result: await adapter.feeds(message.params) };
 			if (message.method === "library.item-children") return { result: await adapter.itemChildren(message.params) };
 			if (message.method === "library.item-metadata") return { result: await adapter.itemMetadata(message.params) };
 			if (message.method === "library.libraries") return { result: await adapter.libraries(message.params) };

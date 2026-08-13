@@ -21,6 +21,7 @@ export const METHOD_CAPABILITIES = Object.freeze({
   "library.annotations": "library:read",
   "library.attachment": "library:read",
   "library.collections": "library:read",
+  "library.feeds": "library:read",
   "library.item-children": "library:read",
   "library.item-metadata": "library:read",
   "library.libraries": "library:read",
@@ -68,6 +69,10 @@ export const METHOD_TYPES = Object.freeze({
   "library.collections": {
     "params": "LibraryCollectionsParams",
     "result": "LibraryCollectionsResult"
+  },
+  "library.feeds": {
+    "params": "LibraryFeedsParams",
+    "result": "LibraryFeedsResult"
   },
   "library.item-children": {
     "params": "LibraryItemChildrenParams",

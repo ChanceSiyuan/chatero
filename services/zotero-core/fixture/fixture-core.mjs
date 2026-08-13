@@ -109,6 +109,7 @@ async function main() {
   const fixtureItems = Array.isArray(fixture) ? fixture : fixture.items;
   const fixtureCollections = Array.isArray(fixture?.collections) ? fixture.collections : [];
   const fixtureItemChildren = Array.isArray(fixture?.itemChildren) ? fixture.itemChildren : [];
+  const fixtureFeeds = Array.isArray(fixture?.feeds) ? fixture.feeds : [];
   const fixtureItemMetadata = Array.isArray(fixture?.itemMetadata) ? fixture.itemMetadata : [];
   const fixtureLibraries = Array.isArray(fixture?.libraries) ? fixture.libraries : [];
   const fixtureNotes = Array.isArray(fixture?.notes) ? fixture.notes : [];
@@ -248,6 +249,12 @@ async function main() {
           : collection.parentKey === message.params.parentKey)
         .sort((left, right) => String(left.name).localeCompare(String(right.name)) || String(left.collectionKey).localeCompare(String(right.collectionKey)));
       return { result: { collections } };
+    }
+    if (message.method === "library.feeds") {
+      if (!message.params || typeof message.params !== "object" || Array.isArray(message.params) || Object.keys(message.params).length) {
+        throw new Error("library.feeds params must be an empty object");
+      }
+      return { result: { feeds: fixtureFeeds } };
     }
     if (message.method === "library.item-children") {
       validateIdentityParams(message.params, "itemKey", "library.item-children");

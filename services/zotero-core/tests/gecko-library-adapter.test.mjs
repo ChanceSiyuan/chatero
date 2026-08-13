@@ -206,6 +206,19 @@ function fixture({
     Tags: { getAll: async libraryId => libraryId === 1
       ? [{ tag: "Methods" }, { tag: "reading", type: 1 }, { tag: "Renormalization" }]
       : [{ tag: "Group" }] },
+    Feeds: { getAll: () => [{
+      cleanupReadAfter: 30,
+      cleanupUnreadAfter: 90,
+      lastCheck: 300,
+      lastCheckError: "",
+      lastUpdate: 250,
+      libraryID: 3,
+      name: "Research feed",
+      refreshInterval: 60,
+      unreadCount: 4,
+      updating: false,
+      url: "https://example.org/feed.xml",
+    }] },
   };
   return { Zotero };
 }
@@ -238,6 +251,19 @@ test("lists libraries, saved searches, and paginated tags without database or pa
     nextCursor: "1",
     total: 2,
   });
+  assert.deepEqual(await adapter.feeds({}), { feeds: [{
+    cleanupReadAfter: 30,
+    cleanupUnreadAfter: 90,
+    lastCheck: 300,
+    lastCheckError: "",
+    lastUpdate: 250,
+    libraryId: 3,
+    name: "Research feed",
+    refreshInterval: 60,
+    unreadCount: 4,
+    updating: false,
+    url: "https://example.org/feed.xml",
+  }] });
 });
 
 test("normalizes root and nested collections with composite library identity", async () => {

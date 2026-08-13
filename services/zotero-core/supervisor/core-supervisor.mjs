@@ -80,6 +80,7 @@ async function terminate(child) {
 export async function startCore({
   profileDirectory,
   fixtureCollections = [],
+  fixtureFeeds = [],
   fixtureAnnotations = [],
   fixtureAttachmentContents = [],
   fixtureItems = [],
@@ -112,6 +113,7 @@ export async function startCore({
     annotations: fixtureAnnotations,
     attachmentContents: fixtureAttachmentContents,
     collections: fixtureCollections,
+    feeds: fixtureFeeds,
     itemChildren: fixtureItemChildren,
     itemMetadata: fixtureItemMetadata,
     items: fixtureItems,
