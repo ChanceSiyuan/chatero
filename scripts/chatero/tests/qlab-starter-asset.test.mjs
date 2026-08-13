@@ -76,7 +76,10 @@ function run(repository, command, args) {
   return spawnSync(command, args, {
     cwd: repository,
     encoding: "utf8",
-    timeout: 30_000,
+    // This file deliberately runs real npm installs and validators. During the
+    // complete acceptance suite they contend with the other dependency-closed
+    // starter build, so a normal successful validation can exceed 30 seconds.
+    timeout: 120_000,
     env: { ...process.env, NODE_PATH: "" },
   });
 }
