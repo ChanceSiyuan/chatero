@@ -351,10 +351,17 @@ class NoteEditorProvider {
     const subscription = typeof panel.webview.onDidReceiveMessage === "function"
       ? panel.webview.onDidReceiveMessage(message => {
         const operation = (async () => {
-          if (!workflow || message?.type !== "note-save" || !Number.isSafeInteger(message.sequence)
+          if (!workflow || !Number.isSafeInteger(message?.sequence)
               || message.sequence <= lastSequence || typeof message.html !== "string"
               || Buffer.byteLength(message.html, "utf8") > 1024 * 1024
-              || Object.keys(message).sort().join(",") !== "html,sequence,type") {
+              || message.type !== "note-save" || Object.keys(message).sort().join(",") !== "html,sequence,type") {
+            if (workflow && message?.type === "note-reload" && Number.isSafeInteger(message.sequence)
+                && message.sequence > lastSequence && Object.keys(message).sort().join(",") === "sequence,type") {
+              lastSequence = message.sequence;
+              note = await workflow.loadNote({ libraryId: document.record.libraryId, noteKey: document.record.noteKey });
+              await panel.webview.postMessage?.({ html: note.html, sequence: message.sequence, type: "note-reloaded", version: note.version });
+              return;
+            }
             throw new TypeError("Note editor message is invalid");
           }
           lastSequence = message.sequence;

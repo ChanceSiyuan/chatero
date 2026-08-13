@@ -763,7 +763,7 @@ test("PDF editor HTML boots the packaged PDF.js viewer with bounded annotation d
   assert.doesNotMatch(html, /https?:\/\//);
 });
 
-test("Note editor HTML provides a nonce-confined round-trip editor", async () => {
+test("Note editor HTML provides a sanitized rich-text round-trip editor with conflict recovery", async () => {
   const { renderNoteEditorHTML } = await import("../extensions/chatero-zotero/evidence-editor-html.mjs");
   const html = renderNoteEditorHTML({
     cspSource: "vscode-webview://unit-test",
@@ -777,12 +777,16 @@ test("Note editor HTML provides a nonce-confined round-trip editor", async () =>
     },
   });
 
-  assert.match(html, /<textarea[^>]+id="note-html"/);
-  assert.match(html, /&lt;p&gt;Reading note&lt;\/p&gt;/);
+  assert.match(html, /id="note-editor" contenteditable="true"/);
+  assert.match(html, /id="note-data" type="application\/json"/);
+  assert.match(html, /setHTML\(JSON\.parse/);
   assert.doesNotMatch(html, /<script>alert\(1\)<\/script>/);
   assert.match(html, /default-src 'none'/);
   assert.match(html, /script-src 'nonce-fixed-note-nonce'/);
   assert.match(html, /type:"note-save"/);
+  assert.match(html, /type:"note-reload"/);
+  assert.match(html, /function sanitize/);
+  assert.match(html, /aria-readonly/);
   assert.match(html, /id="save-note"/);
 });
 
@@ -829,6 +833,8 @@ test("Note provider serializes versioned saves and acknowledges only accepted me
     { sequence: 2, type: "note-saved", version: 6 },
   ]);
   await assert.rejects(receiveMessage({ type: "note-save", sequence: 2, html: "replay" }), /invalid/);
+  await receiveMessage({ type: "note-reload", sequence: 3 });
+  assert.deepEqual(posted.at(-1), { html: "<p>Original</p>", sequence: 3, type: "note-reloaded", version: 4 });
   disposeListener();
   assert.equal(subscriptionDisposals, 1);
 });
