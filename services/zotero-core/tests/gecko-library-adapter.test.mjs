@@ -35,8 +35,13 @@ function item({
   annotation = {},
   deleted = false,
   inTrash = false,
+  relations = {},
+  synced = true,
+  version = 1,
+  attachmentSyncState = 2,
 }) {
   return Object.freeze({
+    attachmentSyncState,
     deleted,
     id,
     itemTypeID: type,
@@ -68,6 +73,7 @@ function item({
     getFilePathAsync: async () => path || false,
     getNote: () => noteHTML,
     getNotes: () => notes.slice(),
+    getRelations: () => structuredClone(relations),
     getTags: () => tags.slice(),
     isAnnotation: () => type === "annotation",
     isAttachment: () => type === "attachment",
@@ -75,6 +81,8 @@ function item({
     isInTrash: () => inTrash,
     isNote: () => type === "note",
     isRegularItem: () => !["attachment", "note", "annotation"].includes(type),
+    synced,
+    version,
   });
 }
 
@@ -155,6 +163,12 @@ function fixture({
     attachments: [attachment.id],
     notes: [childNote.id],
     collectionIDs: [101, 102],
+    relations: {
+      "dc:relation": ["http://zotero.org/users/local/abc/items/ITEM0002"],
+      "owl:sameAs": "https://doi.org/10.1234/alpha",
+    },
+    synced: false,
+    version: 17,
   });
   const beta = item({ id: 12, key: "ITEM0002", libraryID: 1, title: "Beta Result", type: "book", year: "in press", creators: ["Emmy Noether"], collectionIDs: [101] });
   const groupAttachment = item({
@@ -219,6 +233,24 @@ function fixture({
       updating: false,
       url: "https://example.org/feed.xml",
     }] },
+    Fulltext: {
+      INDEX_STATE_INDEXED: 3,
+      getIndexedState: async value => value.id === 90 ? 3 : 1,
+      getItemVersion: async value => value === 90 ? 6 : false,
+      getPages: async value => value === 90 ? { indexedPages: 12, total: 12 } : false,
+    },
+    Retractions: {
+      isRetracted: value => value.id === 11,
+      shouldShowCitationWarning: value => value.id === 11,
+    },
+    Sync: { Storage: { Local: {
+      SYNC_STATE_FORCE_DOWNLOAD: 4,
+      SYNC_STATE_FORCE_UPLOAD: 3,
+      SYNC_STATE_IN_CONFLICT: 5,
+      SYNC_STATE_IN_SYNC: 2,
+      SYNC_STATE_TO_DOWNLOAD: 1,
+      SYNC_STATE_TO_UPLOAD: 0,
+    } } },
   };
   return { Zotero };
 }
@@ -281,6 +313,35 @@ test("normalizes root and nested collections with composite library identity", a
     ],
   });
   await assert.rejects(adapter.collections({ parentKey: "SHARED01" }), /libraryId/);
+});
+
+test("exposes bounded item facts and attachment availability without leaking paths", async () => {
+  const adapter = createZoteroLibraryAdapter(fixture());
+
+  assert.deepEqual(await adapter.itemFacts({ libraryId: 1, itemKey: "ITEM0001" }), {
+    citationWarning: true,
+    itemKey: "ITEM0001",
+    libraryId: 1,
+    relations: [
+      { object: "http://zotero.org/users/local/abc/items/ITEM0002", predicate: "dc:relation" },
+      { object: "https://doi.org/10.1234/alpha", predicate: "owl:sameAs" },
+    ],
+    retracted: true,
+    synced: false,
+    version: 17,
+  });
+  const state = await adapter.attachmentState({ attachmentKey: "PDF00001", libraryId: 1 });
+  assert.deepEqual(state, {
+    attachmentKey: "PDF00001",
+    fileAvailable: true,
+    fulltextIndexState: "indexed",
+    fulltextVersion: 6,
+    indexedPages: 12,
+    libraryId: 1,
+    storageSyncState: "in-sync",
+    totalPages: 12,
+  });
+  assert.equal(JSON.stringify(state).includes("/Users/example"), false);
 });
 
 test("search isolates duplicate collection keys and emits protocol-exact item summaries", async () => {

@@ -14,6 +14,7 @@
 */
 
 import { SCHEMA_VERSION } from "../modules/chateroCoreProtocol.mjs";
+import { createCoreAttachmentSourceRegistry } from "./chateroCoreAttachmentSourceRegistry.mjs";
 import { GeckoFrameDecoder, encodeGeckoFrame } from "./chateroCoreFrameCodec.mjs";
 import { createZoteroLibraryAdapter } from "./chateroCoreLibraryAdapter.mjs";
 import { createZoteroProfileAdapter } from "./chateroCoreProfileAdapter.mjs";
@@ -242,6 +243,7 @@ export async function startGeckoCoreHost({ Zotero, window } = {}) {
 	if (await IOUtils.exists(socketPath)) throw new Error("Gecko Core socket path already exists");
 
 	let bootstrapToken = readInheritedBootstrapToken();
+	let timers = ChromeUtils.importESModule("resource://gre/modules/Timer.sys.mjs");
 	let adapter = createZoteroLibraryAdapter({ Zotero });
 	let profileAdapter = createZoteroProfileAdapter({
 		Zotero,
@@ -255,6 +257,10 @@ export async function startGeckoCoreHost({ Zotero, window } = {}) {
 	});
 	let router = createGeckoCoreRequestRouter({
 		adapter,
+		attachmentSources: createCoreAttachmentSourceRegistry({
+			clearTimeout: timers.clearTimeout,
+			setTimeout: timers.setTimeout,
+		}),
 		bootstrapToken,
 		profileEpoch,
 		profileName: PathUtils.filename(actualProfile),

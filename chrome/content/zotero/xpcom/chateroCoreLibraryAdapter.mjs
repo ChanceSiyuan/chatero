@@ -21,8 +21,10 @@ const SEARCH_SORT_FIELDS = new Set(["creators", "itemType", "title", "year"]);
 const SEARCH_SORT_DIRECTIONS = new Set(["asc", "desc"]);
 const ITEM_CHILDREN_FIELDS = new Set(["itemKey", "libraryId"]);
 const ITEM_METADATA_FIELDS = new Set(["itemKey", "libraryId"]);
+const ITEM_FACTS_FIELDS = new Set(["itemKey", "libraryId"]);
 const ANNOTATION_FIELDS = new Set(["attachmentKey", "libraryId"]);
 const ATTACHMENT_FIELDS = new Set(["attachmentKey", "libraryId"]);
+const ATTACHMENT_STATE_FIELDS = new Set(["attachmentKey", "libraryId"]);
 const NOTE_FIELDS = new Set(["libraryId", "noteKey"]);
 const LIBRARIES_FIELDS = new Set();
 const FEEDS_FIELDS = new Set();
@@ -33,6 +35,8 @@ const MAX_PAGE_SIZE = 200;
 const MAX_NOTE_BYTES = 512 * 1024;
 const MAX_ANNOTATION_FIELD_BYTES = 256 * 1024;
 const MAX_METADATA_FIELD_BYTES = 256 * 1024;
+const MAX_RELATIONS = 1024;
+const MAX_RELATION_FIELD_BYTES = 16 * 1024;
 
 function exactObject(value, fields, label) {
 	if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -240,6 +244,62 @@ function itemMetadataSummary(Zotero, item) {
 	return metadata;
 }
 
+function itemFactsSummary(Zotero, item) {
+	let rawRelations = item.getRelations?.() || {};
+	if (!rawRelations || typeof rawRelations !== "object" || Array.isArray(rawRelations)) {
+		throw new Error("Zotero item relations must be an object");
+	}
+	let relations = [];
+	for (let [predicate, rawObjects] of Object.entries(rawRelations)) {
+		let objects = Array.isArray(rawObjects) ? rawObjects : [rawObjects];
+		for (let object of objects) {
+			relations.push({
+				object: boundedString(object, MAX_RELATION_FIELD_BYTES, "item relation object"),
+				predicate: boundedString(predicate, MAX_RELATION_FIELD_BYTES, "item relation predicate"),
+			});
+			if (relations.length > MAX_RELATIONS) throw new Error(`item relations exceed the ${MAX_RELATIONS} entry limit`);
+		}
+	}
+	relations.sort((left, right) => compareText(left.predicate, right.predicate) || compareText(left.object, right.object));
+	return {
+		citationWarning: Boolean(Zotero.Retractions.shouldShowCitationWarning(item)),
+		itemKey: item.key,
+		libraryId: item.libraryID,
+		relations,
+		retracted: Boolean(Zotero.Retractions.isRetracted(item)),
+		synced: Boolean(item.synced),
+		version: Number.isSafeInteger(item.version) && item.version >= 0 ? item.version : 0,
+	};
+}
+
+function stateName(value, owner, prefix, names, fallback) {
+	for (let name of names) {
+		if (value === owner?.[`${prefix}${name.replaceAll("-", "_").toUpperCase()}`]) return name;
+	}
+	return fallback;
+}
+
+async function attachmentStateSummary(Zotero, attachment) {
+	let path = await attachment.getFilePathAsync();
+	let fulltext = Zotero.Fulltext || Zotero.FullText;
+	let indexState = await fulltext.getIndexedState(attachment);
+	let pages = await fulltext.getPages(attachment.id);
+	let version = await fulltext.getItemVersion(attachment.id);
+	let result = {
+		attachmentKey: attachment.key,
+		fileAvailable: typeof path === "string" && path.startsWith("/"),
+		fulltextIndexState: stateName(indexState, fulltext, "INDEX_STATE_",
+			["unavailable", "unindexed", "partial", "indexed", "queued"], "unknown"),
+		libraryId: attachment.libraryID,
+		storageSyncState: stateName(attachment.attachmentSyncState, Zotero.Sync.Storage.Local, "SYNC_STATE_",
+			["to-upload", "to-download", "in-sync", "force-upload", "force-download", "in-conflict"], "unknown"),
+	};
+	if (Number.isSafeInteger(version) && version >= 0) result.fulltextVersion = version;
+	if (Number.isSafeInteger(pages?.indexedPages) && pages.indexedPages >= 0) result.indexedPages = pages.indexedPages;
+	if (Number.isSafeInteger(pages?.total) && pages.total >= 0) result.totalPages = pages.total;
+	return result;
+}
+
 function itemIsUnavailable(item) {
 	if (!item) return true;
 	if (item.deleted) return true;
@@ -336,6 +396,11 @@ function validateZotero(Zotero) {
 		[Zotero?.Searches, "getByLibraryAndKey"],
 		[Zotero?.Tags, "getAll"],
 		[Zotero?.Feeds, "getAll"],
+		[Zotero?.Fulltext || Zotero?.FullText, "getIndexedState"],
+		[Zotero?.Fulltext || Zotero?.FullText, "getItemVersion"],
+		[Zotero?.Fulltext || Zotero?.FullText, "getPages"],
+		[Zotero?.Retractions, "isRetracted"],
+		[Zotero?.Retractions, "shouldShowCitationWarning"],
 	];
 	for (let [owner, method] of required) {
 		if (typeof owner?.[method] !== "function") {
@@ -471,6 +536,15 @@ export function createZoteroLibraryAdapter({ Zotero, openAttachmentFile = openGe
 			return summary;
 		},
 
+		async attachmentState(params) {
+			validateCompositeParams(params, ATTACHMENT_STATE_FIELDS, "attachmentKey", "library.attachment-state");
+			let attachment = lookupItem(Zotero, params.libraryId, params.attachmentKey, "Zotero attachment");
+			if (!attachment.isAttachment?.() || !attachment.isFileAttachment?.()) {
+				throw new Error("library.attachment-state target must be a file attachment");
+			}
+			return attachmentStateSummary(Zotero, attachment);
+		},
+
 		async attachmentSource(params) {
 			validateCompositeParams(params, ATTACHMENT_FIELDS, "attachmentKey", "attachment.open");
 			let attachment = lookupItem(Zotero, params.libraryId, params.attachmentKey, "Zotero attachment");
@@ -524,6 +598,13 @@ export function createZoteroLibraryAdapter({ Zotero, openAttachmentFile = openGe
 			let item = lookupItem(Zotero, params.libraryId, params.itemKey, "Zotero item");
 			if (!item.isRegularItem?.()) throw new Error("library.item-metadata target must be a regular item");
 			return itemMetadataSummary(Zotero, item);
+		},
+
+		async itemFacts(params) {
+			validateCompositeParams(params, ITEM_FACTS_FIELDS, "itemKey", "library.item-facts");
+			let item = lookupItem(Zotero, params.libraryId, params.itemKey, "Zotero item");
+			if (!item.isRegularItem?.()) throw new Error("library.item-facts target must be a regular item");
+			return itemFactsSummary(Zotero, item);
 		},
 
 		async note(params) {

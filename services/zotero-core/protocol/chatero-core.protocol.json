@@ -109,6 +109,12 @@
       "resultType": "LibraryItemMetadata"
     },
     {
+      "name": "library.item-facts",
+      "capability": "library:read",
+      "paramsType": "LibraryItemFactsParams",
+      "resultType": "LibraryItemFacts"
+    },
+    {
       "name": "library.annotations",
       "capability": "library:read",
       "paramsType": "LibraryAnnotationsParams",
@@ -119,6 +125,12 @@
       "capability": "library:read",
       "paramsType": "LibraryAttachmentParams",
       "resultType": "LibraryAttachmentSummary"
+    },
+    {
+      "name": "library.attachment-state",
+      "capability": "library:read",
+      "paramsType": "LibraryAttachmentParams",
+      "resultType": "LibraryAttachmentState"
     },
     {
       "name": "library.note",
@@ -460,6 +472,19 @@
         "libraryId": "number"
       }
     },
+    "LibraryAttachmentState": {
+      "kind": "object",
+      "fields": {
+        "attachmentKey": "string",
+        "fileAvailable": "boolean",
+        "fulltextIndexState": "string",
+        "fulltextVersion?": "number",
+        "indexedPages?": "number",
+        "libraryId": "number",
+        "storageSyncState": "string",
+        "totalPages?": "number"
+      }
+    },
     "LibraryNoteSummary": {
       "kind": "object",
       "fields": {
@@ -498,6 +523,32 @@
         "title": "string",
         "url?": "string",
         "year?": "number"
+      }
+    },
+    "LibraryItemFactsParams": {
+      "kind": "object",
+      "fields": {
+        "itemKey": "string",
+        "libraryId": "number"
+      }
+    },
+    "LibraryItemRelation": {
+      "kind": "object",
+      "fields": {
+        "object": "string",
+        "predicate": "string"
+      }
+    },
+    "LibraryItemFacts": {
+      "kind": "object",
+      "fields": {
+        "citationWarning": "boolean",
+        "itemKey": "string",
+        "libraryId": "number",
+        "relations": "LibraryItemRelation[]",
+        "retracted": "boolean",
+        "synced": "boolean",
+        "version": "number"
       }
     },
     "LibraryAnnotationsParams": {

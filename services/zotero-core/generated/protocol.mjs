@@ -20,9 +20,11 @@ export const METHOD_CAPABILITIES = Object.freeze({
   "core.handshake": null,
   "library.annotations": "library:read",
   "library.attachment": "library:read",
+  "library.attachment-state": "library:read",
   "library.collections": "library:read",
   "library.feeds": "library:read",
   "library.item-children": "library:read",
+  "library.item-facts": "library:read",
   "library.item-metadata": "library:read",
   "library.libraries": "library:read",
   "library.note": "library:read",
@@ -66,6 +68,10 @@ export const METHOD_TYPES = Object.freeze({
     "params": "LibraryAttachmentParams",
     "result": "LibraryAttachmentSummary"
   },
+  "library.attachment-state": {
+    "params": "LibraryAttachmentParams",
+    "result": "LibraryAttachmentState"
+  },
   "library.collections": {
     "params": "LibraryCollectionsParams",
     "result": "LibraryCollectionsResult"
@@ -77,6 +83,10 @@ export const METHOD_TYPES = Object.freeze({
   "library.item-children": {
     "params": "LibraryItemChildrenParams",
     "result": "LibraryItemChildrenResult"
+  },
+  "library.item-facts": {
+    "params": "LibraryItemFactsParams",
+    "result": "LibraryItemFacts"
   },
   "library.item-metadata": {
     "params": "LibraryItemMetadataParams",

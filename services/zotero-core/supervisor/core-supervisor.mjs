@@ -83,8 +83,10 @@ export async function startCore({
   fixtureFeeds = [],
   fixtureAnnotations = [],
   fixtureAttachmentContents = [],
+  fixtureAttachmentStates = [],
   fixtureItems = [],
   fixtureItemChildren = [],
+  fixtureItemFacts = [],
   fixtureItemMetadata = [],
   fixtureLibraries = [],
   fixtureNotes = [],
@@ -107,14 +109,17 @@ export async function startCore({
   const bootstrapPath = join(sessionDirectory, "bootstrap.token");
   const fixturePath = join(sessionDirectory, "fixture-items.json");
   const socketPath = join(sessionDirectory, "core.sock");
+  const startupErrorPath = `${socketPath}.startup-error`;
   await writeFile(markerPath, `${JSON.stringify({ nonce: sessionNonce, schemaVersion: 1 })}\n`, { mode: 0o600 });
   await writeFile(bootstrapPath, `${bootstrapToken}\n`, { mode: 0o600 });
   await writeFile(fixturePath, `${JSON.stringify({
     annotations: fixtureAnnotations,
     attachmentContents: fixtureAttachmentContents,
+    attachmentStates: fixtureAttachmentStates,
     collections: fixtureCollections,
     feeds: fixtureFeeds,
     itemChildren: fixtureItemChildren,
+    itemFacts: fixtureItemFacts,
     itemMetadata: fixtureItemMetadata,
     items: fixtureItems,
     libraries: fixtureLibraries,
@@ -150,6 +155,11 @@ export async function startCore({
   let spawnError = null;
   child.once("error", error => { spawnError = error; });
   let stderr = "";
+  let stdout = "";
+  child.stdout.setEncoding("utf8");
+  child.stdout.on("data", chunk => {
+    stdout = `${stdout}${chunk}`.slice(-8192);
+  });
   child.stderr.setEncoding("utf8");
   child.stderr.on("data", chunk => {
     stderr = `${stderr}${chunk}`.slice(-8192);
@@ -161,7 +171,8 @@ export async function startCore({
     while (!client && Date.now() < deadline) {
       if (spawnError) throw spawnError;
       if (child.exitCode !== null || child.signalCode !== null) {
-        throw new Error(`Zotero Core exited before readiness: ${stderr.trim() || child.exitCode || child.signalCode}`);
+        const startupError = await readFile(startupErrorPath, "utf8").catch(error => error?.code === "ENOENT" ? "" : Promise.reject(error));
+        throw new Error(`Zotero Core exited before readiness: ${(startupError + stdout + stderr).trim() || child.exitCode || child.signalCode}`);
       }
       try {
         client = await connectCore({
@@ -176,7 +187,11 @@ export async function startCore({
         await wait(20);
       }
     }
-    if (!client) throw new Error(`Zotero Core did not become ready within ${readyTimeoutMs}ms${stderr ? `: ${stderr.trim()}` : ""}`);
+    if (!client) {
+      const startupError = await readFile(startupErrorPath, "utf8").catch(error => error?.code === "ENOENT" ? "" : Promise.reject(error));
+      let diagnostics = (startupError + stdout + stderr).trim();
+      throw new Error(`Zotero Core did not become ready within ${readyTimeoutMs}ms${diagnostics ? `: ${diagnostics}` : ""}`);
+    }
   }
   catch (error) {
     await terminate(child);

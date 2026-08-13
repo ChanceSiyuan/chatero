@@ -31,13 +31,36 @@ if (CommandLineOptions.url) {
 }
 
 if (CommandLineOptions.chateroCore) {
-	Services.ww.openWindow(
-		null,
-		"chrome://zotero/content/chateroCore.xhtml",
-		"_blank",
-		"chrome,dialog=no,width=1,height=1",
-		null
-	);
+	dump("Chatero Core: command-line mode selected\n");
+	// Core is deliberately windowless. Even a hidden 1×1 XUL window initializes a
+	// compositor and can crash under macOS headless mode before the RPC socket starts.
+	// Enter Gecko's explicit last-window survival area synchronously, before command-
+	// line dispatch returns, so the app shell cannot initiate shutdown while Zotero's
+	// database services are still initializing.
+	Services.startup.enterLastWindowClosingSurvivalArea();
+	void (async () => {
+		dump("Chatero Core: initializing Zotero services\n");
+		let { Zotero } = ChromeUtils.importESModule("chrome://zotero/content/zotero.mjs");
+		let { startGeckoCoreHost } = ChromeUtils.importESModule(
+			"chrome://zotero/content/xpcom/chateroCoreHost.mjs"
+		);
+		await Zotero.initializationPromise;
+		dump("Chatero Core: Zotero services initialized\n");
+		let host = await startGeckoCoreHost({ Zotero });
+		dump("Chatero Core: RPC socket ready\n");
+		Zotero.addShutdownListener(() => {
+			host.close();
+		});
+	})().catch(async error => {
+		let diagnostic = `Chatero Core startup failed: ${error?.stack || error}`;
+		dump(`${diagnostic}\n`);
+		Components.utils.reportError(error);
+		let socketPath = Services.env.get("CHATERO_CORE_SOCKET_PATH");
+		if (socketPath) {
+			await IOUtils.writeUTF8(`${socketPath}.startup-error`, diagnostic).catch(() => {});
+		}
+		Services.startup.quit(Ci.nsIAppStartup.eForceQuit);
+	});
 	cmdLine.preventDefault = true;
 }
 

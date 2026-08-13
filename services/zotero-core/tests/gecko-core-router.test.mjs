@@ -38,11 +38,13 @@ function createRouter(overrides = {}) {
   const adapter = {
     async annotations(params) { calls.push(["annotations", params]); return { annotations: [] }; },
     async attachment(params) { calls.push(["attachment", params]); return { annotationCount: 0, attachmentKey: "PDF00001", contentType: "application/pdf", filename: "paper.pdf", libraryId: 1, parentItemKey: "ITEM0001", title: "Paper" }; },
+    async attachmentState(params) { calls.push(["attachmentState", params]); return { attachmentKey: params.attachmentKey, fileAvailable: true, fulltextIndexState: "indexed", libraryId: params.libraryId, storageSyncState: "in-sync" }; },
     async attachmentSource(params) { calls.push(["attachmentSource", params]); return { size: 4, async read(offset, length) { return Uint8Array.from([1, 2, 3, 4]).slice(offset, offset + length); }, async close() {} }; },
     async collections(params) { calls.push(["collections", params]); return { collections: [] }; },
     async feeds(params) { calls.push(["feeds", params]); return { feeds: [] }; },
     async itemChildren(params) { calls.push(["itemChildren", params]); return { attachments: [], notes: [] }; },
     async itemMetadata(params) { calls.push(["itemMetadata", params]); return { itemKey: params.itemKey, libraryId: params.libraryId }; },
+    async itemFacts(params) { calls.push(["itemFacts", params]); return { citationWarning: false, itemKey: params.itemKey, libraryId: params.libraryId, relations: [], retracted: false, synced: true, version: 1 }; },
     async libraries(params) { calls.push(["libraries", params]); return { libraries: [] }; },
     async note(params) { calls.push(["note", params]); return { html: "<p>Note</p>", libraryId: 1, noteKey: "NOTE0001", parentItemKey: "ITEM0001", title: "Note" }; },
     async profileBackup() { calls.push(["profileBackup"]); return { backupCreated: true, completedAt: 1234 }; },
@@ -132,15 +134,17 @@ test("enforces capabilities, profile epoch, session, and deadline before adapter
   assert.deepEqual(calls, []);
 });
 
-test("routes read-only PDF children, Note, and annotation methods through library:read", async () => {
+test("routes read-only PDF, item facts, Note, and annotation methods through library:read", async () => {
   const { calls, router } = createRouter();
   const session = await handshake(router);
 
   assert.deepEqual((await router.handle(request(session, "library.item-children", { libraryId: 1, itemKey: "ITEM0001" }))).result, { attachments: [], notes: [] });
   assert.equal(Object.hasOwn((await router.handle(request(session, "library.attachment", { attachmentKey: "PDF00001", libraryId: 1 }))).result, "path"), false);
+  assert.equal((await router.handle(request(session, "library.attachment-state", { attachmentKey: "PDF00001", libraryId: 1 }))).result.storageSyncState, "in-sync");
+  assert.equal((await router.handle(request(session, "library.item-facts", { itemKey: "ITEM0001", libraryId: 1 }))).result.version, 1);
   assert.deepEqual((await router.handle(request(session, "library.annotations", { attachmentKey: "PDF00001", libraryId: 1 }))).result, { annotations: [] });
   assert.equal((await router.handle(request(session, "library.note", { libraryId: 1, noteKey: "NOTE0001" }))).result.html, "<p>Note</p>");
-  assert.deepEqual(calls.map(value => value[0]), ["itemChildren", "attachment", "annotations", "note"]);
+  assert.deepEqual(calls.map(value => value[0]), ["itemChildren", "attachment", "attachmentState", "itemFacts", "annotations", "note"]);
 });
 
 test("routes attachment chunks through a session-bound attachment:read capability", async () => {

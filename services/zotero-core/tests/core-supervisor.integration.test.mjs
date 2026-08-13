@@ -89,6 +89,25 @@ const fixtureAttachmentContents = [{
   bytesBase64url: fixturePdfBytes.toString("base64url"),
   libraryId: 1,
 }];
+const fixtureItemFacts = [{
+  citationWarning: false,
+  itemKey: "FISHER01",
+  libraryId: 1,
+  relations: [{ object: "https://doi.org/10.1000/example", predicate: "owl:sameAs" }],
+  retracted: false,
+  synced: true,
+  version: 8,
+}];
+const fixtureAttachmentStates = [{
+  attachmentKey: "PDF00001",
+  fileAvailable: true,
+  fulltextIndexState: "indexed",
+  fulltextVersion: 4,
+  indexedPages: 10,
+  libraryId: 1,
+  storageSyncState: "in-sync",
+  totalPages: 10,
+}];
 
 test("builds an explicit headless Gecko launch without putting secrets in argv or environment", async () => {
   const { buildCoreLaunchPlan } = await import("../supervisor/core-supervisor.mjs");
@@ -126,9 +145,11 @@ test("supervises an authenticated fixture Core over an owner-only Unix socket", 
     profileDirectory,
     fixtureAnnotations,
     fixtureAttachmentContents,
+    fixtureAttachmentStates,
     fixtureCollections,
     fixtureItemChildren,
     fixtureItems,
+    fixtureItemFacts,
     fixtureNotes,
   });
   running.push(core);
@@ -167,6 +188,8 @@ test("supervises an authenticated fixture Core over an owner-only Unix socket", 
     notes: fixtureItemChildren[0].notes,
   });
   assert.deepEqual(await core.client.request("library.attachment", { attachmentKey: "PDF00001", libraryId: 1 }), fixtureItemChildren[0].attachments[0]);
+  assert.deepEqual(await core.client.request("library.attachment-state", { attachmentKey: "PDF00001", libraryId: 1 }), fixtureAttachmentStates[0]);
+  assert.deepEqual(await core.client.request("library.item-facts", { itemKey: "FISHER01", libraryId: 1 }), fixtureItemFacts[0]);
   assert.deepEqual(await core.client.request("library.note", { libraryId: 1, noteKey: "NOTE0001" }), fixtureNotes[0]);
   assert.deepEqual(await core.client.request("library.annotations", { attachmentKey: "PDF00001", libraryId: 1 }), {
     annotations: fixtureAnnotations[0].annotations,
