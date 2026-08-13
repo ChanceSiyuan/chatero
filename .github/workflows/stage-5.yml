@@ -32,6 +32,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run workbench:bootstrap
+      - run: npm ci --prefix vendor/code-oss
       - run: >-
           node products/workbench/remote-agent/scripts/build-linux-agent.mjs
           --arch ${{ matrix.arch }}
@@ -146,6 +147,7 @@ jobs:
           merge-multiple: true
       - run: npm ci
       - run: npm run workbench:bootstrap
+      - run: npm ci --prefix vendor/code-oss
       - run: npm run verify:stage-5
         env:
           CHATERO_CODE_OSS_DIR: vendor/code-oss
