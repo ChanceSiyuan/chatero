@@ -195,22 +195,24 @@ test("rejects traversal, absolute paths, duplicate files, and unknown fields", a
 
 test("the canonical series pins Chatero startup compatibility after native Codex and Documentation authority", async () => {
   const series = JSON.parse(await readFile(join(canonicalPatchDirectory, "series.json"), "utf8"));
-  const entry = series.patches.at(-13);
-  const compatibilityEntry = series.patches.at(-12);
-  const startupEntry = series.patches.at(-11);
-  const bundledSdkEntry = series.patches.at(-10);
-  const optionalCopilotEntry = series.patches.at(-9);
-  const codexIpcEntry = series.patches.at(-8);
-  const liveCodexHomeEntry = series.patches.at(-7);
-  const excludedSystemExtensionsEntry = series.patches.at(-6);
-  const openAIIsolationEntry = series.patches.at(-5);
-  const codexConnectionEntry = series.patches.at(-4);
-  const codexOnlyEntry = series.patches.at(-3);
-  const workspaceRootsEntry = series.patches.at(-2);
-  const claudeDisabledEntry = series.patches.at(-1);
+  const byName = name => series.patches.find(value => value.file === name);
+  const entry = byName("0004-chatero-documentation-agent-authority.patch");
+  const compatibilityEntry = byName("0005-fix-chatero-codex-tests.patch");
+  const startupEntry = byName("0006-disable-copilot-onboarding-without-agent.patch");
+  const bundledSdkEntry = byName("0007-bundle-chatero-codex-sdk.patch");
+  const optionalCopilotEntry = byName("0008-lazy-load-optional-copilot-api.patch");
+  const codexIpcEntry = byName("0009-allow-ephemeral-codex-ipc-sockets.patch");
+  const liveCodexHomeEntry = byName("0010-shallow-pin-live-codex-home.patch");
+  const excludedSystemExtensionsEntry = byName("0011-exclude-unshipped-system-extensions.patch");
+  const openAIIsolationEntry = byName("0012-isolate-openai-codex-resources.patch");
+  const codexConnectionEntry = byName("0013-deduplicate-codex-connection-startup.patch");
+  const codexOnlyEntry = byName("0014-default-agent-host-to-codex-only.patch");
+  const workspaceRootsEntry = byName("0015-preserve-codex-workspace-roots.patch");
+  const claudeDisabledEntry = byName("0016-disable-claude-provider-registration.patch");
+  const lifecycleEntry = byName("0017-lock-nested-lifecycle-installs.patch");
 
   assert.equal(entry.file, "0004-chatero-documentation-agent-authority.patch");
-  assert.equal(series.patches.at(-14)?.file, "0003-chatero-native-codex.patch");
+  assert.ok(byName("0003-chatero-native-codex.patch"));
   assert.equal(compatibilityEntry.file, "0005-fix-chatero-codex-tests.patch");
   assert.equal(startupEntry.file, "0006-disable-copilot-onboarding-without-agent.patch");
   assert.equal(bundledSdkEntry.file, "0007-bundle-chatero-codex-sdk.patch");
@@ -223,6 +225,7 @@ test("the canonical series pins Chatero startup compatibility after native Codex
   assert.equal(codexOnlyEntry.file, "0014-default-agent-host-to-codex-only.patch");
   assert.equal(workspaceRootsEntry.file, "0015-preserve-codex-workspace-roots.patch");
   assert.equal(claudeDisabledEntry.file, "0016-disable-claude-provider-registration.patch");
+  assert.equal(lifecycleEntry.file, "0017-lock-nested-lifecycle-installs.patch");
   const bytes = await readFile(join(canonicalPatchDirectory, entry.file));
   const compatibilityBytes = await readFile(join(canonicalPatchDirectory, compatibilityEntry.file));
   const startupBytes = await readFile(join(canonicalPatchDirectory, startupEntry.file));
@@ -236,6 +239,7 @@ test("the canonical series pins Chatero startup compatibility after native Codex
   const codexOnlyBytes = await readFile(join(canonicalPatchDirectory, codexOnlyEntry.file));
   const workspaceRootsBytes = await readFile(join(canonicalPatchDirectory, workspaceRootsEntry.file));
   const claudeDisabledBytes = await readFile(join(canonicalPatchDirectory, claudeDisabledEntry.file));
+  const lifecycleBytes = await readFile(join(canonicalPatchDirectory, lifecycleEntry.file));
   assert.equal(entry.sha256, sha256(bytes));
   assert.equal(compatibilityEntry.sha256, sha256(compatibilityBytes));
   assert.equal(startupEntry.sha256, sha256(startupBytes));
@@ -249,6 +253,7 @@ test("the canonical series pins Chatero startup compatibility after native Codex
   assert.equal(codexOnlyEntry.sha256, sha256(codexOnlyBytes));
   assert.equal(workspaceRootsEntry.sha256, sha256(workspaceRootsBytes));
   assert.equal(claudeDisabledEntry.sha256, sha256(claudeDisabledBytes));
+  assert.equal(lifecycleEntry.sha256, sha256(lifecycleBytes));
   assert.match(bytes.toString("utf8"), /acquireDocumentationWorkingCopyBarrier/);
   assert.match(compatibilityBytes.toString("utf8"), /chatero_workspace/);
   assert.match(startupBytes.toString("utf8"), /if \(product\.defaultChatAgent\)/);
@@ -279,4 +284,5 @@ test("the canonical series pins Chatero startup compatibility after native Codex
   assert.match(workspaceRootsBytes.toString("utf8"), /workspaceActivePermissionProfile/);
   assert.doesNotMatch(claudeDisabledBytes.toString("utf8"), /^\+.*registerProvider\([^\n]*ClaudeAgent/m);
   assert.match(claudeDisabledBytes.toString("utf8"), /Chatero ships only the Codex provider/);
+  assert.match(lifecycleBytes.toString("utf8"), /CHATERO_NPM_COMMAND/);
 });

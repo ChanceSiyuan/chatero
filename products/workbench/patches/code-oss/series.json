@@ -64,6 +64,10 @@
     {
       "file": "0016-disable-claude-provider-registration.patch",
       "sha256": "4ba65dcbd350236cacdbc1680b1be214572875c428544cd068bef33f66876ba9"
+    },
+    {
+      "file": "0017-lock-nested-lifecycle-installs.patch",
+      "sha256": "f5826d06bd0516359a4d8a99b33f0b6d7a9cefe9f5aab61c0df1c6ff5b9fc0dd"
     }
   ]
 }
