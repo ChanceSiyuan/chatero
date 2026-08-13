@@ -14,7 +14,8 @@
     "profile:write",
     "sync:read",
     "sync:write",
-    "translation:read"
+    "translation:read",
+    "translation:write"
   ],
   "methods": [
     {
@@ -190,6 +191,12 @@
       "capability": "translation:read",
       "paramsType": "TranslationExportParams",
       "resultType": "TranslationExportResult"
+    },
+    {
+      "name": "translation.import",
+      "capability": "translation:write",
+      "paramsType": "TranslationImportParams",
+      "resultType": "TranslationImportResult"
     },
     {
       "name": "citation.styles",
@@ -847,6 +854,34 @@
       "fields": {
         "content": "string",
         "itemCount": "number",
+        "translatorId": "string"
+      }
+    },
+    "TranslationImportedItem": {
+      "kind": "object",
+      "fields": {
+        "itemKey": "string",
+        "libraryId": "number",
+        "title": "string",
+        "version": "number"
+      }
+    },
+    "TranslationImportParams": {
+      "kind": "object",
+      "fields": {
+        "content": "string",
+        "expectedRevision": "number",
+        "idempotencyKey": "string",
+        "libraryId": "number",
+        "translatorId": "string"
+      }
+    },
+    "TranslationImportResult": {
+      "kind": "object",
+      "fields": {
+        "items": "TranslationImportedItem[]",
+        "replayed": "boolean",
+        "revision": "number",
         "translatorId": "string"
       }
     },

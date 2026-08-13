@@ -132,6 +132,7 @@ function fixture({
 } = {}) {
   const syncCalls = [];
 	const exportCalls = [];
+	const importCalls = [];
   const highlight = item({
     id: 92,
     key: "ANN00001",
@@ -237,10 +238,13 @@ function fixture({
       getByLibraryAndKey: (libraryId, key) => items.find(value => value.libraryID === libraryId && value.key === key) || false,
     },
     ItemTypes: { getName: itemTypeID => itemTypeID },
-    Libraries: { getAll: () => [
-      { allowsLinkedFiles: false, archived: false, editable: true, filesEditable: false, groupID: 20, lastSync: 200, libraryID: 2, libraryType: "group", libraryVersion: 8, name: "Group", storageVersion: 7, syncable: true },
-      { allowsLinkedFiles: true, archived: false, editable: true, filesEditable: true, lastSync: 100, libraryID: 1, libraryType: "user", libraryVersion: 10, name: "My Library", storageVersion: 9, syncable: true },
-    ] },
+		Libraries: {
+			get: libraryId => Zotero.Libraries.getAll().find(value => value.libraryID === libraryId) || false,
+			getAll: () => [
+				{ allowsLinkedFiles: false, archived: false, editable: true, filesEditable: false, groupID: 20, lastSync: 200, libraryID: 2, libraryType: "group", libraryVersion: 8, name: "Group", storageVersion: 7, syncable: true },
+				{ allowsLinkedFiles: true, archived: false, editable: true, filesEditable: true, lastSync: 100, libraryID: 1, libraryType: "user", libraryVersion: 10, name: "My Library", storageVersion: 9, syncable: true },
+			],
+		},
     Searches: {
       getAll: async libraryId => searches.filter(value => value.libraryID === libraryId),
       getByLibraryAndKey: (libraryId, key) => searches.find(value => value.libraryID === libraryId && value.key === key) || false,
@@ -272,7 +276,10 @@ function fixture({
       shouldShowCitationWarning: value => value.id === 11,
     },
 		Translators: {
-			get: id => id === "9cb70025-a888-4a29-a210-93ec52da40d4" ? { translatorID: id, translatorType: 2 } : false,
+			get: id => ({
+				"9cb70025-a888-4a29-a210-93ec52da40d4": { translatorID: id, translatorType: 2 },
+				"32d59d2d-b65a-4da4-b0a3-bf57b3d0c6f8": { translatorID: id, translatorType: 1 },
+			}[id] || false),
 			getAllForType: async kind => kind === "export" ? [
 				{ browserSupport: "g", creator: "Simon Kornblith", label: "BibTeX", lastUpdated: "2026-01-01 00:00:00", priority: 100, target: "bib", translatorID: "9cb70025-a888-4a29-a210-93ec52da40d4", translatorType: 2 },
 				{ browserSupport: "g", creator: "Zotero", label: "CSL JSON", lastUpdated: "2025-01-01 00:00:00", priority: 100, target: "json", translatorID: "bc03b4fe-436d-4a1f-ba59-de4d2d7a63f7", translatorType: 2 },
@@ -299,6 +306,14 @@ function fixture({
 					this.string = this.items.map(value => `@article{${value.key},\n  title = {${value.getDisplayTitle()}}\n}`).join("\n");
 				}
 			},
+			Import: class {
+				setString(content) { this.content = content; }
+				setTranslator(translator) { this.translator = translator; }
+				async translate(options) {
+					importCalls.push({ content: this.content, options: structuredClone(options), translatorId: this.translator.translatorID });
+					return [item({ id: 301, key: "IMPORT01", libraryID: options.libraryID, title: "Imported Paper", version: 0, clientVersion: 31 })];
+				}
+			},
 		},
     DB: { executeTransaction: async callback => callback() },
     Sync: {
@@ -320,7 +335,7 @@ function fixture({
       } },
     },
   };
-  return { exportCalls, syncCalls, Zotero };
+  return { exportCalls, importCalls, syncCalls, Zotero };
 }
 
 test("lists libraries, saved searches, and paginated tags without database or path data", async () => {
@@ -549,6 +564,25 @@ test("exports exact items in memory through an installed Zotero export translato
 	});
 	assert.deepEqual(source.exportCalls, [{ items: [[1, "ITEM0001"], [2, "ITEM0001"]], translatorId: "9cb70025-a888-4a29-a210-93ec52da40d4" }]);
 	await assert.rejects(adapter.exportItems({ identities: [{ itemKey: "ITEM0001", libraryId: 1 }], translatorId: "missing" }), /installed export translator/);
+});
+
+test("imports bounded bibliographic text into an editable library with attachments disabled", async () => {
+	const source = fixture();
+	const adapter = createZoteroLibraryAdapter(source);
+	assert.deepEqual(await adapter.importItems({
+		content: "TY  - JOUR\nTI  - Imported Paper\nER  -",
+		libraryId: 2,
+		translatorId: "32d59d2d-b65a-4da4-b0a3-bf57b3d0c6f8",
+	}), {
+		items: [{ itemKey: "IMPORT01", libraryId: 2, title: "Imported Paper", version: 31 }],
+		translatorId: "32d59d2d-b65a-4da4-b0a3-bf57b3d0c6f8",
+	});
+	assert.deepEqual(source.importCalls, [{
+		content: "TY  - JOUR\nTI  - Imported Paper\nER  -",
+		options: { libraryID: 2, saveAttachments: false },
+		translatorId: "32d59d2d-b65a-4da4-b0a3-bf57b3d0c6f8",
+	}]);
+	await assert.rejects(adapter.importItems({ content: "x", libraryId: 2, translatorId: "missing" }), /installed import translator/);
 });
 
 test("search isolates duplicate collection keys and emits protocol-exact item summaries", async () => {

@@ -70,7 +70,8 @@ function validateRouterOptions(options) {
 			|| typeof options.adapter.translators !== "function"
 			|| typeof options.adapter.citationStyles !== "function"
 			|| typeof options.adapter.renderCitation !== "function"
-			|| typeof options.adapter.exportItems !== "function") {
+			|| typeof options.adapter.exportItems !== "function"
+			|| typeof options.adapter.importItems !== "function") {
 		throw new Error("Gecko Core router requires Profile and Library adapters");
 	}
 	if (typeof options.bootstrapToken !== "string" || options.bootstrapToken.length < 24) {
@@ -306,6 +307,23 @@ export function createGeckoCoreRequestRouter(options = {}) {
 			if (message.method === "library.tags") return { result: await adapter.tags(message.params) };
 			if (message.method === "translation.translators") return { result: await adapter.translators(message.params) };
 			if (message.method === "translation.export") return { result: await adapter.exportItems(message.params) };
+			if (message.method === "translation.import") {
+				let { expectedRevision, idempotencyKey, ...operation } = message.params || {};
+				let completed = await transactionRegistry.execute({
+					expectedRevision,
+					idempotencyKey,
+					operation,
+					scope: `library:${operation.libraryId}/translation:import`,
+				}, value => adapter.importItems(value));
+				let result = { ...completed.result, replayed: completed.replayed, revision: completed.revision };
+				return {
+					...(!completed.replayed && { event: eventJournal.publish("library.items.imported", {
+						identities: result.items.map(value => ({ itemKey: value.itemKey, libraryId: value.libraryId })),
+						revision: completed.revision,
+					}) }),
+					result,
+				};
+			}
 			if (message.method === "citation.styles") return { result: await adapter.citationStyles(message.params) };
 			if (message.method === "citation.render") return { result: await adapter.renderCitation(message.params) };
 			if (message.method === "sync.status") return { result: await adapter.syncStatus(message.params) };

@@ -14,7 +14,8 @@ export const CAPABILITIES = Object.freeze([
   "profile:write",
   "sync:read",
   "sync:write",
-  "translation:read"
+  "translation:read",
+  "translation:write"
 ]);
 export const METHOD_CAPABILITIES = Object.freeze({
   "attachment.close": "attachment:read",
@@ -47,6 +48,7 @@ export const METHOD_CAPABILITIES = Object.freeze({
   "sync.retry": "sync:write",
   "sync.status": "sync:read",
   "translation.export": "translation:read",
+  "translation.import": "translation:write",
   "translation.translators": "translation:read"
 });
 export const METHOD_TYPES = Object.freeze({
@@ -169,6 +171,10 @@ export const METHOD_TYPES = Object.freeze({
   "translation.export": {
     "params": "TranslationExportParams",
     "result": "TranslationExportResult"
+  },
+  "translation.import": {
+    "params": "TranslationImportParams",
+    "result": "TranslationImportResult"
   },
   "translation.translators": {
     "params": "TranslationTranslatorsParams",

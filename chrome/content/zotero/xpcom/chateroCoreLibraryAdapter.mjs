@@ -39,6 +39,7 @@ const CITATION_STYLES_FIELDS = new Set();
 const CITATION_RENDER_FIELDS = new Set(["identities", "locale", "mode", "styleId"]);
 const CITATION_MODES = new Set(["bibliography", "citation"]);
 const EXPORT_ITEMS_FIELDS = new Set(["identities", "translatorId"]);
+const IMPORT_ITEMS_FIELDS = new Set(["content", "libraryId", "translatorId"]);
 const SAVED_SEARCH_FIELDS = new Set(["libraryId"]);
 const SAVED_SEARCH_ITEMS_FIELDS = new Set(["cursor", "libraryId", "limit", "searchKey"]);
 const TAG_FIELDS = new Set(["cursor", "libraryId", "limit", "query"]);
@@ -52,6 +53,7 @@ const MAX_MUTATION_ENTRIES = 1024;
 const MAX_CITATION_ITEMS = 200;
 const MAX_CITATION_OUTPUT_BYTES = 384 * 1024;
 const MAX_EXPORT_OUTPUT_BYTES = 768 * 1024;
+const MAX_IMPORT_INPUT_BYTES = 768 * 1024;
 
 function exactObject(value, fields, label) {
 	if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -512,6 +514,7 @@ function validateZotero(Zotero) {
 		[Zotero?.Items, "getByLibraryAndKey"],
 		[Zotero?.ItemTypes, "getName"],
 		[Zotero?.Libraries, "getAll"],
+		[Zotero?.Libraries, "get"],
 		[Zotero?.Searches, "getAll"],
 		[Zotero?.Searches, "getByLibraryAndKey"],
 		[Zotero?.Tags, "getAll"],
@@ -632,6 +635,32 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(S
 				itemCount: items.length,
 				translatorId,
 			};
+		},
+
+		async importItems(params) {
+			exactObject(params, IMPORT_ITEMS_FIELDS, "translation.import params");
+			positiveLibraryId(params.libraryId, "translation.import");
+			let content = boundedString(params.content, MAX_IMPORT_INPUT_BYTES, "translation.import content");
+			if (!content.trim()) throw new Error("translation.import content must not be empty");
+			let translatorId = boundedString(params.translatorId, 256, "translation.import translatorId");
+			let translator = Zotero.Translators.get(translatorId);
+			let importType = Zotero.Translator?.TRANSLATOR_TYPES?.import || 1;
+			if (!translator || !(translator.translatorType & importType)) unavailable("translation.import requires an installed import translator");
+			let library = Zotero.Libraries.get(params.libraryId);
+			if (!library || library.libraryType === "feed" || !library.editable) unavailable("translation.import target library is not editable");
+			let translation = new Zotero.Translate.Import();
+			translation.setString(content);
+			translation.setTranslator(translator);
+			let imported = await translation.translate({ libraryID: params.libraryId, saveAttachments: false });
+			if (!Array.isArray(imported) || imported.length > MAX_MUTATION_ENTRIES) throw new Error("Zotero import returned an invalid item set");
+			let items = imported.filter(item => item?.isRegularItem?.()).map(item => ({
+				itemKey: boundedString(item.key, 256, "imported item key"),
+				libraryId: item.libraryID,
+				title: boundedString(item.getDisplayTitle?.() || "", MAX_METADATA_FIELD_BYTES, "imported item title"),
+				version: Number.isSafeInteger(item.clientVersion) ? item.clientVersion : 0,
+			}));
+			if (items.some(item => item.libraryId !== params.libraryId)) throw new Error("Zotero import crossed the requested library boundary");
+			return { items, translatorId };
 		},
 
 		async feeds(params) {

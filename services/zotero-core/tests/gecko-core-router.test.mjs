@@ -45,6 +45,7 @@ function createRouter(overrides = {}) {
 		async citationStyles(params) { calls.push(["citationStyles", params]); return { styles: [] }; },
 		async renderCitation(params) { calls.push(["renderCitation", params]); return { html: "<div>Reference</div>", text: "Reference" }; },
 		async exportItems(params) { calls.push(["exportItems", params]); return { content: "@article{}", itemCount: params.identities.length, translatorId: params.translatorId }; },
+		async importItems(params) { calls.push(["importItems", params]); return { items: [{ itemKey: "IMPORT01", libraryId: params.libraryId, title: "Imported", version: 1 }], translatorId: params.translatorId }; },
     async feeds(params) { calls.push(["feeds", params]); return { feeds: [] }; },
     async itemChildren(params) { calls.push(["itemChildren", params]); return { attachments: [], notes: [] }; },
     async itemMetadata(params) { calls.push(["itemMetadata", params]); return { itemKey: params.itemKey, libraryId: params.libraryId }; },
@@ -235,6 +236,29 @@ test("routes translator catalog and citation rendering through separate read cap
 		styleId: "http://www.zotero.org/styles/apa",
 	}))).result, { html: "<div>Reference</div>", text: "Reference" });
 	assert.deepEqual(calls.map(value => value[0]), ["translators", "exportItems", "citationStyles", "renderCitation"]);
+});
+
+test("translation import is capability-gated, idempotent, revision-checked, and evented", async () => {
+	const { calls, router } = createRouter();
+	const session = await handshake(router, ["translation:write"]);
+	const params = {
+		content: "TY  - JOUR\nER  -",
+		expectedRevision: 0,
+		idempotencyKey: "translation-import-key-0001",
+		libraryId: 1,
+		translatorId: "ris",
+	};
+	const first = await router.handle(request(session, "translation.import", params));
+	const replay = await router.handle(request(session, "translation.import", params));
+	assert.deepEqual(first.result, {
+		items: [{ itemKey: "IMPORT01", libraryId: 1, title: "Imported", version: 1 }],
+		replayed: false,
+		revision: 1,
+		translatorId: "ris",
+	});
+	assert.equal(first.event.topic, "library.items.imported");
+	assert.equal(replay.result.replayed, true);
+	assert.equal(calls.filter(value => value[0] === "importItems").length, 1);
 });
 
 test("routes read-only PDF, item facts, Note, and annotation methods through library:read", async () => {
