@@ -71,6 +71,7 @@ test("brands Code-OSS as Chatero and selects only Open VSX", async () => {
   assert.deepEqual(product.builtInExtensionsEnabledWithAutoUpdates, []);
   assert.deepEqual(product.excludedSystemExtensionNames, ["copilot-chat"]);
   assert.equal(product.defaultChatAgent, null);
+  assert.deepEqual(product.extensionEnabledApiProposals["vscode.mermaid-markdown-features"], ["chatOutputRenderer", "chatParticipantPrivate"]);
   assert.deepEqual(product.trustedExtensionAuthAccess, {});
   assert.deepEqual(product.preservedBuildField, { enabled: true });
   assert.equal(result.outputPath, input.outputPath);

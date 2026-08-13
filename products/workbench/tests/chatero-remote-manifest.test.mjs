@@ -238,6 +238,7 @@ test("first-party materialization and product proposal allowlist include chatero
   assert.deepEqual(product.extensionEnabledApiProposals, {
     [actualExtensionId]: ["resolvers"],
     "chatero.chatero-zotero": ["chatContextProvider"],
+    "vscode.mermaid-markdown-features": ["chatOutputRenderer", "chatParticipantPrivate"],
   });
   const serialized = JSON.stringify(product);
   assert.doesNotMatch(serialized, /marketplace\.visualstudio\.com|ms-vscode-remote\.remote-ssh|ms-python\.vscode-pylance/i);
