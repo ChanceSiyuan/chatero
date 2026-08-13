@@ -274,7 +274,9 @@ function itemFactsSummary(Zotero, item) {
 		relations,
 		retracted: Boolean(Zotero.Retractions.isRetracted(item)),
 		synced: Boolean(item.synced),
-		version: Number.isSafeInteger(item.version) && item.version >= 0 ? item.version : 0,
+		// Match Zotero's Local API concurrency contract: "version" is the
+		// object clientVersion, which advances for every committed local edit.
+		version: Number.isSafeInteger(item.clientVersion) && item.clientVersion >= 0 ? item.clientVersion : 0,
 	};
 }
 
@@ -372,10 +374,10 @@ function relationObject(relations) {
 }
 
 function revisionConflict(item, expectedVersion, label) {
-	if (item.version === expectedVersion) return;
+	if (item.clientVersion === expectedVersion) return;
 	let error = new Error(`${label} version changed before update`);
 	error.code = "REVISION_CONFLICT";
-	error.actualRevision = Number.isSafeInteger(item.version) ? item.version : 0;
+	error.actualRevision = Number.isSafeInteger(item.clientVersion) ? item.clientVersion : 0;
 	error.expectedRevision = expectedVersion;
 	throw error;
 }
@@ -697,7 +699,7 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(S
 				annotationKey: annotation.key,
 				libraryId: annotation.libraryID,
 				synced: Boolean(annotation.synced),
-				version: Number.isSafeInteger(annotation.version) ? annotation.version : 0,
+				version: Number.isSafeInteger(annotation.clientVersion) ? annotation.clientVersion : 0,
 			})) };
 		},
 
@@ -792,10 +794,10 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(S
 			validateItemUpdate(params);
 			let item = lookupItem(Zotero, params.libraryId, params.itemKey, "Zotero item");
 			if (!item.isRegularItem?.()) throw new Error("library.item-update target must be a regular item");
-			if (item.version !== params.expectedVersion) {
+			if (item.clientVersion !== params.expectedVersion) {
 				let error = new Error("Zotero item version changed before update");
 				error.code = "REVISION_CONFLICT";
-				error.actualRevision = Number.isSafeInteger(item.version) ? item.version : 0;
+				error.actualRevision = Number.isSafeInteger(item.clientVersion) ? item.clientVersion : 0;
 				error.expectedRevision = params.expectedVersion;
 				throw error;
 			}
@@ -815,7 +817,7 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(S
 				itemKey: item.key,
 				libraryId: item.libraryID,
 				synced: Boolean(item.synced),
-				version: Number.isSafeInteger(item.version) ? item.version : 0,
+				version: Number.isSafeInteger(item.clientVersion) ? item.clientVersion : 0,
 			};
 		},
 
@@ -857,7 +859,7 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(S
 				libraryId: note.libraryID,
 				noteKey: note.key,
 				synced: Boolean(note.synced),
-				version: Number.isSafeInteger(note.version) ? note.version : 0,
+				version: Number.isSafeInteger(note.clientVersion) ? note.clientVersion : 0,
 			};
 		},
 

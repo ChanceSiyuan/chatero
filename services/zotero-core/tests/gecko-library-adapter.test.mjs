@@ -38,6 +38,7 @@ function item({
   relations = {},
   synced = true,
   version = 1,
+	clientVersion = version,
   attachmentSyncState = 2,
 }) {
   let currentTitle = title;
@@ -47,6 +48,7 @@ function item({
   let currentNoteHTML = noteHTML;
   let currentAnnotation = { ...annotation };
   let currentVersion = version;
+	let currentClientVersion = clientVersion;
   let currentSynced = synced;
   const value = {
     attachmentSyncState,
@@ -93,7 +95,7 @@ function item({
     isNote: () => type === "note",
     isRegularItem: () => !["attachment", "note", "annotation"].includes(type),
     async reload() {},
-    async save() { currentVersion += 1; currentSynced = false; return true; },
+		async save() { currentClientVersion += 1; currentSynced = false; return true; },
     async saveTx() { return value.save(); },
     setCreators: values => { currentCreators = structuredClone(values); },
     setField: (field, value) => {
@@ -104,6 +106,7 @@ function item({
     setNote: value => { currentNoteHTML = value; },
     setTags: value => { currentTags = structuredClone(value); },
     get synced() { return currentSynced; },
+		get clientVersion() { return currentClientVersion; },
     get version() { return currentVersion; },
   };
   return Object.freeze(value);
@@ -379,7 +382,7 @@ test("exposes bounded item facts and attachment availability without leaking pat
   assert.equal(JSON.stringify(state).includes("/Users/example"), false);
 });
 
-test("atomically updates fields, creators, tags, and relations at an expected Zotero version", async () => {
+test("atomically updates fields, creators, tags, and relations at an expected Zotero client version", async () => {
   const adapter = createZoteroLibraryAdapter(fixture());
   const updated = await adapter.updateItem({
     creators: [{ creatorType: "author", firstName: "Grace", lastName: "Hopper" }],
@@ -408,7 +411,7 @@ test("atomically updates fields, creators, tags, and relations at an expected Zo
   }), error => error.code === "REVISION_CONFLICT" && error.actualRevision === 18);
 });
 
-test("updates Note HTML only at the exact Zotero object version", async () => {
+test("updates Note HTML only at the exact Zotero object client version", async () => {
   const adapter = createZoteroLibraryAdapter(fixture());
   assert.deepEqual(await adapter.updateNote({
     expectedVersion: 1,
