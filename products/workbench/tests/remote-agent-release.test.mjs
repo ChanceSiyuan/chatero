@@ -826,7 +826,11 @@ test("Linux agent builder requires the pinned Node runtime", async () => {
 });
 
 test("Linux agent builder runs gulp with the already verified Node executable", async () => {
-  const { makeCodeOssBuildInvocation, makeCodeOssCompileInvocation } = await import(BUILD_PATH);
+  const {
+    makeCodeOssBuildInvocation,
+    makeCodeOssCompileInvocation,
+    makeCodeOssExtensionsInvocation,
+  } = await import(BUILD_PATH);
 
   assert.deepEqual(makeCodeOssCompileInvocation({
     checkout: "/srv/code-oss",
@@ -875,7 +879,13 @@ test("Linux agent builder runs gulp with the already verified Node executable", 
     },
   });
 
+  assert.equal(makeCodeOssExtensionsInvocation({
+    checkout: "/srv/code-oss",
+    nodePath: "/opt/chatero/node-v24.18.0/bin/node",
+  }).args.at(-1), "compile-extensions-build");
+
   const source = await readFile(BUILD_PATH, "utf8");
+  assert.match(source, /assertRequiredExtensionPayload/);
   assert.doesNotMatch(source, /run\(["']npm["'],\s*\[["']run["'],\s*["']gulp["']/);
   const sdkDestinationPreflight = source.indexOf("assertSafeFileDestination(plan.tarball");
   assert.notEqual(sdkDestinationPreflight, -1);

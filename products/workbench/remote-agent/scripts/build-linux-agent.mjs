@@ -51,6 +51,11 @@ const INTEGRITY_VERIFIER_PATH = new URL("../runtime/chatero-install-integrity.mj
 const NOTICE_SOURCE_DIRECTORY = fileURLToPath(new URL("../licenses/", import.meta.url));
 const REPOSITORY_ROOT = resolve(fileURLToPath(new URL("../../../../", import.meta.url)));
 const FIRST_PARTY_MANIFEST = fileURLToPath(new URL("../../first-party-extensions.json", import.meta.url));
+const REQUIRED_EXTENSION_IDS = Object.freeze([
+  "chatero-documentation", "chatero-remote", "chatero-zotero", "git", "ipynb",
+  "notebook-renderers", "python", "latex", "javascript", "typescript-basics",
+  "markdown-basics", "json", "yaml", "shellscript", "cpp", "java", "go", "rust",
+]);
 
 export const REMOTE_AGENT_NOTICE_FILES = Object.freeze([
   "LICENSE.txt",
@@ -171,6 +176,19 @@ export function makeCodeOssCompileInvocation({
   return makeCodeOssBuildInvocation({
     checkout,
     target: "compile-build-without-mangling",
+    nodePath,
+    environment,
+  });
+}
+
+export function makeCodeOssExtensionsInvocation({
+  checkout,
+  nodePath = process.execPath,
+  environment = process.env,
+}) {
+  return makeCodeOssBuildInvocation({
+    checkout,
+    target: "compile-extensions-build",
     nodePath,
     environment,
   });
@@ -377,6 +395,13 @@ async function installDocumentationPayload(root) {
   }
 }
 
+async function assertRequiredExtensionPayload(root) {
+  for (const id of REQUIRED_EXTENSION_IDS) {
+    const manifest = join(root, "extensions", id, "package.json");
+    await assertRegularFile(manifest, `required Remote Agent extension ${id}`);
+  }
+}
+
 async function packDeterministically(source, root, destination) {
   await run("tar", [
     "--sort=name",
@@ -422,6 +447,11 @@ async function main() {
     cwd: compileInvocation.cwd,
     env: compileInvocation.env,
   });
+  const extensionsInvocation = makeCodeOssExtensionsInvocation({ checkout });
+  await run(extensionsInvocation.command, extensionsInvocation.args, {
+    cwd: extensionsInvocation.cwd,
+    env: extensionsInvocation.env,
+  });
   const buildInvocation = makeCodeOssBuildInvocation({
     checkout,
     target: plan.target,
@@ -460,6 +490,7 @@ async function main() {
     await copyFile(INTEGRITY_VERIFIER_PATH, integrityVerifierDestination);
     await chmod(integrityVerifierDestination, 0o755);
     await assertDocumentationPayload(root);
+    await assertRequiredExtensionPayload(root);
 
     await mkdir(dirname(plan.output), { recursive: true });
     await packDeterministically(workDirectory, plan.rootName, plan.output);
