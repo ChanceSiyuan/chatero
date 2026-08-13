@@ -67,6 +67,7 @@ const fixtureNotes = [{
   noteKey: "NOTE0001",
   parentItemKey: "FISHER01",
   title: "Reading note",
+	version: 1,
 }];
 const fixtureAnnotations = [{
   annotations: [{
@@ -79,6 +80,7 @@ const fixtureAnnotations = [{
     sortIndex: "00002|000001|00000",
     text: "Critical statement",
     type: "highlight",
+		version: 1,
   }],
   attachmentKey: "PDF00001",
   libraryId: 1,

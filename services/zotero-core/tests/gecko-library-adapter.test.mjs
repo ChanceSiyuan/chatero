@@ -497,6 +497,7 @@ test("updates a batch of annotations after validating every object version", asy
     sortIndex: "00006|000001|00000",
     text: "Updated evidence",
     type: "highlight",
+		version: 2,
   });
 });
 
@@ -714,6 +715,7 @@ test("returns PDF and Note children with Zotero composite identity", async () =>
       noteKey: "NOTE0002",
       parentItemKey: "ITEM0001",
       title: "RG reading note",
+		version: 1,
     }],
   });
   assert.equal(Object.hasOwn((await adapter.itemChildren({ libraryId: 2, itemKey: "ITEM0001" })).attachments[0], "path"), false);
@@ -798,6 +800,7 @@ test("returns a Note and PDF annotations without crossing libraries", async () =
     noteKey: "NOTE0002",
     parentItemKey: "ITEM0001",
     title: "RG reading note",
+		version: 1,
   });
   assert.deepEqual(await adapter.annotations({ libraryId: 1, attachmentKey: "PDF00001" }), {
     annotations: [{
@@ -810,6 +813,7 @@ test("returns a Note and PDF annotations without crossing libraries", async () =
       sortIndex: "00006|000001|00000",
       text: "Renormalization closes the flow.",
       type: "highlight",
+		version: 1,
     }],
   });
   assert.deepEqual(await adapter.annotations({ libraryId: 2, attachmentKey: "PDF00001" }), { annotations: [] });

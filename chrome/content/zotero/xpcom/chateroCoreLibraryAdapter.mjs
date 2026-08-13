@@ -484,6 +484,7 @@ function noteSummary(Zotero, note, expectedParent) {
 		noteKey: note.key,
 		parentItemKey: expectedParent.key,
 		title: note.getDisplayTitle?.() || "Untitled note",
+		version: Number.isSafeInteger(note.clientVersion) ? note.clientVersion : 0,
 	};
 }
 
@@ -502,6 +503,7 @@ function annotationSummary(annotation, attachment) {
 		sortIndex: boundedString(annotation.annotationSortIndex || "", MAX_ANNOTATION_FIELD_BYTES, "annotation sortIndex"),
 		text: boundedString(annotation.annotationText || "", MAX_ANNOTATION_FIELD_BYTES, "annotation text"),
 		type: boundedString(annotation.annotationType || "", MAX_ANNOTATION_FIELD_BYTES, "annotation type"),
+		version: Number.isSafeInteger(annotation.clientVersion) ? annotation.clientVersion : 0,
 	};
 }
 
@@ -1009,6 +1011,7 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(S
 				noteKey: note.key,
 				parentItemKey: parentKey(Zotero, note, "Zotero note"),
 				title: note.getDisplayTitle?.() || "Untitled note",
+				version: Number.isSafeInteger(note.clientVersion) ? note.clientVersion : 0,
 			};
 			return {
 				...summary,

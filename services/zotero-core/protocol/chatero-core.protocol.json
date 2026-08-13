@@ -695,7 +695,8 @@
         "positionJson": "string",
         "sortIndex": "string",
         "text": "string",
-        "type": "string"
+        "type": "string",
+        "version": "number"
       }
     },
     "LibraryAnnotationsResult": {
@@ -755,7 +756,8 @@
         "libraryId": "number",
         "noteKey": "string",
         "parentItemKey": "string",
-        "title": "string"
+        "title": "string",
+        "version": "number"
       }
     },
     "LibraryNoteUpdateParams": {

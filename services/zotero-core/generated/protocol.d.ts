@@ -127,6 +127,7 @@ export interface LibraryAnnotationSummary {
   readonly sortIndex: string;
   readonly text: string;
   readonly type: string;
+  readonly version: number;
 }
 
 export interface LibraryAnnotationsUpdateParams {
@@ -340,6 +341,7 @@ export interface LibraryNoteResult {
   readonly noteKey: string;
   readonly parentItemKey: string;
   readonly title: string;
+  readonly version: number;
 }
 
 export interface LibraryNoteSummary {
