@@ -60,6 +60,10 @@
     {
       "file": "0015-preserve-codex-workspace-roots.patch",
       "sha256": "2ff71a364a09980eac42273c1f7bbc6bdeb0bbb7a0b94225daa58ba006d28253"
+    },
+    {
+      "file": "0016-disable-claude-provider-registration.patch",
+      "sha256": "4ba65dcbd350236cacdbc1680b1be214572875c428544cd068bef33f66876ba9"
     }
   ]
 }

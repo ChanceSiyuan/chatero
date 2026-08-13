@@ -131,8 +131,9 @@ function auditStartup({ processResult, agentHostLogs }) {
   if (/CANNOT use .*API proposal|enables LESS API proposals|EXTENSION WILL BE BROKEN/iu.test(processOutput)) {
     throw new Error("extension startup audit found an API-proposal or activation failure");
   }
-  if (/Registering agent provider: (?:claude|copilot)|usageSource=copilot|https:\/\/api\.github\.com/iu.test(agentHostLogs)) {
-    throw new Error("agent host startup audit found a disabled provider or GitHub network authority");
+  const disabledProvider = agentHostLogs.match(/Registering agent provider: (?:claude|copilot)|usageSource=copilot|https:\/\/api\.github\.com/iu)?.[0];
+  if (disabledProvider) {
+    throw new Error(`agent host startup audit found a disabled provider or GitHub network authority: ${disabledProvider}`);
   }
   const codexSpawns = agentHostLogs.match(/\[Codex\] spawning usageSource=openai/gu) ?? [];
   if (codexSpawns.length > 1) {

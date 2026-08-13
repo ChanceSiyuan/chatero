@@ -24,7 +24,7 @@ const codexOnlyPatchPath = join(
   "0014-default-agent-host-to-codex-only.patch",
 );
 
-test("the Code-OSS patch set disables the unshipped Copilot provider without disabling Codex or Claude", async () => {
+test("the initial quarantine patch removes only Copilot while retaining later-provider patch points", async () => {
   const patch = await readFile(quarantinePatchPath, "utf8");
 
   assert.match(patch, /-import \{ CopilotAgent \}/);
