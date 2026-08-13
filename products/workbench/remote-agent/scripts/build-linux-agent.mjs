@@ -49,6 +49,8 @@ const BRIDGE_PATH = new URL("../runtime/chatero-process-bridge.mjs", import.meta
 const EVIDENCE_HELPER_PATH = new URL("../runtime/chatero-evidence-cache.mjs", import.meta.url);
 const INTEGRITY_VERIFIER_PATH = new URL("../runtime/chatero-install-integrity.mjs", import.meta.url);
 const NOTICE_SOURCE_DIRECTORY = fileURLToPath(new URL("../licenses/", import.meta.url));
+const REPOSITORY_ROOT = fileURLToPath(new URL("../../../../", import.meta.url));
+const FIRST_PARTY_MANIFEST = fileURLToPath(new URL("../../first-party-extensions.json", import.meta.url));
 
 export const REMOTE_AGENT_NOTICE_FILES = Object.freeze([
   "LICENSE.txt",
@@ -350,6 +352,31 @@ async function installNotices(checkout, root) {
   }
 }
 
+async function installDocumentationPayload(root) {
+  const manifest = JSON.parse(await readFile(FIRST_PARTY_MANIFEST, "utf8"));
+  const extension = manifest?.extensions?.find(value => value?.id === "chatero.documentation");
+  if (!extension || !Array.isArray(extension.files) || extension.files.length === 0) {
+    throw new Error("first-party Documentation payload declaration is missing");
+  }
+  for (const record of extension.files) {
+    if (!record || typeof record.source !== "string" || typeof record.destination !== "string"
+        || !record.destination.startsWith("extensions/chatero-documentation/")
+        || record.source.includes("\\") || record.destination.includes("\\")
+        || [record.source, record.destination].some(value => value.startsWith("/") || value.split("/").some(part => !part || part === "." || part === ".."))) {
+      throw new Error("first-party Documentation payload declaration is unsafe");
+    }
+    const source = resolve(REPOSITORY_ROOT, record.source);
+    if (!source.startsWith(`${REPOSITORY_ROOT}/`)) throw new Error("Documentation payload source escapes the repository");
+    await assertRegularFile(source, `Documentation payload source ${record.source}`);
+    const destination = resolve(root, record.destination);
+    if (!destination.startsWith(`${resolve(root)}/`)) throw new Error("Documentation payload destination escapes the agent root");
+    await mkdir(dirname(destination), { recursive: true });
+    await assertSafeFileDestination(destination, `Documentation payload destination ${record.destination}`);
+    await copyFile(source, destination);
+    await assertRegularFile(destination, `Documentation payload destination ${record.destination}`);
+  }
+}
+
 async function packDeterministically(source, root, destination) {
   await run("tar", [
     "--sort=name",
@@ -420,6 +447,7 @@ async function main() {
     });
     await installCodexSdk(installedSdkPlan, options["--arch"]);
     await installNotices(checkout, root);
+    await installDocumentationPayload(root);
     const bin = join(root, "bin");
     await mkdir(bin, { recursive: true });
     const bridgeDestination = join(bin, "chatero-process-bridge.mjs");

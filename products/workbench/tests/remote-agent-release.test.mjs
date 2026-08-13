@@ -977,3 +977,13 @@ test("Linux agent builder requires Code-OSS, Codex, and bundled ripgrep notices"
     assert.equal(createHash("sha256").update(bytes).digest("hex"), digest);
   }
 });
+
+test("Linux agent builder injects the exact first-party Documentation payload before auditing it", async () => {
+  const source = await readFile(BUILD_PATH, "utf8");
+  const copyIndex = source.indexOf("installDocumentationPayload(root)");
+  const auditIndex = source.indexOf("assertDocumentationPayload(root)");
+  assert.ok(copyIndex >= 0, "builder does not install Documentation payload");
+  assert.ok(auditIndex > copyIndex, "builder audits Documentation before installing it");
+  assert.match(source, /FIRST_PARTY_MANIFEST/u);
+  assert.match(source, /copyFile\(source, destination/u);
+});
