@@ -240,6 +240,7 @@ test("fixture Core implements every new mutation, citation, translation, and syn
 		fixtureDuplicates: [fixtureItems[0]],
 		fixtureExports: [{ params: exportParams, result: { content: "@article{}", itemCount: 1, translatorId: "bibtex" } }],
 		fixtureFulltextMatches: [{ attachmentKey: "PDF00001", libraryId: 1, parentItemKey: "FISHER01", query: "critical", title: "Paper PDF" }],
+		fixtureItemChildren,
 		fixtureImportResults: [{ params: importOperation, result: { items: [{ itemKey: "IMPORT01", libraryId: 1, title: "Imported", version: 1 }], translatorId: "ris" } }],
 		fixtureLookupResults: [{ params: lookupParams, result: {
 			candidates: [{ creators: ["Ada Lovelace"], date: "1843", doi: "10.1234/example", itemType: "journalArticle", title: "Notes" }],
@@ -263,6 +264,10 @@ test("fixture Core implements every new mutation, citation, translation, and syn
 	assert.equal((await core.client.request("attachment.upload-commit", {
 		expectedRevision: 0, idempotencyKey: "fixture-attachment-upload-0001", libraryId: 1, parentItemKey: "FISHER01", uploadId: upload.uploadId,
 	})).parentItemKey, "FISHER01");
+	assert.equal((await core.client.request("library.attachment-mutate", {
+		action: "trash", attachmentKey: "PDF00001", expectedRevision: 0, expectedVersion: 1,
+		idempotencyKey: "fixture-attachment-trash-0001", libraryId: 1,
+	})).deleted, true);
 	assert.equal((await core.client.request("library.collection-mutate", {
 		action: "create", expectedRevision: 0, idempotencyKey: "fixture-collection-create-0001", libraryId: 1, name: "Reading",
 	})).name, "Reading");
@@ -282,7 +287,7 @@ test("fixture Core implements every new mutation, citation, translation, and syn
 		expectedRevision: 0, idempotencyKey: "fixture-fulltext-index-0001",
 	})).complete, true);
 	assert.equal((await core.client.request("library.annotations-update", {
-		attachmentKey: "PDF00001", expectedRevision: 0, idempotencyKey: "fixture-annotation-update-0001", libraryId: 1,
+		attachmentKey: "PDF00001", expectedRevision: 1, idempotencyKey: "fixture-annotation-update-0001", libraryId: 1,
 		updates: [{ annotationKey: "ANN00001", comment: "Changed", expectedVersion: 1 }],
 	})).annotations[0].version, 2);
 	assert.deepEqual(await core.client.request("sync.storage-status", { libraryId: 1 }), { conflictCount: 1, downloadAsNeeded: true, enabled: true, libraryId: 1, mode: "zfs" });

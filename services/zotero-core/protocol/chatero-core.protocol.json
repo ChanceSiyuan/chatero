@@ -224,6 +224,12 @@
       "resultType": "LibraryAttachmentState"
     },
     {
+      "name": "library.attachment-mutate",
+      "capability": "library:write",
+      "paramsType": "LibraryAttachmentMutationParams",
+      "resultType": "LibraryAttachmentMutationResult"
+    },
+    {
       "name": "library.note",
       "capability": "library:read",
       "paramsType": "LibraryNoteParams",
@@ -879,6 +885,31 @@
         "libraryId": "number",
         "storageSyncState": "string",
         "totalPages?": "number"
+      }
+    },
+    "LibraryAttachmentMutationParams": {
+      "kind": "object",
+      "fields": {
+        "action": "string",
+        "attachmentKey": "string",
+        "expectedRevision": "number",
+        "expectedVersion": "number",
+        "idempotencyKey": "string",
+        "libraryId": "number"
+      }
+    },
+    "LibraryAttachmentMutationResult": {
+      "kind": "object",
+      "fields": {
+        "action": "string",
+        "attachmentKey": "string",
+        "deleted": "boolean",
+        "libraryId": "number",
+        "parentItemKey?": "string",
+        "replayed": "boolean",
+        "revision": "number",
+        "synced": "boolean",
+        "version": "number"
       }
     },
     "LibraryNoteSummary": {

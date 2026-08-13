@@ -565,6 +565,26 @@ async function main() {
       if (!value) throw new Error(`fixture attachment state ${message.params.libraryId}/${message.params.attachmentKey} was not found`);
       return { result: value };
     }
+    if (message.method === "library.attachment-mutate") {
+      const { expectedRevision, idempotencyKey, ...operation } = message.params || {};
+      const completed = await transactionRegistry.execute({
+        expectedRevision, idempotencyKey, operation, scope: `library:${operation.libraryId}/attachment:${operation.attachmentKey}`,
+      }, async value => {
+        const attachment = fixtureItemChildren.flatMap(entry => entry.attachments || []).find(entry => entry.libraryId === value.libraryId && entry.attachmentKey === value.attachmentKey);
+        if (!attachment) throw new Error("fixture attachment was not found");
+        attachment.version ||= 1;
+        if (attachment.version !== value.expectedVersion) throw new Error("fixture attachment changed");
+        attachment.deleted = value.action === "trash";
+        attachment.synced = false;
+        attachment.version += 1;
+        return { action: value.action, attachmentKey: attachment.attachmentKey, deleted: attachment.deleted, libraryId: attachment.libraryId, ...(attachment.parentItemKey && { parentItemKey: attachment.parentItemKey }), synced: attachment.synced, version: attachment.version };
+      });
+      return {
+        ...(!completed.replayed && { event: eventJournal.publish("library.attachment.changed", {
+          action: completed.result.action, identities: [{ itemKey: completed.result.attachmentKey, libraryId: completed.result.libraryId }], revision: completed.revision,
+        }) }), result: { ...completed.result, replayed: completed.replayed, revision: completed.revision },
+      };
+    }
     if (message.method === "library.note") {
       validateIdentityParams(message.params, "noteKey", "library.note");
       const value = fixtureNotes.find(entry => entry.libraryId === message.params.libraryId && entry.noteKey === message.params.noteKey);

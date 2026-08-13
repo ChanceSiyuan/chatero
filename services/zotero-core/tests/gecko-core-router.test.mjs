@@ -43,6 +43,7 @@ function createRouter(overrides = {}) {
     async attachmentState(params) { calls.push(["attachmentState", params]); return { attachmentKey: params.attachmentKey, fileAvailable: true, fulltextIndexState: "indexed", libraryId: params.libraryId, storageSyncState: "in-sync" }; },
     async attachmentSource(params) { calls.push(["attachmentSource", params]); return { size: 4, async read(offset, length) { return Uint8Array.from([1, 2, 3, 4]).slice(offset, offset + length); }, async close() {} }; },
     async importAttachment(params, upload) { calls.push(["importAttachment", params, upload.byteCount]); return { attachmentKey: "UPLOAD01", libraryId: params.libraryId, parentItemKey: params.parentItemKey, synced: false, version: 1 }; },
+    async mutateAttachment(params) { calls.push(["mutateAttachment", params]); return { action: params.action, attachmentKey: params.attachmentKey, deleted: true, libraryId: params.libraryId, parentItemKey: "ITEM0001", synced: false, version: params.expectedVersion + 1 }; },
     async collections(params) { calls.push(["collections", params]); return { collections: [] }; },
     async mutateCollection(params) { calls.push(["mutateCollection", params]); return { action: params.action, collectionKey: "NEWCOL01", deleted: false, libraryId: params.libraryId, name: params.name, synced: false, version: 1 }; },
 		async citationStyles(params) { calls.push(["citationStyles", params]); return { styles: [] }; },
@@ -412,6 +413,17 @@ test("uploads attachment chunks through a session-bound idempotent commit", asyn
   assert.equal(replay.result.replayed, true);
   assert.equal(calls.filter(value => value[0] === "importAttachment").length, 1);
   await router.dispose();
+});
+
+test("attachment lifecycle is one versioned idempotent evented transaction", async () => {
+  const { calls, router } = createRouter();
+  const session = await handshake(router, ["library:write"]);
+  const params = { action: "trash", attachmentKey: "PDF00001", expectedRevision: 0, expectedVersion: 1, idempotencyKey: "attachment-trash-key-0001", libraryId: 1 };
+  const first = await router.handle(request(session, "library.attachment-mutate", params));
+  const replay = await router.handle(request(session, "library.attachment-mutate", params));
+  assert.equal(first.event.topic, "library.attachment.changed");
+  assert.equal(replay.result.replayed, true);
+  assert.equal(calls.filter(value => value[0] === "mutateAttachment").length, 1);
 });
 
 test("maps deleted or trashed exact-item failures to an unavailable response", async () => {

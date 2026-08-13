@@ -571,6 +571,17 @@ test("imports an authorized upload stream through Zotero without exposing paths"
   }), /cannot use parentItemKey/);
 });
 
+test("trashes and restores attachments at exact object versions", async () => {
+  const adapter = createZoteroLibraryAdapter(fixture());
+  assert.deepEqual(await adapter.mutateAttachment({ action: "trash", attachmentKey: "PDF00001", expectedVersion: 1, libraryId: 1 }), {
+    action: "trash", attachmentKey: "PDF00001", deleted: true, libraryId: 1, parentItemKey: "ITEM0001", synced: false, version: 2,
+  });
+  assert.deepEqual(await adapter.mutateAttachment({ action: "restore", attachmentKey: "PDF00001", expectedVersion: 2, libraryId: 1 }), {
+    action: "restore", attachmentKey: "PDF00001", deleted: false, libraryId: 1, parentItemKey: "ITEM0001", synced: false, version: 3,
+  });
+  await assert.rejects(adapter.mutateAttachment({ action: "trash", attachmentKey: "PDF00001", expectedVersion: 2, libraryId: 1 }), error => error.code === "REVISION_CONFLICT");
+});
+
 test("atomically updates fields, creators, tags, and relations at an expected Zotero client version", async () => {
   const adapter = createZoteroLibraryAdapter(fixture());
   const updated = await adapter.updateItem({

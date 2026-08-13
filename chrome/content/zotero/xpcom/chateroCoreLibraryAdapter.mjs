@@ -32,6 +32,7 @@ const UPDATE_ANNOTATIONS_FIELDS = new Set(["attachmentKey", "libraryId", "update
 const ATTACHMENT_FIELDS = new Set(["attachmentKey", "libraryId"]);
 const ATTACHMENT_STATE_FIELDS = new Set(["attachmentKey", "libraryId"]);
 const ATTACHMENT_UPLOAD_COMMIT_FIELDS = new Set(["collectionKeys", "libraryId", "parentItemKey", "title"]);
+const ATTACHMENT_MUTATION_FIELDS = new Set(["action", "attachmentKey", "expectedVersion", "libraryId"]);
 const NOTE_FIELDS = new Set(["libraryId", "noteKey"]);
 const UPDATE_NOTE_FIELDS = new Set(["expectedVersion", "html", "libraryId", "noteKey"]);
 const NOTE_MUTATION_FIELDS = new Set(["action", "expectedVersion", "html", "libraryId", "noteKey", "parentItemKey"]);
@@ -1234,6 +1235,32 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(S
 				...(parent && { parentItemKey: parent.key }),
 				synced: Boolean(attachment.synced),
 				version: Number.isSafeInteger(attachment.clientVersion) ? attachment.clientVersion : 0,
+			};
+		},
+
+		async mutateAttachment(params) {
+			exactObject(params, ATTACHMENT_MUTATION_FIELDS, "library.attachment-mutate params");
+			positiveLibraryId(params.libraryId, "library.attachment-mutate");
+			zoteroKey(params.attachmentKey, "library.attachment-mutate attachmentKey");
+			if (params.action !== "trash" && params.action !== "restore") throw new Error("library.attachment-mutate action is invalid");
+			if (!Number.isSafeInteger(params.expectedVersion) || params.expectedVersion < 0) throw new Error("library.attachment-mutate expectedVersion is invalid");
+			let library = Zotero.Libraries.get(params.libraryId);
+			if (!library || library.libraryType === "feed" || !library.filesEditable) unavailable("attachment target library files are not editable");
+			let attachment = Zotero.Items.getByLibraryAndKey(params.libraryId, params.attachmentKey);
+			if (!attachment || attachment.libraryID !== params.libraryId || !attachment.isAttachment?.()) unavailable("Zotero attachment is unavailable");
+			if (params.action !== "restore" && itemIsUnavailable(attachment)) unavailable("Zotero attachment is unavailable");
+			if (params.action === "restore" && !attachment.deleted && !attachment.isInTrash?.()) throw new Error("attachment restore target is not in trash");
+			revisionConflict(attachment, params.expectedVersion, "Zotero attachment");
+			try { attachment.deleted = params.action === "trash"; await attachment.saveTx(); }
+			catch (error) {
+				try { await attachment.reload?.(null, true); }
+				catch (_) {}
+				throw error;
+			}
+			return {
+				action: params.action, attachmentKey: attachment.key, deleted: Boolean(attachment.deleted), libraryId: attachment.libraryID,
+				...(attachment.parentItemID && { parentItemKey: parentKey(Zotero, attachment, "Zotero attachment") }),
+				synced: Boolean(attachment.synced), version: Number.isSafeInteger(attachment.clientVersion) ? attachment.clientVersion : 0,
 			};
 		},
 
