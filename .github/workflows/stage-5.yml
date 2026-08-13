@@ -38,7 +38,7 @@ jobs:
       - run: npm ci --ignore-scripts --prefix vendor/code-oss
       - run: npm ci --ignore-scripts --prefix vendor/code-oss/build/npm/gyp
       - run: node products/workbench/scripts/prepare-code-oss-lifecycle.mjs vendor/code-oss --prepare
-      - run: npm rebuild --prefix vendor/code-oss
+      - run: npm_command=ci npm rebuild --prefix vendor/code-oss
       - if: always()
         run: node products/workbench/scripts/prepare-code-oss-lifecycle.mjs vendor/code-oss --cleanup
       - run: >-
@@ -161,7 +161,7 @@ jobs:
       - run: npm ci --ignore-scripts --prefix vendor/code-oss
       - run: npm ci --ignore-scripts --prefix vendor/code-oss/build/npm/gyp
       - run: node products/workbench/scripts/prepare-code-oss-lifecycle.mjs vendor/code-oss --prepare
-      - run: npm rebuild --prefix vendor/code-oss
+      - run: npm_command=ci npm rebuild --prefix vendor/code-oss
       - if: always()
         run: node products/workbench/scripts/prepare-code-oss-lifecycle.mjs vendor/code-oss --cleanup
       - run: npm run verify:stage-5
