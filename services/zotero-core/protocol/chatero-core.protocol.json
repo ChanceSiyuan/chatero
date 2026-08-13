@@ -211,6 +211,12 @@
       "resultType": "LibraryNoteUpdateResult"
     },
     {
+      "name": "library.note-mutate",
+      "capability": "library:write",
+      "paramsType": "LibraryNoteMutationParams",
+      "resultType": "LibraryNoteMutationResult"
+    },
+    {
       "name": "library.search",
       "capability": "library:search",
       "paramsType": "LibrarySearchParams",
@@ -1027,6 +1033,33 @@
       "fields": {
         "libraryId": "number",
         "noteKey": "string",
+        "replayed": "boolean",
+        "revision": "number",
+        "synced": "boolean",
+        "version": "number"
+      }
+    },
+    "LibraryNoteMutationParams": {
+      "kind": "object",
+      "fields": {
+        "action": "string",
+        "expectedRevision": "number",
+        "expectedVersion?": "number",
+        "html?": "string",
+        "idempotencyKey": "string",
+        "libraryId": "number",
+        "noteKey?": "string",
+        "parentItemKey?": "string"
+      }
+    },
+    "LibraryNoteMutationResult": {
+      "kind": "object",
+      "fields": {
+        "action": "string",
+        "deleted": "boolean",
+        "libraryId": "number",
+        "noteKey": "string",
+        "parentItemKey?": "string",
         "replayed": "boolean",
         "revision": "number",
         "synced": "boolean",

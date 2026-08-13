@@ -255,6 +255,9 @@ test("fixture Core implements every new mutation, citation, translation, and syn
 	assert.equal((await core.client.request("library.note-update", {
 		expectedRevision: 0, expectedVersion: 1, html: "<p>Changed</p>", idempotencyKey: "fixture-note-update-0001", libraryId: 1, noteKey: "NOTE0001",
 	})).version, 2);
+	assert.equal((await core.client.request("library.note-mutate", {
+		action: "create", expectedRevision: 0, html: "<p>New</p>", idempotencyKey: "fixture-note-create-0001", libraryId: 1, parentItemKey: "FISHER01",
+	})).deleted, false);
 	assert.equal((await core.client.request("library.collection-mutate", {
 		action: "create", expectedRevision: 0, idempotencyKey: "fixture-collection-create-0001", libraryId: 1, name: "Reading",
 	})).name, "Reading");

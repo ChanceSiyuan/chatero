@@ -44,6 +44,7 @@ function item({
   let currentTitle = title;
   let currentLibraryID = libraryID;
   let currentDeleted = deleted;
+  let currentParentItemID = parentItemID;
   let currentCollectionIDs = collectionIDs.slice();
   let currentCreators = creators.map(creator);
   let currentTags = tags.map(value => ({ ...value }));
@@ -62,7 +63,8 @@ function item({
     set deleted(value) { currentDeleted = Boolean(value); },
     get libraryID() { return currentLibraryID; },
     set libraryID(value) { currentLibraryID = value; },
-    parentItemID,
+    get parentItemID() { return currentParentItemID; },
+    set parentItemID(value) { currentParentItemID = value; },
     attachmentContentType: contentType,
     attachmentFilename: filename,
     get annotationColor() { return currentAnnotation.color || ""; },
@@ -620,6 +622,16 @@ test("updates Note HTML only at the exact Zotero object client version", async (
     libraryId: 1,
     noteKey: "NOTE0002",
   }), error => error.code === "REVISION_CONFLICT" && error.actualRevision === 2);
+});
+
+test("creates, trashes, and restores child Notes at exact object versions", async () => {
+  const environment = fixture();
+  const adapter = createZoteroLibraryAdapter(environment);
+  assert.deepEqual(await adapter.mutateNote({ action: "create", html: "<p>New note</p>", libraryId: 1, parentItemKey: "ITEM0001" }), {
+    action: "create", deleted: false, libraryId: 1, noteKey: "NEWITEM8", parentItemKey: "ITEM0001", synced: false, version: 1,
+  });
+  assert.equal((await adapter.mutateNote({ action: "trash", expectedVersion: 1, libraryId: 1, noteKey: "NOTE0002" })).deleted, true);
+  assert.equal((await adapter.mutateNote({ action: "restore", expectedVersion: 2, libraryId: 1, noteKey: "NOTE0002" })).deleted, false);
 });
 
 test("updates a batch of annotations after validating every object version", async () => {

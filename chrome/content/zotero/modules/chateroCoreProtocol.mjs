@@ -44,6 +44,7 @@ export const METHOD_CAPABILITIES = Object.freeze({
   "library.item-update": "library:write",
   "library.libraries": "library:read",
   "library.note": "library:read",
+  "library.note-mutate": "library:write",
   "library.note-update": "library:write",
   "library.saved-search-items": "library:read",
   "library.saved-search-mutate": "library:write",
@@ -166,6 +167,10 @@ export const METHOD_TYPES = Object.freeze({
   "library.note": {
     "params": "LibraryNoteParams",
     "result": "LibraryNoteResult"
+  },
+  "library.note-mutate": {
+    "params": "LibraryNoteMutationParams",
+    "result": "LibraryNoteMutationResult"
   },
   "library.note-update": {
     "params": "LibraryNoteUpdateParams",

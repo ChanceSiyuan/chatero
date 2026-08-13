@@ -60,6 +60,7 @@ function createRouter(overrides = {}) {
     async libraries(params) { calls.push(["libraries", params]); return { libraries: [] }; },
 		async note(params) { calls.push(["note", params]); return { html: "<p>Note</p>", libraryId: 1, noteKey: "NOTE0001", parentItemKey: "ITEM0001", title: "Note", version: 1 }; },
     async updateNote(params) { calls.push(["updateNote", params]); return { libraryId: params.libraryId, noteKey: params.noteKey, synced: false, version: params.expectedVersion + 1 }; },
+    async mutateNote(params) { calls.push(["mutateNote", params]); return { action: params.action, deleted: false, libraryId: params.libraryId, noteKey: "NEWNOTE1", parentItemKey: params.parentItemKey, synced: false, version: 1 }; },
     async profileBackup() { calls.push(["profileBackup"]); return { backupCreated: true, completedAt: 1234 }; },
 		async profileMigrate() { calls.push(["profileMigrate"]); return { compatibilityVersion: 10, migrated: true, schemaVersion: 142 }; },
     async profileStatus() { calls.push(["profileStatus"]); return { compatibilityVersion: 10, integrityCheckRequired: false, profileEpoch: "profile-epoch", profileName: "Disposable Profile", quickCheckPassed: true, readOnly: false, schemaVersion: 142, upstreamVersion: "7.1-real" }; },
@@ -230,6 +231,17 @@ test("Note update is an idempotent object-version transaction", async () => {
   assert.equal(first.event.topic, "library.note.changed");
   assert.equal(replay.result.replayed, true);
   assert.equal(calls.filter(value => value[0] === "updateNote").length, 1);
+});
+
+test("Note lifecycle mutations are one idempotent evented transaction", async () => {
+  const { calls, router } = createRouter();
+  const session = await handshake(router, ["library:write"]);
+  const params = { action: "create", expectedRevision: 0, html: "<p>New</p>", idempotencyKey: "note-create-key-0001", libraryId: 1, parentItemKey: "ITEM0001" };
+  const first = await router.handle(request(session, "library.note-mutate", params));
+  const replay = await router.handle(request(session, "library.note-mutate", params));
+  assert.equal(first.event.topic, "library.note.changed");
+  assert.equal(replay.result.replayed, true);
+  assert.equal(calls.filter(value => value[0] === "mutateNote").length, 1);
 });
 
 test("annotation batches are one idempotent transaction with one event", async () => {

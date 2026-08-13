@@ -565,6 +565,31 @@ async function main() {
         result: { ...completed.result, replayed: completed.replayed, revision: completed.revision },
       };
     }
+    if (message.method === "library.note-mutate") {
+      const { expectedRevision, idempotencyKey, ...operation } = message.params || {};
+      const completed = await transactionRegistry.execute({
+        expectedRevision, idempotencyKey, operation, scope: `library:${operation.libraryId}/note:catalog`,
+      }, async value => {
+        let note;
+        if (value.action === "create") {
+          note = { deleted: false, html: value.html, libraryId: value.libraryId, noteKey: `NOT${String(fixtureNotes.length + 1).padStart(5, "0")}`, ...(value.parentItemKey && { parentItemKey: value.parentItemKey }), synced: false, title: "New Note", version: 1 };
+          fixtureNotes.push(note);
+        }
+        else {
+          note = fixtureNotes.find(entry => entry.libraryId === value.libraryId && entry.noteKey === value.noteKey);
+          if (!note || note.version !== value.expectedVersion) throw new Error("fixture Note changed");
+          note.deleted = value.action === "trash";
+          note.synced = false;
+          note.version += 1;
+        }
+        return { action: value.action, deleted: Boolean(note.deleted), libraryId: note.libraryId, noteKey: note.noteKey, ...(note.parentItemKey && { parentItemKey: note.parentItemKey }), synced: note.synced, version: note.version };
+      });
+      return {
+        ...(!completed.replayed && { event: eventJournal.publish("library.note.changed", {
+          action: completed.result.action, identities: [{ itemKey: completed.result.noteKey, libraryId: completed.result.libraryId }], revision: completed.revision,
+        }) }), result: { ...completed.result, replayed: completed.replayed, revision: completed.revision },
+      };
+    }
     if (message.method === "library.annotations") {
       validateIdentityParams(message.params, "attachmentKey", "library.annotations");
       const value = fixtureAnnotations.find(entry => entry.libraryId === message.params.libraryId && entry.attachmentKey === message.params.attachmentKey);

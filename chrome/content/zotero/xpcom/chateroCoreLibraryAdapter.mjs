@@ -33,6 +33,8 @@ const ATTACHMENT_FIELDS = new Set(["attachmentKey", "libraryId"]);
 const ATTACHMENT_STATE_FIELDS = new Set(["attachmentKey", "libraryId"]);
 const NOTE_FIELDS = new Set(["libraryId", "noteKey"]);
 const UPDATE_NOTE_FIELDS = new Set(["expectedVersion", "html", "libraryId", "noteKey"]);
+const NOTE_MUTATION_FIELDS = new Set(["action", "expectedVersion", "html", "libraryId", "noteKey", "parentItemKey"]);
+const NOTE_MUTATION_ACTIONS = new Set(["create", "trash", "restore"]);
 const LIBRARIES_FIELDS = new Set();
 const FEEDS_FIELDS = new Set();
 const SYNC_STATUS_FIELDS = new Set();
@@ -526,6 +528,22 @@ function validateAnnotationUpdates(params) {
 		if (update.color === undefined && update.comment === undefined && update.text === undefined) {
 			throw new Error("annotation update requires at least one change");
 		}
+	}
+}
+
+function validateNoteMutation(params) {
+	exactObject(params, NOTE_MUTATION_FIELDS, "library.note-mutate params");
+	positiveLibraryId(params.libraryId, "library.note-mutate");
+	if (!NOTE_MUTATION_ACTIONS.has(params.action)) throw new Error("library.note-mutate action is invalid");
+	if (params.action === "create") {
+		if (params.noteKey !== undefined || params.expectedVersion !== undefined) throw new Error("library.note-mutate create does not accept an existing identity");
+		boundedString(params.html, MAX_NOTE_BYTES, "library.note-mutate html");
+		if (params.parentItemKey !== undefined) zoteroKey(params.parentItemKey, "library.note-mutate parentItemKey");
+	}
+	else {
+		zoteroKey(params.noteKey, "library.note-mutate noteKey");
+		if (!Number.isSafeInteger(params.expectedVersion) || params.expectedVersion < 0) throw new Error("library.note-mutate expectedVersion is invalid");
+		if (params.html !== undefined || params.parentItemKey !== undefined) throw new Error("library.note-mutate trash and restore do not accept Note content");
 	}
 }
 
@@ -1395,6 +1413,43 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(S
 				synced: Boolean(note.synced),
 				version: Number.isSafeInteger(note.clientVersion) ? note.clientVersion : 0,
 			};
+		},
+
+		async mutateNote(params) {
+			validateNoteMutation(params);
+			let library = Zotero.Libraries.get(params.libraryId);
+			if (!library || library.libraryType === "feed" || !library.editable) unavailable("Note target library is not editable");
+			let note;
+			if (params.action === "create") {
+				note = new Zotero.Item("note");
+				note.libraryID = params.libraryId;
+				if (params.parentItemKey) {
+					let parent = lookupItem(Zotero, params.libraryId, params.parentItemKey, "Zotero Note parent");
+					if (!parent.isRegularItem?.()) throw new Error("library.note-mutate parent must be a regular item");
+					note.parentItemID = parent.id;
+				}
+				note.setNote(params.html);
+			}
+			else {
+				note = Zotero.Items.getByLibraryAndKey(params.libraryId, params.noteKey);
+				if (!note || note.libraryID !== params.libraryId || !note.isNote?.()) unavailable("Zotero Note is unavailable");
+				if (params.action !== "restore" && itemIsUnavailable(note)) unavailable("Zotero Note is unavailable");
+				if (params.action === "restore" && !note.deleted && !note.isInTrash?.()) throw new Error("library.note-mutate restore target is not in trash");
+				revisionConflict(note, params.expectedVersion, "Zotero Note");
+				note.deleted = params.action === "trash";
+			}
+			try { await note.saveTx(); }
+			catch (error) {
+				try { await note.reload?.(null, true); }
+				catch (_) {}
+				throw error;
+			}
+			let result = {
+				action: params.action, deleted: Boolean(note.deleted), libraryId: note.libraryID, noteKey: note.key,
+				synced: Boolean(note.synced), version: Number.isSafeInteger(note.clientVersion) ? note.clientVersion : 0,
+			};
+			if (note.parentItemID) result.parentItemKey = parentKey(Zotero, note, "Zotero Note");
+			return result;
 		},
 
 		async search(params) {
