@@ -34,6 +34,7 @@ test("Stage 5 CI builds, signs, runs real SSH, and gates both native Linux archi
   assert.match(source, /Verify Stage 6 through the signed Linux Remote Agent/u);
   assert.match(source, /CHATERO_DOCUMENTATION_SSH_ALIAS: stage5-target/u);
   assert.match(source, /stage-6-acceptance-\$\{\{ github\.sha \}\}/u);
+  assert.match(source, /Download the pinned Electron runtime[\s\S]*?npm run electron[\s\S]*?Configure the Chromium sandbox/u);
   assert.match(source, /chown root:root vendor\/code-oss\/\.build\/electron\/chrome-sandbox/u);
   assert.match(source, /chmod 4755 vendor\/code-oss\/\.build\/electron\/chrome-sandbox/u);
   assert.doesNotMatch(source, /--no-sandbox/u);
