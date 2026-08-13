@@ -37,6 +37,7 @@ function createRouter(overrides = {}) {
   const calls = [];
   const adapter = {
     async annotations(params) { calls.push(["annotations", params]); return { annotations: [] }; },
+    async updateAnnotations(params) { calls.push(["updateAnnotations", params]); return { annotations: params.updates.map(value => ({ annotationKey: value.annotationKey, libraryId: params.libraryId, synced: false, version: value.expectedVersion + 1 })) }; },
     async attachment(params) { calls.push(["attachment", params]); return { annotationCount: 0, attachmentKey: "PDF00001", contentType: "application/pdf", filename: "paper.pdf", libraryId: 1, parentItemKey: "ITEM0001", title: "Paper" }; },
     async attachmentState(params) { calls.push(["attachmentState", params]); return { attachmentKey: params.attachmentKey, fileAvailable: true, fulltextIndexState: "indexed", libraryId: params.libraryId, storageSyncState: "in-sync" }; },
     async attachmentSource(params) { calls.push(["attachmentSource", params]); return { size: 4, async read(offset, length) { return Uint8Array.from([1, 2, 3, 4]).slice(offset, offset + length); }, async close() {} }; },
@@ -162,6 +163,24 @@ test("Note update is an idempotent object-version transaction", async () => {
   assert.equal(first.event.topic, "library.note.changed");
   assert.equal(replay.result.replayed, true);
   assert.equal(calls.filter(value => value[0] === "updateNote").length, 1);
+});
+
+test("annotation batches are one idempotent transaction with one event", async () => {
+  const { calls, router } = createRouter();
+  const session = await handshake(router, ["library:write"]);
+  const params = {
+    attachmentKey: "PDF00001",
+    expectedRevision: 0,
+    idempotencyKey: "annotation-batch-key-0001",
+    libraryId: 1,
+    updates: [{ annotationKey: "ANN00001", comment: "Revised", expectedVersion: 3 }],
+  };
+  const first = await router.handle(request(session, "library.annotations-update", params));
+  const replay = await router.handle(request(session, "library.annotations-update", params));
+  assert.deepEqual(first.result, { annotations: [{ annotationKey: "ANN00001", libraryId: 1, synced: false, version: 4 }], replayed: false, revision: 1 });
+  assert.equal(first.event.topic, "library.annotation.changed");
+  assert.equal(replay.result.replayed, true);
+  assert.equal(calls.filter(value => value[0] === "updateAnnotations").length, 1);
 });
 
 test("enforces capabilities, profile epoch, session, and deadline before adapter access", async () => {

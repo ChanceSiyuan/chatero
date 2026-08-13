@@ -24,6 +24,7 @@ const ITEM_METADATA_FIELDS = new Set(["itemKey", "libraryId"]);
 const ITEM_FACTS_FIELDS = new Set(["itemKey", "libraryId"]);
 const UPDATE_ITEM_FIELDS = new Set(["creators", "expectedVersion", "fields", "itemKey", "libraryId", "relations", "tags"]);
 const ANNOTATION_FIELDS = new Set(["attachmentKey", "libraryId"]);
+const UPDATE_ANNOTATIONS_FIELDS = new Set(["attachmentKey", "libraryId", "updates"]);
 const ATTACHMENT_FIELDS = new Set(["attachmentKey", "libraryId"]);
 const ATTACHMENT_STATE_FIELDS = new Set(["attachmentKey", "libraryId"]);
 const NOTE_FIELDS = new Set(["libraryId", "noteKey"]);
@@ -377,6 +378,31 @@ function revisionConflict(item, expectedVersion, label) {
 	throw error;
 }
 
+function validateAnnotationUpdates(params) {
+	exactObject(params, UPDATE_ANNOTATIONS_FIELDS, "library.annotations-update params");
+	positiveLibraryId(params.libraryId, "library.annotations-update");
+	zoteroKey(params.attachmentKey, "library.annotations-update attachmentKey");
+	if (!Array.isArray(params.updates) || params.updates.length < 1 || params.updates.length > MAX_MUTATION_ENTRIES) {
+		throw new Error("library.annotations-update updates must be a non-empty bounded array");
+	}
+	let keys = new Set();
+	for (let update of params.updates) {
+		exactObject(update, new Set(["annotationKey", "color", "comment", "expectedVersion", "text"]), "annotation update");
+		zoteroKey(update.annotationKey, "annotation update annotationKey");
+		if (keys.has(update.annotationKey)) throw new Error("annotation update keys must be unique");
+		keys.add(update.annotationKey);
+		if (!Number.isSafeInteger(update.expectedVersion) || update.expectedVersion < 0) {
+			throw new Error("annotation update expectedVersion must be a non-negative safe integer");
+		}
+		for (let field of ["color", "comment", "text"]) {
+			if (update[field] !== undefined) boundedString(update[field], MAX_ANNOTATION_FIELD_BYTES, `annotation ${field}`);
+		}
+		if (update.color === undefined && update.comment === undefined && update.text === undefined) {
+			throw new Error("annotation update requires at least one change");
+		}
+	}
+}
+
 function itemIsUnavailable(item) {
 	if (!item) return true;
 	if (item.deleted) return true;
@@ -595,6 +621,38 @@ export function createZoteroLibraryAdapter({ Zotero, openAttachmentFile = openGe
 				.sort((left, right) => compareText(left.sortIndex, right.sortIndex)
 					|| compareText(left.annotationKey, right.annotationKey));
 			return { annotations };
+		},
+
+		async updateAnnotations(params) {
+			validateAnnotationUpdates(params);
+			let attachment = lookupItem(Zotero, params.libraryId, params.attachmentKey, "Zotero attachment");
+			if (!attachment.isFileAttachment?.()) throw new Error("library.annotations-update target must be a file attachment");
+			let byKey = new Map(attachment.getAnnotations(false).map(id => {
+				let annotation = Number.isSafeInteger(id) ? Zotero.Items.get(id) : id;
+				return [annotation?.key, annotation];
+			}));
+			let prepared = params.updates.map(update => {
+				let annotation = byKey.get(update.annotationKey);
+				if (!annotation?.isAnnotation?.() || annotation.libraryID !== attachment.libraryID || annotation.parentItemID !== attachment.id) {
+					unavailable(`Zotero annotation ${params.libraryId}/${update.annotationKey} was not found`);
+				}
+				revisionConflict(annotation, update.expectedVersion, `Zotero annotation ${update.annotationKey}`);
+				return { annotation, update };
+			});
+			await Zotero.DB.executeTransaction(async () => {
+				for (let { annotation, update } of prepared) {
+					if (update.color !== undefined) annotation.annotationColor = update.color;
+					if (update.comment !== undefined) annotation.annotationComment = update.comment;
+					if (update.text !== undefined) annotation.annotationText = update.text;
+					await annotation.save({ tx: false });
+				}
+			});
+			return { annotations: prepared.map(({ annotation }) => ({
+				annotationKey: annotation.key,
+				libraryId: annotation.libraryID,
+				synced: Boolean(annotation.synced),
+				version: Number.isSafeInteger(annotation.version) ? annotation.version : 0,
+			})) };
 		},
 
 		async attachment(params) {

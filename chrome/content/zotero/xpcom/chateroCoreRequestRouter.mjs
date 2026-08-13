@@ -46,6 +46,7 @@ function defaultToken() {
 function validateRouterOptions(options) {
 	if (!options?.adapter
 			|| typeof options.adapter.annotations !== "function"
+			|| typeof options.adapter.updateAnnotations !== "function"
 			|| typeof options.adapter.attachment !== "function"
 			|| typeof options.adapter.attachmentState !== "function"
 			|| typeof options.adapter.attachmentSource !== "function"
@@ -234,6 +235,23 @@ export function createGeckoCoreRequestRouter(options = {}) {
 				};
 			}
 			if (message.method === "library.annotations") return { result: await adapter.annotations(message.params) };
+			if (message.method === "library.annotations-update") {
+				let { expectedRevision, idempotencyKey, ...operation } = message.params || {};
+				let completed = await transactionRegistry.execute({
+					expectedRevision,
+					idempotencyKey,
+					operation,
+					scope: `library:${operation.libraryId}/attachment:${operation.attachmentKey}`,
+				}, value => adapter.updateAnnotations(value));
+				let result = { ...completed.result, replayed: completed.replayed, revision: completed.revision };
+				return {
+					...(!completed.replayed && { event: eventJournal.publish("library.annotation.changed", {
+						identities: result.annotations.map(value => ({ itemKey: value.annotationKey, libraryId: value.libraryId })),
+						revision: completed.revision,
+					}) }),
+					result,
+				};
+			}
 			if (message.method === "library.attachment") return { result: await adapter.attachment(message.params) };
 			if (message.method === "library.attachment-state") return { result: await adapter.attachmentState(message.params) };
 			if (message.method === "library.collections") return { result: await adapter.collections(message.params) };

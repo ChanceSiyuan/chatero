@@ -45,6 +45,7 @@ function item({
   let currentTags = tags.map(value => ({ ...value }));
   let currentRelations = structuredClone(relations);
   let currentNoteHTML = noteHTML;
+  let currentAnnotation = { ...annotation };
   let currentVersion = version;
   let currentSynced = synced;
   const value = {
@@ -57,13 +58,16 @@ function item({
     parentItemID,
     attachmentContentType: contentType,
     attachmentFilename: filename,
-    annotationColor: annotation.color || "",
-    annotationComment: annotation.comment || "",
-    annotationPageLabel: annotation.pageLabel || "",
-    annotationPosition: annotation.positionJson || "",
-    annotationSortIndex: annotation.sortIndex || "",
-    annotationText: annotation.text || "",
-    annotationType: annotation.type || "",
+    get annotationColor() { return currentAnnotation.color || ""; },
+    set annotationColor(value) { currentAnnotation.color = value; },
+    get annotationComment() { return currentAnnotation.comment || ""; },
+    set annotationComment(value) { currentAnnotation.comment = value; },
+    get annotationPageLabel() { return currentAnnotation.pageLabel || ""; },
+    get annotationPosition() { return currentAnnotation.positionJson || ""; },
+    get annotationSortIndex() { return currentAnnotation.sortIndex || ""; },
+    get annotationText() { return currentAnnotation.text || ""; },
+    set annotationText(value) { currentAnnotation.text = value; },
+    get annotationType() { return currentAnnotation.type || ""; },
     getAttachments: () => attachments.slice(),
     getAnnotations: () => annotations.slice(),
     getCollections: () => collectionIDs.slice(),
@@ -89,7 +93,8 @@ function item({
     isNote: () => type === "note",
     isRegularItem: () => !["attachment", "note", "annotation"].includes(type),
     async reload() {},
-    async saveTx() { currentVersion += 1; currentSynced = false; return true; },
+    async save() { currentVersion += 1; currentSynced = false; return true; },
+    async saveTx() { return value.save(); },
     setCreators: values => { currentCreators = structuredClone(values); },
     setField: (field, value) => {
       if (field === "title") currentTitle = value;
@@ -269,6 +274,7 @@ function fixture({
       SYNC_STATE_TO_DOWNLOAD: 1,
       SYNC_STATE_TO_UPLOAD: 0,
     } } },
+    DB: { executeTransaction: async callback => callback() },
   };
   return { Zotero };
 }
@@ -406,6 +412,26 @@ test("updates Note HTML only at the exact Zotero object version", async () => {
     libraryId: 1,
     noteKey: "NOTE0002",
   }), error => error.code === "REVISION_CONFLICT" && error.actualRevision === 2);
+});
+
+test("updates a batch of annotations after validating every object version", async () => {
+  const adapter = createZoteroLibraryAdapter(fixture());
+  assert.deepEqual(await adapter.updateAnnotations({
+    attachmentKey: "PDF00001",
+    libraryId: 1,
+    updates: [{ annotationKey: "ANN00001", color: "#ff0000", comment: "Revised", expectedVersion: 1, text: "Updated evidence" }],
+  }), { annotations: [{ annotationKey: "ANN00001", libraryId: 1, synced: false, version: 2 }] });
+  assert.deepEqual((await adapter.annotations({ attachmentKey: "PDF00001", libraryId: 1 })).annotations[0], {
+    annotationKey: "ANN00001",
+    color: "#ff0000",
+    comment: "Revised",
+    libraryId: 1,
+    pageLabel: "7",
+    positionJson: '{"pageIndex":6,"rects":[[1,2,3,4]]}',
+    sortIndex: "00006|000001|00000",
+    text: "Updated evidence",
+    type: "highlight",
+  });
 });
 
 test("search isolates duplicate collection keys and emits protocol-exact item summaries", async () => {

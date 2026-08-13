@@ -128,6 +128,12 @@
       "resultType": "LibraryAnnotationsResult"
     },
     {
+      "name": "library.annotations-update",
+      "capability": "library:write",
+      "paramsType": "LibraryAnnotationsUpdateParams",
+      "resultType": "LibraryAnnotationsUpdateResult"
+    },
+    {
       "name": "library.attachment",
       "capability": "library:read",
       "paramsType": "LibraryAttachmentParams",
@@ -637,6 +643,43 @@
       "kind": "object",
       "fields": {
         "annotations": "LibraryAnnotationSummary[]"
+      }
+    },
+    "LibraryAnnotationUpdate": {
+      "kind": "object",
+      "fields": {
+        "annotationKey": "string",
+        "color?": "string",
+        "comment?": "string",
+        "expectedVersion": "number",
+        "text?": "string"
+      }
+    },
+    "LibraryAnnotationUpdateState": {
+      "kind": "object",
+      "fields": {
+        "annotationKey": "string",
+        "libraryId": "number",
+        "synced": "boolean",
+        "version": "number"
+      }
+    },
+    "LibraryAnnotationsUpdateParams": {
+      "kind": "object",
+      "fields": {
+        "attachmentKey": "string",
+        "expectedRevision": "number",
+        "idempotencyKey": "string",
+        "libraryId": "number",
+        "updates": "LibraryAnnotationUpdate[]"
+      }
+    },
+    "LibraryAnnotationsUpdateResult": {
+      "kind": "object",
+      "fields": {
+        "annotations": "LibraryAnnotationUpdateState[]",
+        "replayed": "boolean",
+        "revision": "number"
       }
     },
     "LibraryNoteParams": {

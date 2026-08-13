@@ -20,6 +20,7 @@ export const METHOD_CAPABILITIES = Object.freeze({
   "core.events": "events:read",
   "core.handshake": null,
   "library.annotations": "library:read",
+  "library.annotations-update": "library:write",
   "library.attachment": "library:read",
   "library.attachment-state": "library:read",
   "library.collections": "library:read",
@@ -66,6 +67,10 @@ export const METHOD_TYPES = Object.freeze({
   "library.annotations": {
     "params": "LibraryAnnotationsParams",
     "result": "LibraryAnnotationsResult"
+  },
+  "library.annotations-update": {
+    "params": "LibraryAnnotationsUpdateParams",
+    "result": "LibraryAnnotationsUpdateResult"
   },
   "library.attachment": {
     "params": "LibraryAttachmentParams",
