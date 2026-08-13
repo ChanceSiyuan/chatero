@@ -38,6 +38,7 @@ function createRouter(overrides = {}) {
   const calls = [];
   const adapter = {
     async annotations(params) { calls.push(["annotations", params]); return { annotations: [] }; },
+    async mutateAnnotation(params) { calls.push(["mutateAnnotation", params]); return { action: params.action, annotation: { annotationKey: params.annotationKey || "NEWANN01", color: params.color || "#ffd400", comment: params.comment || "", libraryId: params.libraryId, pageLabel: params.pageLabel || "", positionJson: params.positionJson || '{}', sortIndex: params.sortIndex || "00000", tags: params.tags || [], text: params.text || "", type: params.type || "highlight", version: (params.expectedVersion ?? 0) + 1 }, deleted: params.action === "trash", synced: false }; },
     async updateAnnotations(params) { calls.push(["updateAnnotations", params]); return { annotations: params.updates.map(value => ({ annotationKey: value.annotationKey, libraryId: params.libraryId, synced: false, version: value.expectedVersion + 1 })) }; },
     async attachment(params) { calls.push(["attachment", params]); return { annotationCount: 0, attachmentKey: "PDF00001", contentType: "application/pdf", filename: "paper.pdf", libraryId: 1, parentItemKey: "ITEM0001", title: "Paper" }; },
     async attachmentState(params) { calls.push(["attachmentState", params]); return { attachmentKey: params.attachmentKey, fileAvailable: true, fulltextIndexState: "indexed", libraryId: params.libraryId, storageSyncState: "in-sync" }; },
@@ -296,6 +297,32 @@ test("annotation batches are one idempotent transaction with one event", async (
   assert.equal(first.event.topic, "library.annotation.changed");
   assert.equal(replay.result.replayed, true);
   assert.equal(calls.filter(value => value[0] === "updateAnnotations").length, 1);
+});
+
+test("annotation lifecycle is one named idempotent transaction with exact attachment identity", async () => {
+  const { calls, router } = createRouter();
+  const session = await handshake(router, ["library:write"]);
+  const params = {
+    action: "create",
+    attachmentKey: "PDF00001",
+    color: "#ffd400",
+    comment: "Evidence",
+    expectedRevision: 0,
+    idempotencyKey: "annotation-create-key-0001",
+    libraryId: 1,
+    pageLabel: "3",
+    positionJson: '{"pageIndex":2,"rects":[[1,2,3,4]]}',
+    sortIndex: "00002|000001|00000",
+    tags: ["reviewed"],
+    text: "Quoted text",
+    type: "highlight",
+  };
+  const first = await router.handle(request(session, "library.annotation-mutate", params));
+  const replay = await router.handle(request(session, "library.annotation-mutate", params));
+  assert.equal(first.result.annotation.annotationKey, "NEWANN01");
+  assert.equal(first.event.topic, "library.annotation.changed");
+  assert.equal(replay.result.replayed, true);
+  assert.equal(calls.filter(value => value[0] === "mutateAnnotation").length, 1);
 });
 
 test("enforces capabilities, profile epoch, session, and deadline before adapter access", async () => {

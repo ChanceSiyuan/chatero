@@ -80,6 +80,7 @@ const fixtureAnnotations = [{
     pageLabel: "3",
     positionJson: '{"pageIndex":2,"rects":[[1,2,3,4]]}',
     sortIndex: "00002|000001|00000",
+    tags: [],
     text: "Critical statement",
     type: "highlight",
 		version: 1,

@@ -684,8 +684,7 @@ async function main() {
         const state = fixtureAttachmentStates.find(entry => entry.libraryId === value.libraryId && entry.attachmentKey === value.attachmentKey);
         if (!state || (state.version || 1) !== value.expectedVersion) throw new Error("fixture Reader state changed");
         state.pageIndex = value.pageIndex;
-        state.version = value.expectedVersion + 1;
-        return { attachmentKey: state.attachmentKey, contentType: "application/pdf", libraryId: state.libraryId, pageIndex: state.pageIndex, synced: false, version: state.version };
+        return { attachmentKey: state.attachmentKey, contentType: "application/pdf", libraryId: state.libraryId, pageIndex: state.pageIndex, synced: false, version: state.version || 1 };
       });
       return { ...(!completed.replayed && { event: eventJournal.publish("reader.state.changed", { attachmentKey: completed.result.attachmentKey, libraryId: completed.result.libraryId, revision: completed.revision }) }), result: { ...completed.result, replayed: completed.replayed, revision: completed.revision } };
     }
@@ -693,6 +692,52 @@ async function main() {
       validateIdentityParams(message.params, "attachmentKey", "library.annotations");
       const value = fixtureAnnotations.find(entry => entry.libraryId === message.params.libraryId && entry.attachmentKey === message.params.attachmentKey);
       return { result: { annotations: value?.annotations || [] } };
+    }
+    if (message.method === "library.annotation-mutate") {
+      const { expectedRevision, idempotencyKey, ...operation } = message.params || {};
+      validateIdentityParams({ attachmentKey: operation.attachmentKey, libraryId: operation.libraryId }, "attachmentKey", "library.annotation-mutate");
+      const completed = await transactionRegistry.execute({
+        expectedRevision, idempotencyKey, operation,
+        scope: `library:${operation.libraryId}/attachment:${operation.attachmentKey}`,
+      }, async value => {
+        const record = fixtureAnnotations.find(entry => entry.libraryId === value.libraryId && entry.attachmentKey === value.attachmentKey);
+        if (!record || !["create", "trash", "restore"].includes(value.action)) throw new Error("library.annotation-mutate params are invalid");
+        let annotation;
+        if (value.action === "create") {
+          if (value.annotationKey !== undefined || value.expectedVersion !== undefined) throw new Error("fixture annotation create identity is invalid");
+          const index = record.annotations.length + 1;
+          annotation = {
+            annotationKey: `NEWANN${String(index).padStart(2, "0")}`,
+            color: value.color,
+            comment: value.comment || "",
+            deleted: false,
+            libraryId: value.libraryId,
+            pageLabel: value.pageLabel || "",
+            positionJson: value.positionJson,
+            sortIndex: value.sortIndex,
+            tags: value.tags || [],
+            text: value.text || "",
+            type: value.type,
+            version: 1,
+          };
+          record.annotations.push(annotation);
+        }
+        else {
+          annotation = record.annotations.find(entry => entry.annotationKey === value.annotationKey);
+          if (!annotation || annotation.version !== value.expectedVersion) throw new Error("fixture annotation changed before mutation");
+          annotation.deleted = value.action === "trash";
+          annotation.version += 1;
+        }
+        return { action: value.action, annotation: { ...annotation }, deleted: annotation.deleted, synced: false };
+      });
+      return {
+        ...(!completed.replayed && { event: eventJournal.publish("library.annotation.changed", {
+          action: completed.result.action,
+          identities: [{ itemKey: completed.result.annotation.annotationKey, libraryId: completed.result.annotation.libraryId }],
+          revision: completed.revision,
+        }) }),
+        result: { ...completed.result, replayed: completed.replayed, revision: completed.revision },
+      };
     }
     if (message.method === "library.annotations-update") {
       const { expectedRevision, idempotencyKey, ...operation } = message.params || {};
@@ -717,6 +762,7 @@ async function main() {
         });
         for (const { annotation, update } of prepared) {
           for (const field of ["color", "comment", "text"]) if (update[field] !== undefined) annotation[field] = update[field];
+          if (update.tags !== undefined) annotation.tags = [...update.tags];
           annotation.version += 1;
         }
         return { annotations: prepared.map(({ annotation }) => ({ annotationKey: annotation.annotationKey, libraryId: annotation.libraryId, synced: false, version: annotation.version })) };

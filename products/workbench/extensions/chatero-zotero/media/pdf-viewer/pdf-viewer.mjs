@@ -3,11 +3,13 @@ const canvas = document.getElementById("pdf-canvas");
 const pageRoot = document.getElementById("pdf-page");
 const textLayer = document.getElementById("text-layer");
 const annotationLayer = document.getElementById("annotation-layer");
+const linkLayer = document.getElementById("link-layer");
 const pageField = document.getElementById("page-number");
 const pageCount = document.getElementById("page-count");
 const status = document.getElementById("viewer-status");
 const viewportHost = document.getElementById("page-viewport");
 const annotations = JSON.parse(document.getElementById("annotation-data")?.textContent || "[]");
+const initialState = JSON.parse(document.getElementById("reader-state")?.textContent || "{}");
 const panelNonce = bootstrap?.dataset.panelNonce;
 const vscode = acquireVsCodeApi();
 
@@ -22,14 +24,16 @@ if (!/^[A-Za-z0-9_-]{24}$/.test(panelNonce || "")) {
 let documentHandle;
 let pdfjs;
 let pageLabels = null;
-let pageNumber = 1;
+let pageNumber = Number.isSafeInteger(initialState.pageIndex) && initialState.pageIndex >= 0 ? initialState.pageIndex + 1 : 1;
 let renderGeneration = 0;
 let zoom = 1;
+let rotation = 0;
 let contextSequence = 0;
 let currentPageText = "";
 let canvasRenderTask = null;
 let textLayerRenderTask = null;
 let selectionTimer = null;
+let currentViewport = null;
 
 function utf8Width(character) {
   const codePoint = character.codePointAt(0);
@@ -132,6 +136,62 @@ function renderAnnotationLayer(viewport) {
   }
 }
 
+async function destinationPage(destination) {
+  const resolved = typeof destination === "string" ? await documentHandle.getDestination(destination) : destination;
+  if (!Array.isArray(resolved) || !resolved[0]) return null;
+  const index = await documentHandle.getPageIndex(resolved[0]);
+  return Number.isSafeInteger(index) ? index + 1 : null;
+}
+
+async function renderLinkLayer(page, viewport, generation) {
+  linkLayer.replaceChildren();
+  const links = await page.getAnnotations({ intent: "display" });
+  if (generation !== renderGeneration) return;
+  for (const link of links) {
+    if (link.subtype !== "Link" || !Array.isArray(link.rect)) continue;
+    const points = viewport.convertToViewportRectangle(link.rect);
+    const element = document.createElement("a");
+    element.className = "pdf-link";
+    element.href = "#";
+    element.setAttribute("aria-label", link.url ? `Open link ${link.url}` : "Go to PDF destination");
+    element.style.left = `${Math.min(points[0], points[2])}px`;
+    element.style.top = `${Math.min(points[1], points[3])}px`;
+    element.style.width = `${Math.abs(points[2] - points[0])}px`;
+    element.style.height = `${Math.abs(points[3] - points[1])}px`;
+    element.addEventListener("click", event => {
+      event.preventDefault();
+      if (typeof link.url === "string") vscode.postMessage({ type: "pdf-open-link", url: link.url });
+      else scheduleRender(async () => {
+        const target = await destinationPage(link.dest);
+        if (target !== null) await goToPage(target);
+      });
+    });
+    linkLayer.append(element);
+  }
+}
+
+function selectedRectangles() {
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0 || selection.isCollapsed || !currentViewport) return [];
+  const root = pageRoot.getBoundingClientRect();
+  const values = [];
+  for (let index = 0; index < selection.rangeCount; index += 1) {
+    const range = selection.getRangeAt(index);
+    if (!textLayer.contains(range.commonAncestorContainer)) continue;
+    for (const rectangle of range.getClientRects()) {
+      const left = Math.max(0, rectangle.left - root.left);
+      const top = Math.max(0, rectangle.top - root.top);
+      const right = Math.min(root.width, rectangle.right - root.left);
+      const bottom = Math.min(root.height, rectangle.bottom - root.top);
+      if (right <= left || bottom <= top) continue;
+      const first = currentViewport.convertToPdfPoint(left, bottom);
+      const second = currentViewport.convertToPdfPoint(right, top);
+      values.push([Math.min(first[0], second[0]), Math.min(first[1], second[1]), Math.max(first[0], second[0]), Math.max(first[1], second[1])]);
+    }
+  }
+  return values.slice(0, 200);
+}
+
 function expectedCancellation(error, generation) {
   return generation !== renderGeneration
     || error?.name === "RenderingCancelledException"
@@ -164,6 +224,7 @@ async function renderPage() {
   currentPageText = "";
   textLayer.replaceChildren();
   annotationLayer.replaceChildren();
+  linkLayer.replaceChildren();
   status.textContent = "Rendering…";
   status.classList.remove("error");
   try {
@@ -171,7 +232,8 @@ async function renderPage() {
     if (generation !== renderGeneration) return;
     const base = page.getViewport({ scale: 1 });
     const fit = Math.max(0.25, (viewportHost.clientWidth - 32) / base.width);
-    const viewport = page.getViewport({ scale: fit * zoom });
+    const viewport = page.getViewport({ rotation, scale: fit * zoom });
+    currentViewport = viewport;
     const ratio = Math.min(window.devicePixelRatio || 1, 2);
     canvas.width = Math.floor(viewport.width * ratio);
     canvas.height = Math.floor(viewport.height * ratio);
@@ -183,6 +245,8 @@ async function renderPage() {
     pageRoot.style.setProperty("--user-unit", String(viewport.userUnit));
     annotationLayer.style.width = `${viewport.width}px`;
     annotationLayer.style.height = `${viewport.height}px`;
+    linkLayer.style.width = `${viewport.width}px`;
+    linkLayer.style.height = `${viewport.height}px`;
     const context = canvas.getContext("2d", { alpha: false });
     const renderTask = page.render({
       canvasContext: context,
@@ -222,15 +286,98 @@ async function renderPage() {
       if (textLayerRenderTask === layerTask) textLayerRenderTask = null;
     }
     if (generation !== renderGeneration) return;
+    await renderLinkLayer(page, viewport, generation);
     renderAnnotationLayer(viewport);
     pageField.value = String(pageNumber);
     status.textContent = "";
     postContext("");
+    vscode.postMessage({ type: "reader-state", pageIndex: pageNumber - 1 });
   }
   catch (error) {
     if (expectedCancellation(error, generation)) return;
     throw error;
   }
+}
+
+async function findNext() {
+  const query = document.getElementById("find-text").value.trim().toLocaleLowerCase();
+  if (!query) return;
+  status.textContent = "Searching…";
+  for (let offset = 0; offset < documentHandle.numPages; offset += 1) {
+    const candidate = ((pageNumber - 1 + offset) % documentHandle.numPages) + 1;
+    const page = await documentHandle.getPage(candidate);
+    const text = textContentValue(await page.getTextContent()).toLocaleLowerCase();
+    if (text.includes(query)) {
+      await goToPage(candidate);
+      status.textContent = `Found on page ${currentPageLabel()}`;
+      return;
+    }
+  }
+  status.textContent = "No matches found";
+}
+
+async function showOutline() {
+  const host = document.getElementById("reader-navigation");
+  const body = document.getElementById("reader-body");
+  if (body.classList.contains("navigation-open") && host.dataset.mode === "outline") return body.classList.remove("navigation-open");
+  host.dataset.mode = "outline";
+  host.replaceChildren();
+  const outline = await documentHandle.getOutline();
+  const append = (items, depth = 0) => {
+    for (const item of items || []) {
+      const button = document.createElement("button");
+      button.textContent = item.title || "Untitled section";
+      button.style.paddingLeft = `${10 + Math.min(depth, 8) * 12}px`;
+      button.addEventListener("click", () => scheduleRender(async () => {
+        const target = await destinationPage(item.dest);
+        if (target !== null) await goToPage(target);
+      }));
+      host.append(button);
+      append(item.items, depth + 1);
+    }
+  };
+  append(outline);
+  if (!host.childElementCount) host.textContent = "This PDF has no outline.";
+  body.classList.add("navigation-open");
+}
+
+async function showThumbnails() {
+  const host = document.getElementById("reader-navigation");
+  const body = document.getElementById("reader-body");
+  if (body.classList.contains("navigation-open") && host.dataset.mode === "thumbnails") return body.classList.remove("navigation-open");
+  host.dataset.mode = "thumbnails";
+  host.replaceChildren();
+  const observer = new IntersectionObserver(entries => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting || entry.target.dataset.rendered) continue;
+      entry.target.dataset.rendered = "true";
+      observer.unobserve(entry.target);
+      scheduleRender(async () => {
+        const page = await documentHandle.getPage(Number(entry.target.dataset.page));
+        const viewport = page.getViewport({ scale: 0.22 });
+        const thumbnail = entry.target.querySelector("canvas");
+        thumbnail.width = Math.floor(viewport.width);
+        thumbnail.height = Math.floor(viewport.height);
+        await page.render({ canvasContext: thumbnail.getContext("2d"), viewport }).promise;
+      });
+    }
+  }, { root: host, rootMargin: "300px" });
+  for (let value = 1; value <= documentHandle.numPages; value += 1) {
+    const row = document.createElement("div");
+    row.className = "thumbnail";
+    row.dataset.page = String(value);
+    row.tabIndex = 0;
+    row.setAttribute("role", "button");
+    row.setAttribute("aria-label", `Go to page ${value}`);
+    row.innerHTML = `<canvas></canvas><span>${value}</span>`;
+    row.addEventListener("click", () => scheduleRender(() => goToPage(value)));
+    row.addEventListener("keydown", event => {
+      if (event.key === "Enter" || event.key === " ") scheduleRender(() => goToPage(value));
+    });
+    host.append(row);
+    observer.observe(row);
+  }
+  body.classList.add("navigation-open");
 }
 
 async function goToPage(value) {
@@ -258,12 +405,37 @@ try {
     swatch.style.backgroundColor = safeColor(swatch.dataset.color);
   }
   documentHandle = await pdfjs.getDocument({ url: bootstrap.dataset.pdfUri }).promise;
+  pageNumber = boundedPage(pageNumber);
   pageLabels = await documentHandle.getPageLabels();
   pageCount.textContent = `/ ${documentHandle.numPages}`;
   document.getElementById("previous-page").addEventListener("click", () => scheduleRender(() => goToPage(pageNumber - 1)));
   document.getElementById("next-page").addEventListener("click", () => scheduleRender(() => goToPage(pageNumber + 1)));
   document.getElementById("zoom-out").addEventListener("click", () => { zoom = Math.max(0.5, zoom - 0.1); scheduleRender(renderPage); });
   document.getElementById("zoom-in").addEventListener("click", () => { zoom = Math.min(3, zoom + 0.1); scheduleRender(renderPage); });
+  document.getElementById("rotate-page").addEventListener("click", () => { rotation = (rotation + 90) % 360; scheduleRender(renderPage); });
+  document.getElementById("find-next").addEventListener("click", () => scheduleRender(findNext));
+  document.getElementById("find-text").addEventListener("keydown", event => {
+    if (event.key === "Enter") scheduleRender(findNext);
+  });
+  document.getElementById("toggle-outline").addEventListener("click", () => scheduleRender(showOutline));
+  document.getElementById("toggle-thumbnails").addEventListener("click", () => scheduleRender(showThumbnails));
+  document.getElementById("print-pdf").addEventListener("click", () => window.print());
+  document.getElementById("export-pdf").addEventListener("click", () => vscode.postMessage({ type: "pdf-export" }));
+  document.getElementById("create-highlight").addEventListener("click", () => {
+    const text = selectedTextWithinLayer();
+    const rects = selectedRectangles();
+    if (!text.trim() || !rects.length) {
+      status.textContent = "Select text on this page before creating a highlight.";
+      return;
+    }
+    vscode.postMessage({
+      type: "annotation-create",
+      pageLabel: currentPageLabel(),
+      positionJson: JSON.stringify({ pageIndex: pageNumber - 1, rects }),
+      sortIndex: `${String(pageNumber - 1).padStart(5, "0")}|${String(Date.now()).padStart(15, "0")}|00000`,
+      text,
+    });
+  });
   pageField.addEventListener("change", () => scheduleRender(() => goToPage(pageField.value)));
   document.addEventListener("click", event => {
     const target = event.target.closest("[data-page-index]");
@@ -297,6 +469,16 @@ try {
     clearTimeout(resizeTimer);
     renderGeneration += 1;
     cancelRenderTasks();
+  });
+  window.addEventListener("message", event => {
+    if (event.data?.type !== "annotation-created") return;
+    const created = event.data.annotation;
+    try {
+      const position = JSON.parse(created.positionJson);
+      annotations.push({ ...created, pageIndex: position.pageIndex, rects: position.rects || [] });
+      scheduleRender(renderPage);
+    }
+    catch { status.textContent = "The new annotation could not be displayed."; }
   });
   await renderPage();
 } catch (error) {

@@ -47,6 +47,7 @@ function defaultToken() {
 function validateRouterOptions(options) {
 	if (!options?.adapter
 			|| typeof options.adapter.annotations !== "function"
+			|| typeof options.adapter.mutateAnnotation !== "function"
 			|| typeof options.adapter.updateAnnotations !== "function"
 			|| typeof options.adapter.attachment !== "function"
 			|| typeof options.adapter.attachmentState !== "function"
@@ -335,6 +336,21 @@ export function createGeckoCoreRequestRouter(options = {}) {
 				};
 			}
 			if (message.method === "library.annotations") return { result: await adapter.annotations(message.params) };
+			if (message.method === "library.annotation-mutate") {
+				let { expectedRevision, idempotencyKey, ...operation } = message.params || {};
+				let completed = await transactionRegistry.execute({
+					expectedRevision, idempotencyKey, operation,
+					scope: `library:${operation.libraryId}/attachment:${operation.attachmentKey}`,
+				}, value => adapter.mutateAnnotation(value));
+				let result = { ...completed.result, replayed: completed.replayed, revision: completed.revision };
+				return {
+					...(!completed.replayed && { event: eventJournal.publish("library.annotation.changed", {
+						action: result.action,
+						identities: [{ itemKey: result.annotation.annotationKey, libraryId: result.annotation.libraryId }],
+						revision: completed.revision,
+					}) }), result,
+				};
+			}
 			if (message.method === "library.annotations-update") {
 				let { expectedRevision, idempotencyKey, ...operation } = message.params || {};
 				let completed = await transactionRegistry.execute({

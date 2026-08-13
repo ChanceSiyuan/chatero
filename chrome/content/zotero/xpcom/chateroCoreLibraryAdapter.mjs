@@ -30,6 +30,8 @@ const ITEM_MUTATION_FIELDS = new Set(["action", "collectionKeys", "creators", "e
 const ITEM_MUTATION_ACTIONS = new Set(["create", "collections", "trash", "restore"]);
 const ANNOTATION_FIELDS = new Set(["attachmentKey", "libraryId"]);
 const UPDATE_ANNOTATIONS_FIELDS = new Set(["attachmentKey", "libraryId", "updates"]);
+const ANNOTATION_MUTATION_FIELDS = new Set(["action", "annotationKey", "attachmentKey", "color", "comment", "expectedVersion", "libraryId", "pageLabel", "positionJson", "sortIndex", "tags", "text", "type"]);
+const ANNOTATION_MUTATION_ACTIONS = new Set(["create", "trash", "restore"]);
 const ATTACHMENT_FIELDS = new Set(["attachmentKey", "libraryId"]);
 const ATTACHMENT_STATE_FIELDS = new Set(["attachmentKey", "libraryId"]);
 const ATTACHMENT_UPLOAD_COMMIT_FIELDS = new Set(["collectionKeys", "libraryId", "parentItemKey", "title"]);
@@ -65,7 +67,7 @@ const FULLTEXT_INDEX_FIELDS = new Set(["attachments", "complete"]);
 const BATCH_FIELDS = new Set(["libraryId", "operations"]);
 const BATCH_OPERATION_FIELDS = new Set(["kind", "params"]);
 const BATCH_KINDS = new Set([
-	"annotations-update", "attachment-mutate", "collection-mutate", "item-mutate", "item-update",
+	"annotation-mutate", "annotations-update", "attachment-mutate", "collection-mutate", "item-mutate", "item-update",
 	"note-mutate", "note-update", "reader-state-update", "saved-search-mutate",
 ]);
 const MAX_PAGE_SIZE = 200;
@@ -530,7 +532,7 @@ function validateAnnotationUpdates(params) {
 	}
 	let keys = new Set();
 	for (let update of params.updates) {
-		exactObject(update, new Set(["annotationKey", "color", "comment", "expectedVersion", "text"]), "annotation update");
+		exactObject(update, new Set(["annotationKey", "color", "comment", "expectedVersion", "tags", "text"]), "annotation update");
 		zoteroKey(update.annotationKey, "annotation update annotationKey");
 		if (keys.has(update.annotationKey)) throw new Error("annotation update keys must be unique");
 		keys.add(update.annotationKey);
@@ -540,8 +542,43 @@ function validateAnnotationUpdates(params) {
 		for (let field of ["color", "comment", "text"]) {
 			if (update[field] !== undefined) boundedString(update[field], MAX_ANNOTATION_FIELD_BYTES, `annotation ${field}`);
 		}
-		if (update.color === undefined && update.comment === undefined && update.text === undefined) {
+		if (update.tags !== undefined) validateAnnotationTags(update.tags);
+		if (update.color === undefined && update.comment === undefined && update.tags === undefined && update.text === undefined) {
 			throw new Error("annotation update requires at least one change");
+		}
+	}
+}
+
+function validateAnnotationTags(tags) {
+	if (!Array.isArray(tags) || tags.length > MAX_MUTATION_ENTRIES) throw new Error("annotation tags must be a bounded array");
+	let seen = new Set();
+	for (let tag of tags) {
+		boundedString(tag, MAX_RELATION_FIELD_BYTES, "annotation tag");
+		if (!tag || seen.has(tag)) throw new Error("annotation tags must be non-empty and unique");
+		seen.add(tag);
+	}
+}
+
+function validateAnnotationMutation(params) {
+	exactObject(params, ANNOTATION_MUTATION_FIELDS, "library.annotation-mutate params");
+	positiveLibraryId(params.libraryId, "library.annotation-mutate");
+	zoteroKey(params.attachmentKey, "library.annotation-mutate attachmentKey");
+	if (!ANNOTATION_MUTATION_ACTIONS.has(params.action)) throw new Error("library.annotation-mutate action is invalid");
+	if (params.action === "create") {
+		if (params.annotationKey !== undefined || params.expectedVersion !== undefined) throw new Error("library.annotation-mutate create does not accept an existing identity");
+		for (let field of ["color", "positionJson", "sortIndex", "type"]) {
+			if (params[field] === undefined) throw new Error(`library.annotation-mutate create requires ${field}`);
+			boundedString(params[field], MAX_ANNOTATION_FIELD_BYTES, `annotation ${field}`);
+		}
+		for (let field of ["comment", "pageLabel", "text"]) if (params[field] !== undefined) boundedString(params[field], MAX_ANNOTATION_FIELD_BYTES, `annotation ${field}`);
+		if (params.tags !== undefined) validateAnnotationTags(params.tags);
+		canonicalPosition(params.positionJson);
+	}
+	else {
+		zoteroKey(params.annotationKey, "library.annotation-mutate annotationKey");
+		if (!Number.isSafeInteger(params.expectedVersion) || params.expectedVersion < 0) throw new Error("library.annotation-mutate expectedVersion is invalid");
+		for (let field of ["color", "comment", "pageLabel", "positionJson", "sortIndex", "tags", "text", "type"]) {
+			if (params[field] !== undefined) throw new Error("library.annotation-mutate trash and restore do not accept annotation content");
 		}
 	}
 }
@@ -568,15 +605,18 @@ function readerLocation(attachment, params, write = false) {
 	if (write && keys.length !== 1) throw new Error("reader state update requires exactly one typed location");
 	if (contentType === "application/pdf") {
 		let value = write ? params.pageIndex : attachment.getAttachmentLastPageIndex();
+		if (!write && value === null) return { contentType };
 		if (!Number.isSafeInteger(value) || value < 0 || (write && keys[0] !== "pageIndex")) throw new Error("PDF reader state requires a non-negative pageIndex");
 		return { contentType, pageIndex: value };
 	}
 	if (contentType === "application/epub+zip") {
 		let value = write ? params.cfi : attachment.getAttachmentLastPageIndex();
+		if (!write && value === null) return { contentType };
 		if (typeof value !== "string" || !/^epubcfi\(.{1,16384}\)$/.test(value) || (write && keys[0] !== "cfi")) throw new Error("EPUB reader state requires a bounded CFI");
 		return { cfi: value, contentType };
 	}
 	let value = write ? params.scrollYPercent : attachment.getAttachmentLastPageIndex();
+	if (!write && value === null) return { contentType };
 	if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 100 || (write && keys[0] !== "scrollYPercent")) throw new Error("snapshot reader state requires scrollYPercent from 0 through 100");
 	return { contentType, scrollYPercent: value };
 }
@@ -659,6 +699,7 @@ function annotationSummary(annotation, attachment) {
 		pageLabel: boundedString(annotation.annotationPageLabel || "", MAX_ANNOTATION_FIELD_BYTES, "annotation pageLabel"),
 		positionJson: canonicalPosition(annotation.annotationPosition || "{}"),
 		sortIndex: boundedString(annotation.annotationSortIndex || "", MAX_ANNOTATION_FIELD_BYTES, "annotation sortIndex"),
+		tags: annotation.getTags().map(value => boundedString(value.tag || value.name || "", MAX_ANNOTATION_FIELD_BYTES, "annotation tag")).filter(Boolean),
 		text: boundedString(annotation.annotationText || "", MAX_ANNOTATION_FIELD_BYTES, "annotation text"),
 		type: boundedString(annotation.annotationType || "", MAX_ANNOTATION_FIELD_BYTES, "annotation type"),
 		version: Number.isSafeInteger(annotation.clientVersion) ? annotation.clientVersion : 0,
@@ -1223,6 +1264,7 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 				for (let { annotation, update } of prepared) {
 					if (update.color !== undefined) annotation.annotationColor = update.color;
 					if (update.comment !== undefined) annotation.annotationComment = update.comment;
+					if (update.tags !== undefined) annotation.setTags(update.tags.map(tag => ({ tag })));
 					if (update.text !== undefined) annotation.annotationText = update.text;
 					await annotation.save({ tx: false });
 				}
@@ -1235,6 +1277,36 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 				synced: Boolean(annotation.synced),
 				version: Number.isSafeInteger(annotation.clientVersion) ? annotation.clientVersion : 0,
 			})) };
+		},
+
+		async mutateAnnotation(params, { tx = true } = {}) {
+			validateAnnotationMutation(params);
+			let attachment = lookupItem(Zotero, params.libraryId, params.attachmentKey, "Zotero attachment");
+			if (!attachment.isFileAttachment?.()) throw new Error("library.annotation-mutate target must be a file attachment");
+			let annotation;
+			if (params.action === "create") {
+				annotation = new Zotero.Item("annotation");
+				annotation.libraryID = params.libraryId;
+				annotation.parentItemID = attachment.id;
+				annotation.annotationColor = params.color;
+				annotation.annotationComment = params.comment || "";
+				annotation.annotationPageLabel = params.pageLabel || "";
+				annotation.annotationPosition = canonicalPosition(params.positionJson);
+				annotation.annotationSortIndex = params.sortIndex;
+				annotation.annotationText = params.text || "";
+				annotation.annotationType = params.type;
+				annotation.setTags((params.tags || []).map(tag => ({ tag })));
+			}
+			else {
+				annotation = Zotero.Items.getByLibraryAndKey(params.libraryId, params.annotationKey);
+				if (!annotation || annotation.libraryID !== params.libraryId || annotation.key !== params.annotationKey) unavailable(`Zotero annotation ${params.libraryId}/${params.annotationKey} was not found`);
+				if (!annotation.isAnnotation?.() || annotation.parentItemID !== attachment.id) throw new Error("library.annotation-mutate annotation does not belong to attachment");
+				revisionConflict(annotation, params.expectedVersion, `Zotero annotation ${params.annotationKey}`);
+				annotation.deleted = params.action === "trash";
+			}
+			if (tx) await annotation.saveTx();
+			else await annotation.save({ tx: false });
+			return { action: params.action, annotation: annotationSummary(annotation, attachment), deleted: Boolean(annotation.deleted), synced: Boolean(annotation.synced) };
 		},
 
 		async attachment(params) {
@@ -1345,7 +1417,7 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 			};
 		},
 
-		async updateReaderState(params, { tx = true } = {}) {
+		async updateReaderState(params) {
 			exactObject(params, READER_STATE_UPDATE_FIELDS, "reader.state-update params");
 			positiveLibraryId(params.libraryId, "reader.state-update");
 			zoteroKey(params.attachmentKey, "reader.state-update attachmentKey");
@@ -1355,7 +1427,7 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 			revisionConflict(attachment, params.expectedVersion, "Zotero Reader attachment");
 			let location = readerLocation(attachment, params, true);
 			let value = location.pageIndex ?? location.cfi ?? location.scrollYPercent;
-			try { attachment.setAttachmentLastPageIndex(value); await saveObject(attachment, tx); }
+			try { await attachment.setAttachmentLastPageIndex(value); }
 			catch (error) {
 				try { await attachment.reload?.(null, true); }
 				catch (_) {}
@@ -1680,6 +1752,7 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 				return { kind: operation.kind, params: operation.params };
 			});
 			let handlers = {
+				"annotation-mutate": adapter.mutateAnnotation,
 				"annotations-update": adapter.updateAnnotations,
 				"attachment-mutate": adapter.mutateAttachment,
 				"collection-mutate": adapter.mutateCollection,

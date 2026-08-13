@@ -218,6 +218,12 @@
       "resultType": "LibraryAnnotationsUpdateResult"
     },
     {
+      "name": "library.annotation-mutate",
+      "capability": "library:write",
+      "paramsType": "LibraryAnnotationMutationParams",
+      "resultType": "LibraryAnnotationMutationResult"
+    },
+    {
       "name": "library.attachment",
       "capability": "library:read",
       "paramsType": "LibraryAttachmentParams",
@@ -1131,6 +1137,7 @@
         "pageLabel": "string",
         "positionJson": "string",
         "sortIndex": "string",
+        "tags": "string[]",
         "text": "string",
         "type": "string",
         "version": "number"
@@ -1149,6 +1156,7 @@
         "color?": "string",
         "comment?": "string",
         "expectedVersion": "number",
+        "tags?": "string[]",
         "text?": "string"
       }
     },
@@ -1177,6 +1185,37 @@
         "annotations": "LibraryAnnotationUpdateState[]",
         "replayed": "boolean",
         "revision": "number"
+      }
+    },
+    "LibraryAnnotationMutationParams": {
+      "kind": "object",
+      "fields": {
+        "action": "string",
+        "annotationKey?": "string",
+        "attachmentKey": "string",
+        "color?": "string",
+        "comment?": "string",
+        "expectedRevision": "number",
+        "expectedVersion?": "number",
+        "idempotencyKey": "string",
+        "libraryId": "number",
+        "pageLabel?": "string",
+        "positionJson?": "string",
+        "sortIndex?": "string",
+        "tags?": "string[]",
+        "text?": "string",
+        "type?": "string"
+      }
+    },
+    "LibraryAnnotationMutationResult": {
+      "kind": "object",
+      "fields": {
+        "action": "string",
+        "annotation": "LibraryAnnotationSummary",
+        "deleted": "boolean",
+        "replayed": "boolean",
+        "revision": "number",
+        "synced": "boolean"
       }
     },
     "LibraryNoteParams": {

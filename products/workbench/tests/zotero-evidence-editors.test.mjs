@@ -763,10 +763,11 @@ test("PDF editor HTML boots the packaged PDF.js viewer with bounded annotation d
   assert.doesNotMatch(html, /https?:\/\//);
 });
 
-test("Note editor HTML confines Zotero HTML to a scriptless sandbox", async () => {
+test("Note editor HTML provides a nonce-confined round-trip editor", async () => {
   const { renderNoteEditorHTML } = await import("../extensions/chatero-zotero/evidence-editor-html.mjs");
   const html = renderNoteEditorHTML({
     cspSource: "vscode-webview://unit-test",
+    nonce: "fixed-note-nonce",
     note: {
       html: '<p>Reading note</p><script>alert(1)</script>',
       libraryId: 7,
@@ -776,16 +777,67 @@ test("Note editor HTML confines Zotero HTML to a scriptless sandbox", async () =
     },
   });
 
-  assert.match(html, /<iframe[^>]+sandbox=""/);
+  assert.match(html, /<textarea[^>]+id="note-html"/);
   assert.match(html, /&lt;p&gt;Reading note&lt;\/p&gt;/);
   assert.doesNotMatch(html, /<script>alert\(1\)<\/script>/);
   assert.match(html, /default-src 'none'/);
+  assert.match(html, /script-src 'nonce-fixed-note-nonce'/);
+  assert.match(html, /type:"note-save"/);
+  assert.match(html, /id="save-note"/);
+});
+
+test("Note provider serializes versioned saves and acknowledges only accepted messages", async () => {
+  const providers = await import("../extensions/chatero-zotero/evidence-editors.cjs");
+  const calls = [];
+  let receiveMessage;
+  let disposeListener;
+  let subscriptionDisposals = 0;
+  const workflow = {
+    async loadNote(identity) {
+      calls.push(["load", identity]);
+      return { ...note, html: "<p>Original</p>", version: 4 };
+    },
+    async updateNote(value) {
+      calls.push(["update", value]);
+      return { ...value, replayed: false, revision: calls.length, synced: false, version: value.version + 1 };
+    },
+  };
+  const posted = [];
+  const provider = new providers.NoteEditorProvider({
+    createReaderWorkflow: model => { assert.deepEqual(model, { ready: true }); return workflow; },
+    getModel: () => ({ ready: true }),
+    registry: { release() {} },
+    renderNoteEditorHTML: value => { calls.push(["render", value]); return "<html>Note</html>"; },
+  });
+  const panel = {
+    onDidDispose(listener) { disposeListener = listener; return { dispose() {} }; },
+    webview: {
+      cspSource: "vscode-webview://unit-test",
+      onDidReceiveMessage(listener) { receiveMessage = listener; return { dispose() { subscriptionDisposals += 1; } }; },
+      async postMessage(message) { posted.push(message); },
+    },
+  };
+
+  await provider.resolveCustomEditor({ record: note }, panel);
+  assert.equal(panel.webview.options.enableScripts, true);
+  assert.equal(panel.webview.html, "<html>Note</html>");
+  await receiveMessage({ type: "note-save", sequence: 1, html: "<p>First</p>" });
+  await receiveMessage({ type: "note-save", sequence: 2, html: "<p>Second</p>" });
+  assert.deepEqual(calls.filter(value => value[0] === "update").map(value => value[1].version), [4, 5]);
+  assert.deepEqual(posted.map(value => ({ sequence: value.sequence, type: value.type, version: value.version })), [
+    { sequence: 1, type: "note-saved", version: 5 },
+    { sequence: 2, type: "note-saved", version: 6 },
+  ]);
+  await assert.rejects(receiveMessage({ type: "note-save", sequence: 2, html: "replay" }), /invalid/);
+  disposeListener();
+  assert.equal(subscriptionDisposals, 1);
 });
 
 test("extension declares native PDF and Note custom editor tabs", async () => {
-  const [manifest, source, packaging] = await Promise.all([
+  const [manifest, source, providersSource, packaging] = await Promise.all([
     readFile(join(extensionRoot, "package.json"), "utf8").then(JSON.parse),
     readFile(join(extensionRoot, "extension.cjs"), "utf8"),
+    readFile(join(extensionRoot, "evidence-editors.cjs"), "utf8"),
     readFile(join(root, "products", "workbench", "first-party-extensions.json"), "utf8").then(JSON.parse),
   ]);
   assert.deepEqual(manifest.contributes.customEditors.map(value => value.viewType).sort(), [
@@ -796,7 +848,9 @@ test("extension declares native PDF and Note custom editor tabs", async () => {
   assert.match(source, /registerCustomEditorProvider\("chatero\.zotero\.pdf"/);
   assert.match(source, /registerCustomEditorProvider\("chatero\.zotero\.note"/);
   assert.match(source, /executeCommand\("vscode\.openWith"/);
-  assert.doesNotMatch(source, /openExternal|executeCommand\(["']vscode\.open["']/);
+  assert.match(providersSource, /\["http", "https", "mailto"\]/);
+  assert.match(providersSource, /openExternal/);
+  assert.doesNotMatch(source, /executeCommand\(["']vscode\.open["']/);
   for (const key of ["profilePath", "coreExecutable", "developerFixtureCore"]) {
     assert.ok(["application", "machine"].includes(manifest.contributes.configuration.properties[`chatero.zotero.${key}`].scope));
   }
@@ -814,6 +868,9 @@ test("packaged PDF viewer renders one page at a time and owns the highlight over
   assert.match(source, /getPage/);
   assert.match(source, /annotation-layer/);
   assert.match(source, /pageIndex/);
+  for (const behavior of ["getOutline", "getAnnotations", "getDestination", "convertToPdfPoint", "window.print", "annotation-create", "reader-state"]) {
+    assert.match(source, new RegExp(behavior.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
   assert.doesNotMatch(source, /fetch\(["']https?:|openExternal/);
 });
 

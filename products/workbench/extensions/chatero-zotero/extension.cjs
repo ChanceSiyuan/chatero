@@ -144,10 +144,11 @@ class LibraryItemProvider {
 }
 
 async function activate(context) {
-  const [{ LibraryTreeModel }, { LibraryItemTableModel }, { LibrarySourceTreeModel }, { EvidenceRecordAuthority }, registryModule, html, metadataHtml, brokerModule, contextFormat] = await Promise.all([
+  const [{ LibraryTreeModel }, { LibraryItemTableModel }, { LibrarySourceTreeModel }, { ReaderWorkflowModel }, { EvidenceRecordAuthority }, registryModule, html, metadataHtml, brokerModule, contextFormat] = await Promise.all([
     import("./library-tree-model.mjs"),
     import("./library-item-table-model.mjs"),
     import("./library-source-tree-model.mjs"),
+    import("./reader-workflow-model.mjs"),
     import("./evidence-authority.mjs"),
     import("./evidence-editor-registry.mjs"),
     import("./evidence-editor-html.mjs"),
@@ -171,6 +172,7 @@ async function activate(context) {
     persist: snapshot => context.workspaceState.update("chatero.zotero.itemTable.v1", snapshot),
   });
   let pdfMaterializer = null;
+  const createReaderWorkflow = core => new ReaderWorkflowModel({ core });
   const dragAndDropController = {
     dragMimeTypes: ["application/vnd.chatero.zotero-items"],
     dropMimeTypes: ["application/vnd.chatero.zotero-items"],
@@ -353,6 +355,7 @@ async function activate(context) {
     materializePdf,
     contextBroker: pdfContexts,
     attachPdfContext: attachPdfSnapshot,
+    createReaderWorkflow,
     onContextError: () => {
       void vscode.window.showErrorMessage("Could not attach the bounded Zotero PDF context.");
     },
@@ -362,6 +365,8 @@ async function activate(context) {
     getModel: () => sourceProvider.core,
     resolveDocument,
     renderNoteEditorHTML: html.renderNoteEditorHTML,
+    createReaderWorkflow,
+    onError: error => void vscode.window.showErrorMessage(`Could not save Zotero Note: ${error.message}`),
   }), { supportsMultipleEditorsPerDocument: false }));
 
   context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.selectProfile", selectProfile));

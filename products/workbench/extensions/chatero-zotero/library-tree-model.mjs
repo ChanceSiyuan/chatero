@@ -135,7 +135,9 @@ function validateAnnotation(value) {
     || typeof value.annotationKey !== "string" || value.annotationKey.length === 0
     || !Number.isSafeInteger(value.libraryId) || value.libraryId < 1
     || !["color", "comment", "pageLabel", "positionJson", "sortIndex", "text", "type"]
-      .every(field => typeof value[field] === "string")) {
+      .every(field => typeof value[field] === "string")
+    || !Array.isArray(value.tags) || value.tags.some(tag => typeof tag !== "string")
+    || !Number.isSafeInteger(value.version) || value.version < 0) {
     throw new Error("Zotero Core returned an invalid annotation");
   }
   return Object.freeze({ ...value });

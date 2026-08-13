@@ -112,10 +112,12 @@ test("Library model lazily loads validated PDF, Note, and annotation records", a
         pageLabel: "3",
         positionJson: '{"pageIndex":2}',
         sortIndex: "00002|000001|00000",
+        tags: [],
         text: "Text",
         type: "highlight",
+        version: 1,
       }] };
-      return { html: "<p>Reading note</p>", libraryId: 7, noteKey: "NOTE0001", parentItemKey: "ITEM0001", title: "Reading note" };
+      return { html: "<p>Reading note</p>", libraryId: 7, noteKey: "NOTE0001", parentItemKey: "ITEM0001", title: "Reading note", version: 1 };
     },
   });
 

@@ -74,11 +74,15 @@ function item({
     get annotationComment() { return currentAnnotation.comment || ""; },
     set annotationComment(value) { currentAnnotation.comment = value; },
     get annotationPageLabel() { return currentAnnotation.pageLabel || ""; },
+    set annotationPageLabel(value) { currentAnnotation.pageLabel = value; },
     get annotationPosition() { return currentAnnotation.positionJson || ""; },
+    set annotationPosition(value) { currentAnnotation.positionJson = value; },
     get annotationSortIndex() { return currentAnnotation.sortIndex || ""; },
+    set annotationSortIndex(value) { currentAnnotation.sortIndex = value; },
     get annotationText() { return currentAnnotation.text || ""; },
     set annotationText(value) { currentAnnotation.text = value; },
     get annotationType() { return currentAnnotation.type || ""; },
+    set annotationType(value) { currentAnnotation.type = value; },
     getAttachments: () => attachments.slice(),
     getAnnotations: () => annotations.slice(),
     getCollections: () => currentCollectionIDs.slice(),
@@ -165,8 +169,10 @@ function savedSearch({ key, libraryID, name, itemIDs = [], synced = true, versio
 }
 
 function fixture({
+  attachmentContentType = "application/pdf",
   attachmentDeleted = false,
   attachmentInTrash = false,
+  attachmentLastPageIndex = 0,
   noteDeleted = false,
   noteInTrash = false,
 } = {}) {
@@ -202,10 +208,11 @@ function fixture({
     parentItemID: 11,
     annotations: [highlight],
     path: "/Users/example/Zotero/storage/PDF00001/paper.pdf",
-    contentType: "application/pdf",
+    contentType: attachmentContentType,
     filename: "paper.pdf",
     deleted: attachmentDeleted,
     inTrash: attachmentInTrash,
+    lastPageIndex: attachmentLastPageIndex,
   });
   const childNote = item({
     id: 93,
@@ -281,7 +288,9 @@ function fixture({
     },
     Item: class {
       constructor(type) {
-        return item({ id: 2000 + items.length, key: `NEWITEM${items.length}`, libraryID: 0, title: "", type, version: 0 });
+        const created = item({ id: 2000 + items.length, key: `NEWITEM${items.length}`, libraryID: 0, title: "", type, version: 0 });
+        items.push(created);
+        return created;
       }
     },
     Search: class {
@@ -594,10 +603,28 @@ test("reads and updates typed Reader locations at exact attachment versions", as
     attachmentKey: "PDF00001", contentType: "application/pdf", libraryId: 1, pageIndex: 0, version: 1,
   });
   assert.deepEqual(await adapter.updateReaderState({ attachmentKey: "PDF00001", expectedVersion: 1, libraryId: 1, pageIndex: 12 }), {
-    attachmentKey: "PDF00001", contentType: "application/pdf", libraryId: 1, pageIndex: 12, synced: false, version: 2,
+    attachmentKey: "PDF00001", contentType: "application/pdf", libraryId: 1, pageIndex: 12, synced: true, version: 1,
   });
-  await assert.rejects(adapter.updateReaderState({ attachmentKey: "PDF00001", cfi: "epubcfi(/6/2)", expectedVersion: 2, libraryId: 1 }), /pageIndex/);
-  await assert.rejects(adapter.updateReaderState({ attachmentKey: "PDF00001", expectedVersion: 1, libraryId: 1, pageIndex: 13 }), error => error.code === "REVISION_CONFLICT");
+  await assert.rejects(adapter.updateReaderState({ attachmentKey: "PDF00001", cfi: "epubcfi(/6/2)", expectedVersion: 1, libraryId: 1 }), /pageIndex/);
+  await assert.rejects(adapter.updateReaderState({ attachmentKey: "PDF00001", expectedVersion: 0, libraryId: 1, pageIndex: 13 }), error => error.code === "REVISION_CONFLICT");
+});
+
+test("Reader locations preserve upstream PDF, EPUB, and snapshot typed state without mutating attachment versions", async () => {
+  const epub = createZoteroLibraryAdapter(fixture({ attachmentContentType: "application/epub+zip", attachmentLastPageIndex: null }));
+  assert.deepEqual(await epub.readerState({ attachmentKey: "PDF00001", libraryId: 1 }), {
+    attachmentKey: "PDF00001", contentType: "application/epub+zip", libraryId: 1, version: 1,
+  });
+  assert.deepEqual(await epub.updateReaderState({ attachmentKey: "PDF00001", cfi: "epubcfi(/6/2)", expectedVersion: 1, libraryId: 1 }), {
+    attachmentKey: "PDF00001", cfi: "epubcfi(/6/2)", contentType: "application/epub+zip", libraryId: 1, synced: true, version: 1,
+  });
+
+  const snapshot = createZoteroLibraryAdapter(fixture({ attachmentContentType: "text/html", attachmentLastPageIndex: null }));
+  assert.deepEqual(await snapshot.readerState({ attachmentKey: "PDF00001", libraryId: 1 }), {
+    attachmentKey: "PDF00001", contentType: "text/html", libraryId: 1, version: 1,
+  });
+  assert.deepEqual(await snapshot.updateReaderState({ attachmentKey: "PDF00001", expectedVersion: 1, libraryId: 1, scrollYPercent: 37.5 }), {
+    attachmentKey: "PDF00001", contentType: "text/html", libraryId: 1, scrollYPercent: 37.5, synced: true, version: 1,
+  });
 });
 
 test("atomically updates fields, creators, tags, and relations at an expected Zotero client version", async () => {
@@ -724,10 +751,25 @@ test("updates a batch of annotations after validating every object version", asy
     pageLabel: "7",
     positionJson: '{"pageIndex":6,"rects":[[1,2,3,4]]}',
     sortIndex: "00006|000001|00000",
+    tags: [],
     text: "Updated evidence",
     type: "highlight",
 		version: 2,
   });
+});
+
+test("creates, trashes, and restores annotations at exact object versions", async () => {
+  const environment = fixture();
+  const adapter = createZoteroLibraryAdapter(environment);
+  const created = await adapter.mutateAnnotation({
+    action: "create", attachmentKey: "PDF00001", color: "#2ea8e5", comment: "New", libraryId: 1,
+    pageLabel: "8", positionJson: '{"pageIndex":7,"rects":[[5,6,7,8]]}', sortIndex: "00007|000001|00000",
+    tags: ["evidence"], text: "New quote", type: "highlight",
+  });
+  assert.equal(created.action, "create");
+  assert.deepEqual(created.annotation.tags, ["evidence"]);
+  assert.equal((await adapter.mutateAnnotation({ action: "trash", annotationKey: created.annotation.annotationKey, attachmentKey: "PDF00001", expectedVersion: created.annotation.version, libraryId: 1 })).deleted, true);
+  assert.equal((await adapter.mutateAnnotation({ action: "restore", annotationKey: created.annotation.annotationKey, attachmentKey: "PDF00001", expectedVersion: created.annotation.version + 1, libraryId: 1 })).deleted, false);
 });
 
 test("reports bounded offline-aware sync status without credentials", async () => {
@@ -1119,6 +1161,7 @@ test("returns a Note and PDF annotations without crossing libraries", async () =
       pageLabel: "7",
       positionJson: '{"pageIndex":6,"rects":[[1,2,3,4]]}',
       sortIndex: "00006|000001|00000",
+      tags: [],
       text: "Renormalization closes the flow.",
       type: "highlight",
 		version: 1,

@@ -419,6 +419,10 @@
           "destination": "extensions/chatero-zotero/library-tree-model.mjs"
         },
         {
+          "source": "products/workbench/extensions/chatero-zotero/reader-workflow-model.mjs",
+          "destination": "extensions/chatero-zotero/reader-workflow-model.mjs"
+        },
+        {
           "source": "products/workbench/extensions/chatero-zotero/item-metadata-html.mjs",
           "destination": "extensions/chatero-zotero/item-metadata-html.mjs"
         },
