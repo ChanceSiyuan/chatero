@@ -18,7 +18,8 @@ import { openGeckoAttachmentSource } from "./chateroCoreGeckoAttachmentSource.mj
 const COLLECTION_FIELDS = new Set(["libraryId", "parentKey"]);
 const COLLECTION_MUTATION_FIELDS = new Set(["action", "collectionKey", "expectedVersion", "libraryId", "name", "parentKey"]);
 const COLLECTION_MUTATION_ACTIONS = new Set(["create", "update", "delete"]);
-const SEARCH_FIELDS = new Set(["collectionKey", "cursor", "libraryId", "limit", "query", "sortBy", "sortDirection"]);
+const SEARCH_FIELDS = new Set(["collectionKey", "cursor", "libraryId", "limit", "query", "scope", "sortBy", "sortDirection"]);
+const SEARCH_SCOPES = new Set(["feed", "library", "trash", "unfiled"]);
 const SEARCH_SORT_FIELDS = new Set(["creators", "itemType", "title", "year"]);
 const SEARCH_SORT_DIRECTIONS = new Set(["asc", "desc"]);
 const ITEM_CHILDREN_FIELDS = new Set(["itemKey", "libraryId"]);
@@ -162,9 +163,11 @@ function validateSearchParams(params) {
 	}
 	let hasCollection = params.collectionKey !== undefined;
 	let hasLibrary = params.libraryId !== undefined;
-	if (hasCollection !== hasLibrary) {
-		throw new Error("library.search collectionKey and libraryId must be provided together");
-	}
+	if (hasCollection && !hasLibrary) throw new Error("library.search collectionKey requires libraryId");
+	if (params.scope !== undefined && !SEARCH_SCOPES.has(params.scope)) throw new Error("library.search scope is invalid");
+	if (params.scope !== undefined && !hasLibrary) throw new Error("library.search scope requires libraryId");
+	if (hasLibrary && !hasCollection && params.scope === undefined) throw new Error("library.search libraryId requires a collectionKey or scope");
+	if (hasCollection && params.scope !== undefined) throw new Error("library.search collectionKey and scope are mutually exclusive");
 	if (hasCollection && (typeof params.collectionKey !== "string" || !params.collectionKey)) {
 		throw new Error("library.search collectionKey must be a non-empty string");
 	}
@@ -304,6 +307,7 @@ function itemSummary(Zotero, item) {
 		itemType: Zotero.ItemTypes.getName(item.itemTypeID),
 		libraryId: item.libraryID,
 		title: item.getDisplayTitle(),
+		version: Number.isSafeInteger(item.clientVersion) ? item.clientVersion : 0,
 	};
 	let year = item.getField("year");
 	if (typeof year === "number" && Number.isSafeInteger(year) && year >= 0
@@ -1624,6 +1628,15 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 				let collection = Zotero.Collections.getByLibraryAndKey(params.libraryId, params.collectionKey);
 				if (!collection) throw new Error(`Zotero collection ${params.libraryId}/${params.collectionKey} was not found`);
 				items = collection.getChildItems(false, false);
+			}
+			else if (params.scope !== undefined) {
+				let library = Zotero.Libraries.get(params.libraryId);
+				if (!library) unavailable(`Zotero library ${params.libraryId} was not found`);
+				if (params.scope === "feed" && library.libraryType !== "feed") throw new Error("library.search feed scope requires a feed library");
+				if (params.scope !== "feed" && library.libraryType === "feed") throw new Error("library.search non-feed scope cannot target a feed library");
+				items = await Zotero.Items.getAll(params.libraryId, true, params.scope === "trash", false);
+				if (params.scope === "trash") items = items.filter(item => itemIsUnavailable(item));
+				else if (params.scope === "unfiled") items = items.filter(item => item.isRegularItem?.() && item.getCollections(false).length === 0);
 			}
 			else {
 				let byLibrary = await Promise.all(Zotero.Libraries.getAll().map(library =>

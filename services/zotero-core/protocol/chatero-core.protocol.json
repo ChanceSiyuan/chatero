@@ -591,6 +591,7 @@
         "libraryId?": "number",
         "limit": "number",
         "query": "string",
+        "scope?": "string",
         "sortBy?": "string",
         "sortDirection?": "string"
       }
@@ -636,6 +637,7 @@
         "itemType": "string",
         "libraryId": "number",
         "title": "string",
+        "version": "number",
         "year?": "number"
       }
     },

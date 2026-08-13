@@ -72,9 +72,11 @@ function validateSearchParams(params) {
   if (params.libraryId !== undefined && (!Number.isSafeInteger(params.libraryId) || params.libraryId <= 0)) {
     throw new Error("library.search libraryId must be a positive safe integer");
   }
-  if ((params.collectionKey === undefined) !== (params.libraryId === undefined)) {
-    throw new Error("library.search collectionKey and libraryId must be provided together");
-  }
+  if (params.scope !== undefined && !["feed", "library", "trash", "unfiled"].includes(params.scope)) throw new Error("library.search scope is invalid");
+  if (params.collectionKey !== undefined && params.libraryId === undefined) throw new Error("library.search collectionKey requires libraryId");
+  if (params.scope !== undefined && params.libraryId === undefined) throw new Error("library.search scope requires libraryId");
+  if (params.collectionKey !== undefined && params.scope !== undefined) throw new Error("library.search collectionKey and scope are mutually exclusive");
+  if (params.libraryId !== undefined && params.collectionKey === undefined && params.scope === undefined) throw new Error("library.search libraryId requires a collectionKey or scope");
   if (params.sortBy !== undefined && !["creators", "itemType", "title", "year"].includes(params.sortBy)) {
     throw new Error("library.search sortBy must be one of creators, itemType, title, year");
   }
@@ -836,8 +838,13 @@ async function main() {
         return sortDirection === "desc" ? -result : result;
       };
       const matches = fixtureItems
-        .filter(item => message.params.collectionKey === undefined
-          || (item.libraryId === message.params.libraryId && item.collectionKeys?.includes(message.params.collectionKey)))
+        .filter(item => {
+          if (message.params.collectionKey !== undefined) return item.libraryId === message.params.libraryId && item.collectionKeys?.includes(message.params.collectionKey);
+          if (message.params.scope === "trash") return item.libraryId === message.params.libraryId && item.deleted === true;
+          if (message.params.scope === "unfiled") return item.libraryId === message.params.libraryId && item.deleted !== true && (!item.collectionKeys || item.collectionKeys.length === 0);
+          if (message.params.scope !== undefined) return item.libraryId === message.params.libraryId && item.deleted !== true;
+          return item.deleted !== true;
+        })
         .filter(item => !query || [item.title, ...(item.creators || [])].some(value => String(value).toLocaleLowerCase("en-US").includes(query)))
         .sort(compare);
       const offset = Number(message.params.cursor || 0);

@@ -196,14 +196,14 @@ test("Library model queries root collections, nested collections, and collection
           ? [{ collectionKey: "CHILD", libraryId: 7, name: "Child" }]
           : [{ collectionKey: "ROOT", libraryId: 7, name: "Root" }] };
       }
-      return { items: [{ itemKey: "ITEM", libraryId: 7, title: "Paper" }], total: 1 };
+      return { items: [{ attachmentCount: 0, creators: [], itemKey: "ITEM", itemType: "book", libraryId: 7, title: "Paper", version: 1 }], total: 1 };
     },
   });
 
   assert.deepEqual(await model.collections(), [{ collectionKey: "ROOT", libraryId: 7, name: "Root" }]);
   assert.deepEqual(await model.collections({ libraryId: 7, parentKey: "ROOT" }), [{ collectionKey: "CHILD", libraryId: 7, name: "Child" }]);
   assert.deepEqual(await model.items({ collectionKey: "ROOT", libraryId: 7, query: "tensor", limit: 50 }), {
-    items: [{ itemKey: "ITEM", libraryId: 7, title: "Paper" }],
+    items: [{ attachmentCount: 0, creators: [], itemKey: "ITEM", itemType: "book", libraryId: 7, title: "Paper", version: 1 }],
     total: 1,
   });
   assert.deepEqual(calls, [
@@ -236,4 +236,129 @@ test("Library model rejects malformed Core rows before presenting them", async (
   });
 
   await assert.rejects(model.collections(), /invalid collection/);
+});
+
+test("Library model exposes every Stage 3 source through validated Core calls", async () => {
+  const { LibraryTreeModel } = await import("../extensions/chatero-zotero/library-tree-model.mjs");
+  const calls = [];
+  const model = new LibraryTreeModel({
+    request: async (method, params) => {
+      calls.push({ method, params });
+      if (method === "library.libraries") return { libraries: [{
+        allowsLinkedFiles: true, archived: false, editable: true, filesEditable: true,
+        lastSync: 10, libraryId: 1, libraryType: "user", libraryVersion: 4,
+        name: "My Library", storageVersion: 3, syncable: true,
+      }] };
+      if (method === "library.saved-searches") return { searches: [{
+        libraryId: 1, name: "Unread", searchKey: "SEARCH01", synced: true, version: 2,
+      }] };
+      if (method === "library.feeds") return { feeds: [{
+        cleanupReadAfter: 30, cleanupUnreadAfter: 90, lastCheck: 1, lastCheckError: "",
+        lastUpdate: 2, libraryId: 9, name: "Journal Feed", refreshInterval: 60,
+        unreadCount: 3, updating: false, url: "https://example.org/feed",
+      }] };
+      if (method === "sync.status") return {
+        enabled: true, inProgress: false, lastSyncAt: 10, libraries: [{
+          errors: [], lastSync: 10, libraryId: 1, libraryVersion: 4, storageVersion: 3,
+        }], offline: false, status: "Up to date",
+      };
+      throw new Error(`unexpected method ${method}`);
+    },
+  });
+
+  assert.equal((await model.libraries())[0].name, "My Library");
+  assert.equal((await model.savedSearches({ libraryId: 1 }))[0].searchKey, "SEARCH01");
+  assert.equal((await model.feeds())[0].unreadCount, 3);
+  assert.equal((await model.syncStatus()).status, "Up to date");
+  assert.deepEqual(calls.map(value => value.method), [
+    "library.libraries", "library.saved-searches", "library.feeds", "sync.status",
+  ]);
+});
+
+test("Library source queries cover libraries, saved searches, duplicates, unfiled items, and trash", async () => {
+  const { LibraryTreeModel } = await import("../extensions/chatero-zotero/library-tree-model.mjs");
+  const calls = [];
+  const model = new LibraryTreeModel({
+    request: async (method, params) => {
+      calls.push({ method, params });
+      return { items: [], total: 0 };
+    },
+  });
+
+  await model.sourceItems({ source: { kind: "library", libraryId: 1 }, limit: 25, query: "graph" });
+  await model.sourceItems({ source: { kind: "savedSearch", libraryId: 1, searchKey: "SEARCH01" }, limit: 25 });
+  await model.sourceItems({ source: { kind: "duplicates", libraryId: 1 }, limit: 25 });
+  await model.sourceItems({ source: { kind: "unfiled", libraryId: 1 }, limit: 25 });
+  await model.sourceItems({ source: { kind: "trash", libraryId: 1 }, limit: 25 });
+
+  assert.deepEqual(calls, [
+    { method: "library.search", params: { libraryId: 1, limit: 25, query: "graph", scope: "library" } },
+    { method: "library.saved-search-items", params: { libraryId: 1, limit: 25, searchKey: "SEARCH01" } },
+    { method: "library.duplicates", params: { libraryId: 1, limit: 25 } },
+    { method: "library.search", params: { libraryId: 1, limit: 25, query: "", scope: "unfiled" } },
+    { method: "library.search", params: { libraryId: 1, limit: 25, query: "", scope: "trash" } },
+  ]);
+});
+
+test("item table session paginates, sorts, restores stable selection, and batches same-library mutations", async () => {
+  const { LibraryItemTableModel } = await import("../extensions/chatero-zotero/library-item-table-model.mjs");
+  const calls = [];
+  const pages = [
+    { items: [{ creators: ["Ada"], itemKey: "ITEM0001", itemType: "book", libraryId: 1, title: "Alpha", version: 2 }], nextCursor: "1", total: 2 },
+    { items: [{ creators: ["Grace"], itemKey: "ITEM0002", itemType: "article", libraryId: 1, title: "Beta", version: 7 }], total: 2 },
+  ];
+  const core = {
+    async sourceItems(options) { calls.push(["sourceItems", options]); return pages.shift(); },
+    async batchMutate(options) { calls.push(["batchMutate", options]); return { replayed: false, results: [], revision: 1 }; },
+  };
+  const table = new LibraryItemTableModel({ core, pageSize: 1 });
+  await table.open({ kind: "library", libraryId: 1 });
+  table.select(["1/ITEM0001"]);
+  await table.loadNext();
+  table.select(["1/ITEM0001", "1/ITEM0002"]);
+  const snapshot = table.snapshot();
+
+  assert.equal(table.rows.length, 2);
+  assert.deepEqual(table.selectedRows.map(value => value.itemKey), ["ITEM0001", "ITEM0002"]);
+  assert.equal(snapshot.nextCursor, undefined);
+  await table.batch("trash");
+  assert.deepEqual(calls.at(-1), ["batchMutate", {
+    libraryId: 1,
+    operations: [
+      { kind: "item-mutate", params: { action: "trash", expectedVersion: 2, itemKey: "ITEM0001", libraryId: 1 } },
+      { kind: "item-mutate", params: { action: "trash", expectedVersion: 7, itemKey: "ITEM0002", libraryId: 1 } },
+    ],
+  }]);
+
+  const restored = new LibraryItemTableModel({ core, pageSize: 1 });
+  restored.restore(snapshot);
+  assert.deepEqual(restored.selectedRows.map(value => value.itemKey), ["ITEM0001", "ITEM0002"]);
+  assert.equal(restored.sortBy, "title");
+  assert.equal(restored.sortDirection, "asc");
+});
+
+test("batch mutation learns a Core scope revision and retries once with a fresh idempotency key", async () => {
+  const { LibraryTreeModel } = await import("../extensions/chatero-zotero/library-tree-model.mjs");
+  const calls = [];
+  let keys = 0;
+  const model = new LibraryTreeModel({
+    idempotencyKey: () => `chatero-stage3-key-${++keys}`,
+    request: async (method, params) => {
+      calls.push({ method, params });
+      if (calls.length === 1) {
+        const error = new Error("revision conflict");
+        error.code = "CONFLICT";
+        error.details = { actualRevision: 5, expectedRevision: 0, kind: "REVISION_CONFLICT" };
+        throw error;
+      }
+      return { replayed: false, results: [], revision: 6 };
+    },
+  });
+  const operations = [{ kind: "item-mutate", params: { action: "trash", expectedVersion: 2, itemKey: "ITEM0001", libraryId: 1 } }];
+
+  assert.equal((await model.batchMutate({ libraryId: 1, operations })).revision, 6);
+  assert.deepEqual(calls.map(value => ({ expectedRevision: value.params.expectedRevision, idempotencyKey: value.params.idempotencyKey })), [
+    { expectedRevision: 0, idempotencyKey: "chatero-stage3-key-1" },
+    { expectedRevision: 5, idempotencyKey: "chatero-stage3-key-2" },
+  ]);
 });

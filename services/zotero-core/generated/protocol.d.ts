@@ -489,6 +489,7 @@ export interface LibraryItemSummary {
   readonly itemType: string;
   readonly libraryId: number;
   readonly title: string;
+  readonly version: number;
   readonly year?: number;
 }
 
@@ -680,6 +681,7 @@ export interface LibrarySearchParams {
   readonly libraryId?: number;
   readonly limit: number;
   readonly query: string;
+  readonly scope?: string;
   readonly sortBy?: string;
   readonly sortDirection?: string;
 }
