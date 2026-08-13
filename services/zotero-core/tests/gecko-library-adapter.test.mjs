@@ -131,6 +131,7 @@ function fixture({
   noteInTrash = false,
 } = {}) {
   const syncCalls = [];
+	const exportCalls = [];
   const highlight = item({
     id: 92,
     key: "ANN00001",
@@ -271,6 +272,7 @@ function fixture({
       shouldShowCitationWarning: value => value.id === 11,
     },
 		Translators: {
+			get: id => id === "9cb70025-a888-4a29-a210-93ec52da40d4" ? { translatorID: id, translatorType: 2 } : false,
 			getAllForType: async kind => kind === "export" ? [
 				{ browserSupport: "g", creator: "Simon Kornblith", label: "BibTeX", lastUpdated: "2026-01-01 00:00:00", priority: 100, target: "bib", translatorID: "9cb70025-a888-4a29-a210-93ec52da40d4", translatorType: 2 },
 				{ browserSupport: "g", creator: "Zotero", label: "CSL JSON", lastUpdated: "2025-01-01 00:00:00", priority: 100, target: "json", translatorID: "bc03b4fe-436d-4a1f-ba59-de4d2d7a63f7", translatorType: 2 },
@@ -287,6 +289,16 @@ function fixture({
 				html: modified ? `<span>(${selected.map(value => value.getDisplayTitle()).join("; ")})</span>` : `<div>${selected.map(value => value.getDisplayTitle()).join("; ")}</div>`,
 				text: modified ? `(${selected.map(value => value.getDisplayTitle()).join("; ")})` : selected.map(value => value.getDisplayTitle()).join("; "),
 			}),
+		},
+		Translate: {
+			Export: class {
+				setItems(items) { this.items = items; }
+				setTranslator(translator) { this.translator = translator; }
+				async translate() {
+					exportCalls.push({ items: this.items.map(value => [value.libraryID, value.key]), translatorId: this.translator.translatorID });
+					this.string = this.items.map(value => `@article{${value.key},\n  title = {${value.getDisplayTitle()}}\n}`).join("\n");
+				}
+			},
 		},
     DB: { executeTransaction: async callback => callback() },
     Sync: {
@@ -308,7 +320,7 @@ function fixture({
       } },
     },
   };
-  return { syncCalls, Zotero };
+  return { exportCalls, syncCalls, Zotero };
 }
 
 test("lists libraries, saved searches, and paginated tags without database or path data", async () => {
@@ -522,6 +534,21 @@ test("lists installed CSL styles and renders bibliography or citation through Qu
 		text: "(Alpha Methods)",
 	});
 	await assert.rejects(adapter.renderCitation({ identities, mode: "bibliography", styleId: "file:///tmp/evil.csl" }), /installed/);
+});
+
+test("exports exact items in memory through an installed Zotero export translator", async () => {
+	const source = fixture();
+	const adapter = createZoteroLibraryAdapter(source);
+	assert.deepEqual(await adapter.exportItems({
+		identities: [{ itemKey: "ITEM0001", libraryId: 1 }, { itemKey: "ITEM0001", libraryId: 2 }],
+		translatorId: "9cb70025-a888-4a29-a210-93ec52da40d4",
+	}), {
+		content: "@article{ITEM0001,\n  title = {Alpha Methods}\n}\n@article{ITEM0001,\n  title = {Group Alpha}\n}",
+		itemCount: 2,
+		translatorId: "9cb70025-a888-4a29-a210-93ec52da40d4",
+	});
+	assert.deepEqual(source.exportCalls, [{ items: [[1, "ITEM0001"], [2, "ITEM0001"]], translatorId: "9cb70025-a888-4a29-a210-93ec52da40d4" }]);
+	await assert.rejects(adapter.exportItems({ identities: [{ itemKey: "ITEM0001", libraryId: 1 }], translatorId: "missing" }), /installed export translator/);
 });
 
 test("search isolates duplicate collection keys and emits protocol-exact item summaries", async () => {

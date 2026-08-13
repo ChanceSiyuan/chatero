@@ -46,6 +46,7 @@ export const METHOD_CAPABILITIES = Object.freeze({
   "profile.status": "profile:read",
   "sync.retry": "sync:write",
   "sync.status": "sync:read",
+  "translation.export": "translation:read",
   "translation.translators": "translation:read"
 });
 export const METHOD_TYPES = Object.freeze({
@@ -164,6 +165,10 @@ export const METHOD_TYPES = Object.freeze({
   "sync.status": {
     "params": "SyncStatusParams",
     "result": "SyncStatusResult"
+  },
+  "translation.export": {
+    "params": "TranslationExportParams",
+    "result": "TranslationExportResult"
   },
   "translation.translators": {
     "params": "TranslationTranslatorsParams",

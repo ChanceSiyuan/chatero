@@ -44,6 +44,7 @@ function createRouter(overrides = {}) {
     async collections(params) { calls.push(["collections", params]); return { collections: [] }; },
 		async citationStyles(params) { calls.push(["citationStyles", params]); return { styles: [] }; },
 		async renderCitation(params) { calls.push(["renderCitation", params]); return { html: "<div>Reference</div>", text: "Reference" }; },
+		async exportItems(params) { calls.push(["exportItems", params]); return { content: "@article{}", itemCount: params.identities.length, translatorId: params.translatorId }; },
     async feeds(params) { calls.push(["feeds", params]); return { feeds: [] }; },
     async itemChildren(params) { calls.push(["itemChildren", params]); return { attachments: [], notes: [] }; },
     async itemMetadata(params) { calls.push(["itemMetadata", params]); return { itemKey: params.itemKey, libraryId: params.libraryId }; },
@@ -224,13 +225,16 @@ test("routes translator catalog and citation rendering through separate read cap
 	const { calls, router } = createRouter();
 	const session = await handshake(router, ["citation:read", "translation:read"]);
 	assert.deepEqual((await router.handle(request(session, "translation.translators", { kind: "export" }))).result, { translators: [] });
+	assert.deepEqual((await router.handle(request(session, "translation.export", {
+		identities: [{ itemKey: "ITEM0001", libraryId: 1 }], translatorId: "bibtex",
+	}))).result, { content: "@article{}", itemCount: 1, translatorId: "bibtex" });
 	assert.deepEqual((await router.handle(request(session, "citation.styles", {}))).result, { styles: [] });
 	assert.deepEqual((await router.handle(request(session, "citation.render", {
 		identities: [{ itemKey: "ITEM0001", libraryId: 1 }],
 		mode: "bibliography",
 		styleId: "http://www.zotero.org/styles/apa",
 	}))).result, { html: "<div>Reference</div>", text: "Reference" });
-	assert.deepEqual(calls.map(value => value[0]), ["translators", "citationStyles", "renderCitation"]);
+	assert.deepEqual(calls.map(value => value[0]), ["translators", "exportItems", "citationStyles", "renderCitation"]);
 });
 
 test("routes read-only PDF, item facts, Note, and annotation methods through library:read", async () => {

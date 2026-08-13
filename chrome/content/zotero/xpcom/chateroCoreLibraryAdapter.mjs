@@ -38,6 +38,7 @@ const TRANSLATOR_KINDS = new Set(["export", "import", "search", "web"]);
 const CITATION_STYLES_FIELDS = new Set();
 const CITATION_RENDER_FIELDS = new Set(["identities", "locale", "mode", "styleId"]);
 const CITATION_MODES = new Set(["bibliography", "citation"]);
+const EXPORT_ITEMS_FIELDS = new Set(["identities", "translatorId"]);
 const SAVED_SEARCH_FIELDS = new Set(["libraryId"]);
 const SAVED_SEARCH_ITEMS_FIELDS = new Set(["cursor", "libraryId", "limit", "searchKey"]);
 const TAG_FIELDS = new Set(["cursor", "libraryId", "limit", "query"]);
@@ -50,6 +51,7 @@ const MAX_RELATION_FIELD_BYTES = 16 * 1024;
 const MAX_MUTATION_ENTRIES = 1024;
 const MAX_CITATION_ITEMS = 200;
 const MAX_CITATION_OUTPUT_BYTES = 384 * 1024;
+const MAX_EXPORT_OUTPUT_BYTES = 768 * 1024;
 
 function exactObject(value, fields, label) {
 	if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -520,6 +522,7 @@ function validateZotero(Zotero) {
 		[Zotero?.Retractions, "isRetracted"],
 		[Zotero?.Retractions, "shouldShowCitationWarning"],
 		[Zotero?.Translators, "getAllForType"],
+		[Zotero?.Translators, "get"],
 		[Zotero?.Styles, "get"],
 		[Zotero?.Styles, "getVisible"],
 		[Zotero?.QuickCopy, "getContentFromItems"],
@@ -598,6 +601,36 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(S
 			return {
 				html: boundedString(rendered.html, MAX_CITATION_OUTPUT_BYTES, "citation HTML"),
 				text: boundedString(rendered.text, MAX_CITATION_OUTPUT_BYTES, "citation text"),
+			};
+		},
+
+		async exportItems(params) {
+			exactObject(params, EXPORT_ITEMS_FIELDS, "translation.export params");
+			let translatorId = boundedString(params.translatorId, 256, "translation.export translatorId");
+			if (!Array.isArray(params.identities) || params.identities.length < 1 || params.identities.length > MAX_CITATION_ITEMS) {
+				throw new Error("translation.export identities must be a non-empty bounded array");
+			}
+			let translator = Zotero.Translators.get(translatorId);
+			let exportType = Zotero.Translator?.TRANSLATOR_TYPES?.export || 2;
+			if (!translator || !(translator.translatorType & exportType)) unavailable("translation.export requires an installed export translator");
+			let seen = new Set();
+			let items = params.identities.map(identity => {
+				validateCompositeParams(identity, ITEM_METADATA_FIELDS, "itemKey", "translation.export identity");
+				let composite = `${identity.libraryId}/${identity.itemKey}`;
+				if (seen.has(composite)) throw new Error("translation.export identities must be unique");
+				seen.add(composite);
+				let item = lookupItem(Zotero, identity.libraryId, identity.itemKey, "Zotero export item");
+				if (!item.isRegularItem?.() && !item.isNote?.()) throw new Error("translation.export target must be a regular item or Note");
+				return item;
+			});
+			let translation = new Zotero.Translate.Export();
+			translation.setItems(items.slice());
+			translation.setTranslator(translator);
+			await translation.translate();
+			return {
+				content: boundedString(translation.string || "", MAX_EXPORT_OUTPUT_BYTES, "translation export content"),
+				itemCount: items.length,
+				translatorId,
 			};
 		},
 

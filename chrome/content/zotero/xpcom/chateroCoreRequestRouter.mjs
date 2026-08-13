@@ -69,7 +69,8 @@ function validateRouterOptions(options) {
 			|| typeof options.adapter.retrySync !== "function"
 			|| typeof options.adapter.translators !== "function"
 			|| typeof options.adapter.citationStyles !== "function"
-			|| typeof options.adapter.renderCitation !== "function") {
+			|| typeof options.adapter.renderCitation !== "function"
+			|| typeof options.adapter.exportItems !== "function") {
 		throw new Error("Gecko Core router requires Profile and Library adapters");
 	}
 	if (typeof options.bootstrapToken !== "string" || options.bootstrapToken.length < 24) {
@@ -304,6 +305,7 @@ export function createGeckoCoreRequestRouter(options = {}) {
 			if (message.method === "library.saved-search-items") return { result: await adapter.savedSearchItems(message.params) };
 			if (message.method === "library.tags") return { result: await adapter.tags(message.params) };
 			if (message.method === "translation.translators") return { result: await adapter.translators(message.params) };
+			if (message.method === "translation.export") return { result: await adapter.exportItems(message.params) };
 			if (message.method === "citation.styles") return { result: await adapter.citationStyles(message.params) };
 			if (message.method === "citation.render") return { result: await adapter.renderCitation(message.params) };
 			if (message.method === "sync.status") return { result: await adapter.syncStatus(message.params) };

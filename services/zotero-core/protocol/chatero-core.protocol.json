@@ -186,6 +186,12 @@
       "resultType": "TranslationTranslatorsResult"
     },
     {
+      "name": "translation.export",
+      "capability": "translation:read",
+      "paramsType": "TranslationExportParams",
+      "resultType": "TranslationExportResult"
+    },
+    {
       "name": "citation.styles",
       "capability": "citation:read",
       "paramsType": "CitationStylesParams",
@@ -827,6 +833,21 @@
       "kind": "object",
       "fields": {
         "translators": "TranslationTranslatorSummary[]"
+      }
+    },
+    "TranslationExportParams": {
+      "kind": "object",
+      "fields": {
+        "identities": "CitationItemIdentity[]",
+        "translatorId": "string"
+      }
+    },
+    "TranslationExportResult": {
+      "kind": "object",
+      "fields": {
+        "content": "string",
+        "itemCount": "number",
+        "translatorId": "string"
       }
     },
     "CitationStyleSummary": {
