@@ -32,11 +32,17 @@ function trustedCspSource(value) {
     && /^[A-Za-z][A-Za-z0-9+.-]*:[^\s;'"<>*]*$/u.test(value);
   const vscodeCdnWildcard = typeof value === "string"
     && /^https:\/\/\*\.[A-Za-z0-9.-]+$/u.test(value);
-  if ((!fixedScheme && !vscodeCdnWildcard)
+  // Code-OSS 1.132 exposes `'self' https://*.vscode-cdn.net` as a
+  // space-separated source list. Accept that exact leading `'self'` form and
+  // keep only the webview resource wildcard for URI validation and the CSP.
+  const selfPrefixedWildcard = typeof value === "string"
+    && value.startsWith("'self' ")
+    && /^https:\/\/\*\.[A-Za-z0-9.-]+$/u.test(value.slice("'self' ".length));
+  if ((!fixedScheme && !vscodeCdnWildcard && !selfPrefixedWildcard)
     || /^(?:data|blob|file|javascript):/iu.test(value)) {
     throw new TypeError("webview.cspSource is invalid");
   }
-  return value;
+  return selfPrefixedWildcard ? value.slice("'self' ".length) : value;
 }
 
 export function createLivePreviewHtml({ webview, scriptUri, styleUri, nonce }) {
