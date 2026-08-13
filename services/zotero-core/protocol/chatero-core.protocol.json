@@ -1131,8 +1131,11 @@
       "kind": "object",
       "fields": {
         "annotationKey": "string",
+        "authorName?": "string",
         "color": "string",
         "comment": "string",
+        "dateCreated?": "string",
+        "dateModified?": "string",
         "libraryId": "number",
         "pageLabel": "string",
         "positionJson": "string",
@@ -1156,8 +1159,12 @@
         "color?": "string",
         "comment?": "string",
         "expectedVersion": "number",
+        "pageLabel?": "string",
+        "positionJson?": "string",
+        "sortIndex?": "string",
         "tags?": "string[]",
-        "text?": "string"
+        "text?": "string",
+        "type?": "string"
       }
     },
     "LibraryAnnotationUpdateState": {

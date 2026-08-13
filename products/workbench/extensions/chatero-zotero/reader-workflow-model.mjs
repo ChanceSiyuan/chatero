@@ -61,6 +61,9 @@ function validateAnnotation(value) {
   for (const field of ["annotationKey", "color", "comment", "pageLabel", "positionJson", "sortIndex", "text", "type"]) {
     string(value[field], `Reader annotation ${field}`, { empty: ["comment", "pageLabel", "text"].includes(field), maximum: field === "positionJson" ? 256 * 1024 : 64 * 1024 });
   }
+  for (const field of ["authorName", "dateCreated", "dateModified"]) {
+    if (value[field] !== undefined) string(value[field], `Reader annotation ${field}`, { empty: field === "authorName", maximum: 64 * 1024 });
+  }
   const tags = validateTags(value.tags) || Object.freeze([]);
   return Object.freeze({ ...value, tags });
 }
@@ -202,14 +205,18 @@ export class ReaderWorkflowModel {
       if (!before) throw new Error(`annotation ${value.annotationKey} is not loaded`);
       integer(value.expectedVersion, `annotation update ${index} expectedVersion`);
       const tags = validateTags(value.tags);
-      if (!["color", "comment", "text"].some(field => value[field] !== undefined) && tags === undefined) throw new TypeError(`annotation update ${index} has no changes`);
+      if (!["color", "comment", "pageLabel", "positionJson", "sortIndex", "text", "type"].some(field => value[field] !== undefined) && tags === undefined) throw new TypeError(`annotation update ${index} has no changes`);
       return {
         annotationKey: value.annotationKey,
         expectedVersion: value.expectedVersion,
         ...(value.color !== undefined && { color: string(value.color, "annotation color", { maximum: 32 }) }),
         ...(value.comment !== undefined && { comment: string(value.comment, "annotation comment", { empty: true, maximum: 64 * 1024 }) }),
+        ...(value.pageLabel !== undefined && { pageLabel: string(value.pageLabel, "annotation pageLabel", { empty: true, maximum: 1024 }) }),
+        ...(value.positionJson !== undefined && { positionJson: string(value.positionJson, "annotation position", { maximum: 256 * 1024 }) }),
+        ...(value.sortIndex !== undefined && { sortIndex: string(value.sortIndex, "annotation sortIndex", { maximum: 1024 }) }),
         ...(tags !== undefined && { tags }),
         ...(value.text !== undefined && { text: string(value.text, "annotation text", { empty: true, maximum: 64 * 1024 }) }),
+        ...(value.type !== undefined && { type: string(value.type, "annotation type", { maximum: 64 }) }),
       };
     });
     const scope = `library:${this.#identity.libraryId}/attachment:${this.#identity.attachmentKey}`;
@@ -217,7 +224,7 @@ export class ReaderWorkflowModel {
     const versions = new Map(result.annotations.map(value => [value.annotationKey, value.version]));
     this.#undo.push({ updates: normalized.map(value => {
       const before = prior.get(value.annotationKey);
-      return { annotationKey: value.annotationKey, color: before.color, comment: before.comment, expectedVersion: versions.get(value.annotationKey), tags: before.tags, text: before.text };
+      return { annotationKey: value.annotationKey, color: before.color, comment: before.comment, expectedVersion: versions.get(value.annotationKey), pageLabel: before.pageLabel, positionJson: before.positionJson, sortIndex: before.sortIndex, tags: before.tags, text: before.text, type: before.type };
     }) });
     await this.#reloadAnnotations();
     return result;

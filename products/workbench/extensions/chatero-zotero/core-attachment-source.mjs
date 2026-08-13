@@ -10,10 +10,11 @@ function unavailable() {
 }
 
 function validateRecord(record) {
+  const supportedContentTypes = new Set(["application/epub+zip", "application/pdf", "application/xhtml+xml", "text/html"]);
   if (!record || typeof record !== "object" || !Object.isFrozen(record)
       || !Number.isSafeInteger(record.libraryId) || record.libraryId < 1
       || typeof record.attachmentKey !== "string" || !/^[A-Z0-9]{8}$/u.test(record.attachmentKey)
-      || record.contentType !== "application/pdf" || Object.hasOwn(record, "path")) {
+      || !supportedContentTypes.has(record.contentType) || Object.hasOwn(record, "path")) {
     throw unavailable();
   }
 }

@@ -108,7 +108,7 @@ test("creates, edits, tags, trashes, restores, and undoes annotations through na
   const model = new ReaderWorkflowModel({ core, idempotencyKey: () => `reader-test-key-${String(calls.length).padStart(4, "0")}` });
   await model.load({ attachmentKey: "PDF00001", libraryId: 7 });
   await model.createAnnotation({ color: "#2ea8e5", comment: "New", pageLabel: "4", positionJson: '{"pageIndex":3,"rects":[[5,6,7,8]]}', sortIndex: "00003|000001|00000", tags: ["method"], text: "New quote", type: "highlight" });
-  await model.updateAnnotations([{ annotationKey: "ANNNEW01", color: "#a28ae5", comment: "Edited", expectedVersion: 1, tags: ["reviewed"] }]);
+  await model.updateAnnotations([{ annotationKey: "ANNNEW01", color: "#a28ae5", comment: "Edited", expectedVersion: 1, pageLabel: "5", positionJson: '{"type":"CssSelector","value":"#evidence"}', sortIndex: "00005", tags: ["reviewed"], type: "underline" }]);
   await model.mutateAnnotation({ action: "trash", annotationKey: "ANNNEW01", expectedVersion: 2 });
   await model.mutateAnnotation({ action: "restore", annotationKey: "ANNNEW01", expectedVersion: 3 });
   assert.equal(await model.undo(), true);
@@ -117,6 +117,9 @@ test("creates, edits, tags, trashes, restores, and undoes annotations through na
     "library.annotation-mutate", "library.annotations-update", "library.annotation-mutate", "library.annotation-mutate", "library.annotation-mutate",
   ]);
   assert.equal(calls.at(-1).params.action, "trash");
+  const fullUpdate = calls.find(value => value.method === "library.annotations-update").params.updates[0];
+  assert.equal(fullUpdate.type, "underline");
+  assert.equal(fullUpdate.positionJson, '{"type":"CssSelector","value":"#evidence"}');
   assert.ok(calls.every(value => JSON.stringify(value.params).includes("/Users/") === false));
 });
 

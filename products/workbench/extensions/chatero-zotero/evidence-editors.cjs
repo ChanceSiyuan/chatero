@@ -26,28 +26,41 @@ class PdfEditorProvider {
     getModel,
     resolveDocument,
     renderPdfEditorHTML,
+    renderUpstreamReaderHTML = null,
     extensionUri,
     materializePdf = async () => { throw new Error("Zotero PDF materialization is unavailable"); },
     contextBroker = null,
     attachPdfContext = null,
     createReaderWorkflow = null,
+    fromUpstreamReaderAnnotation = null,
     makePanelNonce = nonce,
     onContextError = () => {},
+    readerLocationFromViewState = null,
+    toUpstreamReaderAnnotation = null,
   }) {
     this.vscode = vscode;
     this.registry = registry;
     this.getModel = getModel;
     this.resolveDocument = resolveDocument || ((uri, kind) => registry.resolve(uri, kind));
     this.renderPdfEditorHTML = renderPdfEditorHTML;
+    this.renderUpstreamReaderHTML = renderUpstreamReaderHTML;
     this.materializePdf = materializePdf;
     this.viewerRoot = vscode.Uri.joinPath(extensionUri, "media", "pdf-viewer");
+    this.upstreamReaderRoot = vscode.Uri.joinPath(extensionUri, "media", "zotero-reader");
     this.contextBroker = contextBroker;
     this.attachPdfContext = attachPdfContext;
     this.createReaderWorkflow = createReaderWorkflow;
+    this.fromUpstreamReaderAnnotation = fromUpstreamReaderAnnotation;
+    this.readerLocationFromViewState = readerLocationFromViewState;
+    this.toUpstreamReaderAnnotation = toUpstreamReaderAnnotation;
     this.makePanelNonce = makePanelNonce;
     this.onContextError = onContextError;
     if ((contextBroker === null) !== (attachPdfContext === null)
         || (createReaderWorkflow !== null && typeof createReaderWorkflow !== "function")
+        || ([fromUpstreamReaderAnnotation, renderUpstreamReaderHTML, readerLocationFromViewState, toUpstreamReaderAnnotation]
+          .filter(value => value !== null).length !== 0
+          && ![fromUpstreamReaderAnnotation, renderUpstreamReaderHTML, readerLocationFromViewState, toUpstreamReaderAnnotation]
+            .every(value => typeof value === "function"))
         || typeof makePanelNonce !== "function" || typeof onContextError !== "function") {
       throw new TypeError("PDF editor context bridge configuration is invalid");
     }
@@ -66,16 +79,20 @@ class PdfEditorProvider {
     const loaded = workflow ? await workflow.load(record) : null;
     const annotations = loaded?.annotations
       ?? await model.annotations({ attachmentKey: record.attachmentKey, libraryId: record.libraryId });
+    const isPdf = record.contentType === "application/pdf";
+    if (!isPdf && !this.renderUpstreamReaderHTML) throw new Error(`Reader content type ${record.contentType} is unavailable`);
     const materialized = await this.materializePdf(record);
     const file = this.vscode.Uri.file(materialized.path);
-    panel.webview.options = { enableScripts: true, localResourceRoots: [this.vscode.Uri.file(dirname(materialized.path)), this.viewerRoot] };
+    const readerRoot = isPdf ? this.viewerRoot : this.upstreamReaderRoot;
+    panel.webview.options = { enableScripts: true, localResourceRoots: [this.vscode.Uri.file(dirname(materialized.path)), readerRoot] };
     const panelNonce = this.makePanelNonce();
-    const contextLease = this.contextBroker?.open(document.uri, document.record, panelNonce, annotations) ?? null;
+    const contextLease = isPdf ? this.contextBroker?.open(document.uri, document.record, panelNonce, annotations) ?? null : null;
     let lastSequence = 0;
     let lastAttachSequence = 0;
     let lastSnapshot = null;
     let disposed = false;
     let readerWrite = Promise.resolve();
+    const readerKeyMap = new Map();
     let lastReaderPage = loaded?.state?.pageIndex;
     let messageSubscription = null;
     let viewStateSubscription = null;
@@ -96,8 +113,62 @@ class PdfEditorProvider {
       messageSubscription = (this.contextBroker || workflow) && typeof panel.webview.onDidReceiveMessage === "function"
         ? panel.webview.onDidReceiveMessage(message => {
         const operation = (async () => {
+          if (message?.type === "upstream-reader-state") {
+            if (isPdf || !workflow || Object.keys(message).sort().join(",") !== "state,type") throw new TypeError("Upstream Reader state message is invalid");
+            const location = this.readerLocationFromViewState(record.contentType, message.state);
+            readerWrite = readerWrite.catch(() => {}).then(() => workflow.updateLocation(location));
+            await readerWrite;
+            return;
+          }
+          if (message?.type === "upstream-reader-save") {
+            const sequence = message.sequence;
+            try {
+              if (isPdf || !workflow || !Number.isSafeInteger(sequence) || sequence < 1 || !Array.isArray(message.annotations)
+                  || message.annotations.length > 100 || Object.keys(message).sort().join(",") !== "annotations,sequence,type") {
+                throw new TypeError("Upstream Reader save message is invalid");
+              }
+              for (const value of message.annotations) {
+                const key = typeof value?.id === "string" ? value.id : "";
+                const currentKey = readerKeyMap.get(key) || key;
+                const current = workflow.annotations.find(annotation => annotation.annotationKey === currentKey);
+                const change = this.fromUpstreamReaderAnnotation(value, current);
+                if (change.action === "create") {
+                  const created = await workflow.createAnnotation(change);
+                  readerKeyMap.set(key, created.annotationKey);
+                }
+                else if (Object.keys(change).length > 2) await workflow.updateAnnotations([change]);
+              }
+              await panel.webview.postMessage?.({ sequence, type: "upstream-reader-saved" });
+            }
+            catch (error) {
+              await panel.webview.postMessage?.({ message: error.message, sequence, type: "upstream-reader-error" });
+              throw error;
+            }
+            return;
+          }
+          if (message?.type === "upstream-reader-delete") {
+            const sequence = message.sequence;
+            try {
+              if (isPdf || !workflow || !Number.isSafeInteger(sequence) || sequence < 1 || !Array.isArray(message.ids)
+                  || message.ids.length > 100 || new Set(message.ids).size !== message.ids.length
+                  || Object.keys(message).sort().join(",") !== "ids,sequence,type") throw new TypeError("Upstream Reader delete message is invalid");
+              for (const key of message.ids) {
+                const currentKey = readerKeyMap.get(key) || key;
+                const current = workflow.annotations.find(annotation => annotation.annotationKey === currentKey);
+                if (!current) throw new Error(`Reader annotation ${key} is unavailable`);
+                await workflow.mutateAnnotation({ action: "trash", annotationKey: currentKey, expectedVersion: current.version });
+                readerKeyMap.delete(key);
+              }
+              await panel.webview.postMessage?.({ sequence, type: "upstream-reader-saved" });
+            }
+            catch (error) {
+              await panel.webview.postMessage?.({ message: error.message, sequence, type: "upstream-reader-error" });
+              throw error;
+            }
+            return;
+          }
           if (message?.type === "reader-state") {
-            if (!workflow || !Number.isSafeInteger(message.pageIndex) || message.pageIndex < 0
+            if (!isPdf || !workflow || !Number.isSafeInteger(message.pageIndex) || message.pageIndex < 0
                 || Object.keys(message).sort().join(",") !== "pageIndex,type") {
               throw new TypeError("Reader state message is invalid");
             }
@@ -172,17 +243,30 @@ class PdfEditorProvider {
         })
         : null;
       panelDisposeSubscription = panel.onDidDispose?.(cleanup) ?? null;
-      panel.webview.html = this.renderPdfEditorHTML({
+      const renderedNonce = nonce();
+      panel.webview.html = isPdf ? this.renderPdfEditorHTML({
         annotations,
         attachment: record,
         cspSource: panel.webview.cspSource,
-        nonce: nonce(),
+        nonce: renderedNonce,
         initialState: loaded?.state ?? {},
         panelNonce,
         pdfJsUri: panel.webview.asWebviewUri(this.vscode.Uri.joinPath(this.viewerRoot, "pdf.mjs")).toString(),
         pdfUri: panel.webview.asWebviewUri(file).toString(),
         viewerUri: panel.webview.asWebviewUri(this.vscode.Uri.joinPath(this.viewerRoot, "pdf-viewer.mjs")).toString(),
         workerUri: panel.webview.asWebviewUri(this.vscode.Uri.joinPath(this.viewerRoot, "pdf.worker.mjs")).toString(),
+      }) : this.renderUpstreamReaderHTML({
+        annotations: annotations.map(this.toUpstreamReaderAnnotation),
+        attachment: record,
+        cspSource: panel.webview.cspSource,
+        documentUri: panel.webview.asWebviewUri(file).toString(),
+        hostUri: panel.webview.asWebviewUri(this.vscode.Uri.joinPath(this.upstreamReaderRoot, "chatero-reader-host.mjs")).toString(),
+        luaparseUri: panel.webview.asWebviewUri(this.vscode.Uri.joinPath(this.upstreamReaderRoot, "luaparse.js")).toString(),
+        nonce: renderedNonce,
+        readerCssUri: panel.webview.asWebviewUri(this.vscode.Uri.joinPath(this.upstreamReaderRoot, "reader.css")).toString(),
+        readerJsUri: panel.webview.asWebviewUri(this.vscode.Uri.joinPath(this.upstreamReaderRoot, "reader.js")).toString(),
+        readerType: record.contentType === "application/epub+zip" ? "epub" : "snapshot",
+        state: loaded?.state ?? {},
       });
     }
     catch (error) {

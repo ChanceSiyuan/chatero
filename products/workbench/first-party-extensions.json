@@ -451,6 +451,154 @@
           "destination": "extensions/chatero-zotero/package.json"
         },
         {
+          "source": "products/workbench/extensions/chatero-zotero/core-attachment-source.mjs",
+          "destination": "extensions/chatero-zotero/core-attachment-source.mjs"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/pdf-materializer.mjs",
+          "destination": "extensions/chatero-zotero/pdf-materializer.mjs"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/upstream-reader-bridge.mjs",
+          "destination": "extensions/chatero-zotero/upstream-reader-bridge.mjs"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/115.js",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/115.js"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/317.js",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/317.js"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/903.js",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/903.js"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/903.js.LICENSE.txt",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/903.js.LICENSE.txt"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/LICENSE",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/LICENSE"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/ZOTERO-AGPL-3.0.txt",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/ZOTERO-AGPL-3.0.txt"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/chatero-reader-host.mjs",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/chatero-reader-host.mjs"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/luaparse.js",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/luaparse.js"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/reader.css",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/reader.css"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/reader.js",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/reader.js"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/reader.js.LICENSE.txt",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/reader.js.LICENSE.txt"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/mathjax-fonts/MathJax_AMS-Regular.woff",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/mathjax-fonts/MathJax_AMS-Regular.woff"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/mathjax-fonts/MathJax_Calligraphic-Bold.woff",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/mathjax-fonts/MathJax_Calligraphic-Bold.woff"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/mathjax-fonts/MathJax_Calligraphic-Regular.woff",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/mathjax-fonts/MathJax_Calligraphic-Regular.woff"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/mathjax-fonts/MathJax_Fraktur-Bold.woff",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/mathjax-fonts/MathJax_Fraktur-Bold.woff"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/mathjax-fonts/MathJax_Fraktur-Regular.woff",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/mathjax-fonts/MathJax_Fraktur-Regular.woff"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/mathjax-fonts/MathJax_Main-Bold.woff",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/mathjax-fonts/MathJax_Main-Bold.woff"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/mathjax-fonts/MathJax_Main-Italic.woff",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/mathjax-fonts/MathJax_Main-Italic.woff"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/mathjax-fonts/MathJax_Main-Regular.woff",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/mathjax-fonts/MathJax_Main-Regular.woff"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/mathjax-fonts/MathJax_Math-BoldItalic.woff",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/mathjax-fonts/MathJax_Math-BoldItalic.woff"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/mathjax-fonts/MathJax_Math-Italic.woff",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/mathjax-fonts/MathJax_Math-Italic.woff"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/mathjax-fonts/MathJax_Math-Regular.woff",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/mathjax-fonts/MathJax_Math-Regular.woff"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/mathjax-fonts/MathJax_SansSerif-Bold.woff",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/mathjax-fonts/MathJax_SansSerif-Bold.woff"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/mathjax-fonts/MathJax_SansSerif-Italic.woff",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/mathjax-fonts/MathJax_SansSerif-Italic.woff"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/mathjax-fonts/MathJax_SansSerif-Regular.woff",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/mathjax-fonts/MathJax_SansSerif-Regular.woff"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/mathjax-fonts/MathJax_Script-Regular.woff",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/mathjax-fonts/MathJax_Script-Regular.woff"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/mathjax-fonts/MathJax_Size1-Regular.woff",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/mathjax-fonts/MathJax_Size1-Regular.woff"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/mathjax-fonts/MathJax_Size2-Regular.woff",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/mathjax-fonts/MathJax_Size2-Regular.woff"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/mathjax-fonts/MathJax_Size3-Regular.woff",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/mathjax-fonts/MathJax_Size3-Regular.woff"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/mathjax-fonts/MathJax_Size4-Regular.woff",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/mathjax-fonts/MathJax_Size4-Regular.woff"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/mathjax-fonts/MathJax_Typewriter-Regular.woff",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/mathjax-fonts/MathJax_Typewriter-Regular.woff"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/mathjax-fonts/MathJax_Vector-Bold.woff",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/mathjax-fonts/MathJax_Vector-Bold.woff"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/mathjax-fonts/MathJax_Vector-Regular.woff",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/mathjax-fonts/MathJax_Vector-Regular.woff"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/mathjax-fonts/MathJax_Zero.woff",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/mathjax-fonts/MathJax_Zero.woff"
+        },
+        {
           "source": "products/workbench/extensions/chatero-zotero/package.nls.json",
           "destination": "extensions/chatero-zotero/package.nls.json"
         },

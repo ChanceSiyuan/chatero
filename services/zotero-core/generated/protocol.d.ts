@@ -234,8 +234,11 @@ export interface LibraryAnnotationsResult {
 
 export interface LibraryAnnotationSummary {
   readonly annotationKey: string;
+  readonly authorName?: string;
   readonly color: string;
   readonly comment: string;
+  readonly dateCreated?: string;
+  readonly dateModified?: string;
   readonly libraryId: number;
   readonly pageLabel: string;
   readonly positionJson: string;
@@ -265,8 +268,12 @@ export interface LibraryAnnotationUpdate {
   readonly color?: string;
   readonly comment?: string;
   readonly expectedVersion: number;
+  readonly pageLabel?: string;
+  readonly positionJson?: string;
+  readonly sortIndex?: string;
   readonly tags?: ReadonlyArray<string>;
   readonly text?: string;
+  readonly type?: string;
 }
 
 export interface LibraryAnnotationUpdateState {

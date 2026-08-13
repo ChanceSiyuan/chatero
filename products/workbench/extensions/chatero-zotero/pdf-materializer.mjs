@@ -4,22 +4,31 @@ import { isAbsolute, join } from "node:path";
 
 import { CORE_ATTACHMENT_MAX_READ_BYTES, openCoreAttachmentSource } from "./core-attachment-source.mjs";
 
-export class CorePdfMaterializer {
+const CONTENT_EXTENSIONS = Object.freeze({
+  "application/epub+zip": "epub",
+  "application/pdf": "pdf",
+  "application/xhtml+xml": "xhtml",
+  "text/html": "html",
+});
+
+export class CoreAttachmentMaterializer {
   #request;
   #rootDirectory;
 
   constructor({ request, rootDirectory } = {}) {
     if (typeof request !== "function" || typeof rootDirectory !== "string" || !isAbsolute(rootDirectory)) {
-      throw new TypeError("PDF materializer requires Core RPC and an absolute local cache root");
+      throw new TypeError("attachment materializer requires Core RPC and an absolute local cache root");
     }
     this.#request = request;
     this.#rootDirectory = rootDirectory;
   }
 
   async materialize(record) {
+    const extension = CONTENT_EXTENSIONS[record?.contentType];
+    if (!extension) throw new TypeError("attachment materializer content type is unsupported");
     const source = await openCoreAttachmentSource(record, { request: this.#request });
-    const directory = join(this.#rootDirectory, `pdf-${randomBytes(18).toString("base64url")}`);
-    const path = join(directory, "paper.pdf");
+    const directory = join(this.#rootDirectory, `reader-${randomBytes(18).toString("base64url")}`);
+    const path = join(directory, `document.${extension}`);
     let handle;
     let disposed = false;
     try {
@@ -33,7 +42,7 @@ export class CorePdfMaterializer {
         const length = Math.min(CORE_ATTACHMENT_MAX_READ_BYTES, source.size - offset);
         const bytes = await source.read(offset, length);
         const written = await handle.write(bytes, 0, bytes.byteLength, offset);
-        if (written.bytesWritten !== bytes.byteLength) throw new Error("Could not materialize the complete Zotero PDF chunk");
+        if (written.bytesWritten !== bytes.byteLength) throw new Error("Could not materialize the complete Zotero attachment chunk");
         offset += bytes.byteLength;
       }
       await handle.sync();
@@ -57,3 +66,5 @@ export class CorePdfMaterializer {
     }
   }
 }
+
+export class CorePdfMaterializer extends CoreAttachmentMaterializer {}

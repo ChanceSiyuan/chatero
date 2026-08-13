@@ -532,18 +532,19 @@ function validateAnnotationUpdates(params) {
 	}
 	let keys = new Set();
 	for (let update of params.updates) {
-		exactObject(update, new Set(["annotationKey", "color", "comment", "expectedVersion", "tags", "text"]), "annotation update");
+		exactObject(update, new Set(["annotationKey", "color", "comment", "expectedVersion", "pageLabel", "positionJson", "sortIndex", "tags", "text", "type"]), "annotation update");
 		zoteroKey(update.annotationKey, "annotation update annotationKey");
 		if (keys.has(update.annotationKey)) throw new Error("annotation update keys must be unique");
 		keys.add(update.annotationKey);
 		if (!Number.isSafeInteger(update.expectedVersion) || update.expectedVersion < 0) {
 			throw new Error("annotation update expectedVersion must be a non-negative safe integer");
 		}
-		for (let field of ["color", "comment", "text"]) {
+		for (let field of ["color", "comment", "pageLabel", "sortIndex", "text", "type"]) {
 			if (update[field] !== undefined) boundedString(update[field], MAX_ANNOTATION_FIELD_BYTES, `annotation ${field}`);
 		}
+		if (update.positionJson !== undefined) canonicalPosition(update.positionJson);
 		if (update.tags !== undefined) validateAnnotationTags(update.tags);
-		if (update.color === undefined && update.comment === undefined && update.tags === undefined && update.text === undefined) {
+		if (!["color", "comment", "pageLabel", "positionJson", "sortIndex", "tags", "text", "type"].some(field => update[field] !== undefined)) {
 			throw new Error("annotation update requires at least one change");
 		}
 	}
@@ -686,15 +687,18 @@ function noteSummary(Zotero, note, expectedParent) {
 	};
 }
 
-function annotationSummary(annotation, attachment) {
+function annotationSummary(Zotero, annotation, attachment) {
 	if (!annotation?.isAnnotation?.() || annotation.libraryID !== attachment.libraryID
 			|| annotation.parentItemID !== attachment.id) {
 		throw new Error("annotation does not belong to the requested attachment");
 	}
 	return {
 		annotationKey: annotation.key,
+		...(annotation.annotationAuthorName && { authorName: boundedString(annotation.annotationAuthorName, MAX_ANNOTATION_FIELD_BYTES, "annotation authorName") }),
 		color: boundedString(annotation.annotationColor || "", MAX_ANNOTATION_FIELD_BYTES, "annotation color"),
 		comment: boundedString(annotation.annotationComment || "", MAX_ANNOTATION_FIELD_BYTES, "annotation comment"),
+		...(annotation.dateAdded && { dateCreated: Zotero.Date.sqlToISO8601(annotation.dateAdded) }),
+		...(annotation.dateModified && { dateModified: Zotero.Date.sqlToISO8601(annotation.dateModified) }),
 		libraryId: annotation.libraryID,
 		pageLabel: boundedString(annotation.annotationPageLabel || "", MAX_ANNOTATION_FIELD_BYTES, "annotation pageLabel"),
 		positionJson: canonicalPosition(annotation.annotationPosition || "{}"),
@@ -1238,7 +1242,7 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 			let attachment = lookupItem(Zotero, params.libraryId, params.attachmentKey, "Zotero attachment");
 			if (!attachment.isFileAttachment?.()) throw new Error("library.annotations target must be a file attachment");
 			let annotations = attachment.getAnnotations(false)
-				.map(value => annotationSummary(value, attachment))
+				.map(value => annotationSummary(Zotero, value, attachment))
 				.sort((left, right) => compareText(left.sortIndex, right.sortIndex)
 					|| compareText(left.annotationKey, right.annotationKey));
 			return { annotations };
@@ -1264,8 +1268,12 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 				for (let { annotation, update } of prepared) {
 					if (update.color !== undefined) annotation.annotationColor = update.color;
 					if (update.comment !== undefined) annotation.annotationComment = update.comment;
+					if (update.pageLabel !== undefined) annotation.annotationPageLabel = update.pageLabel;
+					if (update.positionJson !== undefined) annotation.annotationPosition = update.positionJson;
+					if (update.sortIndex !== undefined) annotation.annotationSortIndex = update.sortIndex;
 					if (update.tags !== undefined) annotation.setTags(update.tags.map(tag => ({ tag })));
 					if (update.text !== undefined) annotation.annotationText = update.text;
+					if (update.type !== undefined) annotation.annotationType = update.type;
 					await annotation.save({ tx: false });
 				}
 			};
@@ -1306,7 +1314,7 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 			}
 			if (tx) await annotation.saveTx();
 			else await annotation.save({ tx: false });
-			return { action: params.action, annotation: annotationSummary(annotation, attachment), deleted: Boolean(annotation.deleted), synced: Boolean(annotation.synced) };
+			return { action: params.action, annotation: annotationSummary(Zotero, annotation, attachment), deleted: Boolean(annotation.deleted), synced: Boolean(annotation.synced) };
 		},
 
 		async attachment(params) {

@@ -144,11 +144,12 @@ class LibraryItemProvider {
 }
 
 async function activate(context) {
-  const [{ LibraryTreeModel }, { LibraryItemTableModel }, { LibrarySourceTreeModel }, { ReaderWorkflowModel }, { EvidenceRecordAuthority }, registryModule, html, metadataHtml, brokerModule, contextFormat] = await Promise.all([
+  const [{ LibraryTreeModel }, { LibraryItemTableModel }, { LibrarySourceTreeModel }, { ReaderWorkflowModel }, readerBridge, { EvidenceRecordAuthority }, registryModule, html, metadataHtml, brokerModule, contextFormat] = await Promise.all([
     import("./library-tree-model.mjs"),
     import("./library-item-table-model.mjs"),
     import("./library-source-tree-model.mjs"),
     import("./reader-workflow-model.mjs"),
+    import("./upstream-reader-bridge.mjs"),
     import("./evidence-authority.mjs"),
     import("./evidence-editor-registry.mjs"),
     import("./evidence-editor-html.mjs"),
@@ -338,9 +339,9 @@ async function activate(context) {
     const startedCore = await ensureCore();
     if (!startedCore) throw new Error("Zotero Core setup is required before opening a PDF");
     if (!pdfMaterializer) {
-      const { CorePdfMaterializer } = await import("./pdf-materializer.mjs");
+      const { CoreAttachmentMaterializer } = await import("./pdf-materializer.mjs");
       const rootDirectory = (context.storageUri || context.globalStorageUri)?.fsPath;
-      pdfMaterializer = new CorePdfMaterializer({ request: startedCore.client.request, rootDirectory });
+      pdfMaterializer = new CoreAttachmentMaterializer({ request: startedCore.client.request, rootDirectory });
     }
     return pdfMaterializer.materialize(record);
   };
@@ -351,11 +352,15 @@ async function activate(context) {
     getModel: () => sourceProvider.core,
     resolveDocument,
     renderPdfEditorHTML: html.renderPdfEditorHTML,
+    renderUpstreamReaderHTML: html.renderUpstreamReaderHTML,
     extensionUri: context.extensionUri,
     materializePdf,
     contextBroker: pdfContexts,
     attachPdfContext: attachPdfSnapshot,
     createReaderWorkflow,
+    fromUpstreamReaderAnnotation: readerBridge.fromUpstreamReaderAnnotation,
+    readerLocationFromViewState: readerBridge.readerLocationFromViewState,
+    toUpstreamReaderAnnotation: readerBridge.toUpstreamReaderAnnotation,
     onContextError: () => {
       void vscode.window.showErrorMessage("Could not attach the bounded Zotero PDF context.");
     },

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 
 import { openCoreAttachmentSource } from "../extensions/chatero-zotero/core-attachment-source.mjs";
-import { CorePdfMaterializer } from "../extensions/chatero-zotero/pdf-materializer.mjs";
+import { CoreAttachmentMaterializer, CorePdfMaterializer } from "../extensions/chatero-zotero/pdf-materializer.mjs";
 
 const record = Object.freeze({
   annotationCount: 0,
@@ -58,4 +58,18 @@ test("PDF materializer writes owner-only disposable content from bounded Core ch
   assert.equal(calls.at(-1)[0], "attachment.close");
   await result.dispose();
   await assert.rejects(stat(result.path), error => error.code === "ENOENT");
+});
+
+test("attachment materializer accepts only Reader-supported Core content and never a path", async () => {
+  const temporary = await mkdtemp(join(tmpdir(), "chatero-reader-materializer-test-"));
+  for (const [contentType, extension] of [["application/epub+zip", "epub"], ["text/html", "html"], ["application/xhtml+xml", "xhtml"]]) {
+    const calls = [];
+    const materializer = new CoreAttachmentMaterializer({ request: rpc(Buffer.from("reader"), calls), rootDirectory: join(temporary, extension) });
+    const result = await materializer.materialize(Object.freeze({ ...record, contentType }));
+    assert.match(result.path, new RegExp(`document\\.${extension}$`));
+    assert.equal(Object.hasOwn(result, "record"), false);
+    await result.dispose();
+  }
+  const materializer = new CoreAttachmentMaterializer({ request: async () => { throw new Error("must not call Core"); }, rootDirectory: temporary });
+  await assert.rejects(materializer.materialize(Object.freeze({ ...record, contentType: "image/png" })), /unsupported/);
 });

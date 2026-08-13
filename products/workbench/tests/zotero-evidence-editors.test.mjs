@@ -860,6 +860,50 @@ test("extension declares native PDF and Note custom editor tabs", async () => {
   assert.ok(destinations.includes("extensions/chatero-zotero/media/pdf-viewer/pdf.mjs"));
   assert.ok(destinations.includes("extensions/chatero-zotero/media/pdf-viewer/pdf.worker.mjs"));
   assert.ok(destinations.includes("extensions/chatero-zotero/media/pdf-viewer/pdf-viewer.mjs"));
+  assert.ok(destinations.includes("extensions/chatero-zotero/media/zotero-reader/reader.js"));
+  assert.ok(destinations.includes("extensions/chatero-zotero/media/zotero-reader/reader.css"));
+  assert.ok(destinations.includes("extensions/chatero-zotero/media/zotero-reader/ZOTERO-AGPL-3.0.txt"));
+  assert.ok(destinations.includes("extensions/chatero-zotero/upstream-reader-bridge.mjs"));
+  assert.equal(new Set(destinations).size, destinations.length);
+});
+
+test("EPUB provider uses the pinned upstream Reader and commits exact CFI state", async () => {
+  const providers = await import("../extensions/chatero-zotero/evidence-editors.cjs");
+  const epub = Object.freeze({ ...attachment, contentType: "application/epub+zip", filename: "paper.epub" });
+  const calls = [];
+  const workflow = {
+    annotations: [],
+    async load() { return { annotations: [], attachment: epub, state: { attachmentKey: "PDF00001", contentType: "application/epub+zip", libraryId: 7, version: 2 } }; },
+    async updateLocation(value) { calls.push(["state", value]); return { ...value, version: 2 }; },
+  };
+  const fileUri = value => ({ authority: "", fsPath: value, path: value, scheme: "file", value, toString: () => `file://${value}` });
+  const provider = new providers.PdfEditorProvider({
+    createReaderWorkflow: () => workflow,
+    extensionUri: fileUri("/extension"),
+    fromUpstreamReaderAnnotation: () => { throw new Error("not reached"); },
+    getModel: () => ({ ready: true }),
+    materializePdf: async () => ({ path: "/tmp/private/document.epub", async dispose() {} }),
+    readerLocationFromViewState: (_contentType, state) => ({ cfi: state.cfi }),
+    registry: { release() {} },
+    renderPdfEditorHTML: () => { throw new Error("PDF renderer must not be used"); },
+    renderUpstreamReaderHTML: value => { calls.push(["render", value]); return "<html>EPUB</html>"; },
+    toUpstreamReaderAnnotation: value => value,
+    vscode: {
+      Uri: { file: fileUri, joinPath: (base, ...parts) => fileUri(`${base.value}/${parts.join("/")}`), parse: value => ({ scheme: value.split(":")[0] }) },
+      env: { async openExternal() {} }, window: {}, workspace: {},
+    },
+  });
+  let receiveMessage;
+  const panel = { active: true, onDidDispose() { return { dispose() {} }; }, webview: {
+    asWebviewUri: value => ({ toString: () => `vscode-webview:${value.value}` }), cspSource: "vscode-webview://unit-test",
+    onDidReceiveMessage(listener) { receiveMessage = listener; return { dispose() {} }; },
+  } };
+  await provider.resolveCustomEditor({ record: epub, uri: { toString: () => "chatero-zotero-pdf:/7/PDF00001/paper.chatero-zotero-pdf" } }, panel);
+  assert.equal(panel.webview.html, "<html>EPUB</html>");
+  assert.equal(calls.find(value => value[0] === "render")[1].readerType, "epub");
+  assert.deepEqual(panel.webview.options.localResourceRoots.map(value => value.value), ["/tmp/private", "/extension/media/zotero-reader"]);
+  await receiveMessage({ type: "upstream-reader-state", state: { cfi: "epubcfi(/6/2)" } });
+  assert.deepEqual(calls.at(-1), ["state", { cfi: "epubcfi(/6/2)" }]);
 });
 
 test("packaged PDF viewer renders one page at a time and owns the highlight overlay", async () => {
