@@ -119,7 +119,7 @@ test("builds an explicit headless Gecko launch without putting secrets in argv o
   });
 
   assert.equal(plan.executable, "/Applications/Chatero Core.app/Contents/MacOS/zotero");
-  assert.deepEqual(plan.args, ["-no-remote", "-profile", "/tmp/chatero profile", "-headless", "-ChateroCore"]);
+  assert.deepEqual(plan.args, ["-no-remote", "-profile", "/tmp/chatero profile", "-datadir", "profile", "-headless", "-ChateroCore"]);
   assert.equal(JSON.stringify(plan).includes("bootstrap"), false);
   assert.equal(JSON.stringify(plan).includes("socket"), false);
   assert.throws(() => buildCoreLaunchPlan({ geckoExecutable: "relative/zotero", profileDirectory: "/tmp/profile" }), /absolute/);

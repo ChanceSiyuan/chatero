@@ -174,7 +174,7 @@ export function createZoteroCoreTransactionStore({ Zotero } = {}) {
 				if (parsed?.state !== "pending" || parsed?.operationDigest !== receipt.operationDigest || parsed?.scope !== receipt.scope) {
 					throw new Error("Core transaction reservation changed before commit");
 				}
-				await Zotero.DB.queryAsync("UPDATE settings SET value=? WHERE setting=? AND key=?", [value, RECEIPT_SETTING, receipt.idempotencyKey]);
+				await Zotero.DB.queryAsync("REPLACE INTO settings (setting, key, value) VALUES (?, ?, ?)", [RECEIPT_SETTING, receipt.idempotencyKey, value]);
 				await Zotero.DB.queryAsync("REPLACE INTO settings (setting, key, value) VALUES (?, ?, ?)", [REVISION_SETTING, scopeRevision.scope, String(scopeRevision.revision)]);
 				for (let idempotencyKey of evictedKeys) await Zotero.DB.queryAsync("DELETE FROM settings WHERE setting=? AND key=?", [RECEIPT_SETTING, idempotencyKey]);
 			});
@@ -254,6 +254,7 @@ export function createCoreTransactionRegistry({ capacity = DEFAULT_CAPACITY, sto
 
 	return Object.freeze({
 		get receiptCount() { return receipts.size; },
+		async ready() { await hydrate(); },
 		getRevision(scope) {
 			if (typeof scope !== "string" || !SCOPE_PATTERN.test(scope)) throw new Error("Core transaction scope is invalid");
 			return revisions.get(scope) || 0;
@@ -366,7 +367,7 @@ export function createCoreTransactionRegistry({ capacity = DEFAULT_CAPACITY, sto
 				}
 				else if (store) {
 					recoveryScopes.add(transaction.scope);
-					error = conflict("TRANSACTION_RECOVERY_REQUIRED", "Core transaction outcome could not be durably committed", {
+					error = conflict("TRANSACTION_RECOVERY_REQUIRED", `Core transaction outcome could not be durably committed: ${String(error?.message || error)}`, {
 						cause: error,
 						idempotencyKey: transaction.idempotencyKey,
 						scope: transaction.scope,

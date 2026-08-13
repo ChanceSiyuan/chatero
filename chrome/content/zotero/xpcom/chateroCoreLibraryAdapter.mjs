@@ -705,6 +705,7 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 	if (typeof openAttachmentFile !== "function") throw new Error("attachment source opener is required");
 	if (typeof isOffline !== "function") throw new Error("offline state provider is required");
 
+	let saveObject = (object, tx) => tx ? object.saveTx() : object.save({ tx: false });
 	let adapter = {
 		async translators(params) {
 			exactObject(params, TRANSLATOR_FIELDS, "translation.translators params");
@@ -1037,7 +1038,7 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 				}, { strict: true });
 				if (params.action === "trash") search.deleted = true;
 				if (params.action === "restore") search.deleted = false;
-				await (tx ? search.saveTx() : search.save({ tx: false }));
+				await saveObject(search, tx);
 			}
 			catch (error) {
 				try { await search.reload?.(null, true); }
@@ -1316,7 +1317,7 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 			if (params.action !== "restore" && itemIsUnavailable(attachment)) unavailable("Zotero attachment is unavailable");
 			if (params.action === "restore" && !attachment.deleted && !attachment.isInTrash?.()) throw new Error("attachment restore target is not in trash");
 			revisionConflict(attachment, params.expectedVersion, "Zotero attachment");
-			try { attachment.deleted = params.action === "trash"; await (tx ? attachment.saveTx() : attachment.save({ tx: false })); }
+			try { attachment.deleted = params.action === "trash"; await saveObject(attachment, tx); }
 			catch (error) {
 				try { await attachment.reload?.(null, true); }
 				catch (_) {}
@@ -1350,7 +1351,7 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 			revisionConflict(attachment, params.expectedVersion, "Zotero Reader attachment");
 			let location = readerLocation(attachment, params, true);
 			let value = location.pageIndex ?? location.cfi ?? location.scrollYPercent;
-			try { attachment.setAttachmentLastPageIndex(value); await (tx ? attachment.saveTx() : attachment.save({ tx: false })); }
+			try { attachment.setAttachmentLastPageIndex(value); await saveObject(attachment, tx); }
 			catch (error) {
 				try { await attachment.reload?.(null, true); }
 				catch (_) {}
@@ -1406,7 +1407,7 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 					if (params.name !== undefined) collection.name = params.name.trim();
 					if (params.parentKey !== undefined) collection.parentKey = params.parentKey || false;
 				}
-				await (tx ? collection.saveTx() : collection.save({ tx: false }));
+				await saveObject(collection, tx);
 			}
 			catch (error) {
 				try { await collection.reload?.(null, true); }
@@ -1474,7 +1475,7 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 				if (params.creators !== undefined) item.setCreators(params.creators, { strict: true });
 				if (params.tags !== undefined) item.setTags(params.tags.map(tag => ({ tag: tag.name, type: tag.type })));
 				if (params.relations !== undefined) item.setRelations(relationObject(params.relations));
-				await (tx ? item.saveTx() : item.save({ tx: false }));
+				await saveObject(item, tx);
 			}
 			catch (error) {
 				try { await item.reload?.(null, true); }
@@ -1518,7 +1519,7 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 				}
 				if (params.action === "trash") item.deleted = true;
 				if (params.action === "restore") item.deleted = false;
-				await (tx ? item.saveTx() : item.save({ tx: false }));
+				await saveObject(item, tx);
 			}
 			catch (error) {
 				try { await item.reload?.(null, true); }
@@ -1562,7 +1563,7 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 			revisionConflict(note, params.expectedVersion, "Zotero Note");
 			try {
 				note.setNote(html);
-				await (tx ? note.saveTx() : note.save({ tx: false }));
+				await saveObject(note, tx);
 			}
 			catch (error) {
 				try { await note.reload?.(null, true); }
@@ -1600,7 +1601,7 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 				revisionConflict(note, params.expectedVersion, "Zotero Note");
 				note.deleted = params.action === "trash";
 			}
-			try { await (tx ? note.saveTx() : note.save({ tx: false })); }
+			try { await saveObject(note, tx); }
 			catch (error) {
 				try { await note.reload?.(null, true); }
 				catch (_) {}

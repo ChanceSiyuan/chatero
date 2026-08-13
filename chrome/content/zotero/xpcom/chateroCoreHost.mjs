@@ -245,6 +245,10 @@ export async function startGeckoCoreHost({ Zotero, window } = {}) {
 
 	let bootstrapToken = readInheritedBootstrapToken();
 	let timers = ChromeUtils.importESModule("resource://gre/modules/Timer.sys.mjs");
+	let transactionRegistry = createCoreTransactionRegistry({
+		store: createZoteroCoreTransactionStore({ Zotero }),
+	});
+	await transactionRegistry.ready();
 	let adapter = createZoteroLibraryAdapter({ Zotero });
 	let profileAdapter = createZoteroProfileAdapter({
 		Zotero,
@@ -267,9 +271,7 @@ export async function startGeckoCoreHost({ Zotero, window } = {}) {
 		profileEpoch,
 		profileName: PathUtils.filename(actualProfile),
 		schemaVersion: SCHEMA_VERSION,
-		transactionRegistry: createCoreTransactionRegistry({
-			store: createZoteroCoreTransactionStore({ Zotero }),
-		}),
+		transactionRegistry,
 		upstreamVersion: Zotero.version,
 	});
 	let notifierBridge = createZoteroNotifierBridge({

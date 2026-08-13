@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -24,6 +27,7 @@ const hasGeckoExecutable = await stat(geckoExecutable).then(value => value.isFil
 
 const running = [];
 const temporaryDirectories = [];
+const execFileAsync = promisify(execFile);
 
 afterEach(async () => {
   await Promise.all(running.splice(0).map(value => value.stop().catch(() => {})));
@@ -83,23 +87,30 @@ test(
     const params = {
       action: "create",
       expectedRevision: 0,
-      idempotencyKey: "real-gecko-collection-create-0001",
+      idempotencyKey: `real-gecko-${randomUUID()}`,
       libraryId: 1,
       name: "Durable receipt",
     };
 
     const firstCore = await startCore({ geckoExecutable, profileDirectory, readyTimeoutMs: 60000 });
     running.push(firstCore);
-    const first = await firstCore.client.request("library.collection-mutate", params);
+    const first = await firstCore.client.request("library.collection-mutate", params).catch(error => {
+			throw new Error(`first Core write failed: ${error.message}`, { cause: error });
+		});
     assert.equal(first.replayed, false);
     assert.equal(first.revision, 1);
     const firstKey = first.collectionKey;
     await firstCore.stop();
     running.splice(running.indexOf(firstCore), 1);
+		const stored = await execFileAsync("/usr/bin/sqlite3", [join(profileDirectory, "zotero", "zotero.sqlite"),
+			"SELECT setting || '|' || key || '|' || value FROM settings WHERE setting LIKE 'chateroCoreTransaction%';"]);
+		assert.match(stored.stdout, /"state":"completed"/);
 
     const secondCore = await startCore({ geckoExecutable, profileDirectory, readyTimeoutMs: 60000 });
     running.push(secondCore);
-    const replay = await secondCore.client.request("library.collection-mutate", params);
+    const replay = await secondCore.client.request("library.collection-mutate", params).catch(error => {
+			throw new Error(`restarted Core replay failed: ${error.message}; stored=${stored.stdout.trim()}`, { cause: error });
+		});
     assert.equal(replay.replayed, true);
     assert.equal(replay.revision, 1);
     assert.equal(replay.collectionKey, firstKey);

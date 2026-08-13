@@ -22,7 +22,7 @@ export function buildCoreLaunchPlan({ geckoExecutable, profileDirectory, fixture
       throw new Error("Gecko Core executable must be an absolute path");
     }
     return Object.freeze({
-      args: Object.freeze(["-no-remote", "-profile", canonicalProfile, "-headless", "-ChateroCore"]),
+      args: Object.freeze(["-no-remote", "-profile", canonicalProfile, "-datadir", "profile", "-headless", "-ChateroCore"]),
       executable: geckoExecutable,
       mode: "gecko",
     });
