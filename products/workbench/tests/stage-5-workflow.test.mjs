@@ -20,6 +20,7 @@ test("Stage 5 CI builds, signs, runs real SSH, and gates both native Linux archi
   assert.match(source, /prepare-stage-5-ci-ssh\.mjs/u);
   assert.match(source, /npm run verify:stage-5/u);
   assert.equal((source.match(/npm ci --prefix vendor\/code-oss/gu) ?? []).length, 2);
+  assert.match(source, /sudo apt-get update && sudo apt-get install -y libkrb5-dev/u);
   assert.doesNotMatch(source, /marketplace\.visualstudio\.com|ms-vscode-remote\.remote-ssh|PRIVATE KEY-----/iu);
 
   const realSsh = workflow.jobs["real-ssh"];

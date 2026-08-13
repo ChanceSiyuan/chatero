@@ -30,6 +30,7 @@ jobs:
         with:
           node-version: 24.18.0
           cache: npm
+      - run: sudo apt-get update && sudo apt-get install -y libkrb5-dev
       - run: npm ci
       - run: npm run workbench:bootstrap
       - run: npm ci --prefix vendor/code-oss
