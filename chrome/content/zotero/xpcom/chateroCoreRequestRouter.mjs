@@ -116,6 +116,17 @@ export function mapGeckoCoreError(error) {
 			retriable: false,
 		};
 	}
+	if (error?.code === "TRANSACTION_RECOVERY_REQUIRED") {
+		return {
+			code: "CORE_ERROR",
+			details: {
+				kind: error.code,
+				...(typeof error.scope === "string" && { scope: error.scope }),
+			},
+			message,
+			retriable: false,
+		};
+	}
 	if (/missing capability/.test(message)) return { code: "FORBIDDEN", message, retriable: false };
 	if (/deadline|profile epoch|session|authentication|bootstrap|protocol version/.test(message)) {
 		return { code: "UNAUTHORIZED", message, retriable: false };

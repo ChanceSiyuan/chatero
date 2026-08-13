@@ -462,6 +462,22 @@ test("maps deleted or trashed exact-item failures to an unavailable response", a
   });
 });
 
+test("maps interrupted transaction reservations to a non-retriable recovery error", () => {
+  const recovery = Object.assign(new Error("Core transaction outcome is ambiguous"), {
+    code: "TRANSACTION_RECOVERY_REQUIRED",
+    scope: "library:1/item:ITEM0001",
+  });
+  assert.deepEqual(mapGeckoCoreError(recovery), {
+    code: "CORE_ERROR",
+    details: {
+      kind: "TRANSACTION_RECOVERY_REQUIRED",
+      scope: "library:1/item:ITEM0001",
+    },
+    message: "Core transaction outcome is ambiguous",
+    retriable: false,
+  });
+});
+
 test("cancels an in-flight search without changing the session", async () => {
   let started;
   const startedPromise = new Promise(resolve => { started = resolve; });

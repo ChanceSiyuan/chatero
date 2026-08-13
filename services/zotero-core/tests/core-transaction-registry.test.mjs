@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { test } from "node:test";
 
 import { createCoreTransactionRegistry } from "../../../chrome/content/zotero/xpcom/chateroCoreTransactionRegistry.mjs";
@@ -112,4 +113,72 @@ test("different idempotency keys cannot commit concurrently at one scope revisio
   await assert.rejects(second, error => error.code === "REVISION_CONFLICT" && error.actualRevision === 1);
   assert.equal(secondRan, false);
   assert.equal(registry.getRevision("library:1/item:ITEM0001"), 1);
+});
+
+function persistentStore() {
+  const records = new Map();
+  const revisions = new Map();
+  return {
+    async load() {
+      return {
+        receipts: [...records.values()].map(value => structuredClone(value)),
+        revisions: [...revisions].map(value => [...value]),
+      };
+    },
+    async reserve(record) {
+      records.set(record.idempotencyKey, structuredClone(record));
+    },
+    async commit({ evictedKeys, receipt, scopeRevision }) {
+      records.set(receipt.idempotencyKey, structuredClone(receipt));
+      revisions.set(scopeRevision.scope, scopeRevision.revision);
+      for (const key of evictedKeys) records.delete(key);
+    },
+    async release(idempotencyKey) {
+      records.delete(idempotencyKey);
+    },
+  };
+}
+
+test("completed receipts and scope revisions survive a Core registry restart", async () => {
+  const store = persistentStore();
+  const firstRegistry = createCoreTransactionRegistry({ capacity: 4, store });
+  let calls = 0;
+  assert.deepEqual(await firstRegistry.execute(transaction(), async () => {
+    calls += 1;
+    return { itemKey: "ITEM0001", title: "First" };
+  }), {
+    replayed: false,
+    result: { itemKey: "ITEM0001", title: "First" },
+    revision: 1,
+  });
+
+  const restartedRegistry = createCoreTransactionRegistry({ capacity: 4, store });
+  assert.deepEqual(await restartedRegistry.execute(transaction(), async () => {
+    calls += 1;
+    return { forged: true };
+  }), {
+    replayed: true,
+    result: { itemKey: "ITEM0001", title: "First" },
+    revision: 1,
+  });
+  assert.equal(calls, 1);
+  assert.equal(restartedRegistry.getRevision("library:1/item:ITEM0001"), 1);
+});
+
+test("a crash-ambiguous durable reservation fails closed instead of executing twice", async () => {
+  const store = persistentStore();
+  await store.reserve({
+    expectedRevision: 0,
+    idempotencyKey: "transaction-key-0001",
+    operationDigest: createHash("sha256").update(JSON.stringify(transaction().operation)).digest("hex"),
+    scope: "library:1/item:ITEM0001",
+    state: "pending",
+  });
+  const registry = createCoreTransactionRegistry({ store });
+  let calls = 0;
+  await assert.rejects(
+    registry.execute(transaction(), async () => { calls += 1; }),
+    error => error.code === "TRANSACTION_RECOVERY_REQUIRED",
+  );
+  assert.equal(calls, 0);
 });

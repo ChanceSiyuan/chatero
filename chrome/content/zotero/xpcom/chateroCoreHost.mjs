@@ -20,6 +20,8 @@ import { createZoteroLibraryAdapter } from "./chateroCoreLibraryAdapter.mjs";
 import { createZoteroProfileAdapter } from "./chateroCoreProfileAdapter.mjs";
 import { createZoteroNotifierBridge } from "./chateroCoreNotifierBridge.mjs";
 import { createGeckoCoreRequestRouter, mapGeckoCoreError } from "./chateroCoreRequestRouter.mjs";
+import { createCoreTransactionRegistry } from "./chateroCoreTransactionRegistry.mjs";
+import { createZoteroCoreTransactionStore } from "./chateroCoreTransactionStore.mjs";
 
 const MAX_BOOTSTRAP_BYTES = 1024;
 
@@ -266,6 +268,9 @@ export async function startGeckoCoreHost({ Zotero, window } = {}) {
 		profileEpoch,
 		profileName: PathUtils.filename(actualProfile),
 		schemaVersion: SCHEMA_VERSION,
+		transactionRegistry: createCoreTransactionRegistry({
+			store: createZoteroCoreTransactionStore({ Zotero }),
+		}),
 		upstreamVersion: Zotero.version,
 	});
 	let notifierBridge = createZoteroNotifierBridge({
