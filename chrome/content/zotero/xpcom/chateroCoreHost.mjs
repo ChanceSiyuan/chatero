@@ -20,8 +20,7 @@ import { createZoteroLibraryAdapter } from "./chateroCoreLibraryAdapter.mjs";
 import { createZoteroProfileAdapter } from "./chateroCoreProfileAdapter.mjs";
 import { createZoteroNotifierBridge } from "./chateroCoreNotifierBridge.mjs";
 import { createGeckoCoreRequestRouter, mapGeckoCoreError } from "./chateroCoreRequestRouter.mjs";
-import { createCoreTransactionRegistry } from "./chateroCoreTransactionRegistry.mjs";
-import { createZoteroCoreTransactionStore } from "./chateroCoreTransactionStore.mjs";
+import { createCoreTransactionRegistry, createZoteroCoreTransactionStore } from "./chateroCoreTransactionRegistry.mjs";
 
 const MAX_BOOTSTRAP_BYTES = 1024;
 

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { createZoteroCoreTransactionStore } from "../../../chrome/content/zotero/xpcom/chateroCoreTransactionStore.mjs";
+import { createZoteroCoreTransactionStore } from "../../../chrome/content/zotero/xpcom/chateroCoreTransactionRegistry.mjs";
 
 function fakeZotero() {
   const rows = new Map();
