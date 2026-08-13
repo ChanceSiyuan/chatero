@@ -16,7 +16,7 @@ const EXPECTED = Object.freeze({
   checks: Object.freeze([
     Object.freeze({ id: "research-loop-contract-tests", command: "node", args: Object.freeze(["products/workbench/scripts/run-node-tests.mjs", "products/workbench/tests/research-loop-*.test.mjs", "products/workbench/tests/reviewed-research-surfaces.test.mjs", "products/workbench/tests/zotero-research-api.test.mjs"]) }),
     Object.freeze({ id: "documentation-transaction-tests", command: "node", args: Object.freeze(["products/workbench/scripts/run-node-tests.mjs", "products/workbench/tests/documentation-*.test.mjs"]) }),
-    Object.freeze({ id: "qmd-obsidian-editing-parity", command: "node", args: Object.freeze(["--test", "products/workbench/tests/documentation-live-preview-provider.test.mjs"]) }),
+    Object.freeze({ id: "qmd-obsidian-editing-parity", command: "node", args: Object.freeze(["--test", "products/workbench/tests/documentation-live-preview-provider.test.mjs", "products/workbench/tests/documentation-quarto-preview.test.mjs"]) }),
     Object.freeze({ id: "local-research-loop-runtime", command: "npm", args: Object.freeze(["run", "test:documentation:integration", "--", "--target", "local"]) }),
     Object.freeze({ id: "ssh-research-loop-runtime", command: "npm", args: Object.freeze(["run", "test:documentation:integration", "--", "--target", "ssh-fixture"]) }),
     Object.freeze({ id: "research-loop-boundary-audit", kind: "source-inspection" }),

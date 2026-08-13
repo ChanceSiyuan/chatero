@@ -10,6 +10,7 @@
     { "id": "documentation-textdocument", "status": "supported", "test": "documentation-integration-runner.test.mjs" },
     { "id": "documentation-live-preview", "status": "supported", "test": "documentation-live-preview-provider.test.mjs" },
     { "id": "documentation-obsidian-editing-view-toggle", "status": "supported", "test": "documentation-live-preview-provider.test.mjs" },
+    { "id": "documentation-sandboxed-quarto-last-good", "status": "supported", "test": "documentation-quarto-preview.test.mjs" },
     { "id": "documentation-formal-blocks", "status": "supported", "test": "documentation-formal-block-preview.test.mjs" },
     { "id": "documentation-images", "status": "supported", "test": "documentation-image-preview.test.mjs" },
     { "id": "documentation-changeset-review", "status": "supported", "test": "documentation-review-surfaces.test.mjs" },

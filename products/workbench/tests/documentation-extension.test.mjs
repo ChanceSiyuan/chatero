@@ -92,6 +92,7 @@ test("Documentation is the default workspace surface with optional Live Preview"
     "chatero.documentation.newPage",
     "chatero.documentation.openSource",
     "chatero.documentation.toggleEditingView",
+    "chatero.documentation.openQuartoPreview",
     "chatero.documentation.markWorking",
     "chatero.documentation.markReviewed",
     "chatero.documentation.planMigration",
@@ -190,6 +191,11 @@ test("first-party materialization declares the complete Documentation authority"
     "extensions/chatero-documentation/migration-rewrite.mjs",
     "extensions/chatero-documentation/package.json",
     "extensions/chatero-documentation/pending-edit-rebase.mjs",
+    "extensions/chatero-documentation/quarto-input-policy.mjs",
+    "extensions/chatero-documentation/quarto-preview-html.mjs",
+    "extensions/chatero-documentation/quarto-preview-manager.mjs",
+    "extensions/chatero-documentation/quarto-runtime.mjs",
+    "extensions/chatero-documentation/quarto-static-server.mjs",
     "extensions/chatero-documentation/review-decisions.mjs",
     "extensions/chatero-documentation/review-snapshot.mjs",
     "extensions/chatero-documentation/research-loop-commands.mjs",
@@ -202,6 +208,8 @@ test("first-party materialization declares the complete Documentation authority"
     "extensions/chatero-documentation/settlement-planner.mjs",
     "extensions/chatero-documentation/settlement-protocol.mjs",
     "extensions/chatero-documentation/settlement-recovery.mjs",
+    "extensions/chatero-documentation/safe-quarto-renderer.mjs",
+    "extensions/chatero-documentation/safe-quarto-sandbox.mjs",
     "extensions/chatero-documentation/settlement-operations.mjs",
     "extensions/chatero-documentation/settlement-executor.mjs",
     "extensions/chatero-documentation/runtime/chatero-documentation-authority.mjs",
@@ -227,7 +235,7 @@ test("first-party materialization declares the complete Documentation authority"
   ]);
 });
 
-async function activateWith({ enabled, registerDocumentation, registerLivePreview = async () => [] }) {
+async function activateWith({ enabled, registerDocumentation, registerLivePreview = async () => [], registerQuartoPreview = async () => [] }) {
   const commands = [];
   const outputLines = [];
   const output = {
@@ -257,7 +265,7 @@ async function activateWith({ enabled, registerDocumentation, registerLivePrevie
       },
     },
   };
-  const context = { subscriptions: [], documentationServices: Object.freeze({ test: true }) };
+  const context = { subscriptions: [], documentationServices: Object.freeze({ test: true }), registerQuartoPreview };
   const require = createRequire(import.meta.url);
   const extensionPath = fileURLToPath(new URL("extension.cjs", extensionRoot));
   delete require.cache[require.resolve(extensionPath)];

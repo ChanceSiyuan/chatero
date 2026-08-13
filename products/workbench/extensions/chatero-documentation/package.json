@@ -67,6 +67,11 @@
         "category": "Chatero"
       },
       {
+        "command": "chatero.documentation.openQuartoPreview",
+        "title": "Open Exact Quarto Preview Beside Source",
+        "category": "Chatero"
+      },
+      {
         "command": "chatero.documentation.markWorking",
         "title": "Mark Documentation as Working",
         "category": "Chatero"

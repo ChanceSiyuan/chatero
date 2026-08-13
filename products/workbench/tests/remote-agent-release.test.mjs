@@ -10,6 +10,7 @@ import {
   mkdtemp,
   lstat,
   readFile,
+  realpath,
   rm,
   symlink,
   writeFile,
@@ -52,6 +53,10 @@ const FIRST_PARTY_MANIFEST_PATH = fileURLToPath(new URL(
   import.meta.url,
 ));
 const temporaryDirectories = [];
+
+async function canonicalTemporaryDirectory(prefix) {
+  return realpath(await mkdtemp(join(tmpdir(), prefix)));
+}
 
 await buildDocumentationWebview({ root: REPOSITORY_ROOT });
 
@@ -338,7 +343,7 @@ test("installed-tree verification rejects changed bytes, modes, links, and entri
     verifyInstallTree,
     writeInstallTreeManifest,
   } = await import("../remote-agent/runtime/chatero-install-integrity.mjs");
-  const directory = await mkdtemp(join(tmpdir(), "chatero-install-tree-"));
+  const directory = await canonicalTemporaryDirectory("chatero-install-tree-");
   temporaryDirectories.push(directory);
   const root = join(directory, "agent");
   const launcherDirectory = join(root, "agent-sdk", "codex", "node_modules", "@openai", "codex", "bin");
@@ -478,7 +483,7 @@ test("process bridge rejects unknown request keys and oversized environment entr
 });
 
 test("release staging injects fixed helpers and signs the exact install tree", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "chatero-stage-release-"));
+  const directory = await canonicalTemporaryDirectory("chatero-stage-release-");
   temporaryDirectories.push(directory);
   const inputs = join(directory, "inputs");
   const output = join(directory, "output");
@@ -551,8 +556,15 @@ test("release staging injects fixed helpers and signs the exact install tree", a
       "migration-planner.mjs",
       "migration-rewrite.mjs",
       "pending-edit-rebase.mjs",
+      "quarto-input-policy.mjs",
+      "quarto-preview-html.mjs",
+      "quarto-preview-manager.mjs",
+      "quarto-runtime.mjs",
+      "quarto-static-server.mjs",
       "runtime/yaml-2.9.0.mjs",
       "runtime/yaml-LICENSE",
+      "safe-quarto-renderer.mjs",
+      "safe-quarto-sandbox.mjs",
       "text-change-set.mjs",
       "working-copy-coordinator.mjs",
     ]) {
@@ -588,7 +600,7 @@ test("release staging injects fixed helpers and signs the exact install tree", a
 });
 
 test("release staging refuses to sign an archive without the complete SDK notices", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "chatero-stage-incomplete-sdk-"));
+  const directory = await canonicalTemporaryDirectory("chatero-stage-incomplete-sdk-");
   temporaryDirectories.push(directory);
   const inputs = join(directory, "inputs");
   const output = join(directory, "output");
@@ -623,7 +635,7 @@ test("release staging refuses to sign an archive without the complete SDK notice
 });
 
 test("release staging rejects an Agent SDK download fallback in product.json", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "chatero-stage-sdk-fallback-"));
+  const directory = await canonicalTemporaryDirectory("chatero-stage-sdk-fallback-");
   temporaryDirectories.push(directory);
   const inputs = join(directory, "inputs");
   const output = join(directory, "output");
@@ -658,7 +670,7 @@ test("release staging rejects an Agent SDK download fallback in product.json", a
 });
 
 test("release staging rejects a required payload behind an intermediate symlink", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "chatero-stage-parent-symlink-"));
+  const directory = await canonicalTemporaryDirectory("chatero-stage-parent-symlink-");
   temporaryDirectories.push(directory);
   const inputs = join(directory, "inputs");
   const output = join(directory, "output");
@@ -723,7 +735,7 @@ test("release staging rejects unpinned Documentation and Agent SDK payloads", as
     }, /Documentation extension.*first-party provenance/i],
   ]) {
     await t.test(name, async () => {
-      const directory = await mkdtemp(join(tmpdir(), "chatero-stage-provider-"));
+      const directory = await canonicalTemporaryDirectory("chatero-stage-provider-");
       temporaryDirectories.push(directory);
       const inputs = join(directory, "inputs");
       const output = join(directory, "output");
@@ -757,7 +769,7 @@ test("release staging rejects unpinned Documentation and Agent SDK payloads", as
 });
 
 test("release staging rejects a bridge destination symlink without changing its target", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "chatero-stage-symlink-"));
+  const directory = await canonicalTemporaryDirectory("chatero-stage-symlink-");
   temporaryDirectories.push(directory);
   const inputs = join(directory, "inputs");
   const output = join(directory, "output");

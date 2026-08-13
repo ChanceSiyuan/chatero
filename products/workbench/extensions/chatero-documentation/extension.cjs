@@ -35,6 +35,13 @@ async function activate(context) {
   });
   context.subscriptions.push(...livePreview);
 
+  const quartoPreview = await registerSafely("Exact Quarto Preview", async () => {
+    const registerQuartoPreview = context.registerQuartoPreview
+      ?? await import("./quarto-preview-manager.mjs").then(module => module.registerQuartoPreview);
+    return registerQuartoPreview({ vscode, context });
+  });
+  context.subscriptions.push(...quartoPreview);
+
   let enabled = false;
   try {
     enabled = vscode.workspace

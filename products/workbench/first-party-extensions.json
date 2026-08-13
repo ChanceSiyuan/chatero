@@ -213,6 +213,26 @@
           "destination": "extensions/chatero-documentation/pending-edit-rebase.mjs"
         },
         {
+          "source": "products/workbench/extensions/chatero-documentation/quarto-input-policy.mjs",
+          "destination": "extensions/chatero-documentation/quarto-input-policy.mjs"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-documentation/quarto-preview-html.mjs",
+          "destination": "extensions/chatero-documentation/quarto-preview-html.mjs"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-documentation/quarto-preview-manager.mjs",
+          "destination": "extensions/chatero-documentation/quarto-preview-manager.mjs"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-documentation/quarto-runtime.mjs",
+          "destination": "extensions/chatero-documentation/quarto-runtime.mjs"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-documentation/quarto-static-server.mjs",
+          "destination": "extensions/chatero-documentation/quarto-static-server.mjs"
+        },
+        {
           "source": "products/workbench/extensions/chatero-documentation/review-decisions.mjs",
           "destination": "extensions/chatero-documentation/review-decisions.mjs"
         },
@@ -259,6 +279,14 @@
         {
           "source": "products/workbench/extensions/chatero-documentation/settlement-recovery.mjs",
           "destination": "extensions/chatero-documentation/settlement-recovery.mjs"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-documentation/safe-quarto-renderer.mjs",
+          "destination": "extensions/chatero-documentation/safe-quarto-renderer.mjs"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-documentation/safe-quarto-sandbox.mjs",
+          "destination": "extensions/chatero-documentation/safe-quarto-sandbox.mjs"
         },
         {
           "source": "products/workbench/documentation-authority/settlement-operations.mjs",
