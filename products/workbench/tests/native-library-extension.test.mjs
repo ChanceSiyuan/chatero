@@ -214,6 +214,22 @@ test("Library model queries root collections, nested collections, and collection
   ]);
 });
 
+test("Library model forwards sortable search fields to the Core", async () => {
+  const { LibraryTreeModel } = await import("../extensions/chatero-zotero/library-tree-model.mjs");
+  const calls = [];
+  const model = new LibraryTreeModel({
+    request: async (method, params) => {
+      calls.push({ method, params });
+      return { items: [], total: 0 };
+    },
+  });
+
+  await model.items({ query: "", limit: 50, sortBy: "year", sortDirection: "desc" });
+  assert.deepEqual(calls, [
+    { method: "library.search", params: { limit: 50, query: "", sortBy: "year", sortDirection: "desc" } },
+  ]);
+});
+
 test("Library model rejects malformed Core rows before presenting them", async () => {
   const { LibraryTreeModel } = await import("../extensions/chatero-zotero/library-tree-model.mjs");
   const model = new LibraryTreeModel({

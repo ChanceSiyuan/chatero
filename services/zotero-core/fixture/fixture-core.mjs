@@ -60,6 +60,12 @@ function validateSearchParams(params) {
   if ((params.collectionKey === undefined) !== (params.libraryId === undefined)) {
     throw new Error("library.search collectionKey and libraryId must be provided together");
   }
+  if (params.sortBy !== undefined && !["creators", "itemType", "title", "year"].includes(params.sortBy)) {
+    throw new Error("library.search sortBy must be one of creators, itemType, title, year");
+  }
+  if (params.sortDirection !== undefined && !["asc", "desc"].includes(params.sortDirection)) {
+    throw new Error("library.search sortDirection must be asc or desc");
+  }
 }
 
 function validateIdentityParams(params, keyField, label) {
@@ -208,11 +214,35 @@ async function main() {
         active.delete(message.cancellationId);
       }
       const query = message.params.query.trim().toLocaleLowerCase("en-US");
+      const sortBy = message.params.sortBy || "title";
+      const sortDirection = message.params.sortDirection || "asc";
+      const compare = (left, right) => {
+        let result;
+        if (sortBy === "year") {
+          const leftYear = Number.isSafeInteger(left.year) ? left.year : null;
+          const rightYear = Number.isSafeInteger(right.year) ? right.year : null;
+          if (leftYear === null && rightYear === null) result = 0;
+          else if (leftYear === null) result = 1;
+          else if (rightYear === null) result = -1;
+          else result = leftYear - rightYear;
+        }
+        else if (sortBy === "creators") {
+          result = String(left.creators?.[0] || "").localeCompare(String(right.creators?.[0] || ""));
+        }
+        else if (sortBy === "itemType") {
+          result = String(left.itemType).localeCompare(String(right.itemType));
+        }
+        else {
+          result = String(left.title).localeCompare(String(right.title));
+        }
+        if (result === 0) result = String(left.itemKey).localeCompare(String(right.itemKey));
+        return sortDirection === "desc" ? -result : result;
+      };
       const matches = fixtureItems
         .filter(item => message.params.collectionKey === undefined
           || (item.libraryId === message.params.libraryId && item.collectionKeys?.includes(message.params.collectionKey)))
         .filter(item => !query || [item.title, ...(item.creators || [])].some(value => String(value).toLocaleLowerCase("en-US").includes(query)))
-        .sort((left, right) => String(left.title).localeCompare(String(right.title)) || String(left.itemKey).localeCompare(String(right.itemKey)));
+        .sort(compare);
       const offset = Number(message.params.cursor || 0);
       if (!Number.isSafeInteger(offset) || offset < 0 || offset > matches.length) throw new Error("library.search cursor is outside the result set");
       const items = matches.slice(offset, offset + message.params.limit);

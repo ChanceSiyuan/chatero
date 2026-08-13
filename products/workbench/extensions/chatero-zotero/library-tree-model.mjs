@@ -114,11 +114,13 @@ export class LibraryTreeModel {
     });
   }
 
-  async items({ collectionKey, libraryId, query = "", limit = 50, cursor } = {}) {
+  async items({ collectionKey, libraryId, query = "", limit = 50, cursor, sortBy, sortDirection } = {}) {
     const result = await this.#request("library.search", {
       ...(collectionKey !== undefined && { collectionKey }),
       ...(cursor !== undefined && { cursor }),
       ...(libraryId !== undefined && { libraryId }),
+      ...(sortBy !== undefined && { sortBy }),
+      ...(sortDirection !== undefined && { sortDirection }),
       limit,
       query,
     });

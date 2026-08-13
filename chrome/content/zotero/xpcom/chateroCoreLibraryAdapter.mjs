@@ -14,7 +14,9 @@
 */
 
 const COLLECTION_FIELDS = new Set(["libraryId", "parentKey"]);
-const SEARCH_FIELDS = new Set(["collectionKey", "cursor", "libraryId", "limit", "query"]);
+const SEARCH_FIELDS = new Set(["collectionKey", "cursor", "libraryId", "limit", "query", "sortBy", "sortDirection"]);
+const SEARCH_SORT_FIELDS = new Set(["creators", "itemType", "title", "year"]);
+const SEARCH_SORT_DIRECTIONS = new Set(["asc", "desc"]);
 const ITEM_CHILDREN_FIELDS = new Set(["itemKey", "libraryId"]);
 const ITEM_METADATA_FIELDS = new Set(["itemKey", "libraryId"]);
 const ANNOTATION_FIELDS = new Set(["attachmentKey", "libraryId"]);
@@ -110,10 +112,34 @@ function validateSearchParams(params) {
 		throw new Error("library.search collectionKey must be a non-empty string");
 	}
 	if (hasLibrary) positiveLibraryId(params.libraryId, "library.search");
+	if (params.sortBy !== undefined && !SEARCH_SORT_FIELDS.has(params.sortBy)) {
+		throw new Error(`library.search sortBy must be one of ${[...SEARCH_SORT_FIELDS].join(", ")}`);
+	}
+	if (params.sortDirection !== undefined && !SEARCH_SORT_DIRECTIONS.has(params.sortDirection)) {
+		throw new Error("library.search sortDirection must be asc or desc");
+	}
 }
 
 function compareText(left, right) {
 	return String(left).localeCompare(String(right), "en-US");
+}
+
+function compareItemSummary(left, right, sortBy) {
+	if (sortBy === "year") {
+		let leftYear = Number.isSafeInteger(left.year) ? left.year : null;
+		let rightYear = Number.isSafeInteger(right.year) ? right.year : null;
+		if (leftYear === null && rightYear === null) return 0;
+		if (leftYear === null) return 1;
+		if (rightYear === null) return -1;
+		return leftYear - rightYear;
+	}
+	if (sortBy === "creators") {
+		return compareText(left.creators?.[0] || "", right.creators?.[0] || "");
+	}
+	if (sortBy === "itemType") {
+		return compareText(left.itemType, right.itemType);
+	}
+	return compareText(left.title, right.title);
 }
 
 function collectionSummary(collection) {
@@ -389,6 +415,8 @@ export function createZoteroLibraryAdapter({ Zotero } = {}) {
 
 		async search(params) {
 			validateSearchParams(params);
+			let sortBy = params.sortBy || "title";
+			let sortDirection = params.sortDirection || "asc";
 			let items;
 			if (params.collectionKey !== undefined) {
 				let collection = Zotero.Collections.getByLibraryAndKey(params.libraryId, params.collectionKey);
@@ -407,9 +435,12 @@ export function createZoteroLibraryAdapter({ Zotero } = {}) {
 				.map(item => itemSummary(Zotero, item))
 				.filter(item => !query || [item.title, ...item.creators]
 					.some(value => String(value).toLocaleLowerCase("en-US").includes(query)))
-				.sort((left, right) => compareText(left.title, right.title)
-					|| left.libraryId - right.libraryId
-					|| compareText(left.itemKey, right.itemKey));
+				.sort((left, right) => {
+					let comparison = compareItemSummary(left, right, sortBy)
+						|| left.libraryId - right.libraryId
+						|| compareText(left.itemKey, right.itemKey);
+					return sortDirection === "desc" ? -comparison : comparison;
+				});
 			let offset = Number(params.cursor || 0);
 			let page = matches.slice(offset, offset + params.limit);
 			let nextOffset = offset + page.length;

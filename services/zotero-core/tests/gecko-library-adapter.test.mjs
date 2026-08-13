@@ -274,6 +274,29 @@ test("search across libraries is deterministic and cursor pagination is stable",
   assert.deepEqual((await adapter.search({ cursor: "2", limit: 2, query: "" })).items.map(value => value.title), ["Group Alpha"]);
 });
 
+test("sorts search results by title, year, creators, and item type", async () => {
+  const adapter = createZoteroLibraryAdapter(fixture());
+
+  assert.deepEqual(
+    (await adapter.search({ limit: 10, query: "", sortBy: "year", sortDirection: "asc" })).items.map(value => value.title),
+    ["Alpha Methods", "Beta Result", "Group Alpha"],
+  );
+  assert.deepEqual(
+    (await adapter.search({ limit: 10, query: "", sortBy: "creators", sortDirection: "asc" })).items.map(value => value.title),
+    ["Alpha Methods", "Beta Result", "Group Alpha"],
+  );
+  assert.deepEqual(
+    (await adapter.search({ limit: 10, query: "", sortBy: "itemType", sortDirection: "asc" })).items.map(value => value.title),
+    ["Beta Result", "Alpha Methods", "Group Alpha"],
+  );
+  assert.deepEqual(
+    (await adapter.search({ limit: 10, query: "", sortBy: "title", sortDirection: "desc" })).items.map(value => value.title),
+    ["Group Alpha", "Beta Result", "Alpha Methods"],
+  );
+  await assert.rejects(adapter.search({ limit: 10, query: "", sortBy: "bogus" }), /sortBy/);
+  await assert.rejects(adapter.search({ limit: 10, query: "", sortDirection: "sideways" }), /sortDirection/);
+});
+
 test("returns PDF and Note children with Zotero composite identity", async () => {
   const adapter = createZoteroLibraryAdapter(fixture());
 

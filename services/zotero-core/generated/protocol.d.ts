@@ -147,6 +147,8 @@ export interface LibrarySearchParams {
   readonly libraryId?: number;
   readonly limit: number;
   readonly query: string;
+  readonly sortBy?: string;
+  readonly sortDirection?: string;
 }
 
 export interface LibrarySearchResult {
