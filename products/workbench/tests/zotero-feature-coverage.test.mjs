@@ -29,6 +29,12 @@ test("official Zotero UI inventory stays executable through complete compatibili
     "connector", "plugins", "sync", "translators", "wordProcessor",
     "wordMac", "wordWindows", "libreOffice",
   ]);
+  assert.deepEqual(Object.keys(report.integrationGitlinks), [
+    "wordMac", "wordWindows", "libreOffice",
+  ]);
+  for (const commit of Object.values(report.integrationGitlinks)) {
+    assert.match(commit, /^[0-9a-f]{40}$/u);
+  }
   assert.match(report.compatibilityComponentsSha256, /^[0-9a-f]{64}$/u);
   assert.equal(report.profileMode, "private-exclusive");
   assert.match(report.officialActionInventorySha256, /^[0-9a-f]{64}$/u);
