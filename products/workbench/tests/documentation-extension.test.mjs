@@ -33,7 +33,7 @@ test("isolated Workbench CI gates fast policy and complete macOS Stage 1 accepta
   assert.equal(job.steps[5].id, "code-oss-cache");
   assert.equal(job.steps[5].with.path, "vendor/code-oss");
   assert.equal(job.steps[5].with.key,
-    "workbench-${{ runner.os }}-${{ hashFiles('products/workbench/upstreams.json', 'products/workbench/patches/code-oss/**', 'products/workbench/first-party-extensions.json', 'package-lock.json') }}");
+    "workbench-${{ runner.os }}-${{ hashFiles('products/workbench/upstreams.json', 'products/workbench/patches/code-oss/**', 'products/workbench/first-party-extensions.json', 'products/workbench/extensions/**', 'services/zotero-core/**', 'package-lock.json') }}");
   assert.equal(job.steps[6].if, "steps.code-oss-cache.outputs.cache-hit == 'true'");
 
   const stageOne = workflow.jobs["stage-1-macos"];
