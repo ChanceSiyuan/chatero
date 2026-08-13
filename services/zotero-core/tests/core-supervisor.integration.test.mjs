@@ -31,6 +31,7 @@ const fixtureItems = [
     itemType: "journalArticle",
     libraryId: 1,
     title: "Renormalization group theory",
+    version: 1,
     year: 1974,
   },
   {
@@ -40,6 +41,7 @@ const fixtureItems = [
     itemType: "journalArticle",
     libraryId: 1,
     title: "Density matrix formulation",
+    version: 1,
     year: 1992,
   },
 ];

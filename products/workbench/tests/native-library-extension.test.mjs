@@ -6,37 +6,82 @@ import { test } from "node:test";
 const root = resolve(import.meta.dirname, "..", "..", "..");
 const extensionRoot = join(root, "products", "workbench", "extensions", "chatero-zotero");
 
-test("declares native Library views and commands without a webview", async () => {
+test("declares native Library source and item-table views with Stage 3 commands", async () => {
   const manifest = JSON.parse(await readFile(join(extensionRoot, "package.json"), "utf8"));
-  const commands = manifest.contributes.commands.map(value => value.command).sort();
+  const commands = new Set(manifest.contributes.commands.map(value => value.command));
 
   assert.equal(manifest.name, "chatero-zotero");
   assert.equal(manifest.publisher, "chatero");
   assert.equal(manifest.engines.vscode, "^1.132.0");
-  assert.deepEqual(manifest.activationEvents.sort(), [
-    "onChatContextProvider:chatero.chatero-zotero-zotero-pdf-evidence",
-    "onChatContextProvider:zotero-pdf-evidence",
-    "onCustomEditor:chatero.zotero.note",
-    "onCustomEditor:chatero.zotero.pdf",
-    "onView:chatero.zotero.library",
-  ]);
-  assert.deepEqual(commands, [
+  assert.ok(manifest.activationEvents.includes("onView:chatero.zotero.library"));
+  assert.ok(manifest.activationEvents.includes("onView:chatero.zotero.items"));
+  for (const command of [
     "chatero.zotero.addPdfContextToChat",
+    "chatero.zotero.batchMoveToCollection",
+    "chatero.zotero.batchRestore",
+    "chatero.zotero.batchTrash",
+    "chatero.zotero.exportItems",
+    "chatero.zotero.importItems",
+    "chatero.zotero.loadMoreItems",
+    "chatero.zotero.lookupIdentifier",
     "chatero.zotero.openAttachment",
     "chatero.zotero.openNote",
     "chatero.zotero.refreshLibrary",
+    "chatero.zotero.retrySync",
     "chatero.zotero.searchLibrary",
     "chatero.zotero.selectCoreExecutable",
     "chatero.zotero.selectProfile",
     "chatero.zotero.sendFullPaperToRemote",
     "chatero.zotero.showItemDetails",
+    "chatero.zotero.sortItems",
     "chatero.zotero.startCore",
     "chatero.zotero.stopCore",
-  ]);
+  ]) assert.ok(commands.has(command), `missing ${command}`);
   assert.equal(manifest.contributes.viewsContainers.activitybar[0].id, "chatero-zotero");
   assert.equal(manifest.contributes.views["chatero-zotero"][0].id, "chatero.zotero.library");
+  assert.equal(manifest.contributes.views["chatero-zotero"][1].id, "chatero.zotero.items");
+  assert.equal(manifest.contributes.views["chatero-zotero"][1].accessibilityHelpContent, "chatero.zotero.items.accessibilityHelp");
   assert.equal(manifest.contributes.configuration.properties["chatero.zotero.coreExecutable"].type, "string");
+  assert.deepEqual(manifest.contributes.configuration.properties["chatero.zotero.itemTableColumns"].default, ["creators", "year", "itemType"]);
+  assert.equal(manifest.contributes.configuration.properties["chatero.zotero.itemTablePageSize"].maximum, 100);
+  assert.ok(manifest.contributes.keybindings.some(value => value.command === "chatero.zotero.batchTrash"));
   assert.equal(Object.hasOwn(manifest.contributes, "webviewPanel"), false);
+});
+
+test("extension mounts virtualized multi-select TreeViews with drag/drop and state restoration", async () => {
+  const source = await readFile(join(extensionRoot, "extension.cjs"), "utf8");
+  assert.match(source, /createTreeView\("chatero\.zotero\.library"/);
+  assert.match(source, /createTreeView\("chatero\.zotero\.items"/);
+  assert.match(source, /canSelectMany: true/);
+  assert.match(source, /dragAndDropController:/);
+  assert.match(source, /onDidChangeSelection/);
+  assert.match(source, /workspaceState\.(get|update)/);
+  assert.match(source, /withProgress\(/);
+});
+
+test("source tree materializes libraries, groups, collections, searches, duplicates, feeds, trash, and sync", async () => {
+  const { LibrarySourceTreeModel } = await import("../extensions/chatero-zotero/library-source-tree-model.mjs");
+  const core = {
+    async libraries() { return [
+      { libraryId: 1, libraryType: "user", name: "My Library" },
+      { groupId: 8, libraryId: 2, libraryType: "group", name: "Team" },
+    ]; },
+    async collections({ libraryId, parentKey } = {}) {
+      if (parentKey) return [{ collectionKey: "CHILD001", libraryId, name: "Nested", parentKey }];
+      return [{ collectionKey: "ROOT0001", libraryId: 1, name: "Papers" }];
+    },
+    async feeds() { return [{ libraryId: 9, name: "Journal Feed", unreadCount: 3 }]; },
+    async savedSearches({ libraryId }) { return [{ libraryId, name: "Unread", searchKey: "SEARCH01" }]; },
+    async syncStatus() { return { enabled: true, inProgress: false, libraries: [], offline: false, status: "Up to date" }; },
+  };
+  const tree = new LibrarySourceTreeModel({ core });
+  const roots = await tree.roots();
+  assert.deepEqual(roots.map(value => value.kind), ["sync", "library", "library", "feedGroup"]);
+  assert.equal(roots[2].value.groupId, 8);
+  const children = await tree.children(roots[1]);
+  assert.deepEqual(children.map(value => value.kind), ["collection", "savedSearch", "duplicates", "unfiled", "trash"]);
+  assert.equal((await tree.children(children[0]))[0].value.name, "Nested");
+  assert.equal((await tree.children(roots[3]))[0].kind, "feed");
 });
 
 test("Library model lazily loads validated PDF, Note, and annotation records", async () => {

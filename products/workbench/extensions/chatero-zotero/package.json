@@ -20,6 +20,7 @@
   "main": "./extension.cjs",
   "activationEvents": [
     "onView:chatero.zotero.library",
+    "onView:chatero.zotero.items",
     "onCustomEditor:chatero.zotero.pdf",
     "onCustomEditor:chatero.zotero.note",
     "onChatContextProvider:zotero-pdf-evidence",
@@ -96,6 +97,54 @@
         "icon": "$(search)"
       },
       {
+        "command": "chatero.zotero.loadMoreItems",
+        "title": "Load More Zotero Items",
+        "category": "Chatero",
+        "icon": "$(more)"
+      },
+      {
+        "command": "chatero.zotero.sortItems",
+        "title": "Sort Zotero Items…",
+        "category": "Chatero",
+        "icon": "$(list-ordered)"
+      },
+      {
+        "command": "chatero.zotero.batchTrash",
+        "title": "Move Zotero Items to Trash",
+        "category": "Chatero"
+      },
+      {
+        "command": "chatero.zotero.batchRestore",
+        "title": "Restore Zotero Items",
+        "category": "Chatero"
+      },
+      {
+        "command": "chatero.zotero.batchMoveToCollection",
+        "title": "Move Zotero Items to Collection…",
+        "category": "Chatero"
+      },
+      {
+        "command": "chatero.zotero.retrySync",
+        "title": "Retry Zotero Sync",
+        "category": "Chatero",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "chatero.zotero.importItems",
+        "title": "Import Bibliography…",
+        "category": "Chatero"
+      },
+      {
+        "command": "chatero.zotero.exportItems",
+        "title": "Export Selected Items…",
+        "category": "Chatero"
+      },
+      {
+        "command": "chatero.zotero.lookupIdentifier",
+        "title": "Add Item by Identifier…",
+        "category": "Chatero"
+      },
+      {
         "command": "chatero.zotero.addPdfContextToChat",
         "title": "Add PDF Page or Selection to Chat",
         "category": "Chatero"
@@ -126,9 +175,37 @@
           "default": false,
           "scope": "machine",
           "description": "Use the data-free fixture Core while developing the Gecko adapter."
+        },
+        "chatero.zotero.itemTableColumns": {
+          "type": "array",
+          "items": { "enum": ["creators", "year", "itemType"] },
+          "uniqueItems": true,
+          "default": ["creators", "year", "itemType"],
+          "description": "Metadata fields shown beside titles in the native Zotero item table."
+        },
+        "chatero.zotero.itemTablePageSize": {
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 100,
+          "default": 50,
+          "description": "Number of Zotero items loaded per virtualized page."
         }
       }
     },
+    "keybindings": [
+      {
+        "command": "chatero.zotero.searchLibrary",
+        "key": "ctrl+f",
+        "mac": "cmd+f",
+        "when": "focusedView =~ /chatero.zotero.(library|items)/"
+      },
+      {
+        "command": "chatero.zotero.batchTrash",
+        "key": "delete",
+        "mac": "cmd+backspace",
+        "when": "focusedView == chatero.zotero.items && chateroZoteroHasSelection"
+      }
+    ],
     "menus": {
       "view/item/context": [
         {
@@ -147,6 +224,16 @@
           "command": "chatero.zotero.refreshLibrary",
           "when": "view == chatero.zotero.library",
           "group": "navigation@2"
+        },
+        {
+          "command": "chatero.zotero.sortItems",
+          "when": "view == chatero.zotero.items",
+          "group": "navigation@1"
+        },
+        {
+          "command": "chatero.zotero.loadMoreItems",
+          "when": "view == chatero.zotero.items && chateroZoteroHasMoreItems",
+          "group": "navigation@2"
         }
       ]
     },
@@ -163,9 +250,21 @@
       "chatero-zotero": [
         {
           "id": "chatero.zotero.library",
-          "name": "Library"
+          "name": "Library Sources"
+        },
+        {
+          "id": "chatero.zotero.items",
+          "name": "Items",
+          "accessibilityHelpContent": "chatero.zotero.items.accessibilityHelp"
         }
       ]
-    }
+    },
+    "accessibilityHelpContent": [
+      {
+        "name": "Zotero item table help",
+        "id": "chatero.zotero.items.accessibilityHelp",
+        "content": "Use Up and Down Arrow to navigate items, Space to select, Enter to expand attachments and Notes, and the command palette for sort, search, batch, import, export, and sync actions."
+      }
+    ]
   }
 }

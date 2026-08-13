@@ -51,6 +51,7 @@ export class LibraryItemTableModel {
   }
 
   get rows() { return Object.freeze([...this.#rows]); }
+  get core() { return this.#core; }
   get selectedRows() { return Object.freeze(this.#rows.filter(row => this.#selection.has(identity(row)))); }
   get source() { return this.#source; }
   get query() { return this.#query; }

@@ -168,6 +168,7 @@ export class LibraryTreeModel {
   #request;
   #idempotencyKey;
   #batchRevisions = new Map();
+  #transactionRevisions = new Map();
 
   constructor({ request, idempotencyKey = () => `chatero-library-${randomUUID()}` }) {
     if (typeof request !== "function") throw new Error("LibraryTreeModel requires a request function");
@@ -197,6 +198,35 @@ export class LibraryTreeModel {
 
   async syncStatus() {
     return validateSyncStatus(await this.#request("sync.status", {}));
+  }
+
+  request(method, params, options) {
+    return this.#request(method, params, options);
+  }
+
+  async transact(method, params, { scope, options } = {}) {
+    boundedString(method, "transaction method");
+    boundedString(scope, "transaction scope");
+    exactObject(params, "transaction params");
+    const run = () => this.#request(method, {
+      ...params,
+      expectedRevision: this.#transactionRevisions.get(scope) || 0,
+      idempotencyKey: this.#idempotencyKey(),
+    }, options);
+    let result;
+    try { result = await run(); }
+    catch (error) {
+      const actual = error?.code === "CONFLICT" && error?.details?.kind === "REVISION_CONFLICT"
+        ? error.details.actualRevision : undefined;
+      if (!Number.isSafeInteger(actual) || actual < 0) throw error;
+      this.#transactionRevisions.set(scope, actual);
+      result = await run();
+    }
+    if (!result || !Number.isSafeInteger(result.revision) || result.revision < 1 || typeof result.replayed !== "boolean") {
+      throw new Error("Zotero Core returned invalid transaction results");
+    }
+    this.#transactionRevisions.set(scope, result.revision);
+    return result;
   }
 
   async collections({ libraryId, parentKey } = {}) {

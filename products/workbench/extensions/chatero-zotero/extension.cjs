@@ -6,24 +6,23 @@ let activeLifecycle = null;
 let deactivationPromise = null;
 const PDF_CONTEXT_PROVIDER_ID = "zotero-pdf-evidence";
 
-class LibraryProvider {
-  constructor(evidenceAuthority) {
-    this.evidenceAuthority = evidenceAuthority;
+class LibrarySourceProvider {
+  constructor() {
     this._emitter = new vscode.EventEmitter();
     this.onDidChangeTreeData = this._emitter.event;
     this.model = null;
-    this.query = "";
+    this.core = null;
     this.status = "Zotero Core is stopped";
   }
 
   refresh() {
-    this.evidenceAuthority.reset();
     this._emitter.fire(undefined);
   }
 
-  setConnection(model) {
+  setConnection(core, model) {
+    this.core = core;
     this.model = model;
-    this.status = model ? "Zotero Core is ready" : "Zotero Core is stopped";
+    this.status = core ? "Zotero Core is ready" : "Zotero Core is stopped";
     this.refresh();
   }
 
@@ -35,18 +34,77 @@ class LibraryProvider {
       item.command = element.connected ? undefined : { command: "chatero.zotero.startCore", title: "Start Zotero Core" };
       return item;
     }
-    if (element.kind === "collection") {
-      const item = new vscode.TreeItem(element.value.name, vscode.TreeItemCollapsibleState.Collapsed);
-      item.description = element.value.itemCount === undefined ? undefined : String(element.value.itemCount);
-      item.iconPath = new vscode.ThemeIcon("library");
-      item.contextValue = "chateroZoteroCollection";
-      return item;
-    }
+    const collapsible = ["collection", "feedGroup", "library"].includes(element.kind)
+      ? vscode.TreeItemCollapsibleState.Collapsed : vscode.TreeItemCollapsibleState.None;
+    const item = new vscode.TreeItem(element.value.name || element.value.status || "Zotero", collapsible);
+    const icons = {
+      collection: "folder", duplicates: "files", feed: "rss", feedGroup: "rss",
+      library: element.value.groupId ? "organization" : "library", savedSearch: "filter",
+      sync: element.value.inProgress ? "sync~spin" : element.value.offline ? "cloud-offline" : "cloud",
+      trash: "trash", unfiled: "archive",
+    };
+    item.iconPath = new vscode.ThemeIcon(icons[element.kind] || "circle-outline");
+    item.contextValue = `chateroZoteroSource.${element.kind}`;
+    if (element.kind === "sync") item.description = element.value.status;
+    if (element.kind === "feed") item.description = element.value.unreadCount ? String(element.value.unreadCount) : undefined;
+    return item;
+  }
+
+  async getChildren(element) {
+    if (!this.model) return element ? [] : [{ kind: "status", label: this.status, connected: false }];
+    return element ? this.model.children(element) : this.model.roots();
+  }
+
+  dispose() {
+    this._emitter.dispose();
+  }
+}
+
+class LibraryItemProvider {
+  constructor({ evidenceAuthority, persist }) {
+    this.evidenceAuthority = evidenceAuthority;
+    this.persist = persist;
+    this._emitter = new vscode.EventEmitter();
+    this.onDidChangeTreeData = this._emitter.event;
+    this.model = null;
+  }
+
+  setConnection(model) {
+    this.model = model;
+    this.refresh();
+  }
+
+  refresh() {
+    this.evidenceAuthority.reset();
+    this._emitter.fire(undefined);
+    void vscode.commands.executeCommand("setContext", "chateroZoteroHasMoreItems", this.model?.nextCursor !== undefined);
+  }
+
+  async open(source) {
+    if (!this.model || !source) return;
+    await vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: "Loading Zotero items…", cancellable: false }, () => this.model.open(source));
+    await this.persist(this.model.snapshot());
+    this.refresh();
+  }
+
+  async loadNext() {
+    if (!this.model) return;
+    await vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: "Loading more Zotero items…", cancellable: false }, () => this.model.loadNext());
+    await this.persist(this.model.snapshot());
+    this.refresh();
+  }
+
+  select(elements) {
+    if (!this.model) return;
+    this.model.select(elements.filter(value => value.kind === "item").map(value => `${value.value.libraryId}/${value.value.itemKey}`));
+    void vscode.commands.executeCommand("setContext", "chateroZoteroHasSelection", this.model.selectedRows.length > 0);
+    void this.persist(this.model.snapshot());
+  }
+
+  getTreeItem(element) {
     if (element.kind === "attachment") {
       const item = new vscode.TreeItem(element.value.title, vscode.TreeItemCollapsibleState.None);
-      item.description = element.value.annotationCount
-        ? `${element.value.annotationCount} annotation${element.value.annotationCount === 1 ? "" : "s"}`
-        : element.value.filename;
+      item.description = element.value.annotationCount ? `${element.value.annotationCount} annotations` : element.value.filename;
       item.iconPath = new vscode.ThemeIcon(element.value.contentType === "application/pdf" ? "file-pdf" : "file-media");
       item.contextValue = "chateroZoteroAttachment";
       item.command = { command: "chatero.zotero.openAttachment", title: "Open attachment", arguments: [element.value] };
@@ -59,51 +117,37 @@ class LibraryProvider {
       item.command = { command: "chatero.zotero.openNote", title: "Open Note", arguments: [element.value] };
       return item;
     }
-    const item = new vscode.TreeItem(element.value.title || "Untitled", vscode.TreeItemCollapsibleState.Collapsed);
-    item.description = [element.value.creators?.[0], element.value.year].filter(Boolean).join(" · ");
-    item.iconPath = new vscode.ThemeIcon(element.value.attachmentCount ? "file-pdf" : "book");
+    const value = element.value;
+    const item = new vscode.TreeItem(value.title || "Untitled", vscode.TreeItemCollapsibleState.Collapsed);
+    const columns = vscode.workspace.getConfiguration("chatero.zotero").get("itemTableColumns", ["creators", "year", "itemType"]);
+    item.description = columns.flatMap(column => column === "creators" ? value.creators.slice(0, 1) : value[column] === undefined ? [] : [String(value[column])]).join(" · ");
+    item.iconPath = new vscode.ThemeIcon(value.attachmentCount ? "file-pdf" : "book");
     item.contextValue = "chateroZoteroItem";
-    item.tooltip = [element.value.title, ...(element.value.creators || [])].filter(Boolean).join("\n");
+    item.tooltip = [value.title, ...value.creators].join("\n");
+    item.accessibilityInformation = { label: `${value.title}. ${item.description}`.trim(), role: "treeitem" };
+    item.command = { command: "chatero.zotero.showItemDetails", title: "Show item details", arguments: [value] };
     return item;
   }
 
   async getChildren(element) {
-    if (!this.model) return [{ kind: "status", label: this.status, connected: false }];
-    if (!element) {
-      const collections = await this.model.collections();
-      const roots = collections.map(value => ({ kind: "collection", value }));
-      if (this.query) {
-        const result = await this.model.items({ query: this.query });
-        roots.unshift(...result.items.map(value => ({ kind: "item", value })));
-      }
-      return [{ kind: "status", label: this.status, connected: true }, ...roots];
-    }
-    if (element.kind === "item") {
-      const result = await this.model.children({ itemKey: element.value.itemKey, libraryId: element.value.libraryId });
-      return [
-        ...result.attachments.map(value => ({ kind: "attachment", value: this.evidenceAuthority.register(value, "attachment") })),
-        ...result.notes.map(value => ({ kind: "note", value: this.evidenceAuthority.register(value, "note") })),
-      ];
-    }
-    if (element.kind !== "collection") return [];
-    const [collections, result] = await Promise.all([
-      this.model.collections({ libraryId: element.value.libraryId, parentKey: element.value.collectionKey }),
-      this.model.items({ collectionKey: element.value.collectionKey, libraryId: element.value.libraryId, query: this.query }),
-    ]);
+    if (!this.model) return [];
+    if (!element) return this.model.rows.map(value => ({ kind: "item", value }));
+    if (element.kind !== "item") return [];
+    const result = await this.model.core.children({ itemKey: element.value.itemKey, libraryId: element.value.libraryId });
     return [
-      ...collections.map(value => ({ kind: "collection", value })),
-      ...result.items.map(value => ({ kind: "item", value })),
+      ...result.attachments.map(value => ({ kind: "attachment", value: this.evidenceAuthority.register(value, "attachment") })),
+      ...result.notes.map(value => ({ kind: "note", value: this.evidenceAuthority.register(value, "note") })),
     ];
   }
 
-  dispose() {
-    this._emitter.dispose();
-  }
+  dispose() { this._emitter.dispose(); }
 }
 
 async function activate(context) {
-  const [{ LibraryTreeModel }, { EvidenceRecordAuthority }, registryModule, html, metadataHtml, brokerModule, contextFormat] = await Promise.all([
+  const [{ LibraryTreeModel }, { LibraryItemTableModel }, { LibrarySourceTreeModel }, { EvidenceRecordAuthority }, registryModule, html, metadataHtml, brokerModule, contextFormat] = await Promise.all([
     import("./library-tree-model.mjs"),
+    import("./library-item-table-model.mjs"),
+    import("./library-source-tree-model.mjs"),
     import("./evidence-authority.mjs"),
     import("./evidence-editor-registry.mjs"),
     import("./evidence-editor-html.mjs"),
@@ -121,10 +165,34 @@ async function activate(context) {
   const evidenceAuthority = new EvidenceRecordAuthority();
   const evidenceDocuments = new EvidenceDocumentRegistry();
   const pdfContexts = new brokerModule.PdfContextBroker();
-  const provider = new LibraryProvider(evidenceAuthority);
+  const sourceProvider = new LibrarySourceProvider();
+  const itemProvider = new LibraryItemProvider({
+    evidenceAuthority,
+    persist: snapshot => context.workspaceState.update("chatero.zotero.itemTable.v1", snapshot),
+  });
   let pdfMaterializer = null;
-  context.subscriptions.push(provider, pdfContexts);
-  context.subscriptions.push(vscode.window.registerTreeDataProvider("chatero.zotero.library", provider));
+  const dragAndDropController = {
+    dragMimeTypes: ["application/vnd.chatero.zotero-items"],
+    dropMimeTypes: ["application/vnd.chatero.zotero-items"],
+    handleDrag(source, dataTransfer) {
+      const identities = source.filter(value => value.kind === "item").map(value => ({ itemKey: value.value.itemKey, libraryId: value.value.libraryId }));
+      dataTransfer.set("application/vnd.chatero.zotero-items", new vscode.DataTransferItem(identities));
+    },
+    async handleDrop() {},
+  };
+  const sourceView = vscode.window.createTreeView("chatero.zotero.library", { treeDataProvider: sourceProvider });
+  const itemView = vscode.window.createTreeView("chatero.zotero.items", {
+    canSelectMany: true,
+    dragAndDropController: dragAndDropController,
+    showCollapseAll: true,
+    treeDataProvider: itemProvider,
+  });
+  context.subscriptions.push(sourceProvider, itemProvider, pdfContexts, sourceView, itemView);
+  context.subscriptions.push(sourceView.onDidChangeSelection(event => {
+    const source = sourceProvider.model?.toItemSource(event.selection[0]);
+    if (source) void itemProvider.open(source).catch(error => vscode.window.showErrorMessage(`Could not load Zotero items: ${error.message}`));
+  }));
+  context.subscriptions.push(itemView.onDidChangeSelection(event => itemProvider.select(event.selection)));
 
   const getRemoteAlias = async () => {
     const folder = vscode.workspace.workspaceFolders?.find(value =>
@@ -215,7 +283,10 @@ async function activate(context) {
       return startCore({
         profileDirectory,
         ...(geckoExecutable && { geckoExecutable }),
-        requestedCapabilities: ["attachment:read", "events:read", "library:read", "library:search", "profile:read"],
+        requestedCapabilities: [
+          "attachment:read", "attachment:write", "citation:read", "events:read", "library:read", "library:search", "library:write",
+          "profile:read", "sync:read", "sync:write", "translation:read", "translation:write",
+        ],
       });
     });
   };
@@ -223,14 +294,31 @@ async function activate(context) {
     start: launchCore,
     publish: startedCore => {
       const model = new LibraryTreeModel({ request: startedCore.client.request });
+      const sourceModel = new LibrarySourceTreeModel({ core: model });
+      const tableModel = new LibraryItemTableModel({
+        core: model,
+        pageSize: vscode.workspace.getConfiguration("chatero.zotero").get("itemTablePageSize", 50),
+      });
       pdfMaterializer = null;
-      provider.setConnection(model);
-      return startedCore.client.onEvent(() => provider.refresh());
+      sourceProvider.setConnection(model, sourceModel);
+      itemProvider.setConnection(tableModel);
+      const snapshot = context.workspaceState.get("chatero.zotero.itemTable.v1");
+      if (snapshot) {
+        try { tableModel.restore(snapshot); itemProvider.refresh(); }
+        catch (_) { void context.workspaceState.update("chatero.zotero.itemTable.v1", undefined); }
+      }
+      return startedCore.client.onEvent(() => {
+        sourceProvider.refresh();
+        if (tableModel.source) void tableModel.open(tableModel.source, {
+          query: tableModel.query, sortBy: tableModel.sortBy, sortDirection: tableModel.sortDirection,
+        }).then(() => itemProvider.refresh(), () => {});
+      });
     },
     unpublish: () => {
       pdfMaterializer = null;
       evidenceDocuments.reset();
-      provider.setConnection(null);
+      sourceProvider.setConnection(null, null);
+      itemProvider.setConnection(null);
     },
     onUnexpectedStop: () => {
       void vscode.window.showErrorMessage("Zotero Core stopped unexpectedly. Your profile lease was released safely.");
@@ -241,7 +329,7 @@ async function activate(context) {
   const ensureCore = lifecycle.ensureCore;
   const resolveDocument = createEvidenceDocumentResolver({
     ensureCore,
-    getModel: () => provider.model,
+    getModel: () => sourceProvider.core,
     registry: evidenceDocuments,
   });
   const materializePdf = async record => {
@@ -258,7 +346,7 @@ async function activate(context) {
   context.subscriptions.push(vscode.window.registerCustomEditorProvider("chatero.zotero.pdf", new PdfEditorProvider({
     vscode,
     registry: evidenceDocuments,
-    getModel: () => provider.model,
+    getModel: () => sourceProvider.core,
     resolveDocument,
     renderPdfEditorHTML: html.renderPdfEditorHTML,
     extensionUri: context.extensionUri,
@@ -271,7 +359,7 @@ async function activate(context) {
   }), { supportsMultipleEditorsPerDocument: false }));
   context.subscriptions.push(vscode.window.registerCustomEditorProvider("chatero.zotero.note", new NoteEditorProvider({
     registry: evidenceDocuments,
-    getModel: () => provider.model,
+    getModel: () => sourceProvider.core,
     resolveDocument,
     renderNoteEditorHTML: html.renderNoteEditorHTML,
   }), { supportsMultipleEditorsPerDocument: false }));
@@ -280,7 +368,12 @@ async function activate(context) {
   context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.selectCoreExecutable", selectCoreExecutable));
   context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.startCore", () => ensureCore().catch(error => vscode.window.showErrorMessage(`Could not start Zotero Core: ${error.message}`))));
   context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.stopCore", () => lifecycle.stopCore().catch(error => vscode.window.showErrorMessage(`Could not stop Zotero Core: ${error.message}`))));
-  context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.refreshLibrary", () => provider.refresh()));
+  context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.refreshLibrary", () => {
+    sourceProvider.refresh();
+    if (itemProvider.model?.source) void itemProvider.model.open(itemProvider.model.source, {
+      query: itemProvider.model.query, sortBy: itemProvider.model.sortBy, sortDirection: itemProvider.model.sortDirection,
+    }).then(() => itemProvider.refresh(), error => vscode.window.showErrorMessage(`Could not refresh Zotero items: ${error.message}`));
+  }));
   context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.addPdfContextToChat", async () => {
     try {
       return await attachPdfSnapshot(pdfContexts.captureActive());
@@ -303,7 +396,7 @@ async function activate(context) {
     return vscode.commands.executeCommand("vscode.openWith", uri, "chatero.zotero.note", { preview: false });
   }));
   context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.showItemDetails", async item => {
-    if (!provider.model) {
+    if (!sourceProvider.core) {
       void vscode.window.showErrorMessage("Zotero Core is stopped.");
       return;
     }
@@ -312,7 +405,7 @@ async function activate(context) {
       return;
     }
     try {
-      const metadata = await provider.model.metadata({ itemKey: item.itemKey, libraryId: item.libraryId });
+      const metadata = await sourceProvider.core.metadata({ itemKey: item.itemKey, libraryId: item.libraryId });
       const panel = vscode.window.createWebviewPanel(
         "chatero.zotero.itemDetails",
         metadata.title || "Item Details",
@@ -327,9 +420,116 @@ async function activate(context) {
   }));
   context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.searchLibrary", async () => {
     const query = await vscode.window.showInputBox({ placeHolder: "Search titles and creators", prompt: "Search Zotero Library" });
-    if (query === undefined) return;
-    provider.query = query;
-    provider.refresh();
+    if (query === undefined || !itemProvider.model?.source) return;
+    await itemProvider.model.search(query);
+    await context.workspaceState.update("chatero.zotero.itemTable.v1", itemProvider.model.snapshot());
+    itemProvider.refresh();
+  }));
+  const persistAndRefreshItems = async () => {
+    if (!itemProvider.model?.source) return;
+    await itemProvider.model.open(itemProvider.model.source, {
+      query: itemProvider.model.query, sortBy: itemProvider.model.sortBy, sortDirection: itemProvider.model.sortDirection,
+    });
+    await context.workspaceState.update("chatero.zotero.itemTable.v1", itemProvider.model.snapshot());
+    itemProvider.refresh();
+  };
+  const runBatch = async action => {
+    try {
+      await vscode.window.withProgress({
+        cancellable: false,
+        location: vscode.ProgressLocation.Notification,
+        title: `${action === "trash" ? "Moving" : "Restoring"} Zotero items…`,
+      }, () => itemProvider.model.batch(action));
+      await persistAndRefreshItems();
+    }
+    catch (error) { void vscode.window.showErrorMessage(`Could not update Zotero items: ${error.message}`); }
+  };
+  context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.loadMoreItems", () => itemProvider.loadNext()));
+  context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.sortItems", async () => {
+    if (!itemProvider.model?.source) return;
+    const choice = await vscode.window.showQuickPick([
+      { label: "Title (A–Z)", sortBy: "title", sortDirection: "asc" },
+      { label: "Title (Z–A)", sortBy: "title", sortDirection: "desc" },
+      { label: "Creator", sortBy: "creators", sortDirection: "asc" },
+      { label: "Year (newest first)", sortBy: "year", sortDirection: "desc" },
+      { label: "Item type", sortBy: "itemType", sortDirection: "asc" },
+    ], { placeHolder: "Sort Zotero items" });
+    if (!choice) return;
+    await itemProvider.model.sort(choice.sortBy, choice.sortDirection);
+    await context.workspaceState.update("chatero.zotero.itemTable.v1", itemProvider.model.snapshot());
+    itemProvider.refresh();
+  }));
+  context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.batchTrash", () => runBatch("trash")));
+  context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.batchRestore", () => runBatch("restore")));
+  context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.batchMoveToCollection", async () => {
+    const selected = itemProvider.model?.selectedRows || [];
+    if (!selected.length) return void vscode.window.showErrorMessage("Select at least one Zotero item.");
+    const libraryId = selected[0].libraryId;
+    const collections = (await sourceProvider.core.collections()).filter(value => value.libraryId === libraryId);
+    const chosen = await vscode.window.showQuickPick(collections.map(value => ({ label: value.name, value })), { canPickMany: true, placeHolder: "Choose destination collections" });
+    if (!chosen) return;
+    try {
+      await itemProvider.model.batch("collections", { collectionKeys: chosen.map(value => value.value.collectionKey) });
+      await persistAndRefreshItems();
+    }
+    catch (error) { void vscode.window.showErrorMessage(`Could not move Zotero items: ${error.message}`); }
+  }));
+  context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.retrySync", async () => {
+    if (!sourceProvider.core) return;
+    try {
+      const status = await sourceProvider.core.syncStatus();
+      const libraryIds = status.libraries.map(value => value.libraryId);
+      if (!libraryIds.length) return void vscode.window.showInformationMessage("No syncable Zotero libraries are available.");
+      await vscode.window.withProgress({ cancellable: true, location: vscode.ProgressLocation.Notification, title: "Syncing Zotero libraries…" }, async (_, token) => {
+        const controller = new AbortController();
+        const subscription = token.onCancellationRequested(() => controller.abort(new Error("Zotero sync was cancelled")));
+        try { return await sourceProvider.core.transact("sync.retry", { libraryIds }, { scope: "sync:retry", options: { signal: controller.signal } }); }
+        finally { subscription.dispose(); }
+      });
+      sourceProvider.refresh();
+    }
+    catch (error) { void vscode.window.showErrorMessage(`Could not sync Zotero: ${error.message}`); }
+  }));
+  context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.exportItems", async () => {
+    const selected = itemProvider.model?.selectedRows || [];
+    if (!selected.length) return void vscode.window.showErrorMessage("Select at least one Zotero item.");
+    try {
+      const translators = await sourceProvider.core.request("translation.translators", { kind: "export" });
+      const translator = await vscode.window.showQuickPick(translators.translators.map(value => ({ label: value.label, value })), { placeHolder: "Choose an export format" });
+      if (!translator) return;
+      const result = await sourceProvider.core.request("translation.export", {
+        identities: selected.map(value => ({ itemKey: value.itemKey, libraryId: value.libraryId })), translatorId: translator.value.translatorId,
+      });
+      await vscode.env.clipboard.writeText(result.content);
+      void vscode.window.showInformationMessage(`Exported ${result.itemCount} Zotero item${result.itemCount === 1 ? "" : "s"} to the clipboard.`);
+    }
+    catch (error) { void vscode.window.showErrorMessage(`Could not export Zotero items: ${error.message}`); }
+  }));
+  context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.importItems", async () => {
+    if (!itemProvider.model?.source) return void vscode.window.showErrorMessage("Select a Zotero library first.");
+    const content = await vscode.window.showInputBox({ ignoreFocusOut: true, prompt: "Paste BibTeX, RIS, or another supported bibliography" });
+    if (!content) return;
+    try {
+      const translators = await sourceProvider.core.request("translation.translators", { kind: "import" });
+      const translator = await vscode.window.showQuickPick(translators.translators.map(value => ({ label: value.label, value })), { placeHolder: "Choose an import format" });
+      if (!translator) return;
+      const libraryId = itemProvider.model.source.libraryId;
+      await sourceProvider.core.transact("translation.import", {
+        content, libraryId, translatorId: translator.value.translatorId,
+      }, { scope: `library:${libraryId}/translation:import` });
+      await persistAndRefreshItems();
+    }
+    catch (error) { void vscode.window.showErrorMessage(`Could not import Zotero items: ${error.message}`); }
+  }));
+  context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.lookupIdentifier", async () => {
+    const text = await vscode.window.showInputBox({ placeHolder: "DOI, ISBN, PMID, arXiv ID, or URL", prompt: "Look up bibliographic metadata" });
+    if (!text) return;
+    try {
+      const result = await sourceProvider.core.request("translation.lookup", { text });
+      const selected = await vscode.window.showQuickPick(result.candidates.map(value => ({ description: value.creators.join(", "), label: value.title, value })), { placeHolder: "Metadata candidates" });
+      if (selected) void vscode.window.showInformationMessage(`${selected.value.title} — use Import Bibliography to add a reviewed record.`);
+    }
+    catch (error) { void vscode.window.showErrorMessage(`Could not look up identifier: ${error.message}`); }
   }));
   context.subscriptions.push({
     dispose: () => {
