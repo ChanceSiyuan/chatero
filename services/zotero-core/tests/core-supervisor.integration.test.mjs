@@ -302,6 +302,7 @@ test("fixture Core implements every new mutation, citation, translation, and syn
 	assert.equal((await core.client.request("translation.export", exportParams)).content, "@article{}");
 	assert.equal((await core.client.request("translation.lookup", lookupParams)).candidates[0].title, "Notes");
 	assert.equal((await core.client.request("citation.styles", {})).styles[0].styleId, "apa");
+	assert.equal((await core.client.request("citation.items", { identities: [{ itemKey: "FISHER01", libraryId: 1 }] })).items[0].itemKey, "FISHER01");
 	assert.equal((await core.client.request("citation.render", citationParams)).text, "Reference");
 	assert.equal((await core.client.request("translation.import", {
 		...importOperation, expectedRevision: 0, idempotencyKey: "fixture-translation-import-0001",

@@ -728,6 +728,15 @@ async function main() {
       return { result: { translators: fixtureTranslators.filter(value => value.kind === message.params?.kind) } };
     }
     if (message.method === "citation.styles") return { result: { styles: fixtureCitationStyles } };
+    if (message.method === "citation.items") {
+      return { result: { items: message.params.identities.map(identity => ({
+        citationWarning: false,
+        cslJson: JSON.stringify({ id: identity.itemKey, type: "article-journal" }),
+        itemKey: identity.itemKey,
+        libraryId: identity.libraryId,
+        retracted: false,
+      })) } };
+    }
     if (message.method === "citation.render") {
       const serialized = JSON.stringify(message.params);
       const value = fixtureCitationRenders.find(entry => JSON.stringify(entry.params) === serialized);

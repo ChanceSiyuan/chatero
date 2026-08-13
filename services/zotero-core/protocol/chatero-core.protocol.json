@@ -320,6 +320,12 @@
       "resultType": "CitationStylesResult"
     },
     {
+      "name": "citation.items",
+      "capability": "citation:read",
+      "paramsType": "CitationItemsParams",
+      "resultType": "CitationItemsResult"
+    },
+    {
       "name": "citation.render",
       "capability": "citation:read",
       "paramsType": "CitationRenderParams",
@@ -1442,6 +1448,28 @@
         "citationFormat": "string",
         "styleId": "string",
         "title": "string"
+      }
+    },
+    "CitationItemsParams": {
+      "kind": "object",
+      "fields": {
+        "identities": "CitationItemIdentity[]"
+      }
+    },
+    "CitationItemData": {
+      "kind": "object",
+      "fields": {
+        "citationWarning": "boolean",
+        "cslJson": "string",
+        "itemKey": "string",
+        "libraryId": "number",
+        "retracted": "boolean"
+      }
+    },
+    "CitationItemsResult": {
+      "kind": "object",
+      "fields": {
+        "items": "CitationItemData[]"
       }
     },
     "CitationStylesParams": {

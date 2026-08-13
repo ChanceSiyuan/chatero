@@ -47,6 +47,7 @@ function createRouter(overrides = {}) {
     async collections(params) { calls.push(["collections", params]); return { collections: [] }; },
     async mutateCollection(params) { calls.push(["mutateCollection", params]); return { action: params.action, collectionKey: "NEWCOL01", deleted: false, libraryId: params.libraryId, name: params.name, synced: false, version: 1 }; },
 		async citationStyles(params) { calls.push(["citationStyles", params]); return { styles: [] }; },
+		async citationItems(params) { calls.push(["citationItems", params]); return { items: [] }; },
 		async renderCitation(params) { calls.push(["renderCitation", params]); return { html: "<div>Reference</div>", text: "Reference" }; },
 		async exportItems(params) { calls.push(["exportItems", params]); return { content: "@article{}", itemCount: params.identities.length, translatorId: params.translatorId }; },
 		async importItems(params) { calls.push(["importItems", params]); return { items: [{ itemKey: "IMPORT01", libraryId: params.libraryId, title: "Imported", version: 1 }], translatorId: params.translatorId }; },
@@ -324,12 +325,13 @@ test("routes translator catalog and citation rendering through separate read cap
 	}))).result, { content: "@article{}", itemCount: 1, translatorId: "bibtex" });
 	assert.deepEqual((await router.handle(request(session, "translation.lookup", { text: "10.1234/example" }))).result, { candidates: [], identifiers: [] });
 	assert.deepEqual((await router.handle(request(session, "citation.styles", {}))).result, { styles: [] });
+	assert.deepEqual((await router.handle(request(session, "citation.items", { identities: [{ itemKey: "ITEM0001", libraryId: 1 }] }))).result, { items: [] });
 	assert.deepEqual((await router.handle(request(session, "citation.render", {
 		identities: [{ itemKey: "ITEM0001", libraryId: 1 }],
 		mode: "bibliography",
 		styleId: "http://www.zotero.org/styles/apa",
 	}))).result, { html: "<div>Reference</div>", text: "Reference" });
-	assert.deepEqual(calls.map(value => value[0]), ["translators", "exportItems", "lookupIdentifiers", "citationStyles", "renderCitation"]);
+	assert.deepEqual(calls.map(value => value[0]), ["translators", "exportItems", "lookupIdentifiers", "citationStyles", "citationItems", "renderCitation"]);
 });
 
 test("translation import is capability-gated, idempotent, revision-checked, and evented", async () => {

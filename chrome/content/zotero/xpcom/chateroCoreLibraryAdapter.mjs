@@ -48,6 +48,7 @@ const TRANSLATOR_FIELDS = new Set(["kind"]);
 const TRANSLATOR_KINDS = new Set(["export", "import", "search", "web"]);
 const CITATION_STYLES_FIELDS = new Set();
 const CITATION_RENDER_FIELDS = new Set(["identities", "locale", "mode", "styleId"]);
+const CITATION_ITEMS_FIELDS = new Set(["identities"]);
 const CITATION_MODES = new Set(["bibliography", "citation"]);
 const EXPORT_ITEMS_FIELDS = new Set(["identities", "translatorId"]);
 const IMPORT_ITEMS_FIELDS = new Set(["content", "libraryId", "translatorId"]);
@@ -683,6 +684,7 @@ function validateZotero(Zotero) {
 		[Zotero?.Styles, "getVisible"],
 		[Zotero?.QuickCopy, "getContentFromItems"],
 		[Zotero?.Utilities, "extractIdentifiers"],
+		[Zotero?.Utilities?.Item, "itemToCSLJSON"],
 		[Zotero?.Attachments, "importFromNetworkStream"],
 	];
 	for (let [owner, method] of required) {
@@ -760,6 +762,26 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 				html: boundedString(rendered.html, MAX_CITATION_OUTPUT_BYTES, "citation HTML"),
 				text: boundedString(rendered.text, MAX_CITATION_OUTPUT_BYTES, "citation text"),
 			};
+		},
+
+		async citationItems(params) {
+			exactObject(params, CITATION_ITEMS_FIELDS, "citation.items params");
+			if (!Array.isArray(params.identities) || params.identities.length < 1 || params.identities.length > MAX_CITATION_ITEMS) throw new Error("citation.items identities must be a non-empty bounded array");
+			let seen = new Set();
+			let items = params.identities.map(identity => {
+				validateCompositeParams(identity, ITEM_METADATA_FIELDS, "itemKey", "citation.items identity");
+				let composite = `${identity.libraryId}/${identity.itemKey}`;
+				if (seen.has(composite)) throw new Error("citation.items identities must be unique");
+				seen.add(composite);
+				let item = lookupItem(Zotero, identity.libraryId, identity.itemKey, "Zotero citation item");
+				if (!item.isRegularItem?.()) throw new Error("citation.items target must be a regular item");
+				let cslJson = boundedString(JSON.stringify(stableJSON(Zotero.Utilities.Item.itemToCSLJSON(item))), MAX_METADATA_FIELD_BYTES, "CSL item JSON");
+				return {
+					citationWarning: Boolean(Zotero.Retractions.shouldShowCitationWarning(item)), cslJson,
+					itemKey: item.key, libraryId: item.libraryID, retracted: Boolean(Zotero.Retractions.isRetracted(item)),
+				};
+			});
+			return { items };
 		},
 
 		async exportItems(params) {

@@ -84,6 +84,7 @@ function validateRouterOptions(options) {
 			|| typeof options.adapter.retrySync !== "function"
 			|| typeof options.adapter.translators !== "function"
 			|| typeof options.adapter.citationStyles !== "function"
+			|| typeof options.adapter.citationItems !== "function"
 			|| typeof options.adapter.renderCitation !== "function"
 			|| typeof options.adapter.exportItems !== "function"
 			|| typeof options.adapter.importItems !== "function"
@@ -499,6 +500,7 @@ export function createGeckoCoreRequestRouter(options = {}) {
 			}
 			if (message.method === "translation.lookup") return { result: await adapter.lookupIdentifiers(message.params) };
 			if (message.method === "citation.styles") return { result: await adapter.citationStyles(message.params) };
+			if (message.method === "citation.items") return { result: await adapter.citationItems(message.params) };
 			if (message.method === "citation.render") return { result: await adapter.renderCitation(message.params) };
 			if (message.method === "sync.status") return { result: await adapter.syncStatus(message.params) };
 			if (message.method === "sync.storage-status") return { result: await adapter.syncStorageStatus(message.params) };

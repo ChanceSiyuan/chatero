@@ -26,6 +26,7 @@ export const METHOD_CAPABILITIES = Object.freeze({
   "attachment.upload-commit": "attachment:write",
   "attachment.upload-open": "attachment:write",
   "attachment.upload-write": "attachment:write",
+  "citation.items": "citation:read",
   "citation.render": "citation:read",
   "citation.styles": "citation:read",
   "core.cancel": null,
@@ -99,6 +100,10 @@ export const METHOD_TYPES = Object.freeze({
   "attachment.upload-write": {
     "params": "AttachmentUploadWriteParams",
     "result": "AttachmentUploadWriteResult"
+  },
+  "citation.items": {
+    "params": "CitationItemsParams",
+    "result": "CitationItemsResult"
   },
   "citation.render": {
     "params": "CitationRenderParams",

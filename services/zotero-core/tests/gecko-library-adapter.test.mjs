@@ -399,6 +399,7 @@ function fixture({
 		},
 		Utilities: {
 			extractIdentifiers: text => text.includes("10.1234/lookup") ? [{ DOI: "10.1234/lookup" }] : [],
+			Item: { itemToCSLJSON: value => ({ id: value.key, title: value.getDisplayTitle(), type: "article-journal" }) },
 		},
 		DB: {
 			executeTransaction: async callback => callback(),
@@ -834,6 +835,17 @@ test("lists installed CSL styles and renders bibliography or citation through Qu
 		text: "(Alpha Methods)",
 	});
 	await assert.rejects(adapter.renderCitation({ identities, mode: "bibliography", styleId: "file:///tmp/evil.csl" }), /installed/);
+});
+
+test("exports bounded CSL item data with Zotero retraction warnings", async () => {
+  const adapter = createZoteroLibraryAdapter(fixture());
+  assert.deepEqual(await adapter.citationItems({ identities: [{ itemKey: "ITEM0001", libraryId: 1 }] }), { items: [{
+    citationWarning: true,
+    cslJson: '{"id":"ITEM0001","title":"Alpha Methods","type":"article-journal"}',
+    itemKey: "ITEM0001",
+    libraryId: 1,
+    retracted: true,
+  }] });
 });
 
 test("exports exact items in memory through an installed Zotero export translator", async () => {
