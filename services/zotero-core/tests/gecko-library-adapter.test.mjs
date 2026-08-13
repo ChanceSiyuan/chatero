@@ -40,7 +40,13 @@ function item({
   version = 1,
   attachmentSyncState = 2,
 }) {
-  return Object.freeze({
+  let currentTitle = title;
+  let currentCreators = creators.map(creator);
+  let currentTags = tags.map(value => ({ ...value }));
+  let currentRelations = structuredClone(relations);
+  let currentVersion = version;
+  let currentSynced = synced;
+  const value = {
     attachmentSyncState,
     deleted,
     id,
@@ -60,8 +66,8 @@ function item({
     getAttachments: () => attachments.slice(),
     getAnnotations: () => annotations.slice(),
     getCollections: () => collectionIDs.slice(),
-    getCreatorsJSON: () => creators.map(creator),
-    getDisplayTitle: () => title,
+    getCreatorsJSON: () => structuredClone(currentCreators),
+    getDisplayTitle: () => currentTitle,
     getField: field => ({
       DOI: doi,
       abstractNote,
@@ -73,17 +79,27 @@ function item({
     getFilePathAsync: async () => path || false,
     getNote: () => noteHTML,
     getNotes: () => notes.slice(),
-    getRelations: () => structuredClone(relations),
-    getTags: () => tags.slice(),
+    getRelations: () => structuredClone(currentRelations),
+    getTags: () => structuredClone(currentTags),
     isAnnotation: () => type === "annotation",
     isAttachment: () => type === "attachment",
     isFileAttachment: () => type === "attachment" && Boolean(path),
     isInTrash: () => inTrash,
     isNote: () => type === "note",
     isRegularItem: () => !["attachment", "note", "annotation"].includes(type),
-    synced,
-    version,
-  });
+    async reload() {},
+    async saveTx() { currentVersion += 1; currentSynced = false; return true; },
+    setCreators: values => { currentCreators = structuredClone(values); },
+    setField: (field, value) => {
+      if (field === "title") currentTitle = value;
+      else throw new Error(`Unknown field '${field}'`);
+    },
+    setRelations: value => { currentRelations = structuredClone(value); },
+    setTags: value => { currentTags = structuredClone(value); },
+    get synced() { return currentSynced; },
+    get version() { return currentVersion; },
+  };
+  return Object.freeze(value);
 }
 
 function collection({ id, key, libraryID, name, parentKey, childCollections = [], childItems = [] }) {
@@ -342,6 +358,35 @@ test("exposes bounded item facts and attachment availability without leaking pat
     totalPages: 12,
   });
   assert.equal(JSON.stringify(state).includes("/Users/example"), false);
+});
+
+test("atomically updates fields, creators, tags, and relations at an expected Zotero version", async () => {
+  const adapter = createZoteroLibraryAdapter(fixture());
+  const updated = await adapter.updateItem({
+    creators: [{ creatorType: "author", firstName: "Grace", lastName: "Hopper" }],
+    expectedVersion: 17,
+    fields: [{ field: "title", value: "Compiler Methods" }],
+    itemKey: "ITEM0001",
+    libraryId: 1,
+    relations: [{ object: "https://doi.org/10.1234/compiler", predicate: "owl:sameAs" }],
+    tags: [{ name: "compilers", type: 0 }],
+  });
+  assert.deepEqual(updated, {
+    itemKey: "ITEM0001",
+    libraryId: 1,
+    synced: false,
+    version: 18,
+  });
+  assert.equal((await adapter.itemMetadata({ libraryId: 1, itemKey: "ITEM0001" })).title, "Compiler Methods");
+  assert.deepEqual((await adapter.itemFacts({ libraryId: 1, itemKey: "ITEM0001" })).relations, [
+    { object: "https://doi.org/10.1234/compiler", predicate: "owl:sameAs" },
+  ]);
+  await assert.rejects(adapter.updateItem({
+    expectedVersion: 17,
+    fields: [{ field: "title", value: "Stale overwrite" }],
+    itemKey: "ITEM0001",
+    libraryId: 1,
+  }), error => error.code === "REVISION_CONFLICT" && error.actualRevision === 18);
 });
 
 test("search isolates duplicate collection keys and emits protocol-exact item summaries", async () => {

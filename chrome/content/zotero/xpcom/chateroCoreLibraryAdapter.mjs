@@ -22,6 +22,7 @@ const SEARCH_SORT_DIRECTIONS = new Set(["asc", "desc"]);
 const ITEM_CHILDREN_FIELDS = new Set(["itemKey", "libraryId"]);
 const ITEM_METADATA_FIELDS = new Set(["itemKey", "libraryId"]);
 const ITEM_FACTS_FIELDS = new Set(["itemKey", "libraryId"]);
+const UPDATE_ITEM_FIELDS = new Set(["creators", "expectedVersion", "fields", "itemKey", "libraryId", "relations", "tags"]);
 const ANNOTATION_FIELDS = new Set(["attachmentKey", "libraryId"]);
 const ATTACHMENT_FIELDS = new Set(["attachmentKey", "libraryId"]);
 const ATTACHMENT_STATE_FIELDS = new Set(["attachmentKey", "libraryId"]);
@@ -37,6 +38,7 @@ const MAX_ANNOTATION_FIELD_BYTES = 256 * 1024;
 const MAX_METADATA_FIELD_BYTES = 256 * 1024;
 const MAX_RELATIONS = 1024;
 const MAX_RELATION_FIELD_BYTES = 16 * 1024;
+const MAX_MUTATION_ENTRIES = 1024;
 
 function exactObject(value, fields, label) {
 	if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -297,6 +299,71 @@ async function attachmentStateSummary(Zotero, attachment) {
 	if (Number.isSafeInteger(version) && version >= 0) result.fulltextVersion = version;
 	if (Number.isSafeInteger(pages?.indexedPages) && pages.indexedPages >= 0) result.indexedPages = pages.indexedPages;
 	if (Number.isSafeInteger(pages?.total) && pages.total >= 0) result.totalPages = pages.total;
+	return result;
+}
+
+function validateItemUpdate(params) {
+	exactObject(params, UPDATE_ITEM_FIELDS, "library.item-update params");
+	positiveLibraryId(params.libraryId, "library.item-update");
+	zoteroKey(params.itemKey, "library.item-update itemKey");
+	if (!Number.isSafeInteger(params.expectedVersion) || params.expectedVersion < 0) {
+		throw new Error("library.item-update expectedVersion must be a non-negative safe integer");
+	}
+	if (!Array.isArray(params.fields) || params.fields.length > MAX_MUTATION_ENTRIES) {
+		throw new Error("library.item-update fields must be a bounded array");
+	}
+	for (let field of params.fields) {
+		exactObject(field, new Set(["field", "value"]), "library.item-update field");
+		if (typeof field.field !== "string" || !/^[A-Za-z][A-Za-z0-9]*$/.test(field.field)) {
+			throw new Error("library.item-update field name is invalid");
+		}
+		boundedString(field.value, MAX_METADATA_FIELD_BYTES, `library.item-update ${field.field}`);
+	}
+	if (params.creators !== undefined) {
+		if (!Array.isArray(params.creators) || params.creators.length > MAX_MUTATION_ENTRIES) {
+			throw new Error("library.item-update creators must be a bounded array");
+		}
+		for (let creator of params.creators) {
+			exactObject(creator, new Set(["creatorType", "firstName", "lastName", "name"]), "library.item-update creator");
+			boundedString(creator.creatorType, 256, "creator type");
+			let hasName = typeof creator.name === "string";
+			let hasParts = typeof creator.firstName === "string" && typeof creator.lastName === "string";
+			if (hasName === hasParts) throw new Error("creator requires either name or firstName and lastName");
+			for (let value of [creator.name, creator.firstName, creator.lastName]) {
+				if (value !== undefined) boundedString(value, MAX_RELATION_FIELD_BYTES, "creator name");
+			}
+		}
+	}
+	if (params.tags !== undefined) {
+		if (!Array.isArray(params.tags) || params.tags.length > MAX_MUTATION_ENTRIES) {
+			throw new Error("library.item-update tags must be a bounded array");
+		}
+		for (let tag of params.tags) {
+			exactObject(tag, new Set(["name", "type"]), "library.item-update tag");
+			boundedString(tag.name, MAX_RELATION_FIELD_BYTES, "tag name");
+			if (!Number.isSafeInteger(tag.type) || tag.type < 0 || tag.type > 1) throw new Error("tag type must be 0 or 1");
+		}
+	}
+	if (params.relations !== undefined) {
+		if (!Array.isArray(params.relations) || params.relations.length > MAX_RELATIONS) {
+			throw new Error("library.item-update relations must be a bounded array");
+		}
+		for (let relation of params.relations) {
+			exactObject(relation, new Set(["object", "predicate"]), "library.item-update relation");
+			if (typeof relation.predicate !== "string" || !/^[a-z]+:[a-z]+$/i.test(relation.predicate)) {
+				throw new Error("relation predicate is invalid");
+			}
+			boundedString(relation.object, MAX_RELATION_FIELD_BYTES, "relation object");
+		}
+	}
+	if (!params.fields.length && params.creators === undefined && params.tags === undefined && params.relations === undefined) {
+		throw new Error("library.item-update requires at least one change");
+	}
+}
+
+function relationObject(relations) {
+	let result = {};
+	for (let relation of relations) (result[relation.predicate] ||= []).push(relation.object);
 	return result;
 }
 
@@ -605,6 +672,37 @@ export function createZoteroLibraryAdapter({ Zotero, openAttachmentFile = openGe
 			let item = lookupItem(Zotero, params.libraryId, params.itemKey, "Zotero item");
 			if (!item.isRegularItem?.()) throw new Error("library.item-facts target must be a regular item");
 			return itemFactsSummary(Zotero, item);
+		},
+
+		async updateItem(params) {
+			validateItemUpdate(params);
+			let item = lookupItem(Zotero, params.libraryId, params.itemKey, "Zotero item");
+			if (!item.isRegularItem?.()) throw new Error("library.item-update target must be a regular item");
+			if (item.version !== params.expectedVersion) {
+				let error = new Error("Zotero item version changed before update");
+				error.code = "REVISION_CONFLICT";
+				error.actualRevision = Number.isSafeInteger(item.version) ? item.version : 0;
+				error.expectedRevision = params.expectedVersion;
+				throw error;
+			}
+			try {
+				for (let field of params.fields) item.setField(field.field, field.value);
+				if (params.creators !== undefined) item.setCreators(params.creators, { strict: true });
+				if (params.tags !== undefined) item.setTags(params.tags.map(tag => ({ tag: tag.name, type: tag.type })));
+				if (params.relations !== undefined) item.setRelations(relationObject(params.relations));
+				await item.saveTx();
+			}
+			catch (error) {
+				try { await item.reload?.(null, true); }
+				catch (_) {}
+				throw error;
+			}
+			return {
+				itemKey: item.key,
+				libraryId: item.libraryID,
+				synced: Boolean(item.synced),
+				version: Number.isSafeInteger(item.version) ? item.version : 0,
+			};
 		},
 
 		async note(params) {

@@ -190,6 +190,21 @@ test("supervises an authenticated fixture Core over an owner-only Unix socket", 
   assert.deepEqual(await core.client.request("library.attachment", { attachmentKey: "PDF00001", libraryId: 1 }), fixtureItemChildren[0].attachments[0]);
   assert.deepEqual(await core.client.request("library.attachment-state", { attachmentKey: "PDF00001", libraryId: 1 }), fixtureAttachmentStates[0]);
   assert.deepEqual(await core.client.request("library.item-facts", { itemKey: "FISHER01", libraryId: 1 }), fixtureItemFacts[0]);
+  assert.deepEqual(await core.client.request("library.item-update", {
+    expectedRevision: 0,
+    expectedVersion: 8,
+    fields: [{ field: "title", value: "Updated" }],
+    idempotencyKey: "fixture-item-update-0001",
+    itemKey: "FISHER01",
+    libraryId: 1,
+  }), {
+    itemKey: "FISHER01",
+    libraryId: 1,
+    replayed: false,
+    revision: 1,
+    synced: false,
+    version: 9,
+  });
   assert.deepEqual(await core.client.request("library.note", { libraryId: 1, noteKey: "NOTE0001" }), fixtureNotes[0]);
   assert.deepEqual(await core.client.request("library.annotations", { attachmentKey: "PDF00001", libraryId: 1 }), {
     annotations: fixtureAnnotations[0].annotations,

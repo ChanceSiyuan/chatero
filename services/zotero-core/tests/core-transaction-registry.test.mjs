@@ -88,3 +88,28 @@ test("transaction registry rejects ambiguous values and bounds retained receipts
   }
   assert.equal(registry.receiptCount, 2);
 });
+
+test("different idempotency keys cannot commit concurrently at one scope revision", async () => {
+  const registry = createCoreTransactionRegistry();
+  let releaseFirst;
+  const firstCanFinish = new Promise(resolve => { releaseFirst = resolve; });
+  let firstStarted;
+  const firstDidStart = new Promise(resolve => { firstStarted = resolve; });
+  const first = registry.execute(transaction(), async () => {
+    firstStarted();
+    await firstCanFinish;
+    return { winner: "first" };
+  });
+  await firstDidStart;
+  let secondRan = false;
+  const second = registry.execute(transaction({ idempotencyKey: "transaction-key-0002" }), async () => {
+    secondRan = true;
+    return { winner: "second" };
+  });
+  releaseFirst();
+
+  assert.equal((await first).revision, 1);
+  await assert.rejects(second, error => error.code === "REVISION_CONFLICT" && error.actualRevision === 1);
+  assert.equal(secondRan, false);
+  assert.equal(registry.getRevision("library:1/item:ITEM0001"), 1);
+});

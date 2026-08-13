@@ -321,6 +321,36 @@ async function main() {
       if (!value) throw new Error(`fixture item facts ${message.params.libraryId}/${message.params.itemKey} was not found`);
       return { result: value };
     }
+    if (message.method === "library.item-update") {
+      const { expectedRevision, idempotencyKey, ...operation } = message.params || {};
+      validateIdentityParams({ itemKey: operation.itemKey, libraryId: operation.libraryId }, "itemKey", "library.item-update");
+      const completed = await transactionRegistry.execute({
+        expectedRevision,
+        idempotencyKey,
+        operation,
+        scope: `library:${operation.libraryId}/item:${operation.itemKey}`,
+      }, async value => {
+        const facts = fixtureItemFacts.find(entry => entry.libraryId === value.libraryId && entry.itemKey === value.itemKey);
+        if (!facts) throw new Error(`fixture item facts ${value.libraryId}/${value.itemKey} was not found`);
+        if (facts.version !== value.expectedVersion) {
+          const error = new Error("fixture item version changed before update");
+          error.code = "REVISION_CONFLICT";
+          error.actualRevision = facts.version;
+          error.expectedRevision = value.expectedVersion;
+          throw error;
+        }
+        facts.version += 1;
+        facts.synced = false;
+        return { itemKey: facts.itemKey, libraryId: facts.libraryId, synced: facts.synced, version: facts.version };
+      });
+      return {
+        ...(!completed.replayed && { event: eventJournal.publish("library.item.changed", {
+          identities: [{ itemKey: operation.itemKey, libraryId: operation.libraryId }],
+          revision: completed.revision,
+        }) }),
+        result: { ...completed.result, replayed: completed.replayed, revision: completed.revision },
+      };
+    }
     if (message.method === "library.attachment") {
       validateIdentityParams(message.params, "attachmentKey", "library.attachment");
       const value = fixtureItemChildren

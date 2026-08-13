@@ -45,6 +45,7 @@ function createRouter(overrides = {}) {
     async itemChildren(params) { calls.push(["itemChildren", params]); return { attachments: [], notes: [] }; },
     async itemMetadata(params) { calls.push(["itemMetadata", params]); return { itemKey: params.itemKey, libraryId: params.libraryId }; },
     async itemFacts(params) { calls.push(["itemFacts", params]); return { citationWarning: false, itemKey: params.itemKey, libraryId: params.libraryId, relations: [], retracted: false, synced: true, version: 1 }; },
+    async updateItem(params) { calls.push(["updateItem", params]); return { itemKey: params.itemKey, libraryId: params.libraryId, synced: false, version: params.expectedVersion + 1 }; },
     async libraries(params) { calls.push(["libraries", params]); return { libraries: [] }; },
     async note(params) { calls.push(["note", params]); return { html: "<p>Note</p>", libraryId: 1, noteKey: "NOTE0001", parentItemKey: "ITEM0001", title: "Note" }; },
     async profileBackup() { calls.push(["profileBackup"]); return { backupCreated: true, completedAt: 1234 }; },
@@ -121,6 +122,26 @@ test("profile backup is idempotent, revision-checked, capability-gated, and even
     router.handle(request(session, "profile.backup", { expectedRevision: 0, idempotencyKey: "profile-backup-key-0002" })),
     error => error.code === "REVISION_CONFLICT",
   );
+});
+
+test("item update is capability-gated, idempotent, revision-checked, and evented", async () => {
+  const { calls, router } = createRouter();
+  const session = await handshake(router, ["events:read", "library:write"]);
+  const params = {
+    expectedRevision: 0,
+    expectedVersion: 4,
+    fields: [{ field: "title", value: "Updated" }],
+    idempotencyKey: "item-update-key-0001",
+    itemKey: "ITEM0001",
+    libraryId: 1,
+  };
+  const first = await router.handle(request(session, "library.item-update", params));
+  const replay = await router.handle(request(session, "library.item-update", params));
+  assert.deepEqual(first.result, { itemKey: "ITEM0001", libraryId: 1, replayed: false, revision: 1, synced: false, version: 5 });
+  assert.deepEqual(replay.result, { itemKey: "ITEM0001", libraryId: 1, replayed: true, revision: 1, synced: false, version: 5 });
+  assert.equal(first.event.topic, "library.item.changed");
+  assert.equal(replay.event, undefined);
+  assert.equal(calls.filter(value => value[0] === "updateItem").length, 1);
 });
 
 test("enforces capabilities, profile epoch, session, and deadline before adapter access", async () => {

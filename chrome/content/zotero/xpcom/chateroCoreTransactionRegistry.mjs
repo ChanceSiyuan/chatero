@@ -87,6 +87,7 @@ export function createCoreTransactionRegistry({ capacity = DEFAULT_CAPACITY } = 
 	}
 	let receipts = new Map();
 	let revisions = new Map();
+	let scopeTails = new Map();
 
 	return Object.freeze({
 		get receiptCount() { return receipts.size; },
@@ -106,14 +107,6 @@ export function createCoreTransactionRegistry({ capacity = DEFAULT_CAPACITY } = 
 				let completed = await existing.promise;
 				return freeze({ ...completed, replayed: true });
 			}
-			let actualRevision = revisions.get(transaction.scope) || 0;
-			if (transaction.expectedRevision !== actualRevision) {
-				throw conflict("REVISION_CONFLICT", "Core transaction expected revision does not match", {
-					actualRevision,
-					expectedRevision: transaction.expectedRevision,
-					scope: transaction.scope,
-				});
-			}
 			let resolveReceipt;
 			let rejectReceipt;
 			let promise = new Promise((resolve, reject) => {
@@ -122,7 +115,20 @@ export function createCoreTransactionRegistry({ capacity = DEFAULT_CAPACITY } = 
 			});
 			let receipt = { ...transaction, promise };
 			receipts.set(transaction.idempotencyKey, receipt);
+			let previous = scopeTails.get(transaction.scope) || Promise.resolve();
+			let releaseScope;
+			let scopeTail = new Promise(resolve => { releaseScope = resolve; });
+			scopeTails.set(transaction.scope, scopeTail);
 			try {
+				await previous;
+				let actualRevision = revisions.get(transaction.scope) || 0;
+				if (transaction.expectedRevision !== actualRevision) {
+					throw conflict("REVISION_CONFLICT", "Core transaction expected revision does not match", {
+						actualRevision,
+						expectedRevision: transaction.expectedRevision,
+						scope: transaction.scope,
+					});
+				}
 				let result = canonicalJSON(await operation(transaction.operation), "Core transaction result").normalized;
 				let revision = actualRevision + 1;
 				revisions.set(transaction.scope, revision);
@@ -137,6 +143,10 @@ export function createCoreTransactionRegistry({ capacity = DEFAULT_CAPACITY } = 
 				rejectReceipt(error);
 				promise.catch(() => {});
 				throw error;
+			}
+			finally {
+				releaseScope();
+				if (scopeTails.get(transaction.scope) === scopeTail) scopeTails.delete(transaction.scope);
 			}
 		},
 	});

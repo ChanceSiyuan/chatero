@@ -54,6 +54,7 @@ function validateRouterOptions(options) {
 			|| typeof options.adapter.itemChildren !== "function"
 			|| typeof options.adapter.itemMetadata !== "function"
 			|| typeof options.adapter.itemFacts !== "function"
+			|| typeof options.adapter.updateItem !== "function"
 			|| typeof options.adapter.libraries !== "function"
 			|| typeof options.adapter.note !== "function"
 			|| typeof options.adapter.profileBackup !== "function"
@@ -239,6 +240,23 @@ export function createGeckoCoreRequestRouter(options = {}) {
 			if (message.method === "library.item-children") return { result: await adapter.itemChildren(message.params) };
 			if (message.method === "library.item-metadata") return { result: await adapter.itemMetadata(message.params) };
 			if (message.method === "library.item-facts") return { result: await adapter.itemFacts(message.params) };
+			if (message.method === "library.item-update") {
+				let { expectedRevision, idempotencyKey, ...operation } = message.params || {};
+				let completed = await transactionRegistry.execute({
+					expectedRevision,
+					idempotencyKey,
+					operation,
+					scope: `library:${operation.libraryId}/item:${operation.itemKey}`,
+				}, value => adapter.updateItem(value));
+				let result = { ...completed.result, replayed: completed.replayed, revision: completed.revision };
+				return {
+					...(!completed.replayed && { event: eventJournal.publish("library.item.changed", {
+						identities: [{ itemKey: result.itemKey, libraryId: result.libraryId }],
+						revision: completed.revision,
+					}) }),
+					result,
+				};
+			}
 			if (message.method === "library.libraries") return { result: await adapter.libraries(message.params) };
 			if (message.method === "library.note") return { result: await adapter.note(message.params) };
 			if (message.method === "library.saved-searches") return { result: await adapter.savedSearches(message.params) };

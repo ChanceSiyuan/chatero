@@ -8,6 +8,7 @@ export const CAPABILITIES = Object.freeze([
   "events:read",
   "library:read",
   "library:search",
+  "library:write",
   "profile:read",
   "profile:write"
 ]);
@@ -26,6 +27,7 @@ export const METHOD_CAPABILITIES = Object.freeze({
   "library.item-children": "library:read",
   "library.item-facts": "library:read",
   "library.item-metadata": "library:read",
+  "library.item-update": "library:write",
   "library.libraries": "library:read",
   "library.note": "library:read",
   "library.saved-search-items": "library:read",
@@ -91,6 +93,10 @@ export const METHOD_TYPES = Object.freeze({
   "library.item-metadata": {
     "params": "LibraryItemMetadataParams",
     "result": "LibraryItemMetadata"
+  },
+  "library.item-update": {
+    "params": "LibraryItemUpdateParams",
+    "result": "LibraryItemUpdateResult"
   },
   "library.libraries": {
     "params": "LibraryLibrariesParams",

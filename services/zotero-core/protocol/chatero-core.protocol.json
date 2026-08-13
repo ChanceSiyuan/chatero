@@ -8,6 +8,7 @@
     "events:read",
     "library:read",
     "library:search",
+    "library:write",
     "profile:read",
     "profile:write"
   ],
@@ -113,6 +114,12 @@
       "capability": "library:read",
       "paramsType": "LibraryItemFactsParams",
       "resultType": "LibraryItemFacts"
+    },
+    {
+      "name": "library.item-update",
+      "capability": "library:write",
+      "paramsType": "LibraryItemUpdateParams",
+      "resultType": "LibraryItemUpdateResult"
     },
     {
       "name": "library.annotations",
@@ -547,6 +554,54 @@
         "libraryId": "number",
         "relations": "LibraryItemRelation[]",
         "retracted": "boolean",
+        "synced": "boolean",
+        "version": "number"
+      }
+    },
+    "LibraryItemUpdateField": {
+      "kind": "object",
+      "fields": {
+        "field": "string",
+        "value": "string"
+      }
+    },
+    "LibraryItemUpdateCreator": {
+      "kind": "object",
+      "fields": {
+        "creatorType": "string",
+        "firstName?": "string",
+        "lastName?": "string",
+        "name?": "string"
+      }
+    },
+    "LibraryItemUpdateTag": {
+      "kind": "object",
+      "fields": {
+        "name": "string",
+        "type": "number"
+      }
+    },
+    "LibraryItemUpdateParams": {
+      "kind": "object",
+      "fields": {
+        "creators?": "LibraryItemUpdateCreator[]",
+        "expectedRevision": "number",
+        "expectedVersion": "number",
+        "fields": "LibraryItemUpdateField[]",
+        "idempotencyKey": "string",
+        "itemKey": "string",
+        "libraryId": "number",
+        "relations?": "LibraryItemRelation[]",
+        "tags?": "LibraryItemUpdateTag[]"
+      }
+    },
+    "LibraryItemUpdateResult": {
+      "kind": "object",
+      "fields": {
+        "itemKey": "string",
+        "libraryId": "number",
+        "replayed": "boolean",
+        "revision": "number",
         "synced": "boolean",
         "version": "number"
       }
