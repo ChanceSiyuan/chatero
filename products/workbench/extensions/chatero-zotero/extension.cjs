@@ -599,16 +599,20 @@ async function activate(context) {
     }
     catch (error) { void vscode.window.showErrorMessage(`Could not load Zotero conflicts: ${error.message}`); }
   }));
-  const copyRenderedCitation = async mode => {
+  const renderSelectedCitation = async mode => {
     const selected = selectedRows();
-    if (!selected.length) return void vscode.window.showErrorMessage("Select at least one Zotero item.");
+    if (!selected.length) throw new Error("Select at least one Zotero item.");
+    const styles = await sourceProvider.core.request("citation.styles", {});
+    const style = await vscode.window.showQuickPick(styles.styles.map(value => ({ label: value.title, value })), { placeHolder: "Citation style" });
+    if (!style) return null;
+    return sourceProvider.core.request("citation.render", {
+      identities: selected.map(value => ({ itemKey: value.itemKey, libraryId: value.libraryId })), mode, styleId: style.value.styleId,
+    });
+  };
+  const copyRenderedCitation = async mode => {
     try {
-      const styles = await sourceProvider.core.request("citation.styles", {});
-      const style = await vscode.window.showQuickPick(styles.styles.map(value => ({ label: value.title, value })), { placeHolder: "Citation style" });
-      if (!style) return;
-      const rendered = await sourceProvider.core.request("citation.render", {
-        identities: selected.map(value => ({ itemKey: value.itemKey, libraryId: value.libraryId })), mode, styleId: style.value.styleId,
-      });
+      const rendered = await renderSelectedCitation(mode);
+      if (!rendered) return;
       await vscode.env.clipboard.writeText(rendered.text);
       void vscode.window.showInformationMessage(`${mode === "citation" ? "Citation" : "Bibliography"} copied to clipboard.`);
     }
@@ -616,6 +620,21 @@ async function activate(context) {
   };
   context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.copyCitation", () => copyRenderedCitation("citation")));
   context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.copyBibliography", () => copyRenderedCitation("bibliography")));
+  context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.insertCitation", async () => {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) return void vscode.window.showErrorMessage("Open a writable document before inserting a Zotero citation.");
+    try {
+      const rendered = await renderSelectedCitation("citation");
+      if (!rendered) return;
+      const selections = [...editor.selections];
+      const accepted = await editor.edit(builder => {
+        for (const selection of selections) builder.replace(selection, rendered.text);
+      }, { undoStopAfter: true, undoStopBefore: true });
+      if (!accepted) throw new Error("the document changed before the citation could be inserted");
+      void vscode.window.showInformationMessage("Zotero citation inserted. Use Undo to revert it.");
+    }
+    catch (error) { void vscode.window.showErrorMessage(`Could not insert Zotero citation: ${error.message}`); }
+  }));
   context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.copyLocateUrl", async item => {
     const row = item?.itemKey ? item : selectedRows()[0];
     if (!row) return void vscode.window.showErrorMessage("Select one Zotero item.");

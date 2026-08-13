@@ -22,6 +22,7 @@ test("declares native Library source and item-table views with Stage 3 commands"
     "chatero.zotero.batchTrash",
     "chatero.zotero.exportItems",
     "chatero.zotero.importItems",
+    "chatero.zotero.insertCitation",
     "chatero.zotero.loadMoreItems",
     "chatero.zotero.lookupIdentifier",
     "chatero.zotero.openAttachment",
@@ -217,6 +218,17 @@ test("Library open commands keep Core-originated evidence inside native workbenc
   assert.match(source, /registerCommand\("chatero\.zotero\.openNote"/);
   assert.match(source, /executeCommand\("vscode\.openWith"/);
   assert.doesNotMatch(source, /openExternal|executeCommand\(["']vscode\.open["']|child_process/);
+});
+
+test("citation insertion renders through Core and applies one undoable editor transaction", async () => {
+  const source = await readFile(join(extensionRoot, "extension.cjs"), "utf8");
+  assert.match(source, /registerCommand\("chatero\.zotero\.insertCitation"/);
+  assert.match(source, /request\("citation\.render"/);
+  assert.match(source, /editor\.edit\(builder =>/);
+  assert.match(source, /builder\.replace\(selection, rendered\.text\)/);
+  assert.match(source, /undoStopAfter: true, undoStopBefore: true/);
+  assert.match(source, /if \(!accepted\) throw new Error/);
+  assert.doesNotMatch(source, /writeFile[^\n]*citation|appendFile[^\n]*citation/);
 });
 
 test("evidence command authority accepts only the exact active Core record", async () => {

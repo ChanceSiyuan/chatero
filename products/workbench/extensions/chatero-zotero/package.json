@@ -170,6 +170,11 @@
         "category": "Chatero"
       },
       {
+        "command": "chatero.zotero.insertCitation",
+        "title": "Insert Zotero Citation",
+        "category": "Chatero"
+      },
+      {
         "command": "chatero.zotero.copyLocateUrl",
         "title": "Copy Zotero Item URL",
         "category": "Chatero"
@@ -257,6 +262,11 @@
           "command": "chatero.zotero.copyBibliography",
           "when": "viewItem == chateroZoteroItem",
           "group": "zotero@3"
+        },
+        {
+          "command": "chatero.zotero.insertCitation",
+          "when": "viewItem == chateroZoteroItem",
+          "group": "zotero@4"
         }
       ],
       "view/title": [
