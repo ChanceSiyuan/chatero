@@ -17,6 +17,12 @@ const nativeCodexPatchPath = join(
   "code-oss",
   "0003-chatero-native-codex.patch",
 );
+const codexOnlyPatchPath = join(
+  workbenchRoot,
+  "patches",
+  "code-oss",
+  "0014-default-agent-host-to-codex-only.patch",
+);
 
 test("the Code-OSS patch set disables the unshipped Copilot provider without disabling Codex or Claude", async () => {
   const patch = await readFile(quarantinePatchPath, "utf8");
@@ -47,4 +53,12 @@ test("the Chatero Codex policy cannot reactivate Copilot or Claude providers", a
   assert.doesNotMatch(patch, /^\+.*registerProvider\([^\n]*(?:CopilotAgent|ClaudeAgent)/m);
   assert.doesNotMatch(patch, /^\+.*@github\/copilot(?:-sdk)?/m);
   assert.doesNotMatch(patch, /^\+.*falling back to GitHub Copilot/m);
+});
+
+test("the Chatero Agent Host starts Codex-only when provider settings have not arrived yet", async () => {
+  const patch = await readFile(codexOnlyPatchPath, "utf8");
+
+  assert.match(patch, /isAgentEnabled\(process\.env\[AgentHostClaudeAgentEnabledEnvVar\], false\)/);
+  assert.match(patch, /absent means "disabled" for both Claude and Codex/);
+  assert.doesNotMatch(patch, /^\+.*isAgentEnabled\(process\.env\[AgentHostClaudeAgentEnabledEnvVar\], true\)/m);
 });

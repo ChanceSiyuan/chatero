@@ -195,19 +195,20 @@ test("rejects traversal, absolute paths, duplicate files, and unknown fields", a
 
 test("the canonical series pins Chatero startup compatibility after native Codex and Documentation authority", async () => {
   const series = JSON.parse(await readFile(join(canonicalPatchDirectory, "series.json"), "utf8"));
-  const entry = series.patches.at(-10);
-  const compatibilityEntry = series.patches.at(-9);
-  const startupEntry = series.patches.at(-8);
-  const bundledSdkEntry = series.patches.at(-7);
-  const optionalCopilotEntry = series.patches.at(-6);
-  const codexIpcEntry = series.patches.at(-5);
-  const liveCodexHomeEntry = series.patches.at(-4);
-  const excludedSystemExtensionsEntry = series.patches.at(-3);
-  const openAIIsolationEntry = series.patches.at(-2);
-  const codexConnectionEntry = series.patches.at(-1);
+  const entry = series.patches.at(-11);
+  const compatibilityEntry = series.patches.at(-10);
+  const startupEntry = series.patches.at(-9);
+  const bundledSdkEntry = series.patches.at(-8);
+  const optionalCopilotEntry = series.patches.at(-7);
+  const codexIpcEntry = series.patches.at(-6);
+  const liveCodexHomeEntry = series.patches.at(-5);
+  const excludedSystemExtensionsEntry = series.patches.at(-4);
+  const openAIIsolationEntry = series.patches.at(-3);
+  const codexConnectionEntry = series.patches.at(-2);
+  const codexOnlyEntry = series.patches.at(-1);
 
   assert.equal(entry.file, "0004-chatero-documentation-agent-authority.patch");
-  assert.equal(series.patches.at(-11)?.file, "0003-chatero-native-codex.patch");
+  assert.equal(series.patches.at(-12)?.file, "0003-chatero-native-codex.patch");
   assert.equal(compatibilityEntry.file, "0005-fix-chatero-codex-tests.patch");
   assert.equal(startupEntry.file, "0006-disable-copilot-onboarding-without-agent.patch");
   assert.equal(bundledSdkEntry.file, "0007-bundle-chatero-codex-sdk.patch");
@@ -217,6 +218,7 @@ test("the canonical series pins Chatero startup compatibility after native Codex
   assert.equal(excludedSystemExtensionsEntry.file, "0011-exclude-unshipped-system-extensions.patch");
   assert.equal(openAIIsolationEntry.file, "0012-isolate-openai-codex-resources.patch");
   assert.equal(codexConnectionEntry.file, "0013-deduplicate-codex-connection-startup.patch");
+  assert.equal(codexOnlyEntry.file, "0014-default-agent-host-to-codex-only.patch");
   const bytes = await readFile(join(canonicalPatchDirectory, entry.file));
   const compatibilityBytes = await readFile(join(canonicalPatchDirectory, compatibilityEntry.file));
   const startupBytes = await readFile(join(canonicalPatchDirectory, startupEntry.file));
@@ -227,6 +229,7 @@ test("the canonical series pins Chatero startup compatibility after native Codex
   const excludedSystemExtensionsBytes = await readFile(join(canonicalPatchDirectory, excludedSystemExtensionsEntry.file));
   const openAIIsolationBytes = await readFile(join(canonicalPatchDirectory, openAIIsolationEntry.file));
   const codexConnectionBytes = await readFile(join(canonicalPatchDirectory, codexConnectionEntry.file));
+  const codexOnlyBytes = await readFile(join(canonicalPatchDirectory, codexOnlyEntry.file));
   assert.equal(entry.sha256, sha256(bytes));
   assert.equal(compatibilityEntry.sha256, sha256(compatibilityBytes));
   assert.equal(startupEntry.sha256, sha256(startupBytes));
@@ -237,6 +240,7 @@ test("the canonical series pins Chatero startup compatibility after native Codex
   assert.equal(excludedSystemExtensionsEntry.sha256, sha256(excludedSystemExtensionsBytes));
   assert.equal(openAIIsolationEntry.sha256, sha256(openAIIsolationBytes));
   assert.equal(codexConnectionEntry.sha256, sha256(codexConnectionBytes));
+  assert.equal(codexOnlyEntry.sha256, sha256(codexOnlyBytes));
   assert.match(bytes.toString("utf8"), /acquireDocumentationWorkingCopyBarrier/);
   assert.match(compatibilityBytes.toString("utf8"), /chatero_workspace/);
   assert.match(startupBytes.toString("utf8"), /product\.defaultChatAgent \? OnboardingVariationA : DisabledOnboardingService/);
@@ -261,4 +265,5 @@ test("the canonical series pins Chatero startup compatibility after native Codex
   assert.match(openAIIsolationBytes.toString("utf8"), /`features\.plugins=false`/);
   assert.match(codexConnectionBytes.toString("utf8"), /this\._connection\.kind === 'ready'/);
   assert.match(codexConnectionBytes.toString("utf8"), /reuses a connection established while OpenAI validation was pending/);
+  assert.match(codexOnlyBytes.toString("utf8"), /AgentHostClaudeAgentEnabledEnvVar\], false/);
 });
