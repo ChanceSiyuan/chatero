@@ -225,3 +225,18 @@ test("integration child has a hard deadline and cannot wait forever in authority
     killGraceMs: 25,
   }), /timed out/i);
 });
+
+test("SSH integration home receives only public OpenSSH routing material", async () => {
+  const { prepareDocumentationSshHome } = await import("../integration/documentation/fixtures.mjs");
+  const sourceHome = await mkdtemp(join(tmpdir(), "chatero-documentation-ssh-source-"));
+  const fixtureHome = await mkdtemp(join(tmpdir(), "chatero-documentation-ssh-home-"));
+  temporaryDirectories.push(sourceHome, fixtureHome);
+  await mkdir(join(sourceHome, ".ssh"), { mode: 0o700 });
+  await writeFile(join(sourceHome, ".ssh", "config"), "Host stage5-target\n  IdentityFile /runner/.ssh/stage5_ed25519\n", { mode: 0o600 });
+  await writeFile(join(sourceHome, ".ssh", "known_hosts"), "fixture ssh-ed25519 AAAA\n", { mode: 0o600 });
+  await writeFile(join(sourceHome, ".ssh", "stage5_ed25519"), "PRIVATE", { mode: 0o600 });
+  await prepareDocumentationSshHome({ sourceHome, fixtureHome });
+  assert.equal(await readFile(join(fixtureHome, ".ssh", "config"), "utf8"), "Host stage5-target\n  IdentityFile /runner/.ssh/stage5_ed25519\n");
+  assert.equal(await readFile(join(fixtureHome, ".ssh", "known_hosts"), "utf8"), "fixture ssh-ed25519 AAAA\n");
+  await assert.rejects(readFile(join(fixtureHome, ".ssh", "stage5_ed25519")), /ENOENT/u);
+});

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises";
+import { copyFile, lstat, mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -33,6 +33,19 @@ async function fixtureTempBase() {
   return realpath(base);
 }
 
+export async function prepareDocumentationSshHome({ sourceHome, fixtureHome }) {
+  if (typeof sourceHome !== "string" || !sourceHome.length) throw new Error("OpenSSH source home is unavailable");
+  const source = join(await realpath(sourceHome), ".ssh");
+  const destination = join(await realpath(fixtureHome), ".ssh");
+  await mkdir(destination, { mode: 0o700 });
+  for (const filename of ["config", "known_hosts"]) {
+    const path = join(source, filename);
+    const metadata = await lstat(path);
+    if (!metadata.isFile() || metadata.isSymbolicLink()) throw new Error(`OpenSSH ${filename} is not a regular file`);
+    await copyFile(path, join(destination, filename));
+  }
+}
+
 export async function createTemporaryDocumentationWorkspace({ root, checkout, target, remoteAgentReleaseDir, sshAlias }) {
   if (!new Set(["local", "ssh-fixture"]).has(target)) throw new TypeError("invalid Documentation integration target");
   const remoteAuthority = target === "ssh-fixture"
@@ -49,6 +62,9 @@ export async function createTemporaryDocumentationWorkspace({ root, checkout, ta
     mkdir(extensionsDir, { recursive: true }),
     mkdir(homeDir, { recursive: true }),
   ]);
+  if (target === "ssh-fixture") {
+    await prepareDocumentationSshHome({ sourceHome: process.env.HOME, fixtureHome: homeDir });
+  }
   await writeFile(join(workspacePath, "documentation", "index.qmd"), [
     "---",
     "title: Documentation integration fixture",
