@@ -518,6 +518,13 @@ export class SshRemoteAgentRuntime {
     const writing = pumpInput(child.stdin, input, transfer.signal).then(
       () => null,
       error => {
+        // OpenSSH may close its local stdin immediately after the remote
+        // command has consumed and durably accepted the final bytes. Node can
+        // surface that terminal close as EPIPE before the child `close` event.
+        // Preserve the error until the authenticated SSH process reports its
+        // status: exit 0 proves the fixed remote script completed; every
+        // non-zero status below still rejects the transfer.
+        if (error?.code === "EPIPE") return error;
         child.kill("SIGTERM");
         complete({ source: "input", error, code: null, signal: null });
         return error;
@@ -539,7 +546,7 @@ export class SshRemoteAgentRuntime {
       error.remoteSignal = result.signal;
       throw error;
     }
-    if (inputError) throw inputError;
+    if (inputError && inputError.code !== "EPIPE") throw inputError;
     return Buffer.concat(stdout).toString("utf8");
   }
 

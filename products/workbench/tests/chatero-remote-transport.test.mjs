@@ -16,6 +16,7 @@ import {
   parseRemotePlatform,
   pumpInput,
   RemoteAgentInstaller,
+  SshRemoteAgentRuntime,
 } from "../extensions/chatero-remote/remote-agent-installer.mjs";
 import { SshSession } from "../extensions/chatero-remote/ssh-session.mjs";
 import { parseAuthenticatedFingerprint } from "../extensions/chatero-remote/ssh-session.mjs";
@@ -633,4 +634,39 @@ test("stdin pumping rejects channel loss and abort while backpressured", async (
   const cancelledPump = pumpInput(cancelled, [Buffer.alloc(1024)], controller.signal);
   controller.abort(new Error("upload cancelled"));
   await assert.rejects(cancelledPump, /upload cancelled|aborted/i);
+});
+
+test("remote upload accepts only a clean SSH exit after a terminal EPIPE", async () => {
+  function runtime(exitCode) {
+    return new SshRemoteAgentRuntime({
+      alias: "lab-a",
+      controlPath: "/tmp/master.sock",
+      spawn: () => {
+        const child = new EventEmitter();
+        child.stdout = new EventEmitter();
+        child.stderr = new EventEmitter();
+        child.kill = () => {};
+        child.stdin = new Writable({
+          write(_chunk, _encoding, callback) {
+            const error = new Error("remote stdin closed after consuming upload");
+            error.code = "EPIPE";
+            setImmediate(() => child.emit("close", exitCode, null));
+            callback(error);
+          },
+        });
+        return child;
+      },
+    });
+  }
+
+  await runtime(0).upload({
+    partRelativePath: `.chatero-server/transactions/${"a".repeat(40)}/${"b".repeat(24)}.part`,
+    source: async () => Buffer.from("complete artifact"),
+    offset: 0,
+  });
+  await assert.rejects(runtime(71).upload({
+    partRelativePath: `.chatero-server/transactions/${"a".repeat(40)}/${"c".repeat(24)}.part`,
+    source: async () => Buffer.from("rejected artifact"),
+    offset: 0,
+  }), /remote bootstrap exited with 71/);
 });
