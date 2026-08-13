@@ -2,8 +2,8 @@
 
 import { spawn } from "node:child_process";
 import { createReadStream } from "node:fs";
-import { lstat, readFile, realpath, rm } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { lstat, readFile, realpath, readdir, rm } from "node:fs/promises";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { createTemporaryDocumentationWorkspace } from "../integration/documentation/fixtures.mjs";
@@ -14,6 +14,8 @@ const SCRIPT_DIRECTORY = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_ROOT = resolve(SCRIPT_DIRECTORY, "..", "..", "..");
 const TARGETS = new Set(["local", "ssh-fixture"]);
 const MAX_GREP_UTF8 = 256;
+const MAX_STARTUP_OUTPUT_BYTES = 4 * 1024 * 1024;
+const MAX_AGENT_HOST_LOG_BYTES = 4 * 1024 * 1024;
 
 async function safeRegularFile(path, label) {
   const metadata = await lstat(path).catch(error => {
@@ -62,8 +64,22 @@ function environmentFor(fixture, target, root, grep) {
 }
 
 async function spawnAndWait({ file, args, cwd, env }) {
-  await new Promise((accept, reject) => {
-    const child = spawn(file, args, { cwd, env, shell: false, stdio: "inherit" });
+  return new Promise((accept, reject) => {
+    const child = spawn(file, args, { cwd, env, shell: false, stdio: ["inherit", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    const relay = (stream, destination, append) => {
+      stream.on("data", chunk => {
+        destination.write(chunk);
+        append(chunk);
+      });
+    };
+    relay(child.stdout, process.stdout, chunk => {
+      if (Buffer.byteLength(stdout) < MAX_STARTUP_OUTPUT_BYTES) stdout += chunk.toString("utf8");
+    });
+    relay(child.stderr, process.stderr, chunk => {
+      if (Buffer.byteLength(stderr) < MAX_STARTUP_OUTPUT_BYTES) stderr += chunk.toString("utf8");
+    });
     const forwardSignal = signal => {
       if (!child.killed) child.kill(signal);
     };
@@ -78,10 +94,50 @@ async function spawnAndWait({ file, args, cwd, env }) {
     child.once("error", error => { cleanup(); reject(error); });
     child.once("exit", (code, signal) => {
       cleanup();
-      if (code === 0) accept();
+      if (code === 0) accept(Object.freeze({ stdout, stderr }));
       else reject(new Error(`Documentation integration process exited with ${signal ?? code}`));
     });
   });
+}
+
+async function readAgentHostLogs(root) {
+  const chunks = [];
+  let totalBytes = 0;
+  async function visit(path) {
+    const metadata = await lstat(path).catch(error => {
+      if (error?.code === "ENOENT") return undefined;
+      throw error;
+    });
+    if (!metadata || metadata.isSymbolicLink()) return;
+    if (metadata.isDirectory()) {
+      for (const entry of await readdir(path)) await visit(join(path, entry));
+      return;
+    }
+    if (!metadata.isFile() || basename(path) !== "agenthost.log") return;
+    if (metadata.size > MAX_AGENT_HOST_LOG_BYTES || totalBytes + metadata.size > MAX_AGENT_HOST_LOG_BYTES) {
+      throw new Error("agent host startup audit exceeded its bounded log budget");
+    }
+    chunks.push(await readFile(path, "utf8"));
+    totalBytes += metadata.size;
+  }
+  await visit(root);
+  return chunks.join("\n");
+}
+
+function auditStartup({ processResult, agentHostLogs }) {
+  const processOutput = typeof processResult === "object" && processResult
+    ? `${processResult.stdout ?? ""}\n${processResult.stderr ?? ""}`
+    : "";
+  if (/CANNOT use .*API proposal|enables LESS API proposals|EXTENSION WILL BE BROKEN/iu.test(processOutput)) {
+    throw new Error("extension startup audit found an API-proposal or activation failure");
+  }
+  if (/Registering agent provider: (?:claude|copilot)|usageSource=copilot|https:\/\/api\.github\.com/iu.test(agentHostLogs)) {
+    throw new Error("agent host startup audit found a disabled provider or GitHub network authority");
+  }
+  const codexSpawns = agentHostLogs.match(/\[Codex\] spawning usageSource=openai/gu) ?? [];
+  if (codexSpawns.length > 1) {
+    throw new Error(`agent host startup audit found ${codexSpawns.length} Codex app-server spawns`);
+  }
 }
 
 function validateGrep(grep) {
@@ -136,10 +192,14 @@ export async function runDocumentationIntegration({
     const invocation = platform === "linux"
       ? { file: "xvfb-run", args: ["-a", fixture.codeScript, ...codeArguments] }
       : { file: "bash", args: [fixture.codeScript, ...codeArguments] };
-    await run({
+    const processResult = await run({
       ...invocation,
       cwd: canonicalCheckout,
       env: environmentFor(fixture, target, root, boundedGrep),
+    });
+    auditStartup({
+      processResult,
+      agentHostLogs: await readAgentHostLogs(fixture.userDataDir),
     });
     return Object.freeze({ target, workspace: "<temporary-documentation-workspace>" });
   }

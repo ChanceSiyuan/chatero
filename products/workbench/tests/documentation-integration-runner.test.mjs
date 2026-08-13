@@ -98,6 +98,44 @@ test("uses the macOS code script directly and forwards only a bounded grep", asy
   }), /grep/);
 });
 
+test("rejects extension proposal failures reported during startup", async () => {
+  const checkout = await createCheckoutFixture();
+  await assert.rejects(runDocumentationIntegration({
+    root: repositoryRoot,
+    checkout,
+    target: "local",
+    platform: "darwin",
+    verify: async () => ({ ok: true }),
+    run: async () => ({
+      stdout: "Extension 'vscode.example' appears in product.json but enables LESS API proposals than the extension wants. EXTENSION WILL BE BROKEN",
+      stderr: "",
+    }),
+  }), /extension startup audit/i);
+});
+
+test("rejects duplicate Codex startup and disabled provider registration from agent-host logs", async () => {
+  const checkout = await createCheckoutFixture();
+  await assert.rejects(runDocumentationIntegration({
+    root: repositoryRoot,
+    checkout,
+    target: "local",
+    platform: "darwin",
+    verify: async () => ({ ok: true }),
+    run: async call => {
+      const userDataArgument = call.args.find(value => value.startsWith("--user-data-dir="));
+      const userDataDir = userDataArgument.slice("--user-data-dir=".length);
+      const logs = join(userDataDir, "logs", "fixture");
+      await mkdir(logs, { recursive: true });
+      await writeFile(join(logs, "agenthost.log"), [
+        "Registering agent provider: claude",
+        "[Codex] spawning usageSource=openai",
+        "[Codex] spawning usageSource=openai",
+      ].join("\n"));
+      return { stdout: "", stderr: "" };
+    },
+  }), /agent host startup audit/i);
+});
+
 test("fails closed when the SSH fixture lacks a signed Remote Agent release", async () => {
   const checkout = await createCheckoutFixture();
   await assert.rejects(runDocumentationIntegration({
