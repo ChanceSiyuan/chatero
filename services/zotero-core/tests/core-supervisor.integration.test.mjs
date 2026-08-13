@@ -258,6 +258,10 @@ test("fixture Core implements every new mutation, citation, translation, and syn
 	assert.equal((await core.client.request("library.collection-mutate", {
 		action: "create", expectedRevision: 0, idempotencyKey: "fixture-collection-create-0001", libraryId: 1, name: "Reading",
 	})).name, "Reading");
+	assert.equal((await core.client.request("library.item-mutate", {
+		action: "create", collectionKeys: [], expectedRevision: 0, fields: [{ field: "title", value: "Created" }],
+		idempotencyKey: "fixture-item-create-0001", itemType: "journalArticle", libraryId: 1,
+	})).deleted, false);
 	assert.equal((await core.client.request("profile.migrate", { expectedRevision: 0, idempotencyKey: "fixture-profile-migrate-0001" })).schemaVersion, 142);
 	assert.equal((await core.client.request("library.duplicates", { libraryId: 1, limit: 10 })).total, 1);
 	assert.equal((await core.client.request("library.fulltext-search", { libraryId: 1, limit: 10, query: "critical" })).total, 1);

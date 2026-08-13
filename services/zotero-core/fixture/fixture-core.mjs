@@ -451,6 +451,44 @@ async function main() {
         result: { ...completed.result, replayed: completed.replayed, revision: completed.revision },
       };
     }
+    if (message.method === "library.item-mutate") {
+      const { expectedRevision, idempotencyKey, ...operation } = message.params || {};
+      const completed = await transactionRegistry.execute({
+        expectedRevision, idempotencyKey, operation, scope: `library:${operation.libraryId}/item:catalog`,
+      }, async value => {
+        let facts;
+        let summary;
+        if (value.action === "create") {
+          const sequence = fixtureItemFacts.length + fixtureItems.length + 1;
+          const itemKey = `NEW${String(sequence).padStart(5, "0")}`;
+          summary = { attachmentCount: 0, collectionKeys: value.collectionKeys || [], creators: [], itemKey, itemType: value.itemType, libraryId: value.libraryId, title: value.fields?.find(field => field.field === "title")?.value || "", };
+          facts = { citationWarning: false, itemKey, libraryId: value.libraryId, relations: [], retracted: false, synced: false, version: 1 };
+          fixtureItems.push(summary);
+          fixtureItemFacts.push(facts);
+        }
+        else {
+          facts = fixtureItemFacts.find(entry => entry.libraryId === value.libraryId && entry.itemKey === value.itemKey);
+          summary = fixtureItems.find(entry => entry.libraryId === value.libraryId && entry.itemKey === value.itemKey);
+          if (!facts || !summary) throw new Error("fixture item was not found");
+          if (facts.version !== value.expectedVersion) throw new Error("fixture item version changed");
+          if (value.action === "collections") summary.collectionKeys = value.collectionKeys.slice();
+          if (value.action === "trash") facts.deleted = true;
+          if (value.action === "restore") facts.deleted = false;
+          facts.synced = false;
+          facts.version += 1;
+        }
+        return {
+          action: value.action, collectionKeys: summary.collectionKeys || [], deleted: Boolean(facts.deleted),
+          itemKey: facts.itemKey, libraryId: facts.libraryId, synced: facts.synced, version: facts.version,
+        };
+      });
+      return {
+        ...(!completed.replayed && { event: eventJournal.publish("library.item.changed", {
+          action: completed.result.action, identities: [{ itemKey: completed.result.itemKey, libraryId: completed.result.libraryId }], revision: completed.revision,
+        }) }),
+        result: { ...completed.result, replayed: completed.replayed, revision: completed.revision },
+      };
+    }
     if (message.method === "library.attachment") {
       validateIdentityParams(message.params, "attachmentKey", "library.attachment");
       const value = fixtureItemChildren

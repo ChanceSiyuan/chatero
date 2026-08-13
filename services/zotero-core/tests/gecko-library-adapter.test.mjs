@@ -42,6 +42,9 @@ function item({
   attachmentSyncState = 2,
 }) {
   let currentTitle = title;
+  let currentLibraryID = libraryID;
+  let currentDeleted = deleted;
+  let currentCollectionIDs = collectionIDs.slice();
   let currentCreators = creators.map(creator);
   let currentTags = tags.map(value => ({ ...value }));
   let currentRelations = structuredClone(relations);
@@ -52,11 +55,13 @@ function item({
   let currentSynced = synced;
   const value = {
     attachmentSyncState,
-    deleted,
     id,
     itemTypeID: type,
     key,
-    libraryID,
+    get deleted() { return currentDeleted; },
+    set deleted(value) { currentDeleted = Boolean(value); },
+    get libraryID() { return currentLibraryID; },
+    set libraryID(value) { currentLibraryID = value; },
     parentItemID,
     attachmentContentType: contentType,
     attachmentFilename: filename,
@@ -72,7 +77,7 @@ function item({
     get annotationType() { return currentAnnotation.type || ""; },
     getAttachments: () => attachments.slice(),
     getAnnotations: () => annotations.slice(),
-    getCollections: () => collectionIDs.slice(),
+    getCollections: () => currentCollectionIDs.slice(),
     getCreatorsJSON: () => structuredClone(currentCreators),
     getDisplayTitle: () => currentTitle,
     getField: field => ({
@@ -98,6 +103,7 @@ function item({
 		async save() { currentClientVersion += 1; currentSynced = false; return true; },
     async saveTx() { return value.save(); },
     setCreators: values => { currentCreators = structuredClone(values); },
+    setCollections: values => { currentCollectionIDs = values.slice(); },
     setField: (field, value) => {
       if (field === "title") currentTitle = value;
       else throw new Error(`Unknown field '${field}'`);
@@ -241,6 +247,11 @@ function fixture({
         return collection({ id: 1000 + collections.length, key: `NEWCOL0${collections.length}`, version: 0, ...params });
       }
     },
+    Item: class {
+      constructor(type) {
+        return item({ id: 2000 + items.length, key: `NEWITEM${items.length}`, libraryID: 0, title: "", type, version: 0 });
+      }
+    },
     Collections: {
       get: id => collections.find(value => value.id === id) || false,
       getByLibrary: libraryId => collections.filter(value => value.libraryID === libraryId && !value.parentKey),
@@ -253,7 +264,7 @@ function fixture({
 			getAll: async (libraryId, onlyTopLevel = false) => items.filter(value => value.libraryID === libraryId && (onlyTopLevel ? value.isRegularItem() : true)),
       getByLibraryAndKey: (libraryId, key) => items.find(value => value.libraryID === libraryId && value.key === key) || false,
     },
-    ItemTypes: { getName: itemTypeID => itemTypeID },
+    ItemTypes: { getID: itemType => itemType === "journalArticle" ? itemType : false, getName: itemTypeID => itemTypeID },
 		Libraries: {
 			get: libraryId => Zotero.Libraries.getAll().find(value => value.libraryID === libraryId) || false,
 			getAll: () => [
@@ -528,6 +539,34 @@ test("atomically updates fields, creators, tags, and relations at an expected Zo
     itemKey: "ITEM0001",
     libraryId: 1,
   }), error => error.code === "REVISION_CONFLICT" && error.actualRevision === 18);
+});
+
+test("creates, recollects, trashes, and restores regular items at exact object versions", async () => {
+  const environment = fixture();
+  const adapter = createZoteroLibraryAdapter(environment);
+  assert.deepEqual(await adapter.mutateItem({
+    action: "create", collectionKeys: ["SHARED01"], creators: [{ creatorType: "author", name: "Collaboration" }],
+    fields: [{ field: "title", value: "Created Paper" }], itemType: "journalArticle", libraryId: 1,
+    tags: [{ name: "created", type: 0 }],
+  }), {
+    action: "create", collectionKeys: ["SHARED01"], deleted: false, itemKey: "NEWITEM8",
+    libraryId: 1, synced: false, version: 1,
+  });
+  assert.deepEqual(await adapter.mutateItem({
+    action: "collections", collectionKeys: ["NESTED01"], expectedVersion: 17, itemKey: "ITEM0001", libraryId: 1,
+  }), {
+    action: "collections", collectionKeys: ["NESTED01"], deleted: false,
+    itemKey: "ITEM0001", libraryId: 1, synced: false, version: 18,
+  });
+  assert.equal((await adapter.mutateItem({
+    action: "trash", expectedVersion: 18, itemKey: "ITEM0001", libraryId: 1,
+  })).deleted, true);
+  assert.equal((await adapter.mutateItem({
+    action: "restore", expectedVersion: 19, itemKey: "ITEM0001", libraryId: 1,
+  })).deleted, false);
+  await assert.rejects(adapter.mutateItem({
+    action: "trash", expectedVersion: 18, itemKey: "ITEM0001", libraryId: 1,
+  }), error => error.code === "REVISION_CONFLICT" && error.actualRevision === 20);
 });
 
 test("updates Note HTML only at the exact Zotero object client version", async () => {

@@ -25,6 +25,8 @@ const ITEM_CHILDREN_FIELDS = new Set(["itemKey", "libraryId"]);
 const ITEM_METADATA_FIELDS = new Set(["itemKey", "libraryId"]);
 const ITEM_FACTS_FIELDS = new Set(["itemKey", "libraryId"]);
 const UPDATE_ITEM_FIELDS = new Set(["creators", "expectedVersion", "fields", "itemKey", "libraryId", "relations", "tags"]);
+const ITEM_MUTATION_FIELDS = new Set(["action", "collectionKeys", "creators", "expectedVersion", "fields", "itemKey", "itemType", "libraryId", "relations", "tags"]);
+const ITEM_MUTATION_ACTIONS = new Set(["create", "collections", "trash", "restore"]);
 const ANNOTATION_FIELDS = new Set(["attachmentKey", "libraryId"]);
 const UPDATE_ANNOTATIONS_FIELDS = new Set(["attachmentKey", "libraryId", "updates"]);
 const ATTACHMENT_FIELDS = new Set(["attachmentKey", "libraryId"]);
@@ -420,6 +422,43 @@ function validateItemUpdate(params) {
 	if (!params.fields.length && params.creators === undefined && params.tags === undefined && params.relations === undefined) {
 		throw new Error("library.item-update requires at least one change");
 	}
+}
+
+function validateCollectionKeys(Zotero, libraryId, values, label) {
+	if (!Array.isArray(values) || values.length > MAX_MUTATION_ENTRIES) throw new Error(`${label} must be a bounded array`);
+	let seen = new Set();
+	return values.map(key => {
+		zoteroKey(key, label);
+		if (seen.has(key)) throw new Error(`${label} must be unique`);
+		seen.add(key);
+		let collection = Zotero.Collections.getByLibraryAndKey(libraryId, key);
+		if (!collection || collection.deleted) unavailable(`${label} contains an unavailable collection`);
+		return collection;
+	});
+}
+
+function validateItemMutation(Zotero, params) {
+	exactObject(params, ITEM_MUTATION_FIELDS, "library.item-mutate params");
+	positiveLibraryId(params.libraryId, "library.item-mutate");
+	if (!ITEM_MUTATION_ACTIONS.has(params.action)) throw new Error("library.item-mutate action is invalid");
+	if (params.action === "create") {
+		if (params.itemKey !== undefined || params.expectedVersion !== undefined || typeof params.itemType !== "string" || !Zotero.ItemTypes.getID(params.itemType)) {
+			throw new Error("library.item-mutate create requires a valid itemType and no existing identity");
+		}
+		validateItemUpdate({
+			creators: params.creators, expectedVersion: 0, fields: params.fields,
+			itemKey: "VALID001", libraryId: params.libraryId, relations: params.relations, tags: params.tags,
+		});
+		validateCollectionKeys(Zotero, params.libraryId, params.collectionKeys || [], "library.item-mutate collectionKeys");
+		return;
+	}
+	if (params.itemType !== undefined || params.fields !== undefined || params.creators !== undefined || params.tags !== undefined || params.relations !== undefined) {
+		throw new Error("library.item-mutate existing-item actions do not accept metadata");
+	}
+	zoteroKey(params.itemKey, "library.item-mutate itemKey");
+	if (!Number.isSafeInteger(params.expectedVersion) || params.expectedVersion < 0) throw new Error("library.item-mutate expectedVersion is invalid");
+	if (params.action === "collections") validateCollectionKeys(Zotero, params.libraryId, params.collectionKeys, "library.item-mutate collectionKeys");
+	else if (params.collectionKeys !== undefined) throw new Error("library.item-mutate trash and restore do not accept collectionKeys");
 }
 
 function relationObject(relations) {
@@ -1201,6 +1240,51 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(S
 				itemKey: item.key,
 				libraryId: item.libraryID,
 				synced: Boolean(item.synced),
+				version: Number.isSafeInteger(item.clientVersion) ? item.clientVersion : 0,
+			};
+		},
+
+		async mutateItem(params) {
+			validateItemMutation(Zotero, params);
+			let library = Zotero.Libraries.get(params.libraryId);
+			if (!library || library.libraryType === "feed" || !library.editable) unavailable("item target library is not editable");
+			let item;
+			if (params.action === "create") {
+				item = new Zotero.Item(params.itemType);
+				item.libraryID = params.libraryId;
+			}
+			else {
+				item = Zotero.Items.getByLibraryAndKey(params.libraryId, params.itemKey);
+				if (!item || item.libraryID !== params.libraryId || item.key !== params.itemKey || !item.isRegularItem?.()) unavailable("Zotero item is unavailable");
+				if (params.action !== "restore" && itemIsUnavailable(item)) unavailable("Zotero item is unavailable");
+				if (params.action === "restore" && !item.deleted && !item.isInTrash?.()) throw new Error("library.item-mutate restore target is not in trash");
+				revisionConflict(item, params.expectedVersion, "Zotero item");
+			}
+			try {
+				if (params.action === "create") {
+					for (let field of params.fields) item.setField(field.field, field.value);
+					if (params.creators !== undefined) item.setCreators(params.creators, { strict: true });
+					if (params.tags !== undefined) item.setTags(params.tags.map(tag => ({ tag: tag.name, type: tag.type })));
+					if (params.relations !== undefined) item.setRelations(relationObject(params.relations));
+				}
+				if (params.action === "create" || params.action === "collections") {
+					let collections = validateCollectionKeys(Zotero, params.libraryId, params.collectionKeys || [], "library.item-mutate collectionKeys");
+					item.setCollections(collections.map(collection => collection.id));
+				}
+				if (params.action === "trash") item.deleted = true;
+				if (params.action === "restore") item.deleted = false;
+				await item.saveTx();
+			}
+			catch (error) {
+				try { await item.reload?.(null, true); }
+				catch (_) {}
+				throw error;
+			}
+			let collectionKeys = item.getCollections(false).map(id => Zotero.Collections.get(id))
+				.filter(collection => collection?.libraryID === item.libraryID).map(collection => collection.key).sort(compareText);
+			return {
+				action: params.action, collectionKeys, deleted: Boolean(item.deleted), itemKey: item.key,
+				libraryId: item.libraryID, synced: Boolean(item.synced),
 				version: Number.isSafeInteger(item.clientVersion) ? item.clientVersion : 0,
 			};
 		},

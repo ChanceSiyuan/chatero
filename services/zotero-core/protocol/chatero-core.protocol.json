@@ -163,6 +163,12 @@
       "resultType": "LibraryItemUpdateResult"
     },
     {
+      "name": "library.item-mutate",
+      "capability": "library:write",
+      "paramsType": "LibraryItemMutationParams",
+      "resultType": "LibraryItemMutationResult"
+    },
+    {
       "name": "library.annotations",
       "capability": "library:read",
       "paramsType": "LibraryAnnotationsParams",
@@ -842,6 +848,37 @@
     "LibraryItemUpdateResult": {
       "kind": "object",
       "fields": {
+        "itemKey": "string",
+        "libraryId": "number",
+        "replayed": "boolean",
+        "revision": "number",
+        "synced": "boolean",
+        "version": "number"
+      }
+    },
+    "LibraryItemMutationParams": {
+      "kind": "object",
+      "fields": {
+        "action": "string",
+        "collectionKeys?": "string[]",
+        "creators?": "LibraryItemUpdateCreator[]",
+        "expectedRevision": "number",
+        "expectedVersion?": "number",
+        "fields?": "LibraryItemUpdateField[]",
+        "idempotencyKey": "string",
+        "itemKey?": "string",
+        "itemType?": "string",
+        "libraryId": "number",
+        "relations?": "LibraryItemRelation[]",
+        "tags?": "LibraryItemUpdateTag[]"
+      }
+    },
+    "LibraryItemMutationResult": {
+      "kind": "object",
+      "fields": {
+        "action": "string",
+        "collectionKeys": "string[]",
+        "deleted": "boolean",
         "itemKey": "string",
         "libraryId": "number",
         "replayed": "boolean",

@@ -56,6 +56,7 @@ function createRouter(overrides = {}) {
     async itemMetadata(params) { calls.push(["itemMetadata", params]); return { itemKey: params.itemKey, libraryId: params.libraryId }; },
     async itemFacts(params) { calls.push(["itemFacts", params]); return { citationWarning: false, itemKey: params.itemKey, libraryId: params.libraryId, relations: [], retracted: false, synced: true, version: 1 }; },
     async updateItem(params) { calls.push(["updateItem", params]); return { itemKey: params.itemKey, libraryId: params.libraryId, synced: false, version: params.expectedVersion + 1 }; },
+    async mutateItem(params) { calls.push(["mutateItem", params]); return { action: params.action, collectionKeys: params.collectionKeys || [], deleted: false, itemKey: "NEWITEM1", libraryId: params.libraryId, synced: false, version: 1 }; },
     async libraries(params) { calls.push(["libraries", params]); return { libraries: [] }; },
 		async note(params) { calls.push(["note", params]); return { html: "<p>Note</p>", libraryId: 1, noteKey: "NOTE0001", parentItemKey: "ITEM0001", title: "Note", version: 1 }; },
     async updateNote(params) { calls.push(["updateNote", params]); return { libraryId: params.libraryId, noteKey: params.noteKey, synced: false, version: params.expectedVersion + 1 }; },
@@ -183,6 +184,21 @@ test("item update is capability-gated, idempotent, revision-checked, and evented
   assert.equal(first.event.topic, "library.item.changed");
   assert.equal(replay.event, undefined);
   assert.equal(calls.filter(value => value[0] === "updateItem").length, 1);
+});
+
+test("item lifecycle mutations are one idempotent evented transaction", async () => {
+  const { calls, router } = createRouter();
+  const session = await handshake(router, ["library:write"]);
+  const params = {
+    action: "create", collectionKeys: [], expectedRevision: 0, fields: [{ field: "title", value: "Created" }],
+    idempotencyKey: "item-create-key-0001", itemType: "journalArticle", libraryId: 1,
+  };
+  const first = await router.handle(request(session, "library.item-mutate", params));
+  const replay = await router.handle(request(session, "library.item-mutate", params));
+  assert.deepEqual(first.result, { action: "create", collectionKeys: [], deleted: false, itemKey: "NEWITEM1", libraryId: 1, replayed: false, revision: 1, synced: false, version: 1 });
+  assert.equal(first.event.topic, "library.item.changed");
+  assert.equal(replay.result.replayed, true);
+  assert.equal(calls.filter(value => value[0] === "mutateItem").length, 1);
 });
 
 test("Note update is an idempotent object-version transaction", async () => {

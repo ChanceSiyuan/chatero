@@ -60,6 +60,7 @@ function validateRouterOptions(options) {
 			|| typeof options.adapter.itemMetadata !== "function"
 			|| typeof options.adapter.itemFacts !== "function"
 			|| typeof options.adapter.updateItem !== "function"
+			|| typeof options.adapter.mutateItem !== "function"
 			|| typeof options.adapter.libraries !== "function"
 			|| typeof options.adapter.note !== "function"
 			|| typeof options.adapter.updateNote !== "function"
@@ -356,6 +357,20 @@ export function createGeckoCoreRequestRouter(options = {}) {
 				return {
 					...(!completed.replayed && { event: eventJournal.publish("library.item.changed", {
 						identities: [{ itemKey: result.itemKey, libraryId: result.libraryId }],
+						revision: completed.revision,
+					}) }),
+					result,
+				};
+			}
+			if (message.method === "library.item-mutate") {
+				let { expectedRevision, idempotencyKey, ...operation } = message.params || {};
+				let completed = await transactionRegistry.execute({
+					expectedRevision, idempotencyKey, operation, scope: `library:${operation.libraryId}/item:catalog`,
+				}, value => adapter.mutateItem(value));
+				let result = { ...completed.result, replayed: completed.replayed, revision: completed.revision };
+				return {
+					...(!completed.replayed && { event: eventJournal.publish("library.item.changed", {
+						action: result.action, identities: [{ itemKey: result.itemKey, libraryId: result.libraryId }],
 						revision: completed.revision,
 					}) }),
 					result,
