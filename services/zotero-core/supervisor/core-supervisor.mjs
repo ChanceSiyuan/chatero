@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { connectCore } from "../client/core-client.mjs";
 import { CAPABILITIES } from "../generated/protocol.mjs";
 import { acquireProfileLease } from "../profile/profile-lease.mjs";
+export { restoreProfileDatabase } from "../profile/profile-restore.mjs";
 
 const CORE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const DEFAULT_FIXTURE_CORE = join(CORE_ROOT, "fixture", "fixture-core.mjs");
