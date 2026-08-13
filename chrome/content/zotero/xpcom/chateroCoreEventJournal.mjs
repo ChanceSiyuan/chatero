@@ -78,9 +78,15 @@ export function createCoreEventJournal({
 
 	let events = [];
 	let latestSequence = 0;
+	let listeners = new Set();
 
 	return Object.freeze({
 		get latestSequence() { return latestSequence; },
+		subscribe(listener) {
+			if (typeof listener !== "function") throw new Error("Core event listener must be a function");
+			listeners.add(listener);
+			return () => listeners.delete(listener);
+		},
 		publish(topic, payload) {
 			if (typeof topic !== "string" || !TOPIC_PATTERN.test(topic) || topic.length > 128) {
 				throw new Error("Core event topic is invalid");
@@ -96,6 +102,7 @@ export function createCoreEventJournal({
 			});
 			events.push(event);
 			if (events.length > capacity) events.shift();
+			for (let listener of listeners) listener(event);
 			return event;
 		},
 		replay(params) {

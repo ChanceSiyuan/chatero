@@ -66,3 +66,16 @@ test("Core event replay rejects malformed cursors, topics, and oversized payload
   assert.throws(() => journal.replay({ afterSequence: 0, limit: 0 }), /limit/);
   assert.throws(() => journal.replay({ afterSequence: 0, limit: 1, extra: true }), /unknown field/);
 });
+
+test("Core event subscribers observe each published immutable record and can detach", () => {
+  const journal = createCoreEventJournal({ profileEpoch: "epoch-1" });
+  const received = [];
+  const dispose = journal.subscribe(event => received.push(event));
+
+  const first = journal.publish("library.item.changed", { identities: [] });
+  dispose();
+  journal.publish("library.item.changed", { identities: [] });
+
+  assert.deepEqual(received, [first]);
+  assert.throws(() => journal.subscribe(null), /listener/);
+});

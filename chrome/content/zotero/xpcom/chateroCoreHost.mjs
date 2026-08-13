@@ -17,23 +17,48 @@ import { SCHEMA_VERSION } from "../modules/chateroCoreProtocol.mjs";
 import { GeckoFrameDecoder, encodeGeckoFrame } from "./chateroCoreFrameCodec.mjs";
 import { createZoteroLibraryAdapter } from "./chateroCoreLibraryAdapter.mjs";
 import { createZoteroProfileAdapter } from "./chateroCoreProfileAdapter.mjs";
+import { createZoteroNotifierBridge } from "./chateroCoreNotifierBridge.mjs";
 import { createGeckoCoreRequestRouter, mapGeckoCoreError } from "./chateroCoreRequestRouter.mjs";
 
 const MAX_BOOTSTRAP_BYTES = 1024;
 
-export function createGeckoCoreConnection({ profileEpoch, router, write } = {}) {
+export function createGeckoCoreConnection({ profileEpoch, router, subscribeEvents = router?.subscribeEvents, write } = {}) {
 	if (typeof profileEpoch !== "string" || !profileEpoch) throw new Error("Core connection profileEpoch is required");
 	if (typeof router?.handle !== "function") throw new Error("Core connection router is required");
 	if (typeof write !== "function") throw new Error("Core connection write function is required");
 	let decoder = new GeckoFrameDecoder();
 	let lastEventSequence = 0;
 	let closed = false;
+	let processingRequest = false;
+	let queuedEvents = [];
+	let backgroundWrites = Promise.resolve();
+
+	let writeEvent = async event => {
+		if (event.profileEpoch !== profileEpoch || !Number.isSafeInteger(event.sequence)
+				|| event.sequence <= lastEventSequence) {
+			throw new Error("Core router emitted an invalid event sequence");
+		}
+		lastEventSequence = event.sequence;
+		await write(encodeGeckoFrame({ ...event, event: true }));
+	};
+	let drainEvents = async () => {
+		while (queuedEvents.length) await writeEvent(queuedEvents.shift());
+	};
+	let disposeEvents = typeof subscribeEvents === "function" ? subscribeEvents(event => {
+		queuedEvents.push(event);
+		if (!processingRequest && !closed) {
+			backgroundWrites = backgroundWrites.then(drainEvents);
+			backgroundWrites.catch(() => {});
+		}
+	}) : null;
 
 	return Object.freeze({
 		async push(bytes) {
 			if (closed) throw new Error("Core connection is closed");
 			let messages = decoder.push(bytes);
 			for (let message of messages) {
+				await backgroundWrites;
+				processingRequest = true;
 				let response;
 				let event;
 				try {
@@ -49,22 +74,15 @@ export function createGeckoCoreConnection({ profileEpoch, router, write } = {}) 
 					};
 				}
 				await write(encodeGeckoFrame(response));
-				if (event) {
-					if (event.profileEpoch !== profileEpoch || !Number.isSafeInteger(event.sequence)
-							|| event.sequence <= lastEventSequence) {
-						throw new Error("Core router emitted an invalid event sequence");
-					}
-					lastEventSequence = event.sequence;
-					await write(encodeGeckoFrame({
-						...event,
-						event: true,
-					}));
-				}
+				processingRequest = false;
+				if (disposeEvents) await drainEvents();
+				else if (event) await writeEvent(event);
 			}
 		},
 		end() {
 			if (closed) return;
 			closed = true;
+			disposeEvents?.();
 			decoder.end();
 		},
 	});
@@ -227,6 +245,10 @@ export async function startGeckoCoreHost({ Zotero, window } = {}) {
 		schemaVersion: SCHEMA_VERSION,
 		upstreamVersion: Zotero.version,
 	});
+	let notifierBridge = createZoteroNotifierBridge({
+		Zotero,
+		publish: (topic, payload) => router.publishEvent(topic, payload),
+	});
 	bootstrapToken = "";
 
 	let socketFile = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsIFile);
@@ -254,6 +276,7 @@ export async function startGeckoCoreHost({ Zotero, window } = {}) {
 	});
 	await IOUtils.setPermissions(socketPath, 0o600);
 	let close = () => {
+		notifierBridge.dispose();
 		for (let connection of connections) connection.close();
 		connections.clear();
 		try { server.close(); } catch (_) {}

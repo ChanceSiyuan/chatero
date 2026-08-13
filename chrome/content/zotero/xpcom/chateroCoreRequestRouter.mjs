@@ -157,6 +157,8 @@ export function createGeckoCoreRequestRouter(options = {}) {
 	}
 
 	return Object.freeze({
+		publishEvent(topic, payload) { return eventJournal.publish(topic, payload); },
+		subscribeEvents(listener) { return eventJournal.subscribe(listener); },
 		async handle(message) {
 			if (message?.method === "core.handshake") return { result: handshake(message.params) };
 			if (!Object.hasOwn(METHOD_CAPABILITIES, message?.method)) throw new Error(`unknown method ${message?.method}`);

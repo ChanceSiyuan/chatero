@@ -88,3 +88,25 @@ test("connection rejects a stale or cross-profile router event", async () => {
 
   await assert.rejects(connection.push(encodeGeckoFrame({ id: "request-1" })), /invalid event sequence/);
 });
+
+test("subscribed background events serialize after an in-flight response", async () => {
+  const writes = [];
+  let listener;
+  const connection = createGeckoCoreConnection({
+    profileEpoch: "epoch",
+    router: {
+      async handle() {
+        listener({ occurredAt: 10, payload: {}, profileEpoch: "epoch", sequence: 1, topic: "zotero.item.modify" });
+        return { result: { ok: true } };
+      },
+    },
+    subscribeEvents: value => { listener = value; return () => {}; },
+    write: async bytes => writes.push(bytes),
+  });
+
+  await connection.push(encodeGeckoFrame({ id: "request-1" }));
+  assert.deepEqual(decodeFrames(writes), [
+    { id: "request-1", ok: true, result: { ok: true } },
+    { event: true, occurredAt: 10, payload: {}, profileEpoch: "epoch", sequence: 1, topic: "zotero.item.modify" },
+  ]);
+});
