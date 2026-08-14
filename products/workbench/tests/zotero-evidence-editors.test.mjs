@@ -1227,7 +1227,8 @@ test("PDF documents route to the loopback-served upstream Reader page whose host
   assert.deepEqual(rendered[0].state, { pageIndex: 4 });
 
   assert.match(readerPage, /<script src="\.\/reader\.js"><\/script>/);
-  assert.match(readerPage, /script-src 'self'; worker-src 'self' blob:/);
+  assert.match(readerPage, /script-src 'self' 'unsafe-eval'; worker-src 'self' blob:/);
+  assert.match(readerPage, /font-src 'self' data:/);
   assert.match(host, /window\.parent\.postMessage\(\{ type: "chatero-reader-ready" \}, "\*"\)/);
   assert.match(host, /event\.data\?\.type !== "chatero-reader-init"/);
   assert.match(host, /const parentOrigin = init\.origin/);
