@@ -43,6 +43,28 @@
           "default": true,
           "scope": "resource",
           "description": "Open Documentation pages in Chatero Live Preview from Chatero commands."
+        },
+        "chatero.documentation.remoteQuarto.executablePath": {
+          "type": "string",
+          "default": "/opt/quarto/bin/quarto",
+          "scope": "machine",
+          "description": "Absolute path to the Quarto CLI on this Linux machine for Exact Quarto Preview. Ignored on macOS, which uses the pinned signed runtime."
+        },
+        "chatero.documentation.remoteQuarto.sha256Allowlist": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[0-9a-fA-F]{64}$"
+          },
+          "default": [],
+          "scope": "machine",
+          "markdownDescription": "SHA-256 digests the Linux Quarto entry executable must match (this replaces the macOS code-signature check). Compute with `sha256sum \"$(realpath /opt/quarto/bin/quarto)\"`. This pins only the entry executable -- treat the whole Quarto install directory as trusted, since the bubblewrap sandbox, not this pin, is the security boundary. Exact Quarto Preview stays unavailable on Linux until a digest is pinned here."
+        },
+        "chatero.documentation.remoteQuarto.allowExecution": {
+          "type": "boolean",
+          "default": false,
+          "scope": "machine",
+          "description": "Allow Quarto to execute code cells during Exact Quarto Preview on a Chatero remote Linux host. Execution runs inside a bubblewrap sandbox with an isolated network namespace (loopback only, no external or host network) and a file system limited to the disposable render snapshot plus read-only system paths. Off by default: enabling it runs code from whatever QMD you preview, so turn it on only on machines where previewed documents are trusted to compute."
         }
       }
     },
@@ -139,6 +161,12 @@
         "command": "chatero.documentation.toggleEditingView",
         "key": "ctrl+e",
         "mac": "cmd+e",
+        "when": "activeCustomEditorId == chatero.documentation.livePreview || resourceExtname == .qmd"
+      },
+      {
+        "command": "chatero.documentation.openQuartoPreview",
+        "key": "ctrl+k v",
+        "mac": "cmd+k v",
         "when": "activeCustomEditorId == chatero.documentation.livePreview || resourceExtname == .qmd"
       }
     ],

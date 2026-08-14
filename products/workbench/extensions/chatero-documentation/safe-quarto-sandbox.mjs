@@ -1,22 +1,103 @@
+import { accessSync, constants, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+
+const DEFAULT_BUBBLEWRAP = "/usr/bin/bwrap";
 
 function quoted(value) {
   return `\"${String(value).replaceAll("\\", "\\\\").replaceAll('"', '\\"')}\"`;
 }
 
+function executableExists(path) {
+  try {
+    const metadata = statSync(path);
+    if (!metadata.isFile()) return false;
+    accessSync(path, constants.X_OK);
+    return true;
+  }
+  catch { return false; }
+}
+
+function sandboxEnvironment(runtimeRoot, temporaryRoot) {
+  return Object.freeze({
+    HOME: temporaryRoot,
+    LANG: "C.UTF-8",
+    LC_ALL: "C.UTF-8",
+    PATH: `${join(runtimeRoot, "bin")}:/usr/bin:/bin`,
+    QUARTO_DENO_EXTRA_OPTIONS: "--no-prompt",
+    TMPDIR: temporaryRoot,
+  });
+}
+
+// Read-only system surface for the Linux sandbox. The filesystem allowlist is
+// the security boundary on Linux: the user home (SSH keys, credentials) and
+// the workspace are never mounted, and writes land only in the disposable
+// render snapshot. The network namespace is always unshared; the kernel keeps
+// loopback traffic working inside the fresh namespace, which is all Jupyter
+// kernels need, while external hosts, host loopback services, and cloud
+// metadata endpoints stay unreachable even for execution-enabled renders.
+const LINUX_OPTIONAL_READ_ONLY = Object.freeze([
+  "/bin", "/sbin", "/lib", "/lib64", "/lib32",
+  "/etc/alternatives", "/etc/ld.so.cache", "/etc/localtime",
+  "/etc/passwd", "/etc/group", "/etc/nsswitch.conf",
+  "/etc/ssl", "/etc/ca-certificates", "/etc/fonts",
+]);
+
+function buildBubblewrapSandbox({ bubblewrapExecutable, execution, invocation, runtimeRoot, snapshotRoot, temporaryRoot }) {
+  // Bind only the Quarto entry directory plus the conventional bin/ and
+  // share/ subtrees -- never the whole runtime prefix, so a mis-derived
+  // prefix cannot expose sibling directories.
+  const runtimeReadOnly = [...new Set([dirname(invocation.file), join(runtimeRoot, "bin"), join(runtimeRoot, "share")])];
+  const args = [
+    "--die-with-parent",
+    "--new-session",
+    "--unshare-ipc",
+    "--unshare-pid",
+    "--unshare-uts",
+    "--unshare-cgroup-try",
+    "--unshare-net",
+    "--proc", "/proc",
+    "--dev", "/dev",
+    "--ro-bind", "/usr", "/usr",
+    ...LINUX_OPTIONAL_READ_ONLY.flatMap(path => ["--ro-bind-try", path, path]),
+    ...runtimeReadOnly.flatMap(path => ["--ro-bind-try", path, path]),
+    "--bind", snapshotRoot, snapshotRoot,
+    "--chdir", invocation.cwd,
+  ];
+  return Object.freeze({
+    kind: "sandboxed",
+    file: bubblewrapExecutable,
+    args: Object.freeze([...args, invocation.file, ...invocation.args]),
+    cwd: invocation.cwd,
+    shell: false,
+    execution: execution === true,
+    env: sandboxEnvironment(runtimeRoot, temporaryRoot),
+  });
+}
+
 export function buildSafeQuartoSandbox({
+  bubblewrapExecutable = DEFAULT_BUBBLEWRAP,
+  execution = false,
   invocation,
   outputRoot,
   platform = process.platform,
+  probeSandboxExecutable = executableExists,
   runtimeRoot,
   snapshotRoot,
   temporaryRoot,
 } = {}) {
-  if (platform !== "darwin") return Object.freeze({ kind: "preview-unavailable", reason: "sandbox-unavailable" });
+  if (platform !== "darwin" && platform !== "linux") return Object.freeze({ kind: "preview-unavailable", reason: "sandbox-unavailable" });
   if (!invocation || invocation.shell !== false || ![runtimeRoot, snapshotRoot, outputRoot, temporaryRoot]
     .every(value => typeof value === "string" && resolve(value) === value)) {
     throw new TypeError("safe Quarto sandbox paths are invalid");
   }
+  if (platform === "linux") {
+    if (typeof bubblewrapExecutable !== "string" || resolve(bubblewrapExecutable) !== bubblewrapExecutable
+        || !probeSandboxExecutable(bubblewrapExecutable)) {
+      return Object.freeze({ kind: "preview-unavailable", reason: "sandbox-unavailable" });
+    }
+    return buildBubblewrapSandbox({ bubblewrapExecutable, execution, invocation, runtimeRoot, snapshotRoot, temporaryRoot });
+  }
+  if (execution) return Object.freeze({ kind: "preview-unavailable", reason: "execution-unavailable" });
   const executableDirectory = dirname(invocation.file);
   const profile = [
     "(version 1)",
@@ -29,21 +110,14 @@ export function buildSafeQuartoSandbox({
     "(allow file-write* (literal \"/dev/null\"))",
     `(allow file-write* (subpath ${quoted(outputRoot)}) (subpath ${quoted(temporaryRoot)}) (subpath ${quoted(join(snapshotRoot, ".quarto"))}) (subpath ${quoted(join(snapshotRoot, "source"))}))`,
   ].join("\n");
-  const runtimeBin = join(runtimeRoot, "bin");
   return Object.freeze({
     kind: "sandboxed",
     file: "/usr/bin/sandbox-exec",
     args: Object.freeze(["-p", profile, invocation.file, ...invocation.args]),
     cwd: invocation.cwd,
     shell: false,
+    execution: false,
     profile,
-    env: Object.freeze({
-      HOME: temporaryRoot,
-      LANG: "C.UTF-8",
-      LC_ALL: "C.UTF-8",
-      PATH: `${runtimeBin}:/usr/bin:/bin`,
-      QUARTO_DENO_EXTRA_OPTIONS: "--no-prompt",
-      TMPDIR: temporaryRoot,
-    }),
+    env: sandboxEnvironment(runtimeRoot, temporaryRoot),
   });
 }

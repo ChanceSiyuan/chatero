@@ -90,6 +90,11 @@ test("contributes one optional Documentation QMD editor and preference", async (
     key: "ctrl+e",
     mac: "cmd+e",
     when: "activeCustomEditorId == chatero.documentation.livePreview || resourceExtname == .qmd",
+  }, {
+    command: "chatero.documentation.openQuartoPreview",
+    key: "ctrl+k v",
+    mac: "cmd+k v",
+    when: "activeCustomEditorId == chatero.documentation.livePreview || resourceExtname == .qmd",
   }]);
 });
 

@@ -11,16 +11,21 @@ const MAX_DIAGNOSTIC_BYTES = 64 * 1024;
 const MAX_OUTPUT_FILES = 4096;
 const MAX_OUTPUT_BYTES = 128 * 1024 * 1024;
 
-export function buildSafeQuartoInvocation({ snapshot, runtime, output } = {}) {
+export function buildSafeQuartoInvocation({ snapshot, runtime, output, execution = false } = {}) {
   if (!snapshot || !runtime || !output || resolve(snapshot.disposableRoot) !== snapshot.disposableRoot
       || resolve(runtime.quartoExecutable) !== runtime.quartoExecutable
       || !/^[A-Za-z0-9._ -]+\.qmd$/u.test(snapshot.entryBasename)
-      || !/^\.\/[A-Za-z0-9._/-]+$/u.test(output.relativePath)) {
+      || !/^\.\/[A-Za-z0-9._/-]+$/u.test(output.relativePath)
+      || typeof execution !== "boolean") {
     throw new TypeError("safe Quarto invocation inputs are invalid");
   }
   return Object.freeze({
     file: runtime.quartoExecutable,
-    args: Object.freeze(["render", `./source/${snapshot.entryBasename}`, "--no-execute", "--output-dir", output.relativePath]),
+    args: Object.freeze([
+      "render", `./source/${snapshot.entryBasename}`,
+      ...(execution ? [] : ["--no-execute"]),
+      "--output-dir", output.relativePath,
+    ]),
     cwd: snapshot.disposableRoot,
     shell: false,
   });
@@ -84,12 +89,14 @@ function diagnostic(error) {
 }
 
 export class SafeQuartoRenderer {
-  constructor({ runtime, sandboxFactory = buildSafeQuartoSandbox, run = runProcess, temporaryDirectory = tmpdir() } = {}) {
+  constructor({ executionMode = "forbid", runtime, sandboxFactory = buildSafeQuartoSandbox, run = runProcess, temporaryDirectory = tmpdir() } = {}) {
     if (!runtime || typeof runtime.quartoExecutable !== "string" || resolve(runtime.quartoExecutable) !== runtime.quartoExecutable
       || typeof runtime.runtimeRoot !== "string" || resolve(runtime.runtimeRoot) !== runtime.runtimeRoot
-      || typeof sandboxFactory !== "function" || typeof run !== "function") {
+      || typeof sandboxFactory !== "function" || typeof run !== "function"
+      || !(typeof executionMode === "function" || ["forbid", "sandboxed"].includes(executionMode))) {
       throw new TypeError("Safe Quarto renderer dependencies are invalid");
     }
+    this.executionMode = executionMode;
     this.runtime = Object.freeze({ ...runtime });
     this.sandboxFactory = sandboxFactory;
     this.run = run;
@@ -105,8 +112,17 @@ export class SafeQuartoRenderer {
       || typeof source !== "string" || !Number.isSafeInteger(version) || version < 0) {
       throw new TypeError("Safe Quarto render request is invalid");
     }
-    const policy = validatePassiveQuartoInput(source);
-    if (policy.kind !== "passive-input") return Object.freeze({ kind: "unsafe-input", reason: policy.reason, lastGood: this.lastGood });
+    // "sandboxed" execution renders inside an OS sandbox whose filesystem
+    // allowlist and unshared network namespace are the boundary, so the
+    // passive-input scan is waived; "forbid" keeps the passive policy plus
+    // --no-execute as before. A function is re-evaluated on every render so
+    // configuration changes apply without recreating the session.
+    const mode = typeof this.executionMode === "function" ? this.executionMode() : this.executionMode;
+    const execution = mode === "sandboxed";
+    if (!execution) {
+      const policy = validatePassiveQuartoInput(source);
+      if (policy.kind !== "passive-input") return Object.freeze({ kind: "unsafe-input", reason: policy.reason, lastGood: this.lastGood });
+    }
     const canonical = await realpath(sourcePath);
     const sourceMetadata = await lstat(canonical);
     if (!sourceMetadata.isFile() || sourceMetadata.isSymbolicLink() || await readFile(canonical, "utf8") !== source) {
@@ -126,14 +142,16 @@ export class SafeQuartoRenderer {
     const entryBasename = "index.qmd";
     await Promise.all([
       writeFile(join(sourceRoot, entryBasename), source, { flag: "wx", mode: 0o600 }),
-      writeFile(join(root, "_quarto.yml"), "project:\n  type: default\nexecute:\n  enabled: false\nformat:\n  html:\n    embed-resources: true\n", { flag: "wx", mode: 0o600 }),
+      writeFile(join(root, "_quarto.yml"), `project:\n  type: default\nexecute:\n  enabled: ${execution}\nformat:\n  html:\n    embed-resources: true\n`, { flag: "wx", mode: 0o600 }),
     ]);
     const invocation = buildSafeQuartoInvocation({
       snapshot: { disposableRoot: root, entryBasename },
       runtime: this.runtime,
       output: { relativePath: "./output" },
+      execution,
     });
     const sandbox = this.sandboxFactory({
+      execution,
       invocation,
       outputRoot,
       runtimeRoot: this.runtime.runtimeRoot,
