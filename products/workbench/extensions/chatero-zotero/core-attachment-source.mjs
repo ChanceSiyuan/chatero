@@ -1,7 +1,9 @@
 import { Buffer } from "node:buffer";
 
-const MAX_READ_BYTES = 256 * 1024;
+// Must stay in step with chateroCoreAttachmentSourceRegistry.mjs -- both sides validate it.
+const MAX_READ_BYTES = 512 * 1024;
 const SOURCE_ID = /^[A-Za-z0-9_-]{43}$/u;
+const BASE64URL_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
 function unavailable() {
   const error = new Error("The Zotero attachment source is unavailable");
@@ -21,9 +23,14 @@ function validateRecord(record) {
 
 function decodeChunk(value) {
   if (typeof value !== "string" || !/^[A-Za-z0-9_-]+$/u.test(value)) throw unavailable();
-  const bytes = Buffer.from(value, "base64url");
-  if (!bytes.length || bytes.toString("base64url") !== value) throw unavailable();
-  return Uint8Array.from(bytes);
+  // Canonical unpadded base64url: the tail must not carry bits the decoded bytes drop.
+  const remainder = value.length % 4;
+  const trailing = BASE64URL_ALPHABET.indexOf(value[value.length - 1]);
+  if (remainder === 1 || (remainder === 2 && trailing % 16 !== 0) || (remainder === 3 && trailing % 4 !== 0)) {
+    throw unavailable();
+  }
+  // Copy out of the Buffer: Buffer.from(string) can hand back a slice of the shared pool.
+  return Uint8Array.from(Buffer.from(value, "base64url"));
 }
 
 export async function openCoreAttachmentSource(record, { request } = {}) {

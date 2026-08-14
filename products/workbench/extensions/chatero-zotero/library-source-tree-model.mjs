@@ -5,6 +5,7 @@ function source(kind, value, extra = {}) {
 export class LibrarySourceTreeModel {
   #core;
   #feeds = [];
+  #collections = null;
 
   constructor({ core } = {}) {
     if (!core || !["libraries", "collections", "feeds", "savedSearches", "syncStatus"].every(method => typeof core[method] === "function")) {
@@ -14,6 +15,7 @@ export class LibrarySourceTreeModel {
   }
 
   async roots() {
+    this.#collections = null;
     const [libraries, feeds, sync] = await Promise.all([
       this.#core.libraries(),
       this.#core.feeds(),
@@ -36,8 +38,15 @@ export class LibrarySourceTreeModel {
       return Object.freeze(collections.map(value => source("collection", value)));
     }
     if (element.kind !== "library") return Object.freeze([]);
+    if (!this.#collections) {
+      const pending = Promise.resolve(this.#core.collections()).catch(error => {
+        if (this.#collections === pending) this.#collections = null;
+        throw error;
+      });
+      this.#collections = pending;
+    }
     const [collections, searches] = await Promise.all([
-      this.#core.collections(),
+      this.#collections,
       this.#core.savedSearches({ libraryId: element.value.libraryId }),
     ]);
     const libraryCollections = collections.filter(value => value.libraryId === element.value.libraryId && !value.parentKey);

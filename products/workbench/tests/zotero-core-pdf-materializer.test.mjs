@@ -45,7 +45,7 @@ test("Core attachment source exposes bounded bytes without accepting a filesyste
 test("PDF materializer writes owner-only disposable content from bounded Core chunks", async () => {
   const temporary = await mkdtemp(join(tmpdir(), "chatero-materializer-test-"));
   const rootDirectory = join(temporary, "cache");
-  const bytes = Buffer.alloc(300_000, 0x41);
+  const bytes = Buffer.alloc(600_000, 0x41);
   bytes.set(Buffer.from("%PDF"), 0);
   const calls = [];
   const materializer = new CorePdfMaterializer({ request: rpc(bytes, calls), rootDirectory });

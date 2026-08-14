@@ -185,7 +185,8 @@ test("commits an upstream Reader save as one atomic create, trash, and update ba
   assert.equal(calls[0].libraryId, 7);
   assert.deepEqual(calls[0].operations.map(value => value.kind), ["annotation-mutate", "annotation-mutate", "annotations-update"]);
   assert.deepEqual(result.created.map(value => [value.changeIndex, value.annotation.annotationKey]), [[0, "ANNNEW01"]]);
-  assert.deepEqual(model.annotations.map(value => value.annotationKey), ["ANNNEW01", "ANN00001"]);
+  assert.deepEqual(model.annotations.map(value => value.annotationKey), ["ANN00001", "ANNNEW01"]);
+  assert.deepEqual(model.annotations.map(value => [value.comment, value.version]), [["Edited", 3], ["Created", 1]]);
 });
 
 test("keeps the loaded Reader snapshot unchanged when an atomic save fails", async () => {

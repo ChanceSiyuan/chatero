@@ -148,7 +148,8 @@ export class LibraryItemTableModel {
       query: this.#query,
       sortBy: this.#sortBy,
       sortDirection: this.#sortDirection,
-      rows: Object.freeze(this.#rows.map(row => Object.freeze({ ...row }))),
+      // Rows are already frozen Core-validated records (or frozen copies made by restore).
+      rows: Object.freeze([...this.#rows]),
       selection: Object.freeze([...this.#selection]),
       ...(this.#nextCursor !== undefined && { nextCursor: this.#nextCursor }),
       total: this.#total,

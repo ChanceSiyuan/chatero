@@ -1,3 +1,5 @@
+import { Buffer } from "node:buffer";
+
 import { parseEvidenceDocumentUri } from "./evidence-editor-registry.mjs";
 
 export const PDF_CONTEXT_LIMITS = Object.freeze({
@@ -40,14 +42,15 @@ function utf8Width(character) {
 
 export function utf8ByteLength(value) {
   if (typeof value !== "string") throw new TypeError("PDF context text must be a string");
-  let bytes = 0;
-  for (const character of value) bytes += utf8Width(character);
-  return bytes;
+  // Buffer.byteLength agrees with the per-code-point widths above for every JS string,
+  // including lone surrogates (3 bytes as U+FFFD) and surrogate pairs (4 bytes).
+  return Buffer.byteLength(value, "utf8");
 }
 
 export function truncateUtf8(value, maxBytes) {
   if (typeof value !== "string") throw new TypeError("PDF context text must be a string");
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) throw new TypeError("PDF context byte limit is invalid");
+  if (Buffer.byteLength(value, "utf8") <= maxBytes) return value;
   let result = "";
   let bytes = 0;
   for (const character of value) {
@@ -127,15 +130,20 @@ function snapshotAnnotations(annotations, pageIndex) {
   const result = [];
   let remainingText = PDF_CONTEXT_LIMITS.annotationText;
 
-  const envelopeBytes = values => utf8ByteLength(JSON.stringify(values));
+  // JSON.stringify of an array costs 2 bracket bytes, one comma between elements and the
+  // element bytes themselves, so the accumulated elements never need re-serializing.
+  let usedElementBytes = 0;
+  const elementBytes = value => utf8ByteLength(JSON.stringify(value));
+  const envelopeFits = candidateBytes =>
+    2 + usedElementBytes + result.length + candidateBytes <= PDF_CONTEXT_LIMITS.annotationsEnvelope;
   const fitField = (base, field, value) => {
     const characters = Array.from(value);
     let low = 0;
     let high = characters.length;
     while (low < high) {
       const middle = Math.ceil((low + high) / 2);
-      const candidate = Object.freeze({ ...base, [field]: characters.slice(0, middle).join("") });
-      if (envelopeBytes([...result, candidate]) <= PDF_CONTEXT_LIMITS.annotationsEnvelope) low = middle;
+      const candidate = { ...base, [field]: characters.slice(0, middle).join("") };
+      if (envelopeFits(elementBytes(candidate))) low = middle;
       else high = middle - 1;
     }
     return characters.slice(0, low).join("");
@@ -150,19 +158,21 @@ function snapshotAnnotations(annotations, pageIndex) {
       text: "",
       comment: "",
     };
-    if (envelopeBytes([...result, base]) > PDF_CONTEXT_LIMITS.annotationsEnvelope) break;
+    if (!envelopeFits(elementBytes(base))) break;
     const text = fitField(base, "text", truncateUtf8(annotation.text, remainingText));
     remainingText -= utf8ByteLength(text);
     const withText = { ...base, text };
     const comment = fitField(withText, "comment", truncateUtf8(annotation.comment, remainingText));
     remainingText -= utf8ByteLength(comment);
-    result.push(Object.freeze({
+    const entry = {
       annotationKey: base.annotationKey,
       type: base.type,
       pageLabel: base.pageLabel,
       text,
       comment,
-    }));
+    };
+    usedElementBytes += elementBytes(entry);
+    result.push(Object.freeze(entry));
   }
   return Object.freeze(result);
 }

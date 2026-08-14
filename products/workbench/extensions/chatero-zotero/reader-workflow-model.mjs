@@ -68,6 +68,19 @@ function validateAnnotation(value) {
   return Object.freeze({ ...value, tags });
 }
 
+const ANNOTATION_UPDATE_FIELDS = Object.freeze(["color", "comment", "pageLabel", "positionJson", "sortIndex", "tags", "text", "type"]);
+
+// Core answers every write with the authoritative post-write state, so the loaded snapshot is
+// advanced locally instead of re-fetching and re-validating the whole annotation list.
+function mergeAnnotationUpdate(before, update, version) {
+  const merged = { ...before };
+  for (const field of ANNOTATION_UPDATE_FIELDS) {
+    if (update[field] !== undefined) merged[field] = update[field];
+  }
+  merged.version = Number.isSafeInteger(version) ? version : before.version;
+  return validateAnnotation(merged);
+}
+
 function validateNote(value) {
   object(value, "Zotero Note");
   integer(value.libraryId, "Zotero Note libraryId", 1);
@@ -226,7 +239,11 @@ export class ReaderWorkflowModel {
       const before = prior.get(value.annotationKey);
       return { annotationKey: value.annotationKey, color: before.color, comment: before.comment, expectedVersion: versions.get(value.annotationKey), pageLabel: before.pageLabel, positionJson: before.positionJson, sortIndex: before.sortIndex, tags: before.tags, text: before.text, type: before.type };
     }) });
-    await this.#reloadAnnotations();
+    const applied = new Map(normalized.map(value => [
+      value.annotationKey,
+      mergeAnnotationUpdate(prior.get(value.annotationKey), value, versions.get(value.annotationKey)),
+    ]));
+    this.#annotations = Object.freeze(this.#annotations.map(value => applied.get(value.annotationKey) ?? value));
     return result;
   }
 
@@ -238,7 +255,10 @@ export class ReaderWorkflowModel {
     const scope = `library:${this.#identity.libraryId}/attachment:${this.#identity.attachmentKey}`;
     const result = await this.#transact("library.annotation-mutate", { action, ...this.#identity, annotationKey, expectedVersion }, scope);
     this.#undo.push({ action: action === "trash" ? "restore" : "trash", annotationKey, expectedVersion: result.annotation.version });
-    await this.#reloadAnnotations();
+    const remaining = this.#annotations.filter(value => value.annotationKey !== annotationKey);
+    this.#annotations = Object.freeze(action === "trash"
+      ? remaining
+      : [...remaining, validateAnnotation(result.annotation)]);
     return result;
   }
 
@@ -248,6 +268,7 @@ export class ReaderWorkflowModel {
     const current = new Map(this.#annotations.map(value => [value.annotationKey, value]));
     const operations = [];
     const createdIndexes = [];
+    const trashedKeys = [];
     const updates = [];
     for (const [index, change] of changes.entries()) {
       object(change, `Reader change ${index}`);
@@ -271,6 +292,7 @@ export class ReaderWorkflowModel {
         const annotationKey = string(change.annotationKey, "annotation key", { maximum: 128 });
         if (!current.has(annotationKey)) throw new Error(`annotation ${annotationKey} is not loaded`);
         operations.push({ kind: "annotation-mutate", params: { action: "trash", ...this.#identity, annotationKey, expectedVersion: integer(change.expectedVersion, "annotation expectedVersion") } });
+        trashedKeys.push(annotationKey);
         continue;
       }
       const annotationKey = string(change.annotationKey, "annotation key", { maximum: 128 });
@@ -290,6 +312,7 @@ export class ReaderWorkflowModel {
       if (Object.keys(update).length === 2) continue;
       updates.push(update);
     }
+    const updatesOperationIndex = operations.length;
     if (updates.length) operations.push({ kind: "annotations-update", params: { ...this.#identity, updates } });
     if (!operations.length) return Object.freeze({ created: Object.freeze([]), replayed: false, results: Object.freeze([]), revision: 0 });
     const result = await this.#core.batchMutate({ libraryId: this.#identity.libraryId, operations });
@@ -297,7 +320,19 @@ export class ReaderWorkflowModel {
       changeIndex,
       annotation: validateAnnotation(result.results[operationIndex]?.result?.annotation),
     }));
-    await this.#reloadAnnotations();
+    const updated = updates.length ? result.results[updatesOperationIndex]?.result?.annotations : null;
+    const versions = new Map(Array.isArray(updated) ? updated.map(value => [value.annotationKey, value.version]) : []);
+    const applied = new Map(updates.map(value => [
+      value.annotationKey,
+      mergeAnnotationUpdate(current.get(value.annotationKey), value, versions.get(value.annotationKey)),
+    ]));
+    const trashed = new Set(trashedKeys);
+    this.#annotations = Object.freeze([
+      ...this.#annotations
+        .filter(value => !trashed.has(value.annotationKey))
+        .map(value => applied.get(value.annotationKey) ?? value),
+      ...created.map(value => value.annotation),
+    ]);
     return Object.freeze({ ...result, created: Object.freeze(created) });
   }
 
