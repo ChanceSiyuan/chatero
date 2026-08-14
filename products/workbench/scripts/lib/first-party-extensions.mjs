@@ -58,7 +58,7 @@ async function assertSourceFile(root, relativePath) {
   }
 }
 
-async function assertSafeDestinationAncestors(checkout, destination) {
+export async function assertSafeDestinationAncestors(checkout, destination) {
   const relativePath = relative(checkout, destination);
   const parts = relativePath.split(sep).slice(0, -1);
   let current = checkout;

@@ -213,12 +213,19 @@ async function activate(context) {
   const createReaderWorkflow = core => new ReaderWorkflowModel({ core });
   const dragAndDropController = {
     dragMimeTypes: ["application/vnd.chatero.zotero-items"],
-    dropMimeTypes: ["application/vnd.chatero.zotero-items"],
+    dropMimeTypes: ["application/vnd.chatero.zotero-items", "text/uri-list"],
     handleDrag(source, dataTransfer) {
       const identities = source.filter(value => value.kind === "item").map(value => ({ itemKey: value.value.itemKey, libraryId: value.value.libraryId }));
       dataTransfer.set("application/vnd.chatero.zotero-items", new vscode.DataTransferItem(identities));
     },
-    async handleDrop() {},
+    async handleDrop(_target, dataTransfer) {
+      const entry = dataTransfer.get("text/uri-list");
+      if (!entry) return;
+      const text = typeof entry.value === "string" ? entry.value : await entry.asString?.();
+      const { parseDroppedFileUris } = await import("./attachment-import.mjs");
+      const uris = parseDroppedFileUris(text, value => vscode.Uri.parse(value, true));
+      if (uris.length) await importAttachmentUris(uris);
+    },
   };
   const sourceView = vscode.window.createTreeView("chatero.zotero.library", { treeDataProvider: sourceProvider });
   const itemView = vscode.window.createTreeView("chatero.zotero.items", {
@@ -774,6 +781,50 @@ async function activate(context) {
       await persistAndRefreshItems();
     }
     catch (error) { void vscode.window.showErrorMessage(`Could not import Zotero items: ${error.message}`); }
+  }));
+  const importAttachmentUris = async uris => {
+    const source = itemProvider.model?.source;
+    if (!source) return void vscode.window.showErrorMessage("Select a Zotero library first.");
+    const failures = [];
+    let imported = 0;
+    try {
+      const { importFileAttachment } = await import("./attachment-import.mjs");
+      await vscode.window.withProgress({ cancellable: true, location: vscode.ProgressLocation.Notification, title: "Importing attachments into Zotero" }, async (progress, token) => {
+        for (const [index, uri] of uris.entries()) {
+          if (token?.isCancellationRequested) break;
+          const filename = uri.path.split("/").at(-1) || "";
+          progress.report({ increment: index === 0 ? 0 : 100 / uris.length, message: filename });
+          try {
+            const bytes = await vscode.workspace.fs.readFile(uri);
+            await importFileAttachment({
+              core: sourceProvider.core,
+              libraryId: source.libraryId,
+              ...(source.kind === "collection" && typeof source.collectionKey === "string" && { collectionKey: source.collectionKey }),
+              filename,
+              bytes,
+            });
+            imported += 1;
+          }
+          catch (error) { failures.push(`${filename || uri.toString()}: ${error.message}`); }
+        }
+      });
+      if (imported) await persistAndRefreshItems();
+    }
+    catch (error) {
+      void vscode.window.showErrorMessage(`Could not import attachments: ${error.message}`);
+      return;
+    }
+    if (failures.length) void vscode.window.showErrorMessage(`Could not import ${failures.length} attachment${failures.length === 1 ? "" : "s"}: ${failures.join("; ")}`);
+    else if (imported) void vscode.window.showInformationMessage(`Imported ${imported} attachment${imported === 1 ? "" : "s"} into Zotero.`);
+  };
+  context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.importFileAttachment", async () => {
+    if (!itemProvider.model?.source) return void vscode.window.showErrorMessage("Select a Zotero library first.");
+    const uris = await vscode.window.showOpenDialog({
+      canSelectMany: true,
+      filters: { "Documents": ["pdf", "epub", "html", "htm"], "All Files": ["*"] },
+      openLabel: "Import to Zotero",
+    });
+    if (uris?.length) await importAttachmentUris(uris);
   }));
   context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.lookupIdentifier", async () => {
     const text = await vscode.window.showInputBox({ placeHolder: "DOI, ISBN, PMID, arXiv ID, or URL", prompt: "Look up bibliographic metadata" });

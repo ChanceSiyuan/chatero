@@ -48,7 +48,11 @@ and Open VSX configuration, applies the marketplace policy gate, and publishes
 
 `workbench:verify` is read-only. It checks HEAD, runtime pins, patch digests,
 product digest, managed worktree paths, complete binary diff digest, and policy.
-A second `workbench:bootstrap` returns the verified checkout unchanged.
+A second `workbench:bootstrap` returns the verified checkout, re-materializing the
+first-party extensions and re-recording their provenance when the repository
+sources have moved ahead of the generated checkout. `workbench:compile` and
+`workbench:dev` perform the same refresh, so a launch always runs current
+extension code.
 
 `workbench:install`, `workbench:compile`, and `workbench:dev` never imply one
 another. The runner refuses an unverified checkout, a mismatched Node version,

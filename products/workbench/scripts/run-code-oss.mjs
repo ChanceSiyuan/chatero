@@ -4,7 +4,9 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
+import { buildDocumentationWebview } from "./build-documentation-webview.mjs";
 import { loadUpstreamContract } from "./lib/upstream-contract.mjs";
+import { refreshFirstPartyExtensions } from "./lib/refresh-first-party.mjs";
 import { verifyCodeOss } from "./verify-code-oss.mjs";
 
 const execFile = promisify(execFileCallback);
@@ -140,12 +142,22 @@ export async function preflightRuntime({
   };
 }
 
+async function defaultRefreshExtensions({ root, workbenchRoot, checkout }) {
+  return refreshFirstPartyExtensions({
+    root,
+    checkout,
+    manifestPath: join(workbenchRoot, "first-party-extensions.json"),
+    buildWebview: buildDocumentationWebview,
+  });
+}
+
 export async function runDevelopment({
   checkout = process.env.CHATERO_CODE_OSS_DIR || join(DEFAULT_REPOSITORY_ROOT, "vendor", "code-oss"),
   install = false,
   compile = false,
   launch = false,
   preflightOptions = {},
+  refreshExtensions = defaultRefreshExtensions,
   run = defaultRun,
 } = {}) {
   if (!install && !compile && !launch) {
@@ -156,7 +168,9 @@ export async function runDevelopment({
     ...preflightOptions,
     checkout: canonicalCheckout,
   });
-  if (launch) {
+  // Every precondition that can refuse the run is checked before anything
+  // mutates the checkout, so a refusal never leaves a half-refreshed tree.
+  if (launch && !compile) {
     const compiledEntry = join(canonicalCheckout, "out", "main.js");
     const compiled = await stat(compiledEntry).catch(error => {
       if (error?.code === "ENOENT") return null;
@@ -164,6 +178,26 @@ export async function runDevelopment({
     });
     if (!compiled?.isFile()) {
       throw new Error("compile the workbench before launch; out/main.js is missing");
+    }
+  }
+  // The preflight proves the checkout is consistent with its own provenance;
+  // it says nothing about the repository's extension sources having moved
+  // ahead. Refresh stale first-party extensions so every compile/launch runs
+  // current code, then re-verify the rewritten provenance.
+  const root = preflightOptions.root ?? DEFAULT_REPOSITORY_ROOT;
+  const workbenchRoot = preflightOptions.workbenchRoot ?? join(root, "products", "workbench");
+  const firstPartyRefresh = await refreshExtensions({ root, workbenchRoot, checkout: canonicalCheckout });
+  let verification = preflight.verification;
+  if (firstPartyRefresh?.refreshed) {
+    verification = await (preflightOptions.verify ?? verifyCodeOss)({
+      root,
+      workbenchRoot,
+      destination: canonicalCheckout,
+      contractPath: preflightOptions.contractPath ?? join(workbenchRoot, "upstreams.json"),
+      contract: preflightOptions.contract,
+    });
+    if (!verification?.ok) {
+      throw new Error("Code-OSS verification did not pass after refreshing first-party extensions");
     }
   }
 
@@ -181,7 +215,7 @@ export async function runDevelopment({
     });
     completed.push(stage.name);
   }
-  return { completed, preflight };
+  return { completed, firstPartyRefresh, preflight: { ...preflight, verification } };
 }
 
 function parseActions(args) {

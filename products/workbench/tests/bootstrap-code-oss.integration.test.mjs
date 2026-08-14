@@ -164,14 +164,20 @@ test("reuses a valid generated checkout without rewriting provenance", async () 
   assert.equal(after.mtimeMs, before.mtimeMs);
 });
 
-test("refuses to reuse a verified checkout after first-party extension source changes", async () => {
+test("refreshes a reused checkout after first-party extension source changes", async () => {
   const { bootstrapCodeOss } = await import("../scripts/bootstrap-code-oss.mjs");
+  const { verifyCodeOss } = await import("../scripts/verify-code-oss.mjs");
   const input = await createFixture();
   await bootstrapCodeOss(input);
   await writeFile(join(input.root, "first-party-src", "extension.mjs"), "export function activate() { return 'new'; }\n");
 
-  await assert.rejects(bootstrapCodeOss(input), /first-party extension sources differ/);
-  assert.equal(await readFile(join(input.destination, "extensions", "chatero-zotero", "extension.mjs"), "utf8"), "export function activate() {}\n");
+  const result = await bootstrapCodeOss(input);
+  assert.equal(result.reused, true);
+  assert.equal(result.refreshedFirstPartyExtensions, true);
+  assert.equal(await readFile(join(input.destination, "extensions", "chatero-zotero", "extension.mjs"), "utf8"), "export function activate() { return 'new'; }\n");
+  const provenance = JSON.parse(await readFile(join(input.destination, ".chatero-provenance.json"), "utf8"));
+  assert.equal(provenance.firstPartyExtensions[0].files[0].sha256.length, 64);
+  assert.equal((await verifyCodeOss(input)).ok, true);
 });
 
 test("refuses to repair or overwrite a tampered generated checkout", async () => {

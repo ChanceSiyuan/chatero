@@ -7,7 +7,8 @@ import { promisify } from "node:util";
 
 import { ensureCheckout } from "./lib/git-checkout.mjs";
 import { buildDocumentationWebview } from "./build-documentation-webview.mjs";
-import { inspectFirstPartyExtensionSources, materializeFirstPartyExtensions } from "./lib/first-party-extensions.mjs";
+import { materializeFirstPartyExtensions } from "./lib/first-party-extensions.mjs";
+import { refreshFirstPartyExtensions } from "./lib/refresh-first-party.mjs";
 import { applyPatchSeries } from "./lib/patch-series.mjs";
 import { materializeProduct } from "./lib/product-materializer.mjs";
 import { loadUpstreamContract } from "./lib/upstream-contract.mjs";
@@ -94,19 +95,32 @@ export async function bootstrapCodeOss({
   };
 
   if (await exists(provenancePath)) {
-    try {
-      const report = await verifyCodeOss(verificationInput);
-      const currentSources = await inspectFirstPartyExtensionSources({ root, manifestPath: firstPartyManifestPath });
-      if (JSON.stringify(currentSources) !== JSON.stringify(report.firstPartyExtensions)) {
-        throw new Error("first-party extension sources differ from the generated checkout; create a new generated checkout");
-      }
-      return { ...report, reused: true };
-    }
+    let report;
+    try { report = await verifyCodeOss(verificationInput); }
     catch (error) {
       throw new Error(`existing generated checkout failed verification: ${error.message}`, {
         cause: error,
       });
     }
+    // Refresh failures are build or IO problems, not provenance problems;
+    // reporting them as failed verification would send the operator to delete a
+    // checkout that is in fact intact.
+    const refresh = await refreshFirstPartyExtensions({
+      root,
+      checkout: canonicalDestination,
+      manifestPath: firstPartyManifestPath,
+      buildWebview: buildDocumentationWebview,
+      runGit,
+    });
+    if (refresh.refreshed) {
+      try { report = await verifyCodeOss(verificationInput); }
+      catch (error) {
+        throw new Error(`generated checkout failed verification after refreshing first-party extensions: ${error.message}`, {
+          cause: error,
+        });
+      }
+    }
+    return { ...report, refreshedFirstPartyExtensions: refresh.refreshed, reused: true };
   }
 
   await ensureCheckout({

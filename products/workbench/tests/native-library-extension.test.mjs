@@ -22,6 +22,7 @@ test("declares native Library source and item-table views with Stage 3 commands"
     "chatero.zotero.batchRestore",
     "chatero.zotero.batchTrash",
     "chatero.zotero.exportItems",
+    "chatero.zotero.importFileAttachment",
     "chatero.zotero.importItems",
     "chatero.zotero.insertCitation",
     "chatero.zotero.loadMoreItems",

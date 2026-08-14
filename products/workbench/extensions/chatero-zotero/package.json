@@ -144,6 +144,11 @@
         "category": "Chatero"
       },
       {
+        "command": "chatero.zotero.importFileAttachment",
+        "title": "Import File Attachment…",
+        "category": "Chatero"
+      },
+      {
         "command": "chatero.zotero.exportItems",
         "title": "Export Selected Items…",
         "category": "Chatero"

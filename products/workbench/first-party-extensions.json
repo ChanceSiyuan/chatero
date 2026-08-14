@@ -459,6 +459,10 @@
           "destination": "extensions/chatero-zotero/evidence-authority.mjs"
         },
         {
+          "source": "products/workbench/extensions/chatero-zotero/attachment-import.mjs",
+          "destination": "extensions/chatero-zotero/attachment-import.mjs"
+        },
+        {
           "source": "products/workbench/extensions/chatero-zotero/evidence-editor-html.mjs",
           "destination": "extensions/chatero-zotero/evidence-editor-html.mjs"
         },

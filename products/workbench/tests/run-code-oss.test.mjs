@@ -127,6 +127,7 @@ test("runs explicit install and compile stages with fixed argv in the checkout",
     compile: true,
     launch: false,
     preflightOptions: passingPreflight(),
+    refreshExtensions: async () => ({ refreshed: false, extensions: [] }),
     run: async call => { calls.push(call); },
   });
 
@@ -146,6 +147,7 @@ test("launches only a compiled checkout and never adds an implicit build stage",
       checkout: uncompiled,
       launch: true,
       preflightOptions: passingPreflight(),
+      refreshExtensions: async () => ({ refreshed: false, extensions: [] }),
       run: async () => assert.fail("must not launch an uncompiled checkout"),
     }),
     /compile the workbench before launch/
@@ -157,6 +159,7 @@ test("launches only a compiled checkout and never adds an implicit build stage",
     checkout: compiled,
     launch: true,
     preflightOptions: passingPreflight(),
+    refreshExtensions: async () => ({ refreshed: false, extensions: [] }),
     run: async call => { calls.push(call); },
   });
   assert.deepEqual(calls, [{
@@ -179,4 +182,65 @@ test("requires at least one explicit development action", async () => {
     }),
     /select at least one of --install, --compile, or --launch/
   );
+});
+
+test("refreshes stale first-party extensions after preflight and re-verifies only on change", async () => {
+  const { runDevelopment } = await import("../scripts/run-code-oss.mjs");
+  const checkout = await checkoutFixture({ compiled: true });
+  const refreshCalls = [];
+  const verifyCalls = [];
+
+  const order = [];
+  const clean = await runDevelopment({
+    checkout,
+    compile: true,
+    preflightOptions: passingPreflight({
+      verify: async () => { verifyCalls.push("verify"); order.push("verify"); return { ok: true }; },
+    }),
+    refreshExtensions: async call => {
+      refreshCalls.push(call);
+      order.push("refresh");
+      return { refreshed: false, extensions: ["chatero.zotero"] };
+    },
+    run: async () => { order.push("stage"); },
+  });
+  assert.deepEqual(order, ["verify", "refresh", "stage"], "preflight verification must precede any checkout mutation");
+  assert.equal(refreshCalls.length, 1);
+  assert.equal(refreshCalls[0].checkout, checkout);
+  assert.ok(refreshCalls[0].root);
+  assert.ok(refreshCalls[0].workbenchRoot.endsWith("workbench"));
+  assert.equal(clean.firstPartyRefresh.refreshed, false);
+  assert.deepEqual(verifyCalls, ["verify"]);
+
+  const refreshed = await runDevelopment({
+    checkout,
+    compile: true,
+    preflightOptions: passingPreflight({
+      verify: async () => { verifyCalls.push("verify"); return { ok: true, round: verifyCalls.length }; },
+    }),
+    refreshExtensions: async () => ({ refreshed: true, extensions: ["chatero.zotero"] }),
+    run: async () => {},
+  });
+  assert.equal(refreshed.firstPartyRefresh.refreshed, true);
+  assert.deepEqual(verifyCalls, ["verify", "verify", "verify"]);
+  assert.equal(refreshed.preflight.verification.round, 3, "the returned verification must be the post-refresh one");
+});
+
+test("fails the run when post-refresh verification does not pass", async () => {
+  const { runDevelopment } = await import("../scripts/run-code-oss.mjs");
+  const checkout = await checkoutFixture({ compiled: true });
+  let verifications = 0;
+
+  await assert.rejects(runDevelopment({
+    checkout,
+    compile: true,
+    preflightOptions: passingPreflight({
+      verify: async () => {
+        verifications += 1;
+        return verifications === 1 ? { ok: true } : { ok: false };
+      },
+    }),
+    refreshExtensions: async () => ({ refreshed: true, extensions: [] }),
+    run: async () => assert.fail("stages must not run after failed post-refresh verification"),
+  }), /verification did not pass after refreshing first-party extensions/);
 });

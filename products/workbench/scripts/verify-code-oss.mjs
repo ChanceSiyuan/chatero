@@ -11,7 +11,7 @@ import { verifyWorkbenchPolicy } from "./lib/workbench-policy.mjs";
 
 const execFile = promisify(execFileCallback);
 const PROVENANCE_FILE = ".chatero-provenance.json";
-const BUILD_GENERATED_TRACKED_PATHS = Object.freeze([
+export const BUILD_GENERATED_TRACKED_PATHS = Object.freeze([
   "src/vs/platform/extensions/common/extensionsApiProposals.ts",
 ]);
 const MAX_PROVENANCE_BYTES = 128 * 1024;
