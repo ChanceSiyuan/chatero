@@ -17,9 +17,10 @@
   ],
   "main": "./extension.cjs",
   "activationEvents": [
-    "*",
-    "onStartupFinished",
-    "onCustomEditor:chatero.documentation.livePreview"
+    "onView:chatero.documentation.pages",
+    "onCustomEditor:chatero.documentation.livePreview",
+    "onLanguageModelTool:chatero_documentation_retrieve",
+    "onLanguageModelTool:chatero_documentation_stage"
   ],
   "capabilities": {
     "untrustedWorkspaces": {
@@ -287,7 +288,7 @@
           "id": "chatero.documentation.pages",
           "name": "Documentation",
           "icon": "media/documentation.svg",
-          "when": "chatero.documentation.enabled"
+          "when": "config.chatero.documentation.enabled"
         }
       ]
     }

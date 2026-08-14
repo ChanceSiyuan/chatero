@@ -69,6 +69,12 @@ function readElectronTarget(npmrc) {
   return { runtime, target };
 }
 
+function throwPreconditions(failures) {
+  if (failures.length === 0) return;
+  if (failures.length === 1) throw new Error(failures[0]);
+  throw new Error(`unmet Code-OSS development preconditions:\n${failures.map(failure => `  - ${failure}`).join("\n")}`);
+}
+
 export async function preflightRuntime({
   checkout,
   root = DEFAULT_REPOSITORY_ROOT,
@@ -82,31 +88,38 @@ export async function preflightRuntime({
   verify = verifyCodeOss,
 } = {}) {
   const pinned = contract || await loadUpstreamContract(contractPath);
+
+  // Host preconditions are reported together so a fresh machine is fixed in one round,
+  // but nothing inspects the checkout until the host itself can run this workbench.
+  const hostFailures = [];
   if (processVersions.node !== pinned.codeOss.node) {
-    throw new Error(`Code-OSS ${pinned.codeOss.version} requires Node ${pinned.codeOss.node}; current Node is ${processVersions.node}`);
+    hostFailures.push(`Code-OSS ${pinned.codeOss.version} requires Node ${pinned.codeOss.node}; current Node is ${processVersions.node}`);
   }
   if (platform !== "darwin") {
-    throw new Error("the first Chatero workbench developer target requires macOS");
+    hostFailures.push("the first Chatero workbench developer target requires macOS");
   }
+  throwPreconditions(hostFailures);
 
   const canonicalCheckout = resolve(checkout);
+  const checkoutFailures = [];
   const available = await freeBytes(canonicalCheckout);
   if (available < REQUIRED_FREE_BYTES) {
-    throw new Error(`Code-OSS development requires at least 20 GiB free; found ${(available / 1024 ** 3).toFixed(1)} GiB`);
+    checkoutFailures.push(`Code-OSS development requires at least 20 GiB free; found ${(available / 1024 ** 3).toFixed(1)} GiB`);
   }
   if (!await findXcrun()) {
-    throw new Error("Xcode command line tools are required; xcrun could not find clang");
+    checkoutFailures.push("Xcode command line tools are required; xcrun could not find clang");
   }
 
   const declaredNode = (await readFile(join(canonicalCheckout, ".nvmrc"), "utf8")).trim();
   if (declaredNode !== pinned.codeOss.node) {
-    throw new Error(`checkout .nvmrc declares ${declaredNode}, expected ${pinned.codeOss.node}`);
+    checkoutFailures.push(`checkout .nvmrc declares ${declaredNode}, expected ${pinned.codeOss.node}`);
   }
   const npmrc = await readFile(join(canonicalCheckout, ".npmrc"), "utf8");
   const electron = readElectronTarget(npmrc);
   if (electron.runtime !== "electron" || electron.target !== pinned.codeOss.electron) {
-    throw new Error(`checkout .npmrc must declare runtime electron and target ${pinned.codeOss.electron}`);
+    checkoutFailures.push(`checkout .npmrc must declare runtime electron and target ${pinned.codeOss.electron}`);
   }
+  throwPreconditions(checkoutFailures);
 
   const verification = await verify({
     root,

@@ -69,7 +69,14 @@ test("Documentation is the default workspace surface with optional Live Preview"
   assert.equal(`${manifest.publisher}.${manifest.name}`, "chatero.chatero-documentation");
   assert.equal(manifest.engines.vscode, "^1.132.0");
   assert.deepEqual(manifest.extensionKind, ["workspace"]);
-  assert.equal(manifest.activationEvents.includes("*"), true);
+  assert.equal(manifest.activationEvents.includes("*"), false);
+  assert.equal(manifest.activationEvents.includes("onStartupFinished"), false);
+  assert.deepEqual(manifest.activationEvents, [
+    "onView:chatero.documentation.pages",
+    "onCustomEditor:chatero.documentation.livePreview",
+    "onLanguageModelTool:chatero_documentation_retrieve",
+    "onLanguageModelTool:chatero_documentation_stage",
+  ]);
   assert.equal(
     manifest.contributes.configuration.properties["chatero.documentation.enabled"].default,
     true,
@@ -86,6 +93,7 @@ test("Documentation is the default workspace surface with optional Live Preview"
   const explorerViews = manifest.contributes.views?.explorer ?? [];
   assert.deepEqual(explorerViews.map(view => view.name), ["Documentation"]);
   assert.ok(explorerViews[0].id.startsWith("chatero.documentation."));
+  assert.equal(explorerViews[0].when, "config.chatero.documentation.enabled");
 
   const commandIds = manifest.contributes.commands.map(command => command.command);
   assert.deepEqual(commandIds, [

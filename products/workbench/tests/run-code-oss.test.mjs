@@ -82,6 +82,29 @@ test("requires macOS, twenty GiB free, and Xcode command line tools", async () =
   );
 });
 
+test("reports every unmet checkout precondition in one failure", async () => {
+  const { preflightRuntime } = await import("../scripts/run-code-oss.mjs");
+  const checkout = await checkoutFixture();
+  await writeFile(join(checkout, ".nvmrc"), "24.17.0\n");
+  let verified = false;
+
+  await assert.rejects(
+    preflightRuntime(passingPreflight({
+      checkout,
+      freeBytes: async () => 19 * GIB,
+      findXcrun: async () => null,
+      verify: async () => { verified = true; },
+    })),
+    error => {
+      assert.match(error.message, /requires at least 20 GiB free/);
+      assert.match(error.message, /Xcode command line tools are required/);
+      assert.match(error.message, /checkout \.nvmrc declares 24\.17\.0, expected 24\.18\.0/);
+      return true;
+    }
+  );
+  assert.equal(verified, false);
+});
+
 test("rejects checkout runtime files that disagree with the pinned contract", async () => {
   const { preflightRuntime } = await import("../scripts/run-code-oss.mjs");
   const checkout = await checkoutFixture();

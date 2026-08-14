@@ -136,11 +136,8 @@ export async function applyPatchSeries({
     await runGit({ args: ["read-tree", "HEAD"], cwd: checkout, env: preflightEnv });
     for (const patch of verified) {
       try {
-        await runGit({
-          args: ["apply", "--cached", "--check", "--whitespace=error", patch.path],
-          cwd: checkout,
-          env: preflightEnv,
-        });
+        // `git apply --cached` validates the whole patch before touching the throwaway
+        // index, so a separate `--check` pass would repeat the identical validation.
         await runGit({
           args: ["apply", "--cached", "--whitespace=error", patch.path],
           cwd: checkout,

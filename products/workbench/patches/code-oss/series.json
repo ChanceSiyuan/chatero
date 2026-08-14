@@ -71,7 +71,7 @@
     },
     {
       "file": "0018-cursor-agent-keybindings.patch",
-      "sha256": "6ae805cf8ab63c27816cf4ca9a4477f0a7df0e0227eb3cd46929762b2126ec69"
+      "sha256": "b8841f74dfdaa7fe16cdb2d7a8166a0e8d6aec27d9e8601a439408231e7677ea"
     },
     {
       "file": "0019-isolate-workbench-user-data.patch",

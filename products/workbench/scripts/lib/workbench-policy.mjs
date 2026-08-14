@@ -2,7 +2,9 @@ import { lstat, readFile, readdir } from "node:fs/promises";
 import { extname, join, relative, resolve, sep } from "node:path";
 
 const SCANNED_EXTENSIONS = new Set([".cjs", ".js", ".json", ".mjs", ".patch", ".sh", ".ts"]);
-const MAX_SCANNED_FILE_BYTES = 4 * 1024 * 1024;
+// Matches the shipped-file bound in first-party-extensions.mjs so a vendored bundle can
+// never pass materialization and then fail the policy scan on size alone.
+const MAX_SCANNED_FILE_BYTES = 8 * 1024 * 1024;
 const FORBIDDEN_HOST = /https?:\/\/(?:[a-z0-9-]+\.)*gallerycdn\.vsassets\.io\b|https?:\/\/marketplace\.visualstudio\.com\b/gi;
 const FORBIDDEN_EXTENSION = /\b(?:github\.copilot(?:-chat)?|ms-python\.vscode-pylance|ms-vscode-remote\.remote-ssh)\b/gi;
 const FORBIDDEN_AGENT_DEPENDENCIES = new Set([
@@ -64,15 +66,68 @@ async function collectPolicyFiles(root, path, files, violations) {
   files.push(path);
 }
 
+function lineStarts(text) {
+  const starts = [0];
+  for (let index = text.indexOf("\n"); index >= 0; index = text.indexOf("\n", index + 1)) {
+    starts.push(index + 1);
+  }
+  return starts;
+}
+
+function lineIndexAt(starts, offset) {
+  let low = 0;
+  let high = starts.length - 1;
+  while (low < high) {
+    const middle = (low + high + 1) >> 1;
+    if (starts[middle] <= offset) low = middle;
+    else high = middle - 1;
+  }
+  return low;
+}
+
+function lineTextAt(text, starts, index) {
+  const end = index + 1 < starts.length ? starts[index + 1] - 1 : text.length;
+  const line = text.slice(starts[index], end);
+  return line.endsWith("\r") ? line.slice(0, -1) : line;
+}
+
+// Neither forbidden pattern can match across a newline, so one pass over the whole text
+// reports the same violation on the same line as a per-line pass, without splitting
+// multi-megabyte vendored bundles into millions of scanned strings.
+function scanWholeText(root, path, text, violations) {
+  const starts = lineStarts(text);
+  for (const [rule, pattern] of [
+    ["forbidden-host", FORBIDDEN_HOST],
+    ["forbidden-extension", FORBIDDEN_EXTENSION],
+  ]) {
+    pattern.lastIndex = 0;
+    let reported = -1;
+    for (let match = pattern.exec(text); match; match = pattern.exec(text)) {
+      const index = lineIndexAt(starts, match.index);
+      if (index === reported) continue;
+      reported = index;
+      violations.push({
+        rule,
+        path: displayPath(root, path),
+        line: index + 1,
+        excerpt: excerpt(lineTextAt(text, starts, index)),
+      });
+    }
+  }
+}
+
 function scanText(root, path, text, violations) {
   const unifiedPatch = extname(path) === ".patch" && /^diff --git /m.test(text);
+  if (!unifiedPatch) {
+    scanWholeText(root, path, text, violations);
+    return;
+  }
+  // A unified patch is only scanned on the lines it adds, so it keeps the per-line pass.
   for (const [index, line] of text.split(/\r?\n/).entries()) {
-    if (unifiedPatch && (line.startsWith("-") || !line.startsWith("+"))) {
+    if (!line.startsWith("+")) {
       continue;
     }
-    const policyLine = unifiedPatch && line.startsWith("+")
-      ? line.slice(1)
-      : line;
+    const policyLine = line.slice(1);
     FORBIDDEN_HOST.lastIndex = 0;
     if (FORBIDDEN_HOST.test(policyLine)) {
       violations.push({

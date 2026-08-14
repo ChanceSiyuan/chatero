@@ -2,7 +2,10 @@ import { createHash } from "node:crypto";
 import { lstat, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
 
-const MAX_FILE_BYTES = 4 * 1024 * 1024;
+// Bounds a single shipped file read; it is headroom over the largest vendored bundle
+// (the Zotero reader, ~3.5 MiB), not a size pin -- exact bytes are pinned per file by
+// the recorded provenance digests below.
+const MAX_FILE_BYTES = 8 * 1024 * 1024;
 const TOP_FIELDS = new Set(["schemaVersion", "extensions"]);
 const EXTENSION_FIELDS = new Set(["id", "files"]);
 const FILE_FIELDS = new Set(["source", "destination"]);

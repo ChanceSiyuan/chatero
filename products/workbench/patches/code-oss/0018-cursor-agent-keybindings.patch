@@ -1,8 +1,12 @@
 diff --git a/src/vs/workbench/contrib/inlineChat/browser/inlineChatActions.ts b/src/vs/workbench/contrib/inlineChat/browser/inlineChatActions.ts
 --- a/src/vs/workbench/contrib/inlineChat/browser/inlineChatActions.ts
 +++ b/src/vs/workbench/contrib/inlineChat/browser/inlineChatActions.ts
-@@ -62,7 +62,7 @@ export class StartSessionAction extends Action2 {
- 					ContextKeyExpr.or(CTX_INLINE_CHAT_FILE_BELONGS_TO_CHAT.negate(), CTX_ASK_IN_CHAT_ENABLED.negate())
+@@ -60,9 +60,10 @@ export class StartSessionAction extends Action2 {
+ 					EditorContextKeys.focus,
+ 					inlineChatContextKey,
+-					ContextKeyExpr.or(CTX_INLINE_CHAT_FILE_BELONGS_TO_CHAT.negate(), CTX_ASK_IN_CHAT_ENABLED.negate())
++					ContextKeyExpr.or(CTX_INLINE_CHAT_FILE_BELONGS_TO_CHAT.negate(), CTX_ASK_IN_CHAT_ENABLED.negate()),
++					EditorContextKeys.hasNonEmptySelection
  				),
  				weight: KeybindingWeight.WorkbenchContrib,
 -				primary: KeyMod.CtrlCmd | KeyCode.KeyI
