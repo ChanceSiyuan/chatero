@@ -114,6 +114,21 @@ var Zotero_Tabs = new function () {
 	// Ordered left to right; handle N sits between pane N and pane N+1.
 	const SPLIT_HANDLES = ['tabs-split-handle', 'tabs-split-handle-2'];
 	
+	/**
+	 * Divider positions are three CSS custom properties on the deck. Moving a
+	 * divider changes nothing else, so a drag writes these directly instead of
+	 * repainting the whole split layout on every mousemove.
+	 */
+	this._applySplitRatios = function (ratios, deck) {
+		let target = deck || document.getElementById('tabs-deck');
+		if (!target || !ratios) {
+			return;
+		}
+		target.style.setProperty('--qlab-split-ratio', String(ratios[0]));
+		target.style.setProperty('--qlab-split-a', String(ratios[0]));
+		target.style.setProperty('--qlab-split-b', String(ratios[1] !== undefined ? ratios[1] : 1));
+	};
+	
 	this._applySplitVisibility = function () {
 		let deck = document.getElementById('tabs-deck');
 		if (!deck) {
@@ -148,9 +163,7 @@ var Zotero_Tabs = new function () {
 		let ratios = visibility.splitRatios || [visibility.splitRatio];
 		deck.classList.toggle('is-split', visibility.split);
 		deck.classList.toggle('is-split-3', visibility.paneCount >= 3);
-		deck.style.setProperty('--qlab-split-ratio', String(ratios[0]));
-		deck.style.setProperty('--qlab-split-a', String(ratios[0]));
-		deck.style.setProperty('--qlab-split-b', String(ratios[1] !== undefined ? ratios[1] : 1));
+		this._applySplitRatios(ratios, deck);
 		
 		for (let i = 0; i < SPLIT_HANDLES.length; i++) {
 			let handle = document.getElementById(SPLIT_HANDLES[i]);
@@ -201,8 +214,11 @@ var Zotero_Tabs = new function () {
 			handle.classList.add('dragging');
 			event.preventDefault();
 			
-			let onMove = (moveEvent) => {
-				if (!dragging) {
+			let pendingClientX = null;
+			let frame = 0;
+			let applyPendingRatio = () => {
+				frame = 0;
+				if (!dragging || pendingClientX === null) {
 					return;
 				}
 				let rect = deck.getBoundingClientRect();
@@ -211,11 +227,19 @@ var Zotero_Tabs = new function () {
 				}
 				// Ratios are divider positions across the whole deck, so the same
 				// formula applies to every handle.
-				let ratio = (moveEvent.clientX - rect.left) / rect.width;
+				let ratio = (pendingClientX - rect.left) / rect.width;
 				try {
 					if (this._qlab && this._qlab.groups) {
-						// Clamping lives in the model; the change handler repaints.
-						this._qlab.groups.setSplitRatioAt(index, ratio);
+						// Clamping lives in the model; while dragging, the change
+						// handler only rewrites the deck's ratio variables. The full
+						// repaint runs once on mouseup.
+						this._draggingSplit = true;
+						try {
+							this._qlab.groups.setSplitRatioAt(index, ratio);
+						}
+						finally {
+							this._draggingSplit = false;
+						}
 						return;
 					}
 				}
@@ -225,12 +249,33 @@ var Zotero_Tabs = new function () {
 					String(Math.min(0.85, Math.max(0.15, ratio)))
 				);
 			};
+			// Pointer events outrun paint, so collapse a burst into one frame.
+			let onMove = (moveEvent) => {
+				if (!dragging) {
+					return;
+				}
+				pendingClientX = moveEvent.clientX;
+				if (typeof window.requestAnimationFrame !== 'function') {
+					applyPendingRatio();
+					return;
+				}
+				if (!frame) {
+					frame = window.requestAnimationFrame(applyPendingRatio);
+				}
+			};
 			let onUp = () => {
+				if (frame && typeof window.cancelAnimationFrame === 'function') {
+					window.cancelAnimationFrame(frame);
+				}
+				// Land the last pointer position a pending frame would have applied.
+				applyPendingRatio();
 				dragging = false;
 				handle.classList.remove('dragging');
 				window.removeEventListener('mousemove', onMove, true);
 				window.removeEventListener('mouseup', onUp, true);
 				try {
+					// Settle the layout once, now that the ratio is final.
+					this._applySplitVisibility();
 					Zotero.Session.debounceSave();
 				}
 				catch (e) {}
@@ -828,8 +873,16 @@ var Zotero_Tabs = new function () {
 		this._applySplitVisibility();
 	};
 	
-	this._onQLabGroupsChanged = function (_snapshot) {
+	this._onQLabGroupsChanged = function (snapshot) {
 		try {
+			if (this._draggingSplit) {
+				// Only a divider position moved. mouseup runs the full repaint and
+				// the session save.
+				this._applySplitRatios(
+					(snapshot && snapshot.splitRatios) || this._qlab.groups.splitRatios()
+				);
+				return;
+			}
 			this._applySplitVisibility();
 			Zotero.Session.debounceSave();
 		}

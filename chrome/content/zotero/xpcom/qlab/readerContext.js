@@ -16,6 +16,10 @@ Zotero.QLab = Zotero.QLab || {};
 (function () {
 	const MAX_PAGE = 12000;
 	const MAX_SELECTION = 8000;
+	// The selection popup captures on every drag, so the same page is extracted
+	// over and over. Page text is stable for a rendered page; the title can move
+	// if item metadata is edited, hence a short window rather than a hard cache.
+	const PAGE_MEMO_TTL_MS = 30_000;
 	
 	/**
 	 * Bound page text for prompts / composer tags.
@@ -81,6 +85,7 @@ Zotero.QLab = Zotero.QLab || {};
 	Zotero.QLab.ReaderContextStore = {
 		_context: null,
 		_chips: { paper: true, page: true, selection: true },
+		_pageMemo: null,
 		
 		get() {
 			return this._context;
@@ -98,6 +103,7 @@ Zotero.QLab = Zotero.QLab || {};
 		
 		clear() {
 			this._context = null;
+			this._pageMemo = null;
 		},
 		
 		/**
@@ -138,15 +144,34 @@ Zotero.QLab = Zotero.QLab || {};
 				selectionText = this._context.selection.text || '';
 			}
 			
-			let pageText = '';
-			try {
-				pageText = await Zotero.QLab.extractReaderPageText(reader, pageIndex);
-			}
-			catch (e) {}
+			// Reuse the last extraction for the same attachment page instead of
+			// re-reading the reader's text layer and re-resolving the title.
+			let memoKey = `${item.id}:${pageIndex}`;
+			let memo = this._pageMemo
+				&& this._pageMemo.key === memoKey
+				&& (Date.now() - this._pageMemo.at) < PAGE_MEMO_TTL_MS
+				? this._pageMemo
+				: null;
 			
-			let title = parent
-				? (await parent.getDisplayTitle())
-				: (item.attachmentFilename || item.getField('title') || 'PDF');
+			let pageText = memo ? memo.pageText : '';
+			if (!memo) {
+				try {
+					pageText = await Zotero.QLab.extractReaderPageText(reader, pageIndex);
+				}
+				catch (e) {}
+			}
+			
+			let title = memo
+				? memo.title
+				: (parent
+					? (await parent.getDisplayTitle())
+					: (item.attachmentFilename || item.getField('title') || 'PDF'));
+			
+			// Only memoize a page that actually yielded text -- an empty text layer
+			// means the page had not rendered yet and must be retried.
+			if (!memo && pageText) {
+				this._pageMemo = { key: memoKey, at: Date.now(), pageText, title };
+			}
 			
 			this._context = Object.freeze({
 				schemaVersion: 1,

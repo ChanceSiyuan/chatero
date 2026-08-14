@@ -161,7 +161,16 @@ const xpcomFilesLocal = [
 	'users',
 	'translation/translate_item',
 	'translation/translators',
-	// Chatero QLab (disableable; failures must not block core startup)
+];
+
+/**
+ * Chatero QLab XPCOM files.
+ *
+ * These are deliberately kept out of `xpcomFilesAll` so they can be loaded by a
+ * dedicated, failure-isolated loop: a QLab failure must never prevent Zotero
+ * core from starting. They are skipped entirely when `qlab.enabled` is false.
+ **/
+const xpcomFilesQLab = [
 	'qlab/tabGroups',
 	'qlab/qlabWorkspace',
 	'qlab/qlabStarterManifest',
@@ -333,6 +342,33 @@ function makeZoteroContext() {
 		catch (e) {
 			Components.utils.reportError("Error loading " + xpcomFilesAll[i] + ".js");
 			throw (e);
+		}
+	}
+	
+	// Load Chatero QLab. Failures are reported and skipped: a QLab failure must
+	// never prevent Zotero core from starting. When `qlab.enabled` is false only
+	// the settings module loads, so the disabled state stays introspectable
+	// without parsing the rest of QLab.
+	{
+		let qlabEnabled = true;
+		try {
+			qlabEnabled = Services.prefs.getBoolPref("extensions.zotero.qlab.enabled", true);
+		}
+		catch (e) {
+			// Fail open -- an unreadable pref must not silently disable QLab.
+			Components.utils.reportError(e);
+		}
+		for (let xpcomFile of xpcomFilesQLab) {
+			if (!qlabEnabled && xpcomFile !== "qlab/settings") {
+				continue;
+			}
+			try {
+				subscriptLoader.loadSubScript("chrome://zotero/content/xpcom/" + xpcomFile + ".js", zContext, "utf-8");
+			}
+			catch (e) {
+				Components.utils.reportError("Error loading " + xpcomFile + ".js");
+				Components.utils.reportError(e);
+			}
 		}
 	}
 	

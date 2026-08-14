@@ -16,17 +16,19 @@ Zotero.QLab = Zotero.QLab || {};
 (function () {
 	const PREFIXES = ['drafts/', 'literature/', 'knowledge/'];
 
-	function scoreMatch(text, query) {
-		let lower = String(text || '').toLowerCase();
-		let q = String(query || '').toLowerCase().trim();
+	/**
+	 * @param {string} lower Haystack, already lowercased by the caller.
+	 * @param {string} q Needle, already lowercased and trimmed by the caller.
+	 * @param {string[]} qParts `q` split on whitespace, precomputed by the caller.
+	 */
+	function scoreMatch(lower, q, qParts) {
 		if (!q) {
 			return 0;
 		}
 		if (lower.includes(q)) {
 			return q.length + (lower.startsWith(q) ? 10 : 0);
 		}
-		let parts = q.split(/\s+/).filter(Boolean);
-		let hits = parts.filter(p => lower.includes(p)).length;
+		let hits = qParts.filter(p => lower.includes(p)).length;
 		return hits * 3;
 	}
 
@@ -44,6 +46,12 @@ Zotero.QLab = Zotero.QLab || {};
 		if (!io) {
 			return [];
 		}
+		// Normalize the needle once instead of per candidate and per haystack.
+		let q = String(query).toLowerCase().trim();
+		if (!q) {
+			return [];
+		}
+		let qParts = q.split(/\s+/).filter(Boolean);
 		let results = [];
 		for (let prefix of PREFIXES) {
 			let files = [];
@@ -62,12 +70,15 @@ Zotero.QLab = Zotero.QLab || {};
 					let text = await Zotero.QLab.readWorkspaceRel(workspaceRoot, rel, io, {
 						maxChars: 256_000,
 					});
-					let score = scoreMatch(rel, query) + scoreMatch(text, query);
+					// One lowercase pass over the body, shared by scoring and the
+					// snippet lookup below.
+					let lowerText = text.toLowerCase();
+					let score = scoreMatch(rel.toLowerCase(), q, qParts)
+						+ scoreMatch(lowerText, q, qParts);
 					if (score <= 0) {
 						continue;
 					}
-					let q = String(query).toLowerCase().trim();
-					let idx = text.toLowerCase().indexOf(q);
+					let idx = lowerText.indexOf(q);
 					let snippet = idx >= 0
 						? text.slice(Math.max(0, idx - 40), idx + 120).replace(/\s+/g, ' ').trim()
 						: rel;

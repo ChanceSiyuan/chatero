@@ -115,21 +115,48 @@ Zotero.QLab = Zotero.QLab || {};
 	 * }} [deps]
 	 */
 	Zotero.QLab.createCodexCliProvider = function (deps = {}) {
+		// Revalidation window for a memoized executable path. refreshStatus() runs
+		// before every send and again in each turn's `finally`, so a full PATH scan
+		// per call is pure overhead once the binary has been located.
+		const STATUS_TTL_MS = 30_000;
 		let cachedExe = null;
 		let cachedStatus = 'stub';
+		let cachedAt = 0;
+		
+		function discoveryHost() {
+			return typeof IOUtils !== 'undefined'
+				? Zotero.QLab.createGeckoCodexDiscoveryHost()
+				: {};
+		}
 		
 		async function resolveExe() {
 			if (cachedExe) {
 				return cachedExe;
 			}
-			let discover = deps.discover || (() => Zotero.QLab.discoverCodexExecutable(
-				typeof IOUtils !== 'undefined'
-					? Zotero.QLab.createGeckoCodexDiscoveryHost()
-					: {}
-			));
+			let discover = deps.discover
+				|| (() => Zotero.QLab.discoverCodexExecutable(discoveryHost()));
 			cachedExe = await discover();
 			cachedStatus = cachedExe ? 'ready' : 'unavailable';
+			cachedAt = Date.now();
 			return cachedExe;
+		}
+		
+		/**
+		 * Confirm a memoized path is still on disk without re-walking PATH.
+		 * Returns false when no cheap existence check is available, which makes the
+		 * caller fall back to full discovery.
+		 */
+		async function cachedExeStillPresent() {
+			let exists = deps.exists || discoveryHost().exists;
+			if (typeof exists !== 'function') {
+				return false;
+			}
+			try {
+				return !!(await exists(cachedExe));
+			}
+			catch {
+				return false;
+			}
 		}
 		
 		return {
@@ -147,7 +174,19 @@ Zotero.QLab = Zotero.QLab || {};
 				remote: false,
 			}),
 			async refreshStatus() {
-				cachedExe = null;
+				// A missing binary is never cached, so installing Codex mid-session is
+				// still picked up on the next call. A located binary is revalidated
+				// cheaply, and only a vanished path triggers rediscovery.
+				if (cachedExe) {
+					if (Date.now() - cachedAt < STATUS_TTL_MS) {
+						return cachedStatus;
+					}
+					if (await cachedExeStillPresent()) {
+						cachedAt = Date.now();
+						return cachedStatus;
+					}
+					cachedExe = null;
+				}
 				await resolveExe();
 				return cachedStatus;
 			},

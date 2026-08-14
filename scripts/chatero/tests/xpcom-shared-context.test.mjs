@@ -79,6 +79,7 @@ test("shared XPCOM startup scripts have unique top-level lexical bindings", asyn
   });
   const scriptNames = [
     ...arrayDeclaration(loaderProgram, "xpcomFilesAll"),
+    ...arrayDeclaration(loaderProgram, "xpcomFilesQLab"),
     ...arrayDeclaration(loaderProgram, "xpcomFilesLocal")
   ];
 
@@ -108,6 +109,24 @@ test("shared XPCOM startup scripts have unique top-level lexical bindings", asyn
     .map(([binding, owners]) => ({ binding, owners }))
     .sort((a, b) => a.binding.localeCompare(b.binding));
   assert.deepEqual(collisions, [], "shared-context lexical declarations must not collide");
+});
+
+test("QLab subscripts load in a failure-isolated loop", async () => {
+  const source = await readFile(
+    join(repositoryRoot, "chrome/content/zotero/zotero.mjs"),
+    "utf8"
+  );
+  const start = source.indexOf("for (let xpcomFile of xpcomFilesQLab)");
+  assert.notEqual(start, -1, "QLab files must load in their own loop");
+  const end = source.indexOf("for (let xpcomFile of xpcomFilesLocal)", start);
+  assert.ok(end > start, "QLab loading must stay ahead of mode-specific loading");
+
+  const block = source.slice(start, end);
+  assert.ok(
+    !/\bthrow\b/.test(block),
+    "a QLab load failure must never be rethrown into Zotero core startup"
+  );
+  assert.match(block, /reportError/, "a QLab load failure must still be reported");
 });
 
 test("profile isolation runs before preferences and data-directory startup", async () => {

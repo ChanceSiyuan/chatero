@@ -12,6 +12,8 @@ Zotero.QLab = Zotero.QLab || {};
 
 (function () {
 	const SHELL_TYPES = ['qlabchat', 'qlabqmd', 'qlabsite'];
+	const AT_PICKER_DEBOUNCE_MS = 150;
+	const CHAT_PERSIST_THROTTLE_MS = 750;
 
 	function qmdHostAllows(host, capability) {
 		return !!(Zotero.QLab.qmdHostAllows
@@ -1295,7 +1297,7 @@ Zotero.QLab = Zotero.QLab || {};
 				}
 			});
 			prompt.addEventListener('input', () => {
-				Zotero.QLab.maybeShowComposerAtPicker(host);
+				Zotero.QLab.scheduleComposerAtPicker(host);
 			});
 		}
 		
@@ -1795,8 +1797,34 @@ Zotero.QLab = Zotero.QLab || {};
 		host._qlabMessages = (host._qlabMessages || []).concat(message);
 		Zotero.QLab.renderChatMessages(host);
 		Zotero.QLab.updateChatContextMeter(host);
-		void Zotero.QLab.persistChatHost(host, host._qlabMountRoot);
+		Zotero.QLab.scheduleChatPersist(host, host._qlabMountRoot);
 		return message;
+	};
+	
+	/**
+	 * Coalesce transcript writes. Each append used to serialize the whole thread
+	 * and read-modify-rewrite threads.json, three filesystem operations per
+	 * message; a turn appends twice before the reply has any content. Writes are
+	 * trailing-edge so a burst still lands within one throttle window, and any
+	 * direct persistChatHost() call flushes whatever is pending.
+	 */
+	Zotero.QLab.scheduleChatPersist = function (host, root) {
+		if (!host || !root) {
+			return;
+		}
+		let win = host.ownerDocument && host.ownerDocument.defaultView;
+		if (!win || typeof win.setTimeout !== 'function') {
+			void Zotero.QLab.persistChatHost(host, root);
+			return;
+		}
+		host._qlabPersistRoot = root;
+		if (host._qlabPersistTimer) {
+			return;
+		}
+		host._qlabPersistTimer = win.setTimeout(() => {
+			host._qlabPersistTimer = null;
+			void Zotero.QLab.persistChatHost(host, host._qlabPersistRoot);
+		}, CHAT_PERSIST_THROTTLE_MS);
 	};
 	
 	Zotero.QLab.updateChatMessage = function (host, id, text, { status } = {}) {
@@ -1829,6 +1857,41 @@ Zotero.QLab = Zotero.QLab || {};
 		}
 		else {
 			Zotero.QLab.renderChatMessages(host);
+		}
+	};
+	
+	/**
+	 * Streaming fast path: append one delta instead of rebuilding and rewriting
+	 * the whole message body. `message.text` stays authoritative so persistence
+	 * and any later renderChatMessages() are unchanged.
+	 */
+	Zotero.QLab.appendChatMessageText = function (host, id, delta) {
+		if (!host || !host._qlabMessages) {
+			return;
+		}
+		let text = String(delta || '');
+		if (!text) {
+			return;
+		}
+		let message = host._qlabMessages.find(m => m.id === id);
+		if (!message) {
+			return;
+		}
+		message.text += text;
+		let article = host.querySelector(`[data-qlab-message-id="${id}"]`);
+		let body = article && article.querySelector('.qlab-chat-message-body');
+		if (!body) {
+			Zotero.QLab.renderChatMessages(host);
+			return;
+		}
+		let output = host.querySelector('[data-qlab-output]');
+		// Follow the stream only when the reader is already at the bottom, so
+		// scrolling up to re-read earlier output is not undone by the next delta.
+		let pinned = !!output
+			&& output.scrollHeight - output.scrollTop - output.clientHeight < 32;
+		body.append(text);
+		if (pinned) {
+			output.scrollTop = output.scrollHeight;
 		}
 	};
 	
@@ -1899,6 +1962,11 @@ Zotero.QLab = Zotero.QLab || {};
 			return;
 		}
 		Zotero.QLab.cancelShellTurn(host);
+		// Flush any coalesced write before the thread identity changes, otherwise
+		// the tail of the outgoing transcript would never reach its own file.
+		if (host._qlabPersistTimer) {
+			void Zotero.QLab.persistChatHost(host, host._qlabPersistRoot);
+		}
 		host._qlabMessages = [];
 		host._qlabThreadId = newThreadId();
 		host._qlabParentThreadId = null;
@@ -1929,12 +1997,38 @@ Zotero.QLab = Zotero.QLab || {};
 		}
 	};
 	
+	/**
+	 * Debounce the `@` picker so a burst of keystrokes triggers one workspace
+	 * scan instead of one per character.
+	 */
+	Zotero.QLab.scheduleComposerAtPicker = function (host, delay = AT_PICKER_DEBOUNCE_MS) {
+		if (!host) {
+			return;
+		}
+		let win = host.ownerDocument && host.ownerDocument.defaultView;
+		if (!win || typeof win.setTimeout !== 'function') {
+			void Zotero.QLab.maybeShowComposerAtPicker(host);
+			return;
+		}
+		if (host._qlabAtPickerTimer) {
+			win.clearTimeout(host._qlabAtPickerTimer);
+		}
+		host._qlabAtPickerTimer = win.setTimeout(() => {
+			host._qlabAtPickerTimer = null;
+			void Zotero.QLab.maybeShowComposerAtPicker(host);
+		}, delay);
+	};
+	
 	Zotero.QLab.maybeShowComposerAtPicker = async function (host) {
 		let textarea = host && host.querySelector('[data-qlab-prompt]');
 		let picker = host && host.querySelector('[data-qlab-at-picker]');
 		if (!textarea || !picker) {
 			return;
 		}
+		// Claim this run. The workspace scan is async, so a later keystroke must be
+		// able to invalidate an older in-flight result instead of letting it land.
+		let generation = (host._qlabAtPickerGeneration || 0) + 1;
+		host._qlabAtPickerGeneration = generation;
 		let value = textarea.value || '';
 		let pos = typeof textarea.selectionStart === 'number'
 			? textarea.selectionStart
@@ -1958,9 +2052,15 @@ Zotero.QLab = Zotero.QLab || {};
 					query,
 					{ maxResults: 6 }
 				);
+				if (host._qlabAtPickerGeneration !== generation) {
+					return;
+				}
 				items = items.concat(hits);
 			}
 			catch (e) {}
+		}
+		if (host._qlabAtPickerGeneration !== generation) {
+			return;
 		}
 		host._qlabAtPickerItems = items;
 		let wrap = host.ownerDocument.createElement('div');
@@ -2423,15 +2523,22 @@ Zotero.QLab = Zotero.QLab || {};
 		approvalRoot,
 	} = {}) {
 		let cancelled = false;
+		// Record and paint one delta at a time. Rebuilding chunks.join('') per
+		// event and rewriting the whole body made a long reply quadratic.
+		let emit = (text) => {
+			if (!text) {
+				return;
+			}
+			chunks.push(text);
+			Zotero.QLab.appendChatMessageText(host, reply.id, text);
+		};
 		for await (let event of turn) {
 			if (event.type === 'text-delta') {
-				chunks.push(event.text || '');
-				Zotero.QLab.updateChatMessage(host, reply.id, chunks.join(''));
+				emit(event.text || '');
 			}
 			else if (event.type === 'error') {
 				let message = event.message || 'Agent stream failed';
-				chunks.push(`\n[error] ${message}`);
-				Zotero.QLab.updateChatMessage(host, reply.id, chunks.join(''));
+				emit(`\n[error] ${message}`);
 				if (failClosed) throw new Error(message);
 			}
 			else if (event.type === 'approval-needed') {
@@ -2450,12 +2557,11 @@ Zotero.QLab = Zotero.QLab || {};
 				}
 				let decision = Zotero.QLab.evaluateApproval(policy, event);
 				if (decision === 'allow') {
-					chunks.push(`\n[approved] ${event.reason}\n`);
+					emit(`\n[approved] ${event.reason}\n`);
 					continue;
 				}
 				if (decision === 'deny') {
-					chunks.push(`\n[denied] ${event.reason}\n`);
-					Zotero.QLab.updateChatMessage(host, reply.id, chunks.join(''));
+					emit(`\n[denied] ${event.reason}\n`);
 					if (turn.cancel) {
 						turn.cancel();
 					}
@@ -2464,15 +2570,14 @@ Zotero.QLab = Zotero.QLab || {};
 				}
 				let approved = await Zotero.QLab.waitForChatApproval(host, event);
 				if (!approved) {
-					chunks.push(`\n[denied] ${event.reason}\n`);
-					Zotero.QLab.updateChatMessage(host, reply.id, chunks.join(''));
+					emit(`\n[denied] ${event.reason}\n`);
 					if (turn.cancel) {
 						turn.cancel();
 					}
 					if (failClosed) throw new Error('Agent approval was denied during Draft review');
 					break;
 				}
-				chunks.push(`\n[approved] ${event.reason}\n`);
+				emit(`\n[approved] ${event.reason}\n`);
 			}
 			else if (event.type === 'done' && event.status === 'cancelled') {
 				cancelled = true;
@@ -3322,7 +3427,14 @@ Zotero.QLab = Zotero.QLab || {};
 		let groups = new Zotero.QLab.TabGroups(() => {
 			try {
 				if (tabsAPI && typeof tabsAPI._onQLabGroupsChanged === 'function') {
-					tabsAPI._onQLabGroupsChanged(groups.snapshot());
+					// snapshot() deep clones every pane and tab. A divider drag fires
+					// this per pointer frame and only reads the ratio vector, so hand
+					// it just that while tabs.js reports a drag in progress.
+					tabsAPI._onQLabGroupsChanged(
+						tabsAPI._draggingSplit
+							? { splitRatios: groups.splitRatios() }
+							: groups.snapshot()
+					);
 				}
 			}
 			catch (e) {

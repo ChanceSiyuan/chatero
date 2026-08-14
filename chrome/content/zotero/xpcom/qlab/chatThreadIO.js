@@ -161,9 +161,27 @@ Zotero.QLab = Zotero.QLab || {};
 		if (!host || !root || !host._qlabThreadId) {
 			return;
 		}
+		// A direct call is a flush: drop whatever scheduleChatPersist coalesced,
+		// so the pending write does not land again a moment later.
+		if (host._qlabPersistTimer) {
+			let win = host.ownerDocument && host.ownerDocument.defaultView;
+			if (win && typeof win.clearTimeout === 'function') {
+				win.clearTimeout(host._qlabPersistTimer);
+			}
+			host._qlabPersistTimer = null;
+		}
 		let hostIO = Zotero.QLab.QmdDraftIO.createGeckoHost();
+		// Snapshot synchronously so a caller that mutates the host immediately
+		// after this call still persists the state it meant to persist.
 		let snapshot = Zotero.QLab.snapshotChatHost(host);
-		await Zotero.QLab.saveChatThread(root, snapshot, hostIO);
+		// Serialize per host: saveChatThread read-modify-writes threads.json, so
+		// overlapping writes could drop an index entry.
+		let previous = host._qlabPersistChain || Promise.resolve();
+		let next = previous
+			.catch(() => {})
+			.then(() => Zotero.QLab.saveChatThread(root, snapshot, hostIO));
+		host._qlabPersistChain = next;
+		await next;
 	};
 
 	Zotero.QLab.loadLatestChatThread = async function (host, root) {
