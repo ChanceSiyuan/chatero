@@ -852,6 +852,10 @@ test("PDF editor HTML boots the packaged PDF.js viewer with bounded annotation d
   assert.match(html, /<canvas[^>]+id="pdf-canvas"/);
   assert.match(html, /<script[^>]+type="module"[^>]+src="vscode-webview:\/\/unit-test\/pdf-viewer\.mjs"/);
   assert.match(html, /data-worker-uri="vscode-webview:\/\/unit-test\/pdf\.worker\.mjs"/);
+  assert.match(html, /id="selection-menu"[^>]+role="menu"/);
+  assert.match(html, /data-selection-action="highlight-note"/);
+  assert.match(html, /Create highlight from selection">H<\/button>/);
+  assert.match(html, /\.toolbar button,.toolbar input\{flex:0 0 auto/);
   assert.match(html, /data-page-index="2"/);
   assert.match(html, /Quoted &lt;claim&gt;/);
   assert.doesNotMatch(html, /<script>alert\(1\)<\/script>/);
@@ -1080,6 +1084,12 @@ test("packaged PDF viewer renders one page at a time and owns the highlight over
   assert.match(source, /Promise\.all\(\[/);
   assert.match(source, /pdfWorker\?\.terminate\(\)/);
   assert.match(source, /URL\.revokeObjectURL\(pdfWorkerUrl\)/);
+  assert.match(source, /addEventListener\("wheel"/);
+  assert.match(source, /turnPageFromScroll/);
+  assert.match(source, /addEventListener\("contextmenu", showSelectionMenu\)/);
+  assert.match(source, /data-selection-action/);
+  assert.match(source, /window\.prompt\("Annotation note"/);
+  assert.match(source, /postAnnotationCreate\("highlight", \{ \.\.\.selection, comment \}\)/);
   assert.match(source, /getPage/);
   assert.match(source, /annotation-layer/);
   assert.match(source, /pageIndex/);

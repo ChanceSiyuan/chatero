@@ -542,9 +542,10 @@ async function activate(context) {
       return null;
     }
   }));
-  context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.openAttachment", record => {
+  context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.openAttachment", async record => {
     const trusted = evidenceAuthority.authorize(record, "attachment");
     const uri = vscode.Uri.parse(evidenceDocuments.stage("pdf", trusted));
+    await vscode.commands.executeCommand("workbench.action.closeSidebar");
     return vscode.commands.executeCommand("vscode.openWith", uri, "chatero.zotero.pdf", { preview: false });
   }));
   context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.openNote", record => {

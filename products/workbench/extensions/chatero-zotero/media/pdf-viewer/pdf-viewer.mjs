@@ -8,6 +8,7 @@ const pageField = document.getElementById("page-number");
 const pageCount = document.getElementById("page-count");
 const status = document.getElementById("viewer-status");
 const viewportHost = document.getElementById("page-viewport");
+const selectionMenu = document.getElementById("selection-menu");
 const annotations = JSON.parse(document.getElementById("annotation-data")?.textContent || "[]");
 const initialState = JSON.parse(document.getElementById("reader-state")?.textContent || "{}");
 const panelNonce = bootstrap?.dataset.panelNonce;
@@ -37,6 +38,8 @@ let currentViewport = null;
 let areaSelection = null;
 let pdfWorker = null;
 let pdfWorkerUrl = null;
+let pendingSelectionAction = null;
+let scrollTurnLocked = false;
 
 function utf8Width(character) {
   const codePoint = character.codePointAt(0);
@@ -268,7 +271,7 @@ function renderAnnotationSidebar() {
   list.append(...annotations.map(annotationRow));
 }
 
-function postAnnotationCreate(annotationType, { rects = selectedRectangles(), text = selectedTextWithinLayer() } = {}) {
+function postAnnotationCreate(annotationType, { comment = "", rects = selectedRectangles(), text = selectedTextWithinLayer() } = {}) {
   if (!rects.length || (["highlight", "underline"].includes(annotationType) && !text.trim())) {
     status.textContent = annotationType === "image" ? "Drag an area on this page first." : "Select text on this page first.";
     return;
@@ -277,7 +280,7 @@ function postAnnotationCreate(annotationType, { rects = selectedRectangles(), te
     type: "annotation-create",
     annotationType,
     color: "#ffd400",
-    comment: "",
+    comment,
     pageLabel: currentPageLabel(),
     positionJson: JSON.stringify({ pageIndex: pageNumber - 1, rects }),
     sortIndex: `${String(pageNumber - 1).padStart(5, "0")}|${String(Date.now()).padStart(15, "0")}|00000`,
@@ -309,6 +312,37 @@ function reportRenderError() {
 
 function scheduleRender(operation) {
   void Promise.resolve().then(operation).catch(reportRenderError);
+}
+
+function hideSelectionMenu() {
+  selectionMenu.hidden = true;
+  pendingSelectionAction = null;
+}
+
+function showSelectionMenu(event) {
+  const text = selectedTextWithinLayer();
+  const rects = selectedRectangles();
+  if (!text.trim() || !rects.length) return;
+  event.preventDefault();
+  pendingSelectionAction = Object.freeze({ rects, text });
+  selectionMenu.hidden = false;
+  selectionMenu.style.left = `${Math.max(8, Math.min(event.clientX, window.innerWidth - 330))}px`;
+  selectionMenu.style.top = `${Math.max(8, Math.min(event.clientY, window.innerHeight - 52))}px`;
+  selectionMenu.querySelector("button")?.focus({ preventScroll: true });
+}
+
+async function turnPageFromScroll(direction) {
+  if (scrollTurnLocked || !documentHandle) return;
+  const nextPage = pageNumber + direction;
+  if (nextPage < 1 || nextPage > documentHandle.numPages) return;
+  scrollTurnLocked = true;
+  try {
+    await goToPage(nextPage);
+    viewportHost.scrollTop = direction > 0 ? 0 : viewportHost.scrollHeight;
+  }
+  finally {
+    setTimeout(() => { scrollTurnLocked = false; }, 260);
+  }
 }
 
 async function loadPdfBytes(url) {
@@ -592,8 +626,37 @@ try {
     pageRoot.classList.remove("area-selecting");
     if ((rect[2] - rect[0]) * (rect[3] - rect[1]) > 16) postAnnotationCreate("image", { rects: [rect], text: "" });
   });
+  textLayer.addEventListener("contextmenu", showSelectionMenu);
+  selectionMenu.addEventListener("click", event => {
+    const action = event.target.closest("[data-selection-action]")?.dataset.selectionAction;
+    const selection = pendingSelectionAction;
+    if (!action || !selection) return;
+    event.preventDefault();
+    event.stopPropagation();
+    hideSelectionMenu();
+    if (action === "highlight-note") {
+      const comment = window.prompt("Annotation note", "");
+      if (comment === null) return;
+      postAnnotationCreate("highlight", { ...selection, comment });
+    }
+    else postAnnotationCreate(action, selection);
+  });
+  viewportHost.addEventListener("wheel", event => {
+    if (event.ctrlKey || event.metaKey || Math.abs(event.deltaY) < 2) return;
+    const atTop = viewportHost.scrollTop <= 1;
+    const atBottom = viewportHost.scrollTop + viewportHost.clientHeight >= viewportHost.scrollHeight - 1;
+    const direction = event.deltaY > 0 ? 1 : -1;
+    if ((direction > 0 && atBottom) || (direction < 0 && atTop)) {
+      event.preventDefault();
+      scheduleRender(() => turnPageFromScroll(direction));
+    }
+  }, { passive: false });
+  viewportHost.addEventListener("scroll", () => {
+    if (!selectionMenu.hidden) hideSelectionMenu();
+  }, { passive: true });
   pageField.addEventListener("change", () => scheduleRender(() => goToPage(pageField.value)));
   document.addEventListener("click", event => {
+    if (!selectionMenu.hidden && !selectionMenu.contains(event.target)) hideSelectionMenu();
     const action = event.target.closest("[data-action]");
     if (action) {
       event.preventDefault();
@@ -620,6 +683,11 @@ try {
     if (target) scheduleRender(() => goToPage(Number(target.dataset.pageIndex) + 1));
   });
   document.addEventListener("keydown", event => {
+    if (event.key === "Escape" && !selectionMenu.hidden) {
+      event.preventDefault();
+      hideSelectionMenu();
+      return;
+    }
     if ((event.metaKey || event.ctrlKey) && event.shiftKey && !event.altKey && event.key.toLowerCase() === "l") {
       const selectedText = selectedTextWithinLayer();
       if (selectedText.trim().length > 0) {

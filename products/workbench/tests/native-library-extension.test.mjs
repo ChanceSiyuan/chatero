@@ -72,6 +72,7 @@ test("extension mounts virtualized multi-select TreeViews with drag/drop and sta
   assert.match(source, /\.filter\(value => available\.has\(value\)\)/);
   assert.match(source, /workspaceState\.(get|update)/);
   assert.match(source, /withProgress\(/);
+  assert.match(source, /workbench\.action\.closeSidebar/);
 });
 
 test("source tree materializes libraries, groups, collections, searches, duplicates, feeds, trash, and sync", async () => {
