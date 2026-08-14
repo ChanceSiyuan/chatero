@@ -35,6 +35,7 @@ class PdfEditorProvider {
     fromUpstreamReaderAnnotation = null,
     makePanelNonce = nonce,
     onContextError = () => {},
+    onReaderError = () => {},
     readerLocationFromViewState = null,
     toUpstreamReaderAnnotation = null,
   }) {
@@ -55,13 +56,14 @@ class PdfEditorProvider {
     this.toUpstreamReaderAnnotation = toUpstreamReaderAnnotation;
     this.makePanelNonce = makePanelNonce;
     this.onContextError = onContextError;
+    this.onReaderError = onReaderError;
     if ((contextBroker === null) !== (attachPdfContext === null)
         || (createReaderWorkflow !== null && typeof createReaderWorkflow !== "function")
         || ([fromUpstreamReaderAnnotation, renderUpstreamReaderHTML, readerLocationFromViewState, toUpstreamReaderAnnotation]
           .filter(value => value !== null).length !== 0
           && ![fromUpstreamReaderAnnotation, renderUpstreamReaderHTML, readerLocationFromViewState, toUpstreamReaderAnnotation]
             .every(value => typeof value === "function"))
-        || typeof makePanelNonce !== "function" || typeof onContextError !== "function") {
+        || typeof makePanelNonce !== "function" || typeof onContextError !== "function" || typeof onReaderError !== "function") {
       throw new TypeError("PDF editor context bridge configuration is invalid");
     }
   }
@@ -104,7 +106,7 @@ class PdfEditorProvider {
       for (const disposable of [messageSubscription, viewStateSubscription, panelDisposeSubscription, contextLease]) {
         try { disposable?.dispose(); } catch (error) { failure ||= error; }
       }
-      void materialized.dispose().catch(this.onContextError);
+      void materialized.dispose().catch(error => this.onReaderError(error, "materialized-pdf-cleanup"));
       lastSnapshot = null;
       if (failure) throw failure;
     };
@@ -276,7 +278,11 @@ class PdfEditorProvider {
           if (["annotation-create", "annotation-update", "annotation-delete", "annotation-undo"].includes(message?.type)) {
             try { await panel.webview.postMessage?.({ message: error.message, type: "annotation-error" }); } catch (_) {}
           }
-          this.onContextError(error);
+          if (message?.type === "pdf-context") {
+            try { await panel.webview.postMessage?.({ type: "pdf-context-error" }); } catch (_) {}
+          }
+          if (message?.type === "pdf-context-attach") this.onContextError(error);
+          else this.onReaderError(error, message?.type || "unknown");
         });
         return operation;
       })

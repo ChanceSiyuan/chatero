@@ -849,7 +849,7 @@ test("PDF editor HTML boots the packaged PDF.js viewer with bounded annotation d
 
   assert.match(html, /default-src 'none'/);
   assert.match(html, /script-src 'nonce-fixed-nonce'/);
-  assert.match(html, /<canvas[^>]+id="pdf-canvas"/);
+  assert.match(html, /id="pdf-pages"[^>]+aria-label="Continuous PDF pages"/);
   assert.match(html, /<script[^>]+type="module"[^>]+src="vscode-webview:\/\/unit-test\/pdf-viewer\.mjs"/);
   assert.match(html, /data-worker-uri="vscode-webview:\/\/unit-test\/pdf\.worker\.mjs"/);
   assert.match(html, /id="selection-menu"[^>]+role="menu"/);
@@ -1073,7 +1073,7 @@ test("upstream Reader host exposes unawaited delete failures and locks further e
   assert.match(htmlSource, /id="reader-error" role="alert" hidden/);
 });
 
-test("packaged PDF viewer renders one page at a time and owns the highlight overlay", async () => {
+test("packaged PDF viewer lazily renders a continuous multi-page canvas and owns the highlight overlay", async () => {
   const source = await readFile(join(extensionRoot, "media", "pdf-viewer", "pdf-viewer.mjs"), "utf8");
   assert.match(source, /getDocument/);
   assert.match(source, /fetch\(url, \{ cache: "no-store" \}\)/);
@@ -1084,15 +1084,28 @@ test("packaged PDF viewer renders one page at a time and owns the highlight over
   assert.match(source, /Promise\.all\(\[/);
   assert.match(source, /pdfWorker\?\.terminate\(\)/);
   assert.match(source, /URL\.revokeObjectURL\(pdfWorkerUrl\)/);
-  assert.match(source, /addEventListener\("wheel"/);
-  assert.match(source, /turnPageFromScroll/);
-  assert.match(source, /addEventListener\("contextmenu", showSelectionMenu\)/);
+  assert.match(source, /new IntersectionObserver/);
+  assert.match(source, /rootMargin: "1200px 0px"/);
+  assert.match(source, /captureScrollAnchor/);
+  assert.match(source, /capturePointAnchor/);
+  assert.match(source, /ratioX/);
+  assert.match(source, /viewportX/);
+  assert.match(source, /updateCurrentPageFromScroll/);
+  assert.match(source, /viewportHost\.addEventListener\("wheel"/);
+  assert.match(source, /viewportHost\.scrollTop \+= event\.deltaY \* unit/);
+  assert.match(source, /zoom \* Math\.exp\(-event\.deltaY \* unit \* 0\.002\)/);
+  assert.match(source, /\{ passive: false \}/);
+  assert.match(source, /addEventListener\("contextmenu"/);
   assert.match(source, /data-selection-action/);
   assert.match(source, /window\.prompt\("Annotation note"/);
   assert.match(source, /postAnnotationCreate\("highlight", \{ \.\.\.selection, comment \}\)/);
   assert.match(source, /getPage/);
   assert.match(source, /annotation-layer/);
   assert.match(source, /pageIndex/);
+  assert.match(source, /function sortIndexFor/);
+  assert.match(source, /slice\(0, 5\)\.padStart\(5, "0"\)/);
+  assert.match(source, /slice\(0, 6\)\.padStart\(6, "0"\)/);
+  assert.doesNotMatch(source, /Date\.now\(\).*sortIndex|turnPageFromScroll/);
   for (const behavior of ["getOutline", "getAnnotations", "getDestination", "convertToPdfPoint", "window.print", "annotation-create", "reader-state"]) {
     assert.match(source, new RegExp(behavior.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
@@ -1100,8 +1113,8 @@ test("packaged PDF viewer renders one page at a time and owns the highlight over
   for (const behavior of ["create-underline", "create-note", "create-area", "annotation-update", "annotation-delete", "annotation-undo"]) {
     assert.match(source, new RegExp(behavior));
   }
-  assert.ok(source.indexOf("await renderTask.promise") < source.indexOf("const textContent = await page.getTextContent()"));
-  assert.ok(source.indexOf('status.textContent = ""') < source.indexOf("const textContent = await page.getTextContent()"));
+  assert.ok(source.indexOf("await renderTask.promise") < source.indexOf("const textContent = await state.page.getTextContent()"));
+  assert.ok(source.indexOf('status.textContent = ""') < source.indexOf("const textContent = await state.page.getTextContent()"));
 });
 
 test("PDF annotation controls use exact Core versions for create, edit, delete, and undo", async () => {

@@ -13,6 +13,10 @@ OpenSSH 的远程开发，以及 Obsidian 风格的 QMD Live Preview 放在同�
   模型，负责文献库、集合、搜索、附件、PDF/EPUB、笔记、标注、同步、翻译器、
   引文、参考文献和文字处理器集成。命令面板中的
   `Chatero: Open Complete Zotero Compatibility Mode` 可打开完整兼容界面。
+- **Zotero 风格 PDF 阅读器**：PDF 以连续纵向画布显示，可停在两页之间滚动，
+  支持滚轮、触控板捏合缩放、页面/缩略图/大纲导航、文字选择、右键高亮、下划线、
+  笔记和已有 Zotero 标注。`Cmd/Ctrl+Shift+L` 会把当前页或选区作为一个有界、
+  可追溯的 Zotero 上下文加入 Chat。
 - **Cursor 风格编辑与 Agent**：Code-OSS 提供 Monaco 编辑器、Git、终端、搜索、
   调试、扩展和工作区；`Cmd/Ctrl+K` 打开行内 Agent，`Cmd/Ctrl+L` 打开聊天，
   `Cmd/Ctrl+Shift+L` 将当前代码或文本选区加入上下文。PDF 证据和 Zotero 条目也

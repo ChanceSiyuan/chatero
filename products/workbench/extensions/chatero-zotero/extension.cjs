@@ -236,6 +236,7 @@ async function activate(context) {
   const getRemoteAlias = async () => (await getRemoteContext())?.alias ?? null;
   const attachPdfSnapshot = async snapshot => {
     const attachment = contextFormat.makePdfContextAttachment(snapshot, await getRemoteAlias());
+    await vscode.commands.executeCommand("workbench.action.chat.open");
     return vscode.commands.executeCommand("chatero.chat.attachTextContext", attachment);
   };
   const pdfAttachProvider = contextFormat.createPdfAttachContextProvider({
@@ -441,6 +442,9 @@ async function activate(context) {
     toUpstreamReaderAnnotation: readerBridge.toUpstreamReaderAnnotation,
     onContextError: () => {
       void vscode.window.showErrorMessage("Could not attach the bounded Zotero PDF context.");
+    },
+    onReaderError: (error, operation) => {
+      console.error(`[Chatero Zotero reader:${operation}]`, error);
     },
   }), { supportsMultipleEditorsPerDocument: false }));
   context.subscriptions.push(vscode.window.registerCustomEditorProvider("chatero.zotero.note", new NoteEditorProvider({

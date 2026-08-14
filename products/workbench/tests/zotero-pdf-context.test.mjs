@@ -338,6 +338,9 @@ test("manifest and source wire only the explicit native attach provider and real
   assert.match(extensionSource, /chatero\.chat\.attachTextContext/);
   assert.doesNotMatch(extensionSource, /sendRequest|acceptInput|chat\.createChat|history/i);
   assert.match(extensionSource, /onContextError:\s*\(\)\s*=>\s*\{[\s\S]*?showErrorMessage\("Could not attach the bounded Zotero PDF context\."\)/);
+  assert.match(extensionSource, /workbench\.action\.chat\.open/);
+  assert.ok(extensionSource.indexOf('"workbench.action.chat.open"') < extensionSource.indexOf('"chatero.chat.attachTextContext"'));
+  assert.match(extensionSource, /onReaderError:/);
   assert.match(extensionSource, /addPdfContextToChat[\s\S]*?catch\s*\(_\)[\s\S]*?showErrorMessage\("Could not attach the bounded Zotero PDF context\."\)/);
   assert.doesNotMatch(extensionSource, /Could not attach the bounded Zotero PDF context[^\n]*\$\{/);
   for (const command of ["chatero.zotero.addPdfContextToChat", "chatero.zotero.sendFullPaperToRemote"]) {
@@ -347,7 +350,7 @@ test("manifest and source wire only the explicit native attach provider and real
   for (const destination of ["extensions/chatero-zotero/pdf-context-broker.mjs", "extensions/chatero-zotero/pdf-context-format.mjs"]) {
     assert.ok(files.some(value => value.destination === destination));
   }
-  assert.match(htmlSource, /id="text-layer"/);
+  assert.match(htmlSource, /id="pdf-pages"[^>]+Continuous PDF pages/);
   assert.match(htmlSource, /--scale-factor|--total-scale-factor/);
   assert.match(htmlSource, /\.textLayer :is\(span,br\)\{[^}]*z-index:1/);
   assert.match(htmlSource, /data-main-rotation="90"/);
@@ -364,10 +367,10 @@ test("manifest and source wire only the explicit native attach provider and real
   assert.match(viewerSource, /range\.endContainer/);
   assert.match(viewerSource, /range\.commonAncestorContainer/);
   assert.match(viewerSource, /selectionchange/);
-  assert.match(viewerSource, /\(event\.metaKey \|\| event\.ctrlKey\)[^\n]+event\.shiftKey[^\n]+[lL]/);
+  assert.ok(manifest.contributes.keybindings.some(value => value.command === "chatero.zotero.addActiveContextToChat" && value.mac === "cmd+shift+l"));
   assert.match(viewerSource, /acquireVsCodeApi\(\)/);
   assert.match(viewerSource, /function makeContextMessage[\s\S]+type: "pdf-context",[\s\S]+panelNonce,[\s\S]+sequence:[\s\S]+pageIndex:[\s\S]+pageLabel:[\s\S]+pageText:[\s\S]+selectedText:/);
-  assert.match(viewerSource, /Object\.freeze\(\{ type: "pdf-context-attach", panelNonce, sequence \}\)/);
+  assert.doesNotMatch(viewerSource, /type: "pdf-context-attach"/);
   assert.match(viewerSource, /scheduleRender\(/);
   assert.doesNotMatch(viewerSource, /libraryId|attachmentKey|pdfUri\s*:/);
 });
