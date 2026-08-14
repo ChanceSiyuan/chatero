@@ -515,10 +515,14 @@ function relationObject(relations) {
 }
 
 function revisionConflict(item, expectedVersion, label) {
-	if (item.clientVersion === expectedVersion) return;
+	// Compare the same coerced value the read APIs report, and use a kind
+	// distinct from the idempotency journal's REVISION_CONFLICT so clients can
+	// tell an object-version race from a journal replay mismatch.
+	let actual = Number.isSafeInteger(item.clientVersion) ? item.clientVersion : 0;
+	if (actual === expectedVersion) return;
 	let error = new Error(`${label} version changed before update`);
-	error.code = "REVISION_CONFLICT";
-	error.actualRevision = Number.isSafeInteger(item.clientVersion) ? item.clientVersion : 0;
+	error.code = "VERSION_CONFLICT";
+	error.actualRevision = actual;
 	error.expectedRevision = expectedVersion;
 	throw error;
 }
@@ -1568,13 +1572,7 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 			validateItemUpdate(params);
 			let item = await lookupItem(Zotero, params.libraryId, params.itemKey, "Zotero item");
 			if (!item.isRegularItem?.()) throw new Error("library.item-update target must be a regular item");
-			if (item.clientVersion !== params.expectedVersion) {
-				let error = new Error("Zotero item version changed before update");
-				error.code = "REVISION_CONFLICT";
-				error.actualRevision = Number.isSafeInteger(item.clientVersion) ? item.clientVersion : 0;
-				error.expectedRevision = params.expectedVersion;
-				throw error;
-			}
+			revisionConflict(item, params.expectedVersion, "Zotero item");
 			try {
 				for (let field of params.fields) item.setField(field.field, field.value);
 				if (params.creators !== undefined) item.setCreators(params.creators, { strict: true });

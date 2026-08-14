@@ -119,6 +119,20 @@ export class ReaderWorkflowModel {
   get annotations() { return this.#annotations; }
   get proposals() { return Object.freeze([...this.#proposals.values()]); }
 
+  // Core stamps every saved object with a library-wide clientVersion, so any
+  // other writer (sync above all) re-stamps objects this model loaded earlier.
+  // Such races surface as CONFLICT/VERSION_CONFLICT -- distinct from the
+  // idempotency journal's REVISION_CONFLICT that #transact self-heals.
+  static #isVersionConflict(error) {
+    return error?.code === "CONFLICT" && error?.details?.kind === "VERSION_CONFLICT";
+  }
+
+  static #sameAnnotationContent(left, right) {
+    return ["color", "comment", "pageLabel", "positionJson", "sortIndex", "text", "type"]
+      .every(field => left?.[field] === right?.[field])
+      && JSON.stringify(left?.tags) === JSON.stringify(right?.tags);
+  }
+
   async #transact(method, params, scope) {
     const run = () => this.#core.request(method, {
       ...params,
@@ -170,13 +184,24 @@ export class ReaderWorkflowModel {
       : this.#state.contentType === "application/epub+zip" ? "cfi" : "scrollYPercent";
     if (provided.length !== 1 || provided[0][0] !== expected) throw new TypeError(`Reader ${this.#state.contentType} location requires exactly ${expected}`);
     const scope = `library:${this.#identity.libraryId}/reader:${this.#identity.attachmentKey}`;
-    const result = await this.#transact("reader.state-update", {
+    const commit = () => this.#transact("reader.state-update", {
       ...this.#identity,
       expectedVersion: this.#state.version,
       ...(cfi !== undefined && { cfi }),
       ...(pageIndex !== undefined && { pageIndex }),
       ...(scrollYPercent !== undefined && { scrollYPercent }),
     }, scope);
+    let result;
+    try {
+      result = await commit();
+    }
+    catch (error) {
+      if (!ReaderWorkflowModel.#isVersionConflict(error)) throw error;
+      // The reading position is device intent: adopt the racing writer's
+      // version stamp and commit last-writer-wins.
+      this.#state = validateState(await this.#core.request("reader.state", this.#identity));
+      result = await commit();
+    }
     this.#state = validateState(result);
     return this.#state;
   }
@@ -233,7 +258,24 @@ export class ReaderWorkflowModel {
       };
     });
     const scope = `library:${this.#identity.libraryId}/attachment:${this.#identity.attachmentKey}`;
-    const result = await this.#transact("library.annotations-update", { ...this.#identity, updates: normalized }, scope);
+    let submitted = normalized;
+    let result;
+    try {
+      result = await this.#transact("library.annotations-update", { ...this.#identity, updates: submitted }, scope);
+    }
+    catch (error) {
+      if (!ReaderWorkflowModel.#isVersionConflict(error)) throw error;
+      // Retry only when the racing writer changed nothing but the version
+      // stamp; a genuine content change stays a user-visible conflict.
+      await this.#reloadAnnotations();
+      const refreshed = new Map(this.#annotations.map(value => [value.annotationKey, value]));
+      submitted = normalized.map(update => {
+        const now = refreshed.get(update.annotationKey);
+        if (!now || !ReaderWorkflowModel.#sameAnnotationContent(prior.get(update.annotationKey), now)) throw error;
+        return { ...update, expectedVersion: now.version };
+      });
+      result = await this.#transact("library.annotations-update", { ...this.#identity, updates: submitted }, scope);
+    }
     const versions = new Map(result.annotations.map(value => [value.annotationKey, value.version]));
     this.#undo.push({ updates: normalized.map(value => {
       const before = prior.get(value.annotationKey);
@@ -253,7 +295,18 @@ export class ReaderWorkflowModel {
     string(annotationKey, "annotation key", { maximum: 128 });
     integer(expectedVersion, "annotation expectedVersion");
     const scope = `library:${this.#identity.libraryId}/attachment:${this.#identity.attachmentKey}`;
-    const result = await this.#transact("library.annotation-mutate", { action, ...this.#identity, annotationKey, expectedVersion }, scope);
+    const commit = version => this.#transact("library.annotation-mutate", { action, ...this.#identity, annotationKey, expectedVersion: version }, scope);
+    let result;
+    try {
+      result = await commit(expectedVersion);
+    }
+    catch (error) {
+      if (!ReaderWorkflowModel.#isVersionConflict(error)) throw error;
+      await this.#reloadAnnotations();
+      const now = this.#annotations.find(value => value.annotationKey === annotationKey);
+      if (!now) throw error;
+      result = await commit(now.version);
+    }
     this.#undo.push({ action: action === "trash" ? "restore" : "trash", annotationKey, expectedVersion: result.annotation.version });
     const remaining = this.#annotations.filter(value => value.annotationKey !== annotationKey);
     this.#annotations = Object.freeze(action === "trash"
@@ -312,11 +365,50 @@ export class ReaderWorkflowModel {
       if (Object.keys(update).length === 2) continue;
       updates.push(update);
     }
-    const updatesOperationIndex = operations.length;
+    let updatesOperationIndex = operations.length;
     if (updates.length) operations.push({ kind: "annotations-update", params: { ...this.#identity, updates } });
     if (!operations.length) return Object.freeze({ created: Object.freeze([]), replayed: false, results: Object.freeze([]), revision: 0 });
-    const result = await this.#core.batchMutate({ libraryId: this.#identity.libraryId, operations });
-    const created = createdIndexes.map(({ changeIndex, operationIndex }) => Object.freeze({
+    let batchOperations = operations;
+    let batchCreatedIndexes = createdIndexes;
+    let result;
+    try {
+      result = await this.#core.batchMutate({ libraryId: this.#identity.libraryId, operations: batchOperations });
+    }
+    catch (error) {
+      if (!ReaderWorkflowModel.#isVersionConflict(error)) throw error;
+      // Rebuild the batch against refreshed version stamps: trashes of gone
+      // annotations become no-ops, trashes adopt the racing writer's stamp,
+      // and updates retry only when nothing but the stamp changed.
+      await this.#reloadAnnotations();
+      const refreshed = new Map(this.#annotations.map(value => [value.annotationKey, value]));
+      batchOperations = [];
+      batchCreatedIndexes = [];
+      updatesOperationIndex = -1;
+      for (const [operationIndex, operation] of operations.entries()) {
+        if (operation.kind === "annotations-update") {
+          const retried = operation.params.updates.map(update => {
+            const now = refreshed.get(update.annotationKey);
+            if (!now || !ReaderWorkflowModel.#sameAnnotationContent(current.get(update.annotationKey), now)) throw error;
+            return { ...update, expectedVersion: now.version };
+          });
+          updatesOperationIndex = batchOperations.length;
+          batchOperations.push({ kind: "annotations-update", params: { ...this.#identity, updates: retried } });
+          continue;
+        }
+        if (operation.params.action === "create") {
+          const entry = createdIndexes.find(value => value.operationIndex === operationIndex);
+          batchCreatedIndexes.push({ changeIndex: entry.changeIndex, operationIndex: batchOperations.length });
+          batchOperations.push(operation);
+          continue;
+        }
+        const now = refreshed.get(operation.params.annotationKey);
+        if (!now) continue;
+        batchOperations.push({ kind: "annotation-mutate", params: { ...operation.params, expectedVersion: now.version } });
+      }
+      if (!batchOperations.length) return Object.freeze({ created: Object.freeze([]), replayed: false, results: Object.freeze([]), revision: 0 });
+      result = await this.#core.batchMutate({ libraryId: this.#identity.libraryId, operations: batchOperations });
+    }
+    const created = batchCreatedIndexes.map(({ changeIndex, operationIndex }) => Object.freeze({
       changeIndex,
       annotation: validateAnnotation(result.results[operationIndex]?.result?.annotation),
     }));

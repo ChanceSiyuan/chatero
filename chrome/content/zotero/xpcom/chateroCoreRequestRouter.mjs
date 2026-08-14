@@ -106,7 +106,7 @@ export function mapGeckoCoreError(error) {
 	let message = String(error?.message || error).slice(0, MAX_ERROR_MESSAGE);
 	if (error?.code === "CANCELLED") return { code: "CANCELLED", message, retriable: false };
 	if (error?.code === "UNAVAILABLE") return { code: "UNAVAILABLE", message, retriable: false };
-	if (error?.code === "REVISION_CONFLICT" || error?.code === "IDEMPOTENCY_CONFLICT") {
+	if (error?.code === "REVISION_CONFLICT" || error?.code === "IDEMPOTENCY_CONFLICT" || error?.code === "VERSION_CONFLICT") {
 		return {
 			code: "CONFLICT",
 			details: {

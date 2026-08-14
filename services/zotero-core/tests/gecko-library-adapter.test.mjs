@@ -543,7 +543,7 @@ test("creates, renames, moves, and deletes collections at exact object versions"
   await assert.rejects(adapter.mutateCollection({
     action: "update", collectionKey: "NESTED01", expectedVersion: 1,
     libraryId: 1, name: "Stale",
-  }), error => error.code === "REVISION_CONFLICT" && error.actualRevision === 2);
+  }), error => error.code === "VERSION_CONFLICT" && error.actualRevision === 2);
   assert.deepEqual(await adapter.mutateCollection({
     action: "delete", collectionKey: "NESTED01", expectedVersion: 2, libraryId: 1,
   }), { action: "delete", collectionKey: "NESTED01", deleted: true, libraryId: 1 });
@@ -600,7 +600,7 @@ test("trashes and restores attachments at exact object versions", async () => {
   assert.deepEqual(await adapter.mutateAttachment({ action: "restore", attachmentKey: "PDF00001", expectedVersion: 2, libraryId: 1 }), {
     action: "restore", attachmentKey: "PDF00001", deleted: false, libraryId: 1, parentItemKey: "ITEM0001", synced: false, version: 3,
   });
-  await assert.rejects(adapter.mutateAttachment({ action: "trash", attachmentKey: "PDF00001", expectedVersion: 2, libraryId: 1 }), error => error.code === "REVISION_CONFLICT");
+  await assert.rejects(adapter.mutateAttachment({ action: "trash", attachmentKey: "PDF00001", expectedVersion: 2, libraryId: 1 }), error => error.code === "VERSION_CONFLICT");
 });
 
 test("reads and updates typed Reader locations at exact attachment versions", async () => {
@@ -612,7 +612,7 @@ test("reads and updates typed Reader locations at exact attachment versions", as
     attachmentKey: "PDF00001", contentType: "application/pdf", libraryId: 1, pageIndex: 12, synced: true, version: 1,
   });
   await assert.rejects(adapter.updateReaderState({ attachmentKey: "PDF00001", cfi: "epubcfi(/6/2)", expectedVersion: 1, libraryId: 1 }), /pageIndex/);
-  await assert.rejects(adapter.updateReaderState({ attachmentKey: "PDF00001", expectedVersion: 0, libraryId: 1, pageIndex: 13 }), error => error.code === "REVISION_CONFLICT");
+  await assert.rejects(adapter.updateReaderState({ attachmentKey: "PDF00001", expectedVersion: 0, libraryId: 1, pageIndex: 13 }), error => error.code === "VERSION_CONFLICT");
 });
 
 test("Reader locations preserve upstream PDF, EPUB, and snapshot typed state without mutating attachment versions", async () => {
@@ -659,7 +659,7 @@ test("atomically updates fields, creators, tags, and relations at an expected Zo
     fields: [{ field: "title", value: "Stale overwrite" }],
     itemKey: "ITEM0001",
     libraryId: 1,
-  }), error => error.code === "REVISION_CONFLICT" && error.actualRevision === 18);
+  }), error => error.code === "VERSION_CONFLICT" && error.actualRevision === 18);
 });
 
 test("creates, recollects, trashes, and restores regular items at exact object versions", async () => {
@@ -687,7 +687,7 @@ test("creates, recollects, trashes, and restores regular items at exact object v
   })).deleted, false);
   await assert.rejects(adapter.mutateItem({
     action: "trash", expectedVersion: 18, itemKey: "ITEM0001", libraryId: 1,
-  }), error => error.code === "REVISION_CONFLICT" && error.actualRevision === 20);
+  }), error => error.code === "VERSION_CONFLICT" && error.actualRevision === 20);
 });
 
 test("updates Note HTML only at the exact Zotero object client version", async () => {
@@ -704,7 +704,7 @@ test("updates Note HTML only at the exact Zotero object client version", async (
     html: "<p>stale</p>",
     libraryId: 1,
     noteKey: "NOTE0002",
-  }), error => error.code === "REVISION_CONFLICT" && error.actualRevision === 2);
+  }), error => error.code === "VERSION_CONFLICT" && error.actualRevision === 2);
 });
 
 test("creates, trashes, and restores child Notes at exact object versions", async () => {

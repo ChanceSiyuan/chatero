@@ -36,7 +36,7 @@ function rpcError(error) {
   const message = String(error?.message || error).slice(0, MAX_ERROR_MESSAGE);
   if (error?.code === "CANCELLED") return { code: "CANCELLED", message, retriable: false };
   if (error?.code === "UNAVAILABLE") return { code: "UNAVAILABLE", message, retriable: false };
-  if (error?.code === "REVISION_CONFLICT" || error?.code === "IDEMPOTENCY_CONFLICT") {
+  if (error?.code === "REVISION_CONFLICT" || error?.code === "IDEMPOTENCY_CONFLICT" || error?.code === "VERSION_CONFLICT") {
     return {
       code: "CONFLICT",
       details: {
@@ -532,7 +532,7 @@ async function main() {
         if (!facts) throw new Error(`fixture item facts ${value.libraryId}/${value.itemKey} was not found`);
         if (facts.version !== value.expectedVersion) {
           const error = new Error("fixture item version changed before update");
-          error.code = "REVISION_CONFLICT";
+          error.code = "VERSION_CONFLICT";
           error.actualRevision = facts.version;
           error.expectedRevision = value.expectedVersion;
           throw error;
@@ -638,7 +638,7 @@ async function main() {
         if (!note) throw new Error(`fixture note ${value.libraryId}/${value.noteKey} was not found`);
         if (note.version !== value.expectedVersion) {
           const error = new Error("fixture Note version changed before update");
-          error.code = "REVISION_CONFLICT";
+          error.code = "VERSION_CONFLICT";
           error.actualRevision = note.version;
           error.expectedRevision = value.expectedVersion;
           throw error;
@@ -762,7 +762,7 @@ async function main() {
           if (!annotation) throw new Error(`fixture annotation ${value.libraryId}/${update.annotationKey} was not found`);
           if (annotation.version !== update.expectedVersion) {
             const error = new Error("fixture annotation version changed before update");
-            error.code = "REVISION_CONFLICT";
+            error.code = "VERSION_CONFLICT";
             error.actualRevision = annotation.version;
             error.expectedRevision = update.expectedVersion;
             throw error;

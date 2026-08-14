@@ -232,3 +232,104 @@ test("updates complete Notes and renders citations through Core only", async () 
   assert.equal(calls[1].params.expectedVersion, 3);
   assert.equal(Object.hasOwn(calls[1].params, "path"), false);
 });
+
+test("reading position self-heals a version-stamp race last-writer-wins", async () => {
+  const calls = [];
+  let updates = 0;
+  const core = {
+    attachment: async () => attachment,
+    annotations: async () => [annotation],
+    async request(method, params) {
+      calls.push({ method, params });
+      if (method === "reader.state") {
+        const version = calls.filter(value => value.method === "reader.state").length === 1 ? 4 : 9;
+        return { attachmentKey: "PDF00001", contentType: "application/pdf", libraryId: 7, pageIndex: 0, version };
+      }
+      if (++updates === 1) {
+        const error = new Error("Zotero Reader attachment version changed before update");
+        error.code = "CONFLICT";
+        error.details = { actualRevision: 9, expectedRevision: 4, kind: "VERSION_CONFLICT" };
+        throw error;
+      }
+      return { ...params, contentType: "application/pdf", replayed: false, revision: 2, synced: false, version: 9 };
+    },
+  };
+  const model = new ReaderWorkflowModel({ core, idempotencyKey: () => `reader-key-${calls.length}` });
+  await model.load({ attachmentKey: "PDF00001", libraryId: 7 });
+  const result = await model.updateLocation({ pageIndex: 6 });
+
+  const writes = calls.filter(value => value.method === "reader.state-update");
+  assert.equal(writes.length, 2);
+  assert.equal(writes[0].params.expectedVersion, 4);
+  assert.equal(writes[1].params.expectedVersion, 9);
+  assert.equal(calls.filter(value => value.method === "reader.state").length, 2);
+  assert.equal(result.version, 9);
+});
+
+test("annotation updates retry a pure stamp drift and surface real content drift", async () => {
+  const makeCore = reloaded => {
+    const calls = [];
+    let attempts = 0;
+    return {
+      calls,
+      attachment: async () => attachment,
+      annotations: async () => (calls.some(value => value.method === "library.annotations-update") ? [reloaded] : [annotation]),
+      async request(method, params) {
+        calls.push({ method, params });
+        if (method === "reader.state") return { attachmentKey: "PDF00001", contentType: "application/pdf", libraryId: 7, pageIndex: 0, version: 4 };
+        if (++attempts === 1) {
+          const error = new Error("annotation version changed before update");
+          error.code = "CONFLICT";
+          error.details = { actualRevision: 12, expectedRevision: 2, kind: "VERSION_CONFLICT" };
+          throw error;
+        }
+        return { annotations: [{ annotationKey: "ANN00001", version: 13 }], replayed: false, revision: 2, synced: false };
+      },
+    };
+  };
+
+  const stampDrift = makeCore({ ...annotation, version: 12 });
+  const healing = new ReaderWorkflowModel({ core: stampDrift, idempotencyKey: () => `reader-key-${stampDrift.calls.length}` });
+  await healing.load({ attachmentKey: "PDF00001", libraryId: 7 });
+  await healing.updateAnnotations([{ annotationKey: "ANN00001", comment: "Edited", expectedVersion: 2 }]);
+  const healed = stampDrift.calls.filter(value => value.method === "library.annotations-update");
+  assert.equal(healed.length, 2);
+  assert.equal(healed[1].params.updates[0].expectedVersion, 12);
+  assert.equal(healing.annotations.find(value => value.annotationKey === "ANN00001").comment, "Edited");
+
+  const contentDrift = makeCore({ ...annotation, comment: "Someone else edited", version: 12 });
+  const conflicted = new ReaderWorkflowModel({ core: contentDrift, idempotencyKey: () => `reader-key-${contentDrift.calls.length}` });
+  await conflicted.load({ attachmentKey: "PDF00001", libraryId: 7 });
+  await assert.rejects(
+    conflicted.updateAnnotations([{ annotationKey: "ANN00001", comment: "Edited", expectedVersion: 2 }]),
+    error => error?.details?.kind === "VERSION_CONFLICT",
+  );
+  assert.equal(contentDrift.calls.filter(value => value.method === "library.annotations-update").length, 1);
+});
+
+test("batched deletes of already-gone annotations settle as a no-op after a version race", async () => {
+  const calls = [];
+  let batches = 0;
+  const core = {
+    attachment: async () => attachment,
+    annotations: async () => (batches ? [] : [annotation]),
+    async request(method) {
+      calls.push({ method });
+      return { attachmentKey: "PDF00001", contentType: "application/pdf", libraryId: 7, pageIndex: 0, version: 4 };
+    },
+    async batchMutate() {
+      batches += 1;
+      const error = new Error("annotation version changed before update");
+      error.code = "CONFLICT";
+      error.details = { actualRevision: 12, expectedRevision: 2, kind: "VERSION_CONFLICT" };
+      throw error;
+    },
+  };
+  const model = new ReaderWorkflowModel({ core, idempotencyKey: () => `reader-key-${calls.length}` });
+  await model.load({ attachmentKey: "PDF00001", libraryId: 7 });
+  const result = await model.applyAnnotationChanges([{ action: "trash", annotationKey: "ANN00001", expectedVersion: 2 }]);
+
+  assert.equal(batches, 1);
+  assert.deepEqual(result.results, []);
+  assert.equal(model.annotations.length, 0);
+});
