@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Chatero LaTeX Preview</title>
+<style>
+html,body{height:100%;margin:0;background:#f7f7f7}
+iframe{display:block;width:100%;height:100%;border:0}
+#status{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;font:13px system-ui;color:#555;background:#f7f7f7}
+#status[hidden]{display:none}
+</style>
+</head>
+<body>
+<div id="status" role="status">Rendering PDF…</div>
+<iframe id="viewer" title="LaTeX PDF preview"></iframe>
+<script src="./latex-preview-host.js"></script>
+</body>
+</html>

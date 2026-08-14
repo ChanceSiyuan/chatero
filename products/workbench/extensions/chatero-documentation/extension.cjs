@@ -41,6 +41,12 @@ async function activate(context) {
     return registerQuartoPreview({ vscode, context });
   });
   context.subscriptions.push(...quartoPreview);
+  const latexPreview = await registerSafely("LaTeX Preview", async () => {
+    const registerLatexPreview = context.registerLatexPreview
+      ?? await import("./latex-preview-manager.mjs").then(module => module.registerLatexPreview);
+    return registerLatexPreview({ vscode, context });
+  });
+  context.subscriptions.push(...latexPreview);
 
   let enabled = false;
   try {

@@ -102,6 +102,7 @@ test("Documentation is the default workspace surface with optional Live Preview"
     "chatero.documentation.openSource",
     "chatero.documentation.toggleEditingView",
     "chatero.documentation.openQuartoPreview",
+    "chatero.documentation.openLatexPreview",
     "chatero.documentation.markWorking",
     "chatero.documentation.markReviewed",
     "chatero.documentation.planMigration",
@@ -147,7 +148,13 @@ test("first-party materialization declares the complete Documentation authority"
     "chatero.zotero",
   ]);
   const documentation = firstParty.extensions[0];
-  assert.deepEqual(documentation.files.map(file => file.destination), [
+  // The packaged surface is pinned exactly, except for the vendored pdf.js
+  // viewer the LaTeX preview embeds: those assets are asserted by their
+  // boundary and entry points so 200-odd cmaps and fonts stay out of this list.
+  const pdfjsPrefix = "extensions/chatero-documentation/media/pdfjs/";
+  const destinations = documentation.files.map(file => file.destination);
+  const pdfjs = destinations.filter(value => value.startsWith(pdfjsPrefix));
+  assert.deepEqual(destinations.filter(value => !value.startsWith(pdfjsPrefix)).sort(), [
     "extensions/chatero-documentation/change-set-model.mjs",
     "extensions/chatero-documentation/change-set-store.mjs",
     "extensions/chatero-documentation/documentation-agent-tools.mjs",
@@ -156,23 +163,28 @@ test("first-party materialization declares the complete Documentation authority"
     "extensions/chatero-documentation/documentation-image-resolver.mjs",
     "extensions/chatero-documentation/documentation-operations.mjs",
     "extensions/chatero-documentation/documentation-path.mjs",
-    "extensions/chatero-documentation/documentation-review.cjs",
     "extensions/chatero-documentation/documentation-retrieval.mjs",
+    "extensions/chatero-documentation/documentation-review.cjs",
     "extensions/chatero-documentation/documentation-services.mjs",
     "extensions/chatero-documentation/documentation-state.mjs",
     "extensions/chatero-documentation/documentation-transactions.mjs",
     "extensions/chatero-documentation/documentation-tree.cjs",
     "extensions/chatero-documentation/documentation-workspace.mjs",
     "extensions/chatero-documentation/extension.cjs",
+    "extensions/chatero-documentation/latex-preview-html.mjs",
+    "extensions/chatero-documentation/latex-preview-manager.mjs",
+    "extensions/chatero-documentation/latex-preview-server.mjs",
+    "extensions/chatero-documentation/latex-runtime.mjs",
     "extensions/chatero-documentation/licenses/CodeMirror-MIT.txt",
     "extensions/chatero-documentation/licenses/KaTeX-MIT.txt",
+    "extensions/chatero-documentation/licenses/Overleaf-AGPL-3.0.txt",
+    "extensions/chatero-documentation/licenses/Overleaf-NOTICE.txt",
+    "extensions/chatero-documentation/licenses/pdfjs-Apache-2.0.txt",
+    "extensions/chatero-documentation/literature-review.mjs",
     "extensions/chatero-documentation/live-preview-bridge.mjs",
     "extensions/chatero-documentation/live-preview-html.mjs",
     "extensions/chatero-documentation/live-preview-protocol.mjs",
     "extensions/chatero-documentation/live-preview-provider.cjs",
-    "extensions/chatero-documentation/media/documentation.svg",
-    "extensions/chatero-documentation/media/documentation-webview/live-preview.css",
-    "extensions/chatero-documentation/media/documentation-webview/live-preview.js",
     "extensions/chatero-documentation/media/documentation-webview/fonts/KaTeX_AMS-Regular.woff2",
     "extensions/chatero-documentation/media/documentation-webview/fonts/KaTeX_Caligraphic-Bold.woff2",
     "extensions/chatero-documentation/media/documentation-webview/fonts/KaTeX_Caligraphic-Regular.woff2",
@@ -193,8 +205,13 @@ test("first-party materialization declares the complete Documentation authority"
     "extensions/chatero-documentation/media/documentation-webview/fonts/KaTeX_Size3-Regular.woff2",
     "extensions/chatero-documentation/media/documentation-webview/fonts/KaTeX_Size4-Regular.woff2",
     "extensions/chatero-documentation/media/documentation-webview/fonts/KaTeX_Typewriter-Regular.woff2",
-    "extensions/chatero-documentation/migration-model.mjs",
+    "extensions/chatero-documentation/media/documentation-webview/live-preview.css",
+    "extensions/chatero-documentation/media/documentation-webview/live-preview.js",
+    "extensions/chatero-documentation/media/documentation.svg",
+    "extensions/chatero-documentation/media/latex-preview/latex-preview-host.html",
+    "extensions/chatero-documentation/media/latex-preview/latex-preview-host.js",
     "extensions/chatero-documentation/migration-executor.mjs",
+    "extensions/chatero-documentation/migration-model.mjs",
     "extensions/chatero-documentation/migration-planner.mjs",
     "extensions/chatero-documentation/migration-recovery.mjs",
     "extensions/chatero-documentation/migration-rewrite.mjs",
@@ -205,26 +222,27 @@ test("first-party materialization declares the complete Documentation authority"
     "extensions/chatero-documentation/quarto-preview-manager.mjs",
     "extensions/chatero-documentation/quarto-runtime.mjs",
     "extensions/chatero-documentation/quarto-static-server.mjs",
-    "extensions/chatero-documentation/review-decisions.mjs",
-    "extensions/chatero-documentation/review-snapshot.mjs",
     "extensions/chatero-documentation/research-loop-commands.mjs",
     "extensions/chatero-documentation/research-loop-composition.mjs",
     "extensions/chatero-documentation/research-loop-controller.mjs",
     "extensions/chatero-documentation/research-loop-model.mjs",
     "extensions/chatero-documentation/research-loop-registration.mjs",
-    "extensions/chatero-documentation/literature-review.mjs",
+    "extensions/chatero-documentation/review-decisions.mjs",
+    "extensions/chatero-documentation/review-snapshot.mjs",
     "extensions/chatero-documentation/reviewed-research-surfaces.mjs",
-    "extensions/chatero-documentation/settlement-planner.mjs",
-    "extensions/chatero-documentation/settlement-protocol.mjs",
-    "extensions/chatero-documentation/settlement-recovery.mjs",
-    "extensions/chatero-documentation/safe-quarto-renderer.mjs",
-    "extensions/chatero-documentation/safe-quarto-sandbox.mjs",
-    "extensions/chatero-documentation/settlement-operations.mjs",
-    "extensions/chatero-documentation/settlement-executor.mjs",
     "extensions/chatero-documentation/runtime/chatero-documentation-authority.mjs",
     "extensions/chatero-documentation/runtime/protocol.mjs",
     "extensions/chatero-documentation/runtime/yaml-2.9.0.mjs",
     "extensions/chatero-documentation/runtime/yaml-LICENSE",
+    "extensions/chatero-documentation/safe-latex-renderer.mjs",
+    "extensions/chatero-documentation/safe-latex-sandbox.mjs",
+    "extensions/chatero-documentation/safe-quarto-renderer.mjs",
+    "extensions/chatero-documentation/safe-quarto-sandbox.mjs",
+    "extensions/chatero-documentation/settlement-executor.mjs",
+    "extensions/chatero-documentation/settlement-operations.mjs",
+    "extensions/chatero-documentation/settlement-planner.mjs",
+    "extensions/chatero-documentation/settlement-protocol.mjs",
+    "extensions/chatero-documentation/settlement-recovery.mjs",
     "extensions/chatero-documentation/stable-hunks.mjs",
     "extensions/chatero-documentation/text-change-set.mjs",
     "extensions/chatero-documentation/three-way-reconcile.mjs",
@@ -233,8 +251,8 @@ test("first-party materialization declares the complete Documentation authority"
     "extensions/chatero-documentation/webview/formula-decorations.mjs",
     "extensions/chatero-documentation/webview/image-decorations.mjs",
     "extensions/chatero-documentation/webview/line-ending-map.mjs",
-    "extensions/chatero-documentation/webview/prose-decorations.mjs",
     "extensions/chatero-documentation/webview/proof-collapse.mjs",
+    "extensions/chatero-documentation/webview/prose-decorations.mjs",
     "extensions/chatero-documentation/webview/qmd-language.mjs",
     "extensions/chatero-documentation/webview/qmd-preview.mjs",
     "extensions/chatero-documentation/webview/qmd-source-model.mjs",
@@ -242,9 +260,18 @@ test("first-party materialization declares the complete Documentation authority"
     "extensions/chatero-documentation/webview/table-decorations.mjs",
     "extensions/chatero-documentation/working-copy-coordinator.mjs",
   ]);
+  for (const entry of [
+    "web/viewer.html",
+    "web/viewer.mjs",
+    "web/viewer.css",
+    "build/pdf.mjs",
+    "build/pdf.worker.mjs",
+  ]) assert.ok(pdfjs.includes(`${pdfjsPrefix}${entry}`), `missing packaged pdf.js ${entry}`);
+  assert.ok(pdfjs.some(value => value.includes("/cmaps/")), "packaged pdf.js must ship cmaps for CJK documents");
+  assert.ok(pdfjs.some(value => value.includes("/standard_fonts/")), "packaged pdf.js must ship its standard fonts");
 });
 
-async function activateWith({ enabled, registerDocumentation, registerLivePreview = async () => [], registerQuartoPreview = async () => [] }) {
+async function activateWith({ enabled, registerDocumentation, registerLivePreview = async () => [], registerQuartoPreview = async () => [], registerLatexPreview = async () => [] }) {
   const commands = [];
   const outputLines = [];
   const output = {
@@ -274,7 +301,7 @@ async function activateWith({ enabled, registerDocumentation, registerLivePrevie
       },
     },
   };
-  const context = { subscriptions: [], documentationServices: Object.freeze({ test: true }), registerQuartoPreview };
+  const context = { subscriptions: [], documentationServices: Object.freeze({ test: true }), registerLatexPreview, registerQuartoPreview };
   const require = createRequire(import.meta.url);
   const extensionPath = fileURLToPath(new URL("extension.cjs", extensionRoot));
   delete require.cache[require.resolve(extensionPath)];

@@ -1,0 +1,12 @@
+Chatero's LaTeX preview host (media/latex-preview/latex-preview-host.js) ports
+the scroll-position model and the anti-flicker render sequence from Overleaf.
+
+  Overleaf -- https://github.com/overleaf/overleaf
+  Copyright (c) Overleaf, 2014-2025
+  Licensed under the GNU Affero General Public License, version 3.
+  Full license text: Overleaf-AGPL-3.0.txt
+
+Ported from services/web/frontend/js/features/pdf-preview:
+  util/pdf-js-wrapper.ts   -- currentPosition / scrollToPosition
+  components/pdf-js-viewer.tsx -- debounced position capture, scale applied on
+                                  pagesinit, restore after initialisation

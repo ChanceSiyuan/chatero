@@ -4,7 +4,7 @@
   "description": "Unified human and Agent-authored research documentation for Chatero workspaces.",
   "version": "0.1.0",
   "publisher": "chatero",
-  "license": "MIT",
+  "license": "AGPL-3.0-or-later",
   "private": true,
   "engines": {
     "vscode": "^1.132.0"
@@ -60,6 +60,31 @@
           "scope": "machine",
           "markdownDescription": "SHA-256 digests the Linux Quarto entry executable must match (this replaces the macOS code-signature check). Compute with `sha256sum \"$(realpath /opt/quarto/bin/quarto)\"`. This pins only the entry executable -- treat the whole Quarto install directory as trusted, since the bubblewrap sandbox, not this pin, is the security boundary. Exact Quarto Preview stays unavailable on Linux until a digest is pinned here."
         },
+        "chatero.documentation.remoteLatex.executablePath": {
+          "type": "string",
+          "default": "/usr/bin/latexmk",
+          "scope": "machine",
+          "description": "Absolute path to latexmk on this Linux machine, used to compile LaTeX previews. LaTeX compilation runs only on a Chatero remote host."
+        },
+        "chatero.documentation.remoteLatex.sha256Allowlist": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[0-9a-fA-F]{64}$"
+          },
+          "default": [],
+          "scope": "machine",
+          "markdownDescription": "SHA-256 digests the latexmk executable must match. Compute with `sha256sum \"$(realpath /usr/bin/latexmk)\"`. This pins only the entry executable -- treat the whole TeX installation as trusted, since the bubblewrap sandbox, not this pin, is the security boundary. LaTeX Preview stays unavailable until a digest is pinned here."
+        },
+        "chatero.documentation.remoteLatex.runtimeRoots": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "machine",
+          "description": "Extra absolute directories to mount read-only into the LaTeX sandbox, for TeX trees outside /usr (for example /opt/texlive). A directory that is, or contains, your home directory is refused."
+        },
         "chatero.documentation.remoteQuarto.allowExecution": {
           "type": "boolean",
           "default": false,
@@ -92,6 +117,11 @@
       {
         "command": "chatero.documentation.openQuartoPreview",
         "title": "Open Exact Quarto Preview Beside Source",
+        "category": "Chatero"
+      },
+      {
+        "command": "chatero.documentation.openLatexPreview",
+        "title": "Open LaTeX Preview Beside Source",
         "category": "Chatero"
       },
       {
@@ -168,6 +198,12 @@
         "key": "ctrl+k v",
         "mac": "cmd+k v",
         "when": "activeCustomEditorId == chatero.documentation.livePreview || resourceExtname == .qmd"
+      },
+      {
+        "command": "chatero.documentation.openLatexPreview",
+        "key": "ctrl+k v",
+        "mac": "cmd+k v",
+        "when": "resourceExtname == .tex"
       }
     ],
     "customEditors": [

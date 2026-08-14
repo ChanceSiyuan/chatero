@@ -95,6 +95,11 @@ test("contributes one optional Documentation QMD editor and preference", async (
     key: "ctrl+k v",
     mac: "cmd+k v",
     when: "activeCustomEditorId == chatero.documentation.livePreview || resourceExtname == .qmd",
+  }, {
+    command: "chatero.documentation.openLatexPreview",
+    key: "ctrl+k v",
+    mac: "cmd+k v",
+    when: "resourceExtname == .tex",
   }]);
 });
 
