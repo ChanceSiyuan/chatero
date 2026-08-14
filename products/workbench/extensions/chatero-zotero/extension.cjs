@@ -2,6 +2,7 @@ const vscode = require("vscode");
 const { homedir } = require("node:os");
 const { join } = require("node:path");
 const { NoteEditorProvider, PdfEditorProvider } = require("./evidence-editors.cjs");
+const { ReaderServer } = require("./reader-server.cjs");
 
 let activeLifecycle = null;
 let deactivationPromise = null;
@@ -68,6 +69,25 @@ class LibraryItemProvider {
     this._emitter = new vscode.EventEmitter();
     this.onDidChangeTreeData = this._emitter.event;
     this.model = null;
+    this._persistTimer = null;
+  }
+
+  schedulePersist() {
+    if (this._persistTimer) return;
+    this._persistTimer = setTimeout(() => {
+      this._persistTimer = null;
+      void this.persistNow();
+    }, 200);
+    this._persistTimer.unref?.();
+  }
+
+  persistNow() {
+    if (this._persistTimer) {
+      clearTimeout(this._persistTimer);
+      this._persistTimer = null;
+    }
+    if (!this.model?.source) return Promise.resolve();
+    return Promise.resolve(this.persist(this.model.snapshot()));
   }
 
   setConnection(model) {
@@ -84,15 +104,15 @@ class LibraryItemProvider {
   async open(source) {
     if (!this.model || !source) return;
     await vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: "Loading Zotero items…", cancellable: false }, () => this.model.open(source));
-    await this.persist(this.model.snapshot());
     this.refresh();
+    await this.persistNow();
   }
 
   async loadNext() {
     if (!this.model) return;
     await vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: "Loading more Zotero items…", cancellable: false }, () => this.model.loadNext());
-    await this.persist(this.model.snapshot());
     this.refresh();
+    await this.persistNow();
   }
 
   select(elements) {
@@ -103,7 +123,7 @@ class LibraryItemProvider {
       .map(value => `${value.value.libraryId}/${value.value.itemKey}`)
       .filter(value => available.has(value)));
     void vscode.commands.executeCommand("setContext", "chateroZoteroHasSelection", this.model.selectedRows.length > 0);
-    void this.persist(this.model.snapshot());
+    this.schedulePersist();
   }
 
   getTreeItem(element) {
@@ -145,7 +165,10 @@ class LibraryItemProvider {
     ];
   }
 
-  dispose() { this._emitter.dispose(); }
+  dispose() {
+    if (this._persistTimer) void this.persistNow();
+    this._emitter.dispose();
+  }
 }
 
 async function activate(context) {
@@ -181,6 +204,7 @@ async function activate(context) {
   const fullPdfGrants = new authorizedPdfModule.AuthorizedPdfSourceRegistry();
   const sourceProvider = new LibrarySourceProvider();
   let activeNoteIdentity = null;
+  let detailsPanel = null;
   const itemProvider = new LibraryItemProvider({
     evidenceAuthority,
     persist: snapshot => context.workspaceState.update("chatero.zotero.itemTable.v1", snapshot),
@@ -381,19 +405,58 @@ async function activate(context) {
         try { tableModel.restore(snapshot); itemProvider.refresh(); }
         catch (_) { void context.workspaceState.update("chatero.zotero.itemTable.v1", undefined); }
       }
-      return startedCore.client.onEvent(() => {
+      let refreshTimer = null;
+      let refreshing = false;
+      let refreshPending = false;
+      const identify = row => `${row.libraryId}/${row.itemKey}`;
+      const runRefresh = async () => {
         sourceProvider.refresh();
-        if (tableModel.source) void tableModel.open(tableModel.source, {
+        if (!tableModel.source) return;
+        const selection = tableModel.selectedRows.map(identify);
+        await tableModel.open(tableModel.source, {
           query: tableModel.query, sortBy: tableModel.sortBy, sortDirection: tableModel.sortDirection,
-        }).then(() => itemProvider.refresh(), () => {});
+        });
+        const available = new Set(tableModel.rows.map(identify));
+        tableModel.select(selection.filter(value => available.has(value)));
+        itemProvider.refresh();
+      };
+      const drainRefresh = () => {
+        if (refreshing) {
+          refreshPending = true;
+          return;
+        }
+        refreshing = true;
+        void runRefresh().catch(() => {}).then(() => {
+          refreshing = false;
+          if (!refreshPending) return;
+          refreshPending = false;
+          drainRefresh();
+        });
+      };
+      const unsubscribe = startedCore.client.onEvent(() => {
+        if (refreshTimer) clearTimeout(refreshTimer);
+        refreshTimer = setTimeout(() => {
+          refreshTimer = null;
+          drainRefresh();
+        }, 250);
+        refreshTimer.unref?.();
       });
+      return () => {
+        if (refreshTimer) clearTimeout(refreshTimer);
+        refreshTimer = null;
+        refreshPending = false;
+        unsubscribe?.();
+      };
     },
     unpublish: () => {
       activeNoteIdentity = null;
       pdfMaterializer = null;
+      const panel = detailsPanel;
+      detailsPanel = null;
       evidenceDocuments.reset();
       sourceProvider.setConnection(null, null);
       itemProvider.setConnection(null);
+      panel?.dispose();
     },
     onUnexpectedStop: () => {
       void vscode.window.showErrorMessage("Zotero Core stopped unexpectedly. Your profile lease was released safely.");
@@ -425,12 +488,14 @@ async function activate(context) {
     return pdfMaterializer.materialize(record);
   };
 
+  const readerServer = new ReaderServer({ mediaRoot: vscode.Uri.joinPath(context.extensionUri, "media", "zotero-reader").fsPath });
+  context.subscriptions.push({ dispose: () => readerServer.dispose() });
+  let activeReaderExport = null;
   context.subscriptions.push(vscode.window.registerCustomEditorProvider("chatero.zotero.pdf", new PdfEditorProvider({
     vscode,
     registry: evidenceDocuments,
     getModel: () => sourceProvider.core,
     resolveDocument,
-    renderPdfEditorHTML: html.renderPdfEditorHTML,
     renderUpstreamReaderHTML: html.renderUpstreamReaderHTML,
     extensionUri: context.extensionUri,
     materializePdf,
@@ -439,14 +504,29 @@ async function activate(context) {
     createReaderWorkflow,
     fromUpstreamReaderAnnotation: readerBridge.fromUpstreamReaderAnnotation,
     readerLocationFromViewState: readerBridge.readerLocationFromViewState,
+    readerServer,
     toUpstreamReaderAnnotation: readerBridge.toUpstreamReaderAnnotation,
+    onActiveReaderChanged: value => { activeReaderExport = value; },
     onContextError: () => {
       void vscode.window.showErrorMessage("Could not attach the bounded Zotero PDF context.");
     },
     onReaderError: (error, operation) => {
       console.error(`[Chatero Zotero reader:${operation}]`, error);
     },
-  }), { supportsMultipleEditorsPerDocument: false }));
+  }), { supportsMultipleEditorsPerDocument: false, webviewOptions: { retainContextWhenHidden: true } }));
+  context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.exportActivePdf", async () => {
+    if (!activeReaderExport) {
+      void vscode.window.showInformationMessage("Open a Zotero attachment to export a copy of it.");
+      return;
+    }
+    const { file, record } = activeReaderExport;
+    const destination = await vscode.window.showSaveDialog({
+      defaultUri: vscode.Uri.file(record.filename || `${record.attachmentKey}.pdf`),
+      filters: record.contentType === "application/pdf" ? { PDF: ["pdf"] } : undefined,
+      saveLabel: "Export Copy",
+    });
+    if (destination) await vscode.workspace.fs.copy(file, destination, { overwrite: true });
+  }));
   context.subscriptions.push(vscode.window.registerCustomEditorProvider("chatero.zotero.note", new NoteEditorProvider({
     registry: evidenceDocuments,
     getModel: () => sourceProvider.core,
@@ -454,7 +534,7 @@ async function activate(context) {
     renderNoteEditorHTML: html.renderNoteEditorHTML,
     createReaderWorkflow,
     onError: error => void vscode.window.showErrorMessage(`Could not save Zotero Note: ${error.message}`),
-  }), { supportsMultipleEditorsPerDocument: false }));
+  }), { supportsMultipleEditorsPerDocument: false, webviewOptions: { retainContextWhenHidden: true } }));
 
   context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.selectProfile", selectProfile));
   context.subscriptions.push(vscode.commands.registerCommand("chatero.zotero.selectCoreExecutable", selectCoreExecutable));
@@ -469,7 +549,10 @@ async function activate(context) {
       compatibilityTransition = true;
       const configuration = readCoreLaunchConfiguration(vscode.workspace.getConfiguration("chatero.zotero"));
       const profileDirectory = configuration.profilePath || await selectProfile();
-      if (!profileDirectory) return null;
+      if (!profileDirectory) {
+        compatibilityTransition = false;
+        return null;
+      }
       const geckoExecutable = await resolveCoreExecutable({
         configuredPath: configuration.coreExecutable,
         extensionPath: context.extensionPath || __dirname,
@@ -569,13 +652,21 @@ async function activate(context) {
     }
     try {
       const metadata = await sourceProvider.core.metadata({ itemKey: item.itemKey, libraryId: item.libraryId });
-      const panel = vscode.window.createWebviewPanel(
-        "chatero.zotero.itemDetails",
-        metadata.title || "Item Details",
-        vscode.ViewColumn.Beside,
-        { enableScripts: false, localResourceRoots: [] },
-      );
-      panel.webview.html = metadataHtml.renderItemMetadataHTML(metadata);
+      if (detailsPanel) detailsPanel.reveal(vscode.ViewColumn.Beside, true);
+      else {
+        detailsPanel = vscode.window.createWebviewPanel(
+          "chatero.zotero.itemDetails",
+          metadata.title || "Item Details",
+          vscode.ViewColumn.Beside,
+          { enableScripts: false, localResourceRoots: [] },
+        );
+        const panel = detailsPanel;
+        context.subscriptions.push(panel, panel.onDidDispose?.(() => {
+          if (detailsPanel === panel) detailsPanel = null;
+        }) ?? { dispose: () => {} });
+      }
+      detailsPanel.title = metadata.title || "Item Details";
+      detailsPanel.webview.html = metadataHtml.renderItemMetadataHTML(metadata);
     }
     catch (error) {
       void vscode.window.showErrorMessage(`Could not load Zotero item details: ${error.message}`);

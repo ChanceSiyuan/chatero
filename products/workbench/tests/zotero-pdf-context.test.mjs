@@ -318,12 +318,14 @@ test("page mode preserves ordinary maximum page and annotation evidence while ho
 });
 
 test("manifest and source wire only the explicit native attach provider and real proposal allowlist", async () => {
-  const [manifest, product, packaging, extensionSource, viewerSource, htmlSource] = await Promise.all([
+  const [manifest, product, packaging, extensionSource, hostSource, viewerSource, viewerStyle, htmlSource] = await Promise.all([
     readFile(join(extensionRoot, "package.json"), "utf8").then(JSON.parse),
     readFile(join(root, "products", "workbench", "product.chatero.json"), "utf8").then(JSON.parse),
     readFile(join(root, "products", "workbench", "first-party-extensions.json"), "utf8").then(JSON.parse),
     readFile(join(extensionRoot, "extension.cjs"), "utf8"),
-    readFile(join(extensionRoot, "media", "pdf-viewer", "pdf-viewer.mjs"), "utf8"),
+    readFile(join(extensionRoot, "media", "zotero-reader", "chatero-reader-host.mjs"), "utf8"),
+    readFile(join(extensionRoot, "media", "zotero-reader", "pdf", "web", "viewer.mjs"), "utf8"),
+    readFile(join(extensionRoot, "media", "zotero-reader", "pdf", "web", "viewer.css"), "utf8"),
     readFile(join(extensionRoot, "evidence-editor-html.mjs"), "utf8"),
   ]);
   const provider = manifest.contributes.chatContext?.find(value => value.displayName === "Zotero PDF evidence");
@@ -350,27 +352,45 @@ test("manifest and source wire only the explicit native attach provider and real
   for (const destination of ["extensions/chatero-zotero/pdf-context-broker.mjs", "extensions/chatero-zotero/pdf-context-format.mjs"]) {
     assert.ok(files.some(value => value.destination === destination));
   }
-  assert.match(htmlSource, /id="pdf-pages"[^>]+Continuous PDF pages/);
-  assert.match(htmlSource, /--scale-factor|--total-scale-factor/);
-  assert.match(htmlSource, /\.textLayer :is\(span,br\)\{[^}]*z-index:1/);
-  assert.match(htmlSource, /data-main-rotation="90"/);
-  assert.match(htmlSource, /data-main-rotation="180"/);
-  assert.match(htmlSource, /data-main-rotation="270"/);
+  assert.match(htmlSource, /<iframe id="reader-frame" src="\$\{escapeHtml\(readerPageUri\)\}"/);
+  assert.match(htmlSource, /frame-src \$\{escapeHtml\(frameOrigin\)\}/);
+  assert.doesNotMatch(htmlSource, /libraryId|attachmentKey/);
+  assert.match(viewerStyle, /--scale-factor|--total-scale-factor/);
+  assert.match(viewerStyle, /\.textLayer \{[^}]*user-select: auto;[^}]*z-index: 2;/);
+  assert.match(viewerStyle, /data-main-rotation="90"/);
+  assert.match(viewerStyle, /data-main-rotation="180"/);
+  assert.match(viewerStyle, /data-main-rotation="270"/);
+  assert.match(viewerStyle, /--user-unit/);
   assert.match(viewerSource, /getTextContent\(/);
-  assert.match(viewerSource, /new pdfjs\.TextLayer\(/);
-  assert.match(viewerSource, /canvasTask\?\.cancel\(\)/);
-  assert.match(viewerSource, /textTask\?\.cancel\(\)/);
+  assert.match(viewerSource, /new TextLayer\(/);
   assert.match(viewerSource, /RenderingCancelledException/);
   assert.match(viewerSource, /AbortException/);
-  assert.match(viewerSource, /--user-unit/);
-  assert.match(viewerSource, /range\.startContainer/);
-  assert.match(viewerSource, /range\.endContainer/);
-  assert.match(viewerSource, /range\.commonAncestorContainer/);
-  assert.match(viewerSource, /selectionchange/);
+  assert.match(viewerSource, /PDFRenderingQueue/);
+  assert.match(viewerSource, /renderHighestPriority/);
+  assert.match(viewerSource, /startContainer/);
+  assert.match(viewerSource, /endContainer/);
+  assert.match(hostSource, /element\(range\.startContainer\)\?\.closest\?\.\("\.textLayer"\)/);
+  assert.match(hostSource, /element\(range\.commonAncestorContainer\)\?\.closest\?\.\("\.textLayer"\)/);
+  assert.match(hostSource, /closest\?\.\("\.textLayer"\)/);
+  assert.match(hostSource, /closest\("\[data-page-number\]"\)\?\.dataset\.pageNumber/);
+  assert.match(hostSource, /page\.getTextContent\(\)/);
+  assert.match(hostSource, /addEventListener\("selectionchange"/);
   assert.ok(manifest.contributes.keybindings.some(value => value.command === "chatero.zotero.addActiveContextToChat" && value.mac === "cmd+shift+l"));
-  assert.match(viewerSource, /acquireVsCodeApi\(\)/);
-  assert.match(viewerSource, /function makeContextMessage[\s\S]+type: "pdf-context",[\s\S]+panelNonce,[\s\S]+sequence:[\s\S]+pageIndex:[\s\S]+pageLabel:[\s\S]+pageText:[\s\S]+selectedText:/);
-  assert.doesNotMatch(viewerSource, /type: "pdf-context-attach"/);
-  assert.match(viewerSource, /scheduleRender\(/);
-  assert.doesNotMatch(viewerSource, /libraryId|attachmentKey|pdfUri\s*:/);
+  assert.match(htmlSource, /acquireVsCodeApi\(\)/);
+  assert.doesNotMatch(hostSource, /acquireVsCodeApi/);
+  assert.match(hostSource, /const message = \{[\s\S]+type: "pdf-context",[\s\S]+panelNonce,[\s\S]+sequence: contextSequence \+ 1,[\s\S]+pageIndex,[\s\S]+pageLabel:[\s\S]+pageText:[\s\S]+selectedText:/);
+  assert.equal(hostSource.match(/"pdf-context-attach"/gu).length, 1);
+  const attachStart = hostSource.indexOf("async function attachContext() {");
+  const attachEnd = hostSource.indexOf("function isAttachKey(event) {");
+  assert.ok(attachStart > 0 && attachStart < attachEnd);
+  assert.ok(hostSource.indexOf('send({ panelNonce, sequence: attachSequence, type: "pdf-context-attach" });') > attachStart);
+  assert.ok(hostSource.indexOf('send({ panelNonce, sequence: attachSequence, type: "pdf-context-attach" });') < attachEnd);
+  assert.match(hostSource, /function isAttachKey\(event\) \{\n\s+return \(event\.metaKey \|\| event\.ctrlKey\) && event\.shiftKey && !event\.altKey/);
+  // stopImmediatePropagation keeps the chord from also reaching the key relay,
+  // which would attach twice through the workbench keybinding.
+  assert.match(hostSource, /if \(!isAttachKey\(event\)\) return;\n\s+event\.preventDefault\(\);\n\s+event\.stopImmediatePropagation\(\);\n\s+void attachContext\(\);/);
+  assert.match(hostSource, /if \(beforeKeydown\) doc\.addEventListener\("keydown", beforeKeydown, true\);/);
+  assert.ok(hostSource.indexOf("if (beforeKeydown) doc.addEventListener(\"keydown\", beforeKeydown, true);")
+    < hostSource.indexOf('for (const eventType of ["keydown", "keyup"])'));
+  assert.doesNotMatch(hostSource, /libraryId|attachmentKey|documentUri\s*:/);
 });

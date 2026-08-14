@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
 
@@ -63,7 +64,7 @@ function fakeVscode(withProgress) {
     TreeItemCollapsibleState: { Collapsed: 1, None: 0 },
     Uri: {
       file: fsPath => ({ authority: "", fsPath, path: fsPath, scheme: "file", toString: () => `file://${fsPath}` }),
-      joinPath: (base, ...parts) => ({ ...base, path: `${base.path}/${parts.join("/")}` }),
+      joinPath: (base, ...parts) => ({ ...base, fsPath: `${base.fsPath ?? base.path}/${parts.join("/")}`, path: `${base.path}/${parts.join("/")}` }),
       parse: value => ({ toString: () => value }),
     },
     window: {
@@ -90,6 +91,25 @@ function fakeVscode(withProgress) {
         }),
         update: async () => {},
       }),
+    },
+  };
+}
+
+function fakeReaderServer({ origin = "http://127.0.0.1:44100" } = {}) {
+  const disposals = [];
+  const requests = [];
+  return {
+    disposals,
+    requests,
+    async lease(request) {
+      requests.push(request);
+      const leaseId = `LEASE0000${requests.length}`;
+      return Object.freeze({
+        dispose: () => disposals.push(leaseId),
+        documentUrl: `${origin}/token/doc/${leaseId}`,
+        origin,
+        readerPageUrl: `${origin}/token/reader/chatero-reader.html`,
+      });
     },
   };
 }
@@ -266,10 +286,14 @@ test("simultaneous restored PDF and Note tabs start Core once", async () => {
   const fileUri = value => ({ authority: "", fsPath: value, path: value, scheme: "file", value, toString: () => `file://${value}` });
   const pdf = new providers.PdfEditorProvider({
     extensionUri: fileUri("/extension"),
+    fromUpstreamReaderAnnotation: () => { throw new Error("not reached"); },
     getModel: () => null,
+    readerLocationFromViewState: () => { throw new Error("not reached"); },
+    readerServer: fakeReaderServer(),
     registry,
     resolveDocument,
-    renderPdfEditorHTML: () => "",
+    renderUpstreamReaderHTML: () => "",
+    toUpstreamReaderAnnotation: value => value,
     vscode: { Uri: { file: fileUri, joinPath: (base, ...parts) => fileUri(`${base.value}/${parts.join("/")}`) } },
   });
   const noteProvider = new providers.NoteEditorProvider({
@@ -532,6 +556,44 @@ test("extension activation exposes only one frozen path-free Research API", asyn
   assert.doesNotMatch(JSON.stringify(api), /profilePath|coreExecutable|path|client|request/iu);
 });
 
+test("attachment export is a workbench command bound to the active reader, not a webview message", async () => {
+  const [manifest, providersSource, extensionSource] = await Promise.all([
+    readFile(join(extensionRoot, "package.json"), "utf8").then(JSON.parse),
+    readFile(join(extensionRoot, "evidence-editors.cjs"), "utf8"),
+    readFile(join(extensionRoot, "extension.cjs"), "utf8"),
+  ]);
+  assert.deepEqual(manifest.contributes.commands.filter(value => value.command === "chatero.zotero.exportActivePdf"), [{
+    category: "Chatero",
+    command: "chatero.zotero.exportActivePdf",
+    title: "Export Copy of Active Zotero Attachment…",
+  }]);
+  assert.doesNotMatch(providersSource, /pdf-export/);
+  assert.match(extensionSource, /onActiveReaderChanged: value => \{ activeReaderExport = value; \}/);
+  assert.match(extensionSource, /registerCommand\("chatero\.zotero\.exportActivePdf"[\s\S]{0,600}?workspace\.fs\.copy\(file, destination, \{ overwrite: true \}\)/);
+
+  const vscode = fakeVscode(async () => null);
+  const informations = [];
+  const dialogs = [];
+  const copies = [];
+  vscode.window.showInformationMessage = async value => { informations.push(value); };
+  vscode.window.showSaveDialog = async options => { dialogs.push(options); return undefined; };
+  vscode.workspace.fs = { copy: async (...values) => { copies.push(values); } };
+  const extension = loadExtension(vscode);
+  await extension.activate({
+    extensionUri: { authority: "", path: "/extension", scheme: "file" },
+    subscriptions: [],
+    workspaceState: { get: () => undefined, update: async () => {} },
+  });
+
+  const exportCommand = vscode.commandsForTest.get("chatero.zotero.exportActivePdf");
+  assert.equal(typeof exportCommand, "function");
+  await exportCommand();
+  assert.deepEqual(informations, ["Open a Zotero attachment to export a copy of it."]);
+  assert.deepEqual(dialogs, []);
+  assert.deepEqual(copies, []);
+  await extension.deactivate();
+});
+
 test("an unexpected Core stop invalidates evidence before restart and forces exact lookup", async () => {
   const {
     EvidenceDocumentRegistry,
@@ -601,10 +663,14 @@ test("a fresh tree record can replace a rehydrated identity and reopen after clo
   });
   const provider = new providers.PdfEditorProvider({
     extensionUri: { value: "/extension" },
+    fromUpstreamReaderAnnotation: () => { throw new Error("not reached"); },
     getModel: () => null,
+    readerLocationFromViewState: () => { throw new Error("not reached"); },
+    readerServer: fakeReaderServer(),
     registry,
     resolveDocument,
-    renderPdfEditorHTML: () => "",
+    renderUpstreamReaderHTML: () => "",
+    toUpstreamReaderAnnotation: value => value,
     vscode: { Uri: { joinPath: (base, ...parts) => ({ value: `${base.value}/${parts.join("/")}` }) } },
   });
   const uri = { toString: () => uriValue };
@@ -825,41 +891,55 @@ test("Core setup pickers reject remote URIs before persisting local paths", asyn
   }
 });
 
-test("PDF editor HTML boots the packaged PDF.js viewer with bounded annotation data", async () => {
-  const { renderPdfEditorHTML } = await import("../extensions/chatero-zotero/evidence-editor-html.mjs");
-  const html = renderPdfEditorHTML({
-    annotations: [{
-      annotationKey: "ANN00001",
-      color: "#ffd400",
-      comment: "Evidence </script><script>alert(1)</script>",
-      libraryId: 7,
-      pageLabel: "3",
-      positionJson: '{"pageIndex":2,"rects":[[1,2,3,4]]}',
-      sortIndex: "00002|000001|00000",
-      text: "Quoted <claim>",
-      type: "highlight",
-    }],
+test("PDF editor HTML relays the packaged upstream Reader page with bounded annotation data", async () => {
+  const { renderUpstreamReaderHTML } = await import("../extensions/chatero-zotero/evidence-editor-html.mjs");
+  const annotation = Object.freeze({
+    color: "#ffd400",
+    comment: "Evidence </script><script>alert(1)</script>",
+    id: "ANN00001",
+    pageLabel: "3",
+    position: { pageIndex: 2, rects: [[1, 2, 3, 4]] },
+    sortIndex: "00002|000001|00000",
+    tags: [],
+    text: "Quoted <claim>",
+    type: "highlight",
+  });
+  const html = renderUpstreamReaderHTML({
+    annotations: [annotation],
     attachment,
-    cspSource: "vscode-webview://unit-test",
+    documentUri: "http://127.0.0.1:44100/token/doc/LEASE00001",
+    frameOrigin: "http://127.0.0.1:44100",
     nonce: "fixed-nonce",
-    pdfUri: "vscode-webview://unit-test/paper.pdf",
-    viewerUri: "vscode-webview://unit-test/pdf-viewer.mjs",
-    workerUri: "vscode-webview://unit-test/pdf.worker.mjs",
+    panelNonce: "AAAAAAAAAAAAAAAAAAAAAAAA",
+    readerPageUri: "http://127.0.0.1:44100/token/reader/chatero-reader.html",
+    readerType: "pdf",
+    state: { pageIndex: 2 },
   });
 
-  assert.match(html, /default-src 'none'/);
-  assert.match(html, /script-src 'nonce-fixed-nonce'/);
-  assert.match(html, /id="pdf-pages"[^>]+aria-label="Continuous PDF pages"/);
-  assert.match(html, /<script[^>]+type="module"[^>]+src="vscode-webview:\/\/unit-test\/pdf-viewer\.mjs"/);
-  assert.match(html, /data-worker-uri="vscode-webview:\/\/unit-test\/pdf\.worker\.mjs"/);
-  assert.match(html, /id="selection-menu"[^>]+role="menu"/);
-  assert.match(html, /data-selection-action="highlight-note"/);
-  assert.match(html, /Create highlight from selection">H<\/button>/);
-  assert.match(html, /\.toolbar button,.toolbar input\{flex:0 0 auto/);
-  assert.match(html, /data-page-index="2"/);
-  assert.match(html, /Quoted &lt;claim&gt;/);
+  assert.match(html, /content="default-src 'none'; frame-src http:\/\/127\.0\.0\.1:44100; style-src 'nonce-fixed-nonce'; script-src 'nonce-fixed-nonce'"/);
+  assert.match(html, /<iframe id="reader-frame" src="http:\/\/127\.0\.0\.1:44100\/token\/reader\/chatero-reader\.html" title="Paper &lt;PDF&gt;"/);
+  assert.match(html, /<title>Paper &lt;PDF&gt;<\/title>/);
+  assert.deepEqual(JSON.parse(html.match(/<script id="reader-config" type="application\/json">(.*?)<\/script>/su)[1]), {
+    annotations: [annotation],
+    documentUri: "http://127.0.0.1:44100/token/doc/LEASE00001",
+    panelNonce: "AAAAAAAAAAAAAAAAAAAAAAAA",
+    readerType: "pdf",
+    state: { pageIndex: 2 },
+    title: "Paper <PDF>",
+  });
+  assert.match(html, /const childOrigin = new URL\(frame\.src\)\.origin/);
+  assert.match(html, /if \(event\.origin !== childOrigin\) return;/);
+  assert.match(html, /"chatero-reader-ready"/);
+  assert.match(html, /postMessage\(\{ type: "chatero-reader-init", \.\.\.config \}, childOrigin\)/);
+  assert.match(html, /const KEY_FIELDS = \["altKey", "code", "ctrlKey", "key", "keyCode", "metaKey", "repeat", "shiftKey"\]/);
+  assert.match(html, /event\.data\?\.type === "chatero-reader-key"/);
+  assert.match(html, /if \(event\.data\.eventType !== "keydown" && event\.data\.eventType !== "keyup"\) return;/);
+  assert.match(html, /window\.dispatchEvent\(new KeyboardEvent\(event\.data\.eventType, init\)\)/);
+  assert.match(html, /acquireVsCodeApi\(\)/);
+  assert.match(html, /\\u003c\/script>/);
   assert.doesNotMatch(html, /<script>alert\(1\)<\/script>/);
-  assert.doesNotMatch(html, /https?:\/\//);
+  assert.doesNotMatch(html, /createReader|reader\.js|pdf\.worker|libraryId|attachmentKey/);
+  for (const url of html.match(/https?:\/\/[^"' ;]+/gu)) assert.ok(url.startsWith("http://127.0.0.1:44100"), `unexpected remote URL ${url}`);
 });
 
 test("Note editor HTML provides a sanitized rich-text round-trip editor with conflict recovery", async () => {
@@ -962,13 +1042,23 @@ test("extension declares native PDF and Note custom editor tabs", async () => {
   assert.match(source, /readCoreLaunchConfiguration/);
   assert.match(source, /function deactivate\(\)\s*{[^}]*\.dispose\(\)/s);
   const destinations = packaging.extensions.find(value => value.id === "chatero.zotero").files.map(value => value.destination);
-  assert.ok(destinations.includes("extensions/chatero-zotero/media/pdf-viewer/pdf.mjs"));
-  assert.ok(destinations.includes("extensions/chatero-zotero/media/pdf-viewer/pdf.worker.mjs"));
-  assert.ok(destinations.includes("extensions/chatero-zotero/media/pdf-viewer/pdf-viewer.mjs"));
+  assert.ok(destinations.includes("extensions/chatero-zotero/media/zotero-reader/pdf/build/pdf.mjs"));
+  assert.ok(destinations.includes("extensions/chatero-zotero/media/zotero-reader/pdf/build/pdf.worker.mjs"));
+  assert.ok(destinations.includes("extensions/chatero-zotero/media/zotero-reader/pdf/web/viewer.html"));
+  assert.ok(destinations.includes("extensions/chatero-zotero/media/zotero-reader/pdf/web/viewer.mjs"));
+  assert.ok(destinations.includes("extensions/chatero-zotero/media/zotero-reader/pdf/web/viewer.css"));
+  assert.ok(destinations.includes("extensions/chatero-zotero/media/zotero-reader/chatero-reader.html"));
+  assert.ok(destinations.includes("extensions/chatero-zotero/media/zotero-reader/chatero-reader-host.mjs"));
   assert.ok(destinations.includes("extensions/chatero-zotero/media/zotero-reader/reader.js"));
   assert.ok(destinations.includes("extensions/chatero-zotero/media/zotero-reader/reader.css"));
   assert.ok(destinations.includes("extensions/chatero-zotero/media/zotero-reader/ZOTERO-AGPL-3.0.txt"));
   assert.ok(destinations.includes("extensions/chatero-zotero/upstream-reader-bridge.mjs"));
+  assert.ok(destinations.includes("extensions/chatero-zotero/reader-server.cjs"));
+  assert.equal(
+    destinations.indexOf("extensions/chatero-zotero/reader-server.cjs"),
+    destinations.indexOf("extensions/chatero-zotero/evidence-editors.cjs") + 1,
+  );
+  assert.deepEqual(destinations.filter(value => value.includes("/media/pdf-viewer/")), []);
   assert.equal(new Set(destinations).size, destinations.length);
 });
 
@@ -982,6 +1072,7 @@ test("EPUB provider uses the pinned upstream Reader and commits exact CFI state"
     async updateLocation(value) { calls.push(["state", value]); return { ...value, version: 2 }; },
   };
   const fileUri = value => ({ authority: "", fsPath: value, path: value, scheme: "file", value, toString: () => `file://${value}` });
+  const readerServer = fakeReaderServer();
   const provider = new providers.PdfEditorProvider({
     createReaderWorkflow: () => workflow,
     extensionUri: fileUri("/extension"),
@@ -989,8 +1080,8 @@ test("EPUB provider uses the pinned upstream Reader and commits exact CFI state"
     getModel: () => ({ ready: true }),
     materializePdf: async () => ({ path: "/tmp/private/document.epub", async dispose() {} }),
     readerLocationFromViewState: (_contentType, state) => ({ cfi: state.cfi }),
+    readerServer,
     registry: { release() {} },
-    renderPdfEditorHTML: () => { throw new Error("PDF renderer must not be used"); },
     renderUpstreamReaderHTML: value => { calls.push(["render", value]); return "<html>EPUB</html>"; },
     toUpstreamReaderAnnotation: value => value,
     vscode: {
@@ -1005,8 +1096,13 @@ test("EPUB provider uses the pinned upstream Reader and commits exact CFI state"
   } };
   await provider.resolveCustomEditor({ record: epub, uri: { toString: () => "chatero-zotero-pdf:/7/PDF00001/paper.chatero-zotero-pdf" } }, panel);
   assert.equal(panel.webview.html, "<html>EPUB</html>");
-  assert.equal(calls.find(value => value[0] === "render")[1].readerType, "epub");
-  assert.deepEqual(panel.webview.options.localResourceRoots.map(value => value.value), ["/tmp/private", "/extension/media/zotero-reader"]);
+  const rendered = calls.find(value => value[0] === "render")[1];
+  assert.equal(rendered.readerType, "epub");
+  assert.deepEqual(panel.webview.options, { enableScripts: true, localResourceRoots: [] });
+  assert.deepEqual(readerServer.requests, [{ contentType: "application/epub+zip", path: "/tmp/private/document.epub" }]);
+  assert.equal(rendered.documentUri, "http://127.0.0.1:44100/token/doc/LEASE00001");
+  assert.equal(rendered.frameOrigin, "http://127.0.0.1:44100");
+  assert.equal(rendered.readerPageUri, "http://127.0.0.1:44100/token/reader/chatero-reader.html");
   await receiveMessage({ type: "upstream-reader-state", state: { cfi: "epubcfi(/6/2)" } });
   assert.deepEqual(calls.at(-1), ["state", { cfi: "epubcfi(/6/2)" }]);
 });
@@ -1036,8 +1132,8 @@ test("upstream Reader saves and deletes use one atomic batch and preserve create
     getModel: () => ({ ready: true }),
     materializePdf: async () => ({ path: "/tmp/private/document.epub", async dispose() {} }),
     readerLocationFromViewState: (_contentType, state) => state,
+    readerServer: fakeReaderServer(),
     registry: { release() {} },
-    renderPdfEditorHTML: () => { throw new Error("not reached"); },
     renderUpstreamReaderHTML: () => "<html>EPUB</html>",
     toUpstreamReaderAnnotation: value => value,
     vscode: { Uri: { file: fileUri, joinPath: (base, ...parts) => fileUri(`${base.value}/${parts.join("/")}`), parse: value => ({ scheme: value.split(":")[0] }) }, env: { async openExternal() {} }, window: {}, workspace: {} },
@@ -1058,86 +1154,152 @@ test("upstream Reader saves and deletes use one atomic batch and preserve create
   await receiveMessage({ type: "upstream-reader-delete", ids: ["temp-1"], sequence: 2 });
   assert.equal(batches.length, 2);
   assert.deepEqual(batches[1], [{ action: "trash", annotationKey: "ANNNEW01", expectedVersion: 1 }]);
-  assert.deepEqual(posted.map(value => [value.type, value.sequence]), [["upstream-reader-saved", 1], ["upstream-reader-saved", 2]]);
+  // A reader delete of a never-persisted create, and the empty batch the reader
+  // pairs with a create-only save, acknowledge without touching Core.
+  await receiveMessage({ type: "upstream-reader-delete", ids: ["temp-2"], sequence: 3 });
+  await receiveMessage({ type: "upstream-reader-delete", ids: [], sequence: 4 });
+  assert.equal(batches.length, 2);
+  assert.deepEqual(posted.map(value => [value.type, value.sequence]), [
+    ["upstream-reader-saved", 1], ["upstream-reader-saved", 2], ["upstream-reader-saved", 3], ["upstream-reader-saved", 4],
+  ]);
 });
 
 test("upstream Reader host exposes unawaited delete failures and locks further edits", async () => {
-  const [host, htmlSource] = await Promise.all([
+  const [host, readerPage] = await Promise.all([
     readFile(join(extensionRoot, "media", "zotero-reader", "chatero-reader-host.mjs"), "utf8"),
-    readFile(join(extensionRoot, "evidence-editor-html.mjs"), "utf8"),
+    readFile(join(extensionRoot, "media", "zotero-reader", "chatero-reader.html"), "utf8"),
   ]);
   assert.match(host, /function exposeWriteFailure/);
   assert.match(host, /setReadOnly\(true\)/);
   assert.match(host, /pending\.set\(requestSequence, \{\}\)/);
   assert.match(host, /if \(!operation\) \{[\s\S]*exposeWriteFailure/);
-  assert.match(htmlSource, /id="reader-error" role="alert" hidden/);
+  assert.match(host, /document\.getElementById\("reader-error"\)/);
+  assert.match(host, /if \(!Array\.isArray\(ids\) \|\| !ids\.length\) return;/);
+  assert.match(readerPage, /id="reader-error" role="alert" hidden/);
+  assert.match(readerPage, /<script type="module" src="\.\/chatero-reader-host\.mjs"><\/script>/);
 });
 
-test("packaged PDF viewer lazily renders a continuous multi-page canvas and owns the highlight overlay", async () => {
-  const source = await readFile(join(extensionRoot, "media", "pdf-viewer", "pdf-viewer.mjs"), "utf8");
-  assert.match(source, /getDocument/);
-  assert.match(source, /fetch\(url, \{ cache: "no-store" \}\)/);
-  assert.match(source, /new Uint8Array\(await response\.arrayBuffer\(\)\)/);
-  assert.match(source, /getDocument\(\{ data: pdfBytes \}\)/);
-  assert.match(source, /new Worker\(pdfWorkerUrl, \{ type: "module" \}\)/);
-  assert.match(source, /GlobalWorkerOptions\.workerPort = worker/);
-  assert.match(source, /Promise\.all\(\[/);
-  assert.match(source, /pdfWorker\?\.terminate\(\)/);
-  assert.match(source, /URL\.revokeObjectURL\(pdfWorkerUrl\)/);
-  assert.match(source, /new IntersectionObserver/);
-  assert.match(source, /rootMargin: "1200px 0px"/);
-  assert.match(source, /captureScrollAnchor/);
-  assert.match(source, /capturePointAnchor/);
-  assert.match(source, /ratioX/);
-  assert.match(source, /viewportX/);
-  assert.match(source, /updateCurrentPageFromScroll/);
-  assert.match(source, /viewportHost\.addEventListener\("wheel"/);
-  assert.match(source, /viewportHost\.scrollTop \+= event\.deltaY \* unit/);
-  assert.match(source, /zoom \* Math\.exp\(-event\.deltaY \* unit \* 0\.002\)/);
-  assert.match(source, /\{ passive: false \}/);
-  assert.match(source, /addEventListener\("contextmenu"/);
-  assert.match(source, /data-selection-action/);
-  assert.match(source, /window\.prompt\("Annotation note"/);
-  assert.match(source, /postAnnotationCreate\("highlight", \{ \.\.\.selection, comment \}\)/);
-  assert.match(source, /getPage/);
-  assert.match(source, /annotation-layer/);
-  assert.match(source, /pageIndex/);
-  assert.match(source, /function sortIndexFor/);
-  assert.match(source, /slice\(0, 5\)\.padStart\(5, "0"\)/);
-  assert.match(source, /slice\(0, 6\)\.padStart\(6, "0"\)/);
-  assert.doesNotMatch(source, /Date\.now\(\).*sortIndex|turnPageFromScroll/);
-  for (const behavior of ["getOutline", "getAnnotations", "getDestination", "convertToPdfPoint", "window.print", "annotation-create", "reader-state"]) {
-    assert.match(source, new RegExp(behavior.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-  }
-  assert.doesNotMatch(source, /fetch\(["']https?:|openExternal/);
-  for (const behavior of ["create-underline", "create-note", "create-area", "annotation-update", "annotation-delete", "annotation-undo"]) {
-    assert.match(source, new RegExp(behavior));
-  }
-  assert.ok(source.indexOf("await renderTask.promise") < source.indexOf("const textContent = await state.page.getTextContent()"));
-  assert.ok(source.indexOf('status.textContent = ""') < source.indexOf("const textContent = await state.page.getTextContent()"));
-});
-
-test("PDF annotation controls use exact Core versions for create, edit, delete, and undo", async () => {
-  const providers = await import("../extensions/chatero-zotero/evidence-editors.cjs");
-  const calls = [];
-  const revised = Object.freeze({ annotationKey: "ANN00001", color: "#2ea8e5", comment: "Reviewed", libraryId: 7, pageLabel: "3", positionJson: '{"pageIndex":2,"rects":[[1,2,3,4]]}', sortIndex: "00002", tags: ["reviewed"], text: "Quote", type: "underline", version: 3 });
+test("PDF documents route to the loopback-served upstream Reader page whose host relays keys and context", async () => {
+  const [providers, host, readerPage, readerBundle] = await Promise.all([
+    import("../extensions/chatero-zotero/evidence-editors.cjs"),
+    readFile(join(extensionRoot, "media", "zotero-reader", "chatero-reader-host.mjs"), "utf8"),
+    readFile(join(extensionRoot, "media", "zotero-reader", "chatero-reader.html"), "utf8"),
+    readFile(join(extensionRoot, "media", "zotero-reader", "reader.js"), "utf8"),
+  ]);
+  const rendered = [];
   const workflow = {
-    annotations: [revised],
-    async load() { return { annotations: [], attachment, state: { attachmentKey: "PDF00001", contentType: "application/pdf", libraryId: 7, pageIndex: 0, version: 4 } }; },
-    async createAnnotation(value) { calls.push(["create", value]); return { ...revised, ...value, annotationKey: "ANNNEW01", version: 1 }; },
-    async updateAnnotations(value) { calls.push(["update", value]); return { annotations: [{ annotationKey: "ANN00001", libraryId: 7, synced: false, version: 3 }], replayed: false, revision: 2 }; },
-    async mutateAnnotation(value) { calls.push(["mutate", value]); return { annotation: revised }; },
-    async undo() { calls.push(["undo"]); return true; },
+    annotations: [],
+    async load() { return { annotations: [], attachment, state: { attachmentKey: "PDF00001", contentType: "application/pdf", libraryId: 7, pageIndex: 4, version: 3 } }; },
+    async updateLocation(value) { return { ...value, version: 3 }; },
   };
   const fileUri = value => ({ authority: "", fsPath: value, path: value, scheme: "file", value, toString: () => `file://${value}` });
+  const readerServer = fakeReaderServer();
   const provider = new providers.PdfEditorProvider({
     createReaderWorkflow: () => workflow,
     extensionUri: fileUri("/extension"),
+    fromUpstreamReaderAnnotation: () => { throw new Error("not reached"); },
     getModel: () => ({ ready: true }),
     materializePdf: async () => ({ path: "/tmp/private/document.pdf", async dispose() {} }),
+    readerLocationFromViewState: (_contentType, state) => ({ pageIndex: state.pageIndex }),
+    readerServer,
     registry: { release() {} },
-    renderPdfEditorHTML: () => "<html>PDF</html>",
-    vscode: { Uri: { file: fileUri, joinPath: (base, ...parts) => fileUri(`${base.value}/${parts.join("/")}`), parse: value => ({ scheme: value.split(":")[0] }) }, env: {}, window: {}, workspace: {} },
+    renderUpstreamReaderHTML: value => { rendered.push(value); return "<html>PDF</html>"; },
+    toUpstreamReaderAnnotation: value => value,
+    vscode: {
+      Uri: { file: fileUri, joinPath: (base, ...parts) => fileUri(`${base.value}/${parts.join("/")}`), parse: value => ({ scheme: value.split(":")[0] }) },
+      env: { async openExternal() {} }, window: {}, workspace: {},
+    },
+  });
+  const panel = { active: true, onDidDispose() { return { dispose() {} }; }, webview: {
+    asWebviewUri: value => ({ toString: () => `vscode-webview:${value.value}` }), cspSource: "vscode-webview://unit-test",
+    onDidReceiveMessage() { return { dispose() {} }; },
+  } };
+  await provider.resolveCustomEditor({ record: attachment, uri: { toString: () => "chatero-zotero-pdf:/7/PDF00001/paper.chatero-zotero-pdf" } }, panel);
+
+  assert.equal(panel.webview.html, "<html>PDF</html>");
+  assert.equal(rendered.length, 1);
+  assert.equal(rendered[0].readerType, "pdf");
+  assert.deepEqual(readerServer.requests, [{ contentType: "application/pdf", path: "/tmp/private/document.pdf" }]);
+  assert.equal(rendered[0].documentUri, "http://127.0.0.1:44100/token/doc/LEASE00001");
+  assert.equal(rendered[0].frameOrigin, "http://127.0.0.1:44100");
+  assert.equal(rendered[0].readerPageUri, "http://127.0.0.1:44100/token/reader/chatero-reader.html");
+  assert.equal(rendered[0].attachment, attachment);
+  assert.deepEqual(rendered[0].state, { pageIndex: 4 });
+
+  assert.match(readerPage, /<script src="\.\/reader\.js"><\/script>/);
+  assert.match(readerPage, /script-src 'self'; worker-src 'self' blob:/);
+  assert.match(host, /window\.parent\.postMessage\(\{ type: "chatero-reader-ready" \}, "\*"\)/);
+  assert.match(host, /event\.data\?\.type !== "chatero-reader-init"/);
+  assert.match(host, /const parentOrigin = init\.origin/);
+  assert.match(host, /window\.parent\.postMessage\(message, parentOrigin\)/);
+  assert.match(host, /const response = await fetch\(documentUri\)/);
+  assert.match(host, /new Uint8Array\(await response\.arrayBuffer\(\)\)/);
+  assert.match(host, /window\.createReader\(\{/);
+  assert.match(host, /data: \{ buf: data \}/);
+  assert.match(host, /scale: "page-width"/);
+  assert.match(host, /scrollMode: 0/);
+  assert.match(host, /pageIndex: Number\.isSafeInteger\(state\?\.pageIndex\) && state\.pageIndex >= 0 \? state\.pageIndex : 0/);
+  assert.doesNotMatch(host, /workerSrc|createObjectURL|pdf\.worker\.mjs/);
+  assert.match(host, /const KEY_FIELDS = \["altKey", "code", "ctrlKey", "key", "keyCode", "metaKey", "repeat", "shiftKey"\]/);
+  assert.match(host, /function wireKeyRelay\(doc, beforeKeydown = null\) \{/);
+  assert.match(host, /if \(!event\.isTrusted\) return;/);
+  assert.match(host, /const message = \{ eventType, type: "chatero-reader-key" \}/);
+  assert.match(host, /wireKeyRelay\(candidate\.document, onKeydown\);/);
+  assert.match(host, /wireKeyRelay\(document, pdfContext\?\.onKeydown \?\? null\);/);
+  assert.match(host, /onRotatePages\(\) \{ send\(\{ feature: "page rotation", type: "reader-unsupported" \}\); \}/);
+  assert.match(host, /document\.querySelectorAll\("#split-view iframe"\)/);
+  assert.match(host, /new MutationObserver/);
+  assert.doesNotMatch(host, /observer\.disconnect\(\)/);
+  assert.match(host, /const wiredFrames = new WeakSet\(\);/);
+  assert.match(host, /page\.getTextContent\(\)/);
+  assert.match(host, /const PAGE_TEXT_MAX_BYTES = 128 \* 1024/);
+  assert.match(host, /const SELECTED_TEXT_MAX_BYTES = 32 \* 1024/);
+  assert.match(host, /const PAGE_LABEL_MAX_BYTES = 256/);
+  assert.match(host, /const pdfContext = type === "pdf" \? createPdfContext\(\) : null;/);
+  assert.doesNotMatch(host, /acquireVsCodeApi|libraryId|attachmentKey/);
+  assert.doesNotMatch(host, /fetch\(["']https?:|openExternal/);
+  for (const behavior of ["getOutline", "getDestination", "convertToPdfPoint", "print", "sortIndex", "underline", "image", "ink"]) {
+    assert.ok(readerBundle.includes(behavior), `packaged Reader omits ${behavior}`);
+  }
+});
+
+test("PDF Reader saves and deletes use exact Core versions and reject the retired annotation protocol", async () => {
+  const [providers, bridge] = await Promise.all([
+    import("../extensions/chatero-zotero/evidence-editors.cjs"),
+    import("../extensions/chatero-zotero/upstream-reader-bridge.mjs"),
+  ]);
+  const existing = Object.freeze({ annotationKey: "ANN00001", color: "#ffd400", comment: "Original", libraryId: 7, pageLabel: "3", positionJson: '{"pageIndex":2,"rects":[[1,2,3,4]]}', sortIndex: "00002|000001|00000", tags: [], text: "Quote", type: "highlight", version: 3 });
+  const created = Object.freeze({ ...existing, annotationKey: "ANNNEW01", comment: "Created", type: "underline", version: 1 });
+  const batches = [];
+  const errors = [];
+  const warnings = [];
+  const workflow = {
+    annotations: [existing],
+    async load() { return { annotations: this.annotations, attachment, state: { attachmentKey: "PDF00001", contentType: "application/pdf", libraryId: 7, pageIndex: 2, version: 4 } }; },
+    async applyAnnotationChanges(changes) {
+      batches.push(changes);
+      if (changes.some(value => value.action === "create")) this.annotations = [existing, created];
+      return { created: changes.flatMap((value, index) => value.action === "create" ? [{ changeIndex: index, annotation: created }] : []), replayed: false, results: [], revision: batches.length };
+    },
+  };
+  const fileUri = value => ({ authority: "", fsPath: value, path: value, scheme: "file", value, toString: () => `file://${value}` });
+  let rendered;
+  const provider = new providers.PdfEditorProvider({
+    createReaderWorkflow: () => workflow,
+    extensionUri: fileUri("/extension"),
+    fromUpstreamReaderAnnotation: bridge.fromUpstreamReaderAnnotation,
+    getModel: () => ({ ready: true }),
+    materializePdf: async () => ({ path: "/tmp/private/document.pdf", async dispose() {} }),
+    onReaderError: error => errors.push(error.message),
+    readerLocationFromViewState: bridge.readerLocationFromViewState,
+    readerServer: fakeReaderServer(),
+    registry: { release() {} },
+    renderUpstreamReaderHTML: value => { rendered = value; return "<html>PDF</html>"; },
+    toUpstreamReaderAnnotation: bridge.toUpstreamReaderAnnotation,
+    vscode: {
+      Uri: { file: fileUri, joinPath: (base, ...parts) => fileUri(`${base.value}/${parts.join("/")}`), parse: value => ({ scheme: value.split(":")[0] }) },
+      env: {}, window: { showWarningMessage: async value => { warnings.push(value); } }, workspace: {},
+    },
   });
   let receiveMessage;
   const posted = [];
@@ -1148,17 +1310,110 @@ test("PDF annotation controls use exact Core versions for create, edit, delete, 
   } };
   await provider.resolveCustomEditor({ record: attachment, uri: { toString: () => "chatero-zotero-pdf:/7/PDF00001/paper.chatero-zotero-pdf" } }, panel);
 
-  await receiveMessage({ type: "annotation-create", annotationType: "image", color: "#ffd400", comment: "", pageLabel: "3", positionJson: '{"pageIndex":2,"rects":[[1,2,3,4]]}', sortIndex: "00002", tags: [], text: "" });
-  await receiveMessage({ type: "annotation-update", annotationKey: "ANN00001", color: "#2ea8e5", comment: "Reviewed", expectedVersion: 2, tags: ["reviewed"] });
-  await receiveMessage({ type: "annotation-delete", annotationKey: "ANN00001", expectedVersion: 3 });
-  await receiveMessage({ type: "annotation-undo" });
-  assert.deepEqual(calls.map(value => value[0]), ["create", "update", "mutate", "undo"]);
-  assert.equal(calls[1][1][0].expectedVersion, 2);
-  assert.deepEqual(calls[2][1], { action: "trash", annotationKey: "ANN00001", expectedVersion: 3 });
-  assert.deepEqual(posted.map(value => value.type), ["annotation-created", "annotation-updated", "annotation-deleted", "annotation-undone"]);
+  assert.equal(rendered.readerType, "pdf");
+  assert.deepEqual(rendered.annotations.map(value => [value.id, value.position]), [["ANN00001", { pageIndex: 2, rects: [[1, 2, 3, 4]] }]]);
+
+  const upstream = (id, overrides) => ({ color: "#ffd400", comment: "Original", id, pageLabel: "3", position: { pageIndex: 2, rects: [[1, 2, 3, 4]] }, sortIndex: "00002|000001|00000", tags: [], text: "Quote", type: "highlight", ...overrides });
+  await receiveMessage({ type: "upstream-reader-save", annotations: [upstream("ANN00001")], sequence: 1 });
+  assert.deepEqual(batches, []);
+  assert.deepEqual(posted.at(-1), { sequence: 1, type: "upstream-reader-saved" });
+
+  await receiveMessage({ type: "upstream-reader-save", annotations: [
+    upstream("temp-1", { comment: "Created", type: "underline" }),
+    upstream("ANN00001", { color: "#2ea8e5", comment: "Reviewed", tags: [{ name: "reviewed" }] }),
+  ], sequence: 2 });
+  assert.equal(batches.length, 1);
+  assert.deepEqual(batches[0][0], { action: "create", color: "#ffd400", comment: "Created", pageLabel: "3", positionJson: '{"pageIndex":2,"rects":[[1,2,3,4]]}', sortIndex: "00002|000001|00000", tags: [], text: "Quote", type: "underline" });
+  assert.deepEqual(batches[0][1], { annotationKey: "ANN00001", color: "#2ea8e5", comment: "Reviewed", expectedVersion: 3, tags: ["reviewed"] });
+
+  await receiveMessage({ type: "upstream-reader-delete", ids: ["temp-1"], sequence: 3 });
+  assert.equal(batches.length, 2);
+  assert.deepEqual(batches[1], [{ action: "trash", annotationKey: "ANNNEW01", expectedVersion: 1 }]);
+  assert.deepEqual(posted.map(value => [value.type, value.sequence]), [
+    ["upstream-reader-saved", 1], ["upstream-reader-saved", 2], ["upstream-reader-saved", 3],
+  ]);
+
+  // The reader repeats deletes for ids Core never stored; they acknowledge
+  // without a second trash of the same annotation.
+  await receiveMessage({ type: "upstream-reader-delete", ids: ["temp-1"], sequence: 4 });
+  assert.equal(batches.length, 2);
+  assert.deepEqual(posted.at(-1), { sequence: 4, type: "upstream-reader-saved" });
+
+  await receiveMessage({ type: "reader-unsupported", feature: "page rotation" });
+  assert.deepEqual(warnings, ["Chatero does not support page rotation yet."]);
+  await assert.rejects(receiveMessage({ type: "reader-unsupported", feature: "x".repeat(65) }), /Reader capability message is invalid/);
+  await assert.rejects(receiveMessage({ type: "reader-unsupported" }), /Reader capability message is invalid/);
+  assert.equal(warnings.length, 1);
+
+  await assert.rejects(receiveMessage({ type: "upstream-reader-save", annotations: [], sequence: 5, extra: true }), /Upstream Reader save message is invalid/);
+  for (const type of ["annotation-create", "annotation-update", "annotation-delete", "annotation-undo", "reader-state", "pdf-export"]) {
+    await assert.rejects(receiveMessage({ type }), /PDF editor message type is invalid/);
+  }
+  assert.equal(batches.length, 2);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(errors, [
+    "Reader capability message is invalid",
+    "Reader capability message is invalid",
+    "Upstream Reader save message is invalid",
+    ...["annotation-create", "annotation-update", "annotation-delete", "annotation-undo", "reader-state", "pdf-export"].map(() => "PDF editor message type is invalid"),
+  ]);
 });
 
-test("PDF provider exposes only the authorized file and packaged viewer roots", async () => {
+test("PDF view state maps to exact page locations and repeated pages commit once", async () => {
+  const [providers, { readerLocationFromViewState }] = await Promise.all([
+    import("../extensions/chatero-zotero/evidence-editors.cjs"),
+    import("../extensions/chatero-zotero/upstream-reader-bridge.mjs"),
+  ]);
+  assert.deepEqual(readerLocationFromViewState("application/pdf", { pageIndex: 3 }), { pageIndex: 3 });
+  assert.deepEqual(readerLocationFromViewState("application/pdf", { pageIndex: 3, scale: "page-width", scrollMode: 0 }), { pageIndex: 3 });
+  assert.equal(Object.isFrozen(readerLocationFromViewState("application/pdf", { pageIndex: 0 })), true);
+  for (const state of [{ pageIndex: -1 }, { pageIndex: 1.5 }, { pageIndex: "3" }, { pageIndex: Number.NaN }, {}]) {
+    assert.throws(() => readerLocationFromViewState("application/pdf", state), /Reader page location is invalid/);
+  }
+
+  const locations = [];
+  const workflow = {
+    annotations: [],
+    async load() { return { annotations: [], attachment, state: { attachmentKey: "PDF00001", contentType: "application/pdf", libraryId: 7, pageIndex: 6, version: 4 } }; },
+    async updateLocation(value) { locations.push(value); return { ...value, version: 5 }; },
+  };
+  const fileUri = value => ({ authority: "", fsPath: value, path: value, scheme: "file", value, toString: () => `file://${value}` });
+  const provider = new providers.PdfEditorProvider({
+    createReaderWorkflow: () => workflow,
+    extensionUri: fileUri("/extension"),
+    fromUpstreamReaderAnnotation: () => { throw new Error("not reached"); },
+    getModel: () => ({ ready: true }),
+    materializePdf: async () => ({ path: "/tmp/private/document.pdf", async dispose() {} }),
+    readerLocationFromViewState,
+    readerServer: fakeReaderServer(),
+    registry: { release() {} },
+    renderUpstreamReaderHTML: () => "<html>PDF</html>",
+    toUpstreamReaderAnnotation: value => value,
+    vscode: { Uri: { file: fileUri, joinPath: (base, ...parts) => fileUri(`${base.value}/${parts.join("/")}`), parse: value => ({ scheme: value.split(":")[0] }) }, env: {}, window: {}, workspace: {} },
+  });
+  let receiveMessage;
+  const panel = { active: true, onDidDispose() { return { dispose() {} }; }, webview: {
+    asWebviewUri: value => ({ toString: () => `vscode-webview:${value.value}` }), cspSource: "vscode-webview://unit-test",
+    onDidReceiveMessage(listener) { receiveMessage = listener; return { dispose() {} }; },
+    async postMessage() {},
+  } };
+  await provider.resolveCustomEditor({ record: attachment, uri: { toString: () => "chatero-zotero-pdf:/7/PDF00001/paper.chatero-zotero-pdf" } }, panel);
+
+  // The reader reports the restored page as its first view state, and the
+  // seeded location keeps that echo from rewriting the same page in Core.
+  await receiveMessage({ type: "upstream-reader-state", state: { pageIndex: 6, scale: "page-width" } });
+  assert.deepEqual(locations, []);
+  await receiveMessage({ type: "upstream-reader-state", state: { pageIndex: 3, scale: "page-width" } });
+  await receiveMessage({ type: "upstream-reader-state", state: { pageIndex: 3, scrollMode: 0 } });
+  assert.deepEqual(locations, [{ pageIndex: 3 }]);
+  await receiveMessage({ type: "upstream-reader-state", state: { pageIndex: 6 } });
+  assert.deepEqual(locations, [{ pageIndex: 3 }, { pageIndex: 6 }]);
+  await assert.rejects(receiveMessage({ type: "upstream-reader-state", state: { pageIndex: -1 } }), /Reader page location is invalid/);
+  await assert.rejects(receiveMessage({ type: "upstream-reader-state", state: { pageIndex: 4 }, sequence: 1 }), /Upstream Reader state message is invalid/);
+  assert.deepEqual(locations, [{ pageIndex: 3 }, { pageIndex: 6 }]);
+});
+
+test("PDF provider grants no webview resource roots and serves the document only through its lease", async () => {
   const [{ EvidenceDocumentRegistry }, providers] = await Promise.all([
     import("../extensions/chatero-zotero/evidence-editor-registry.mjs"),
     import("../extensions/chatero-zotero/evidence-editors.cjs"),
@@ -1172,15 +1427,20 @@ test("PDF provider exposes only the authorized file and packaged viewer roots", 
     joinPath: (base, ...parts) => fileUri(`${base.value}/${parts.join("/")}`),
   } };
   let rendering;
+  const readerServer = fakeReaderServer();
   const provider = new providers.PdfEditorProvider({
     extensionUri: fileUri("/extension"),
+    fromUpstreamReaderAnnotation: () => { throw new Error("not reached"); },
     getModel: () => ({ annotations: async params => {
       assert.deepEqual(params, { attachmentKey: "PDF00001", libraryId: 7 });
       return [];
     } }),
+    readerLocationFromViewState: () => { throw new Error("not reached"); },
+    readerServer,
     registry,
     materializePdf: async () => ({ path: "/tmp/private/materialized-paper.pdf", async dispose() {} }),
-    renderPdfEditorHTML: value => { rendering = value; return "<html>PDF</html>"; },
+    renderUpstreamReaderHTML: value => { rendering = value; return "<html>PDF</html>"; },
+    toUpstreamReaderAnnotation: value => value,
     vscode,
   });
   const exposedUris = [];
@@ -1196,16 +1456,103 @@ test("PDF provider exposes only the authorized file and packaged viewer roots", 
   await provider.resolveCustomEditor(document, panel);
 
   assert.equal(panel.webview.html, "<html>PDF</html>");
-  assert.deepEqual(panel.webview.options.localResourceRoots.map(value => value.value), [
-    "/tmp/private",
-    "/extension/media/pdf-viewer",
-  ]);
-  assert.equal(rendering.pdfUri, "vscode-webview:/tmp/private/materialized-paper.pdf");
-  const pdfSource = exposedUris.find(value => value.value === "/tmp/private/materialized-paper.pdf");
-  assert.equal(pdfSource.scheme, "file");
-  assert.equal(pdfSource.authority, "");
-  assert.equal(rendering.viewerUri, "vscode-webview:/extension/media/pdf-viewer/pdf-viewer.mjs");
-  assert.equal(rendering.workerUri, "vscode-webview:/extension/media/pdf-viewer/pdf.worker.mjs");
+  assert.deepEqual(panel.webview.options, { enableScripts: true, localResourceRoots: [] });
+  assert.deepEqual(exposedUris, []);
+  assert.deepEqual(readerServer.requests, [{ contentType: "application/pdf", path: "/tmp/private/materialized-paper.pdf" }]);
+  assert.equal(rendering.readerType, "pdf");
+  assert.equal(rendering.documentUri, "http://127.0.0.1:44100/token/doc/LEASE00001");
+  assert.equal(rendering.readerPageUri, "http://127.0.0.1:44100/token/reader/chatero-reader.html");
+  assert.equal(new URL(rendering.documentUri).origin, rendering.frameOrigin);
+  assert.equal(new URL(rendering.readerPageUri).origin, rendering.frameOrigin);
+  assert.equal(Object.hasOwn(rendering, "cspSource"), false);
+  assert.doesNotMatch(JSON.stringify(rendering.documentUri), /materialized-paper|tmp/);
+});
+
+test("reader server serves the packaged reader and leased document from loopback and rejects everything else", async () => {
+  const { ReaderServer } = await import("../extensions/chatero-zotero/reader-server.cjs");
+  const mediaRoot = join(extensionRoot, "media", "zotero-reader");
+  const documentPath = join(mediaRoot, "chatero-reader.html");
+  const server = new ReaderServer({ mediaRoot });
+  try {
+    const lease = await server.lease({ contentType: "application/pdf", path: documentPath });
+    assert.equal(Object.isFrozen(lease), true);
+    assert.equal(new URL(lease.origin).hostname, "127.0.0.1");
+    assert.equal(new URL(lease.readerPageUrl).origin, lease.origin);
+    assert.equal(new URL(lease.documentUrl).origin, lease.origin);
+    const token = new URL(lease.readerPageUrl).pathname.split("/")[1];
+    assert.match(token, /^[A-Za-z0-9_-]{20,}$/);
+    assert.equal(new URL(lease.readerPageUrl).pathname, `/${token}/reader/chatero-reader.html`);
+
+    const page = await fetch(lease.readerPageUrl);
+    assert.equal(page.status, 200);
+    assert.equal(page.headers.get("content-type"), "text/html; charset=utf-8");
+    assert.equal(page.headers.get("x-content-type-options"), "nosniff");
+    assert.equal(page.headers.get("cache-control"), "private, max-age=0, must-revalidate");
+    assert.match(await page.text(), /id="reader-error"/);
+    const host = await fetch(`${lease.origin}/${token}/reader/chatero-reader-host.mjs`);
+    assert.equal(host.status, 200);
+    assert.equal(host.headers.get("content-type"), "text/javascript; charset=utf-8");
+    const documentResponse = await fetch(lease.documentUrl);
+    assert.equal(documentResponse.status, 200);
+    assert.equal(documentResponse.headers.get("content-type"), "application/octet-stream");
+    assert.equal(documentResponse.headers.get("content-disposition"), "attachment");
+    assert.equal(documentResponse.headers.get("content-security-policy"), "sandbox");
+
+    for (const url of [
+      `${lease.origin}/${token}/reader/../../../package.json`,
+      `${lease.origin}/${token}/reader/%2e%2e%2f%2e%2e%2fpackage.json`,
+      `${lease.origin}/${token}/reader/`,
+      `${lease.origin}/${token}/reader`,
+      `${lease.origin}/${token}/doc/${"A".repeat(24)}`,
+      `${lease.origin}/${token}/secrets/chatero-reader.html`,
+      `${lease.origin}/AAAAAAAAAAAAAAAAAAAAAAAA/reader/chatero-reader.html`,
+      lease.documentUrl.replace(`/${token}/`, "/forged-token/"),
+    ]) {
+      assert.equal((await fetch(url)).status, 404, `expected 404 for ${url}`);
+    }
+    for (const method of ["HEAD", "POST", "PUT", "DELETE", "OPTIONS"]) {
+      assert.equal((await fetch(lease.readerPageUrl, { method })).status, 404, `expected 404 for ${method}`);
+    }
+
+    lease.dispose();
+    assert.equal((await fetch(lease.documentUrl)).status, 404);
+    assert.equal((await fetch(lease.readerPageUrl)).status, 200);
+    lease.dispose();
+
+    const second = await server.lease({ contentType: "application/pdf", path: documentPath });
+    assert.equal(second.origin, lease.origin);
+    assert.notEqual(second.documentUrl, lease.documentUrl);
+    for (const request of [{ contentType: "application/pdf" }, { path: documentPath }, { contentType: "", path: documentPath }]) {
+      await assert.rejects(server.lease(request), /Reader server lease request is invalid/);
+    }
+  }
+  finally {
+    server.dispose();
+  }
+  assert.throws(() => new ReaderServer({ mediaRoot: "" }), /Reader server media root is invalid/);
+});
+
+test("reader server never follows a symbolic link out of the packaged reader root", async () => {
+  const { ReaderServer } = await import("../extensions/chatero-zotero/reader-server.cjs");
+  const mediaRoot = await mkdtemp(join(tmpdir(), "chatero-reader-server-"));
+  try {
+    await writeFile(join(mediaRoot, "chatero-reader.html"), "<!doctype html><title>fixture</title>\n");
+    await symlink(join(root, "package.json"), join(mediaRoot, "escape.json"));
+    const server = new ReaderServer({ mediaRoot });
+    try {
+      const lease = await server.lease({ contentType: "application/pdf", path: join(mediaRoot, "chatero-reader.html") });
+      const token = new URL(lease.readerPageUrl).pathname.split("/")[1];
+      assert.equal((await fetch(lease.readerPageUrl)).status, 200);
+      assert.equal((await fetch(`${lease.origin}/${token}/reader/escape.json`)).status, 404);
+      assert.equal((await fetch(`${lease.origin}/${token}/reader/missing.html`)).status, 404);
+    }
+    finally {
+      server.dispose();
+    }
+  }
+  finally {
+    await rm(mediaRoot, { force: true, recursive: true });
+  }
 });
 
 test("PDF editor messages use the host document identity and never attach on passive updates", async () => {
@@ -1229,26 +1576,38 @@ test("PDF editor messages use the host document identity and never attach on pas
     annotations: Object.freeze([]),
     capturedAt: "2026-08-11T12:00:00.000Z",
   });
+  const pageSnapshot = Object.freeze({ ...snapshot, kind: "pdf-page", selectedText: "" });
+  const activations = [];
   const contextBroker = {
+    activate(uri, nonceValue, active) {
+      activations.push([uri, nonceValue, active]);
+    },
     open(uri, record, nonceValue, trustedAnnotations) {
       brokerCalls.push(["open", uri, record, nonceValue, trustedAnnotations]);
       return { dispose() { disposed += 1; } };
     },
     update(uri, record, nonceValue, message) {
       brokerCalls.push(["update", uri, record, nonceValue, message]);
-      return snapshot;
+      return message.selectedText ? snapshot : pageSnapshot;
     },
   };
   const fileUri = value => ({ authority: "", fsPath: value, path: value, scheme: "file", value, toString: () => `file://${value}` });
+  const activeReaders = [];
+  const readerServer = fakeReaderServer();
   const provider = new providers.PdfEditorProvider({
     attachPdfContext: async value => { attached.push(value); await attachmentBarrier; },
     contextBroker,
     extensionUri: fileUri("/extension"),
+    fromUpstreamReaderAnnotation: () => { throw new Error("not reached"); },
     getModel: () => ({ annotations: async () => trustedAnnotations }),
     makePanelNonce: () => panelNonce,
     materializePdf: async () => ({ path: "/tmp/private/materialized-paper.pdf", async dispose() {} }),
+    onActiveReaderChanged: value => { activeReaders.push(value); },
+    readerLocationFromViewState: () => { throw new Error("not reached"); },
+    readerServer,
     registry: { release: () => true },
-    renderPdfEditorHTML: value => { brokerCalls.push(["render", value]); return "<html>PDF</html>"; },
+    renderUpstreamReaderHTML: value => { brokerCalls.push(["render", value]); return "<html>PDF</html>"; },
+    toUpstreamReaderAnnotation: value => value,
     vscode: { Uri: { file: fileUri, joinPath: (base, ...parts) => fileUri(`${base.value}/${parts.join("/")}`) } },
   });
   const document = { record: attachment, uri: { toString: () => "chatero-zotero-pdf:/7/PDF00001/paper.chatero-zotero-pdf" } };
@@ -1273,6 +1632,12 @@ test("PDF editor messages use the host document identity and never attach on pas
   assert.equal(brokerCalls[0][3], panelNonce);
   assert.equal(brokerCalls[0][4], trustedAnnotations);
   assert.equal(brokerCalls[1][1].panelNonce, panelNonce);
+  assert.equal(brokerCalls[1][1].readerType, "pdf");
+  assert.deepEqual(activations, [[document.uri, panelNonce, true]]);
+  assert.equal(activeReaders.length, 1);
+  assert.equal(activeReaders[0].record, attachment);
+  assert.equal(activeReaders[0].file.fsPath, "/tmp/private/materialized-paper.pdf");
+  assert.equal(activeReaders[0].file.scheme, "file");
 
   const update = {
     type: "pdf-context",
@@ -1288,6 +1653,8 @@ test("PDF editor messages use the host document identity and never attach on pas
   assert.deepEqual(brokerCalls.at(-1), ["update", document.uri, document.record, panelNonce, update]);
   changeViewState({ webviewPanel: { active: false } });
   assert.equal(attached.length, 0);
+  assert.deepEqual(activations, [[document.uri, panelNonce, true], [document.uri, panelNonce, false]]);
+  assert.equal(activeReaders.at(-1), null);
 
   const firstAttach = receiveMessage({ type: "pdf-context-attach", panelNonce, sequence: 1 });
   await new Promise(resolve => setImmediate(resolve));
@@ -1301,31 +1668,53 @@ test("PDF editor messages use the host document identity and never attach on pas
   assert.equal(replayResult.status, "rejected");
   assert.deepEqual(attached, [snapshot]);
   await assert.rejects(receiveMessage({ type: "pdf-context-attach", panelNonce, sequence: 2 }), /sequence/);
+
+  // Without a selection the broker keeps the current page, and that snapshot
+  // attaches too -- the chord matches chatero.zotero.addActiveContextToChat.
+  await receiveMessage({ ...update, sequence: 2, selectedText: "" });
+  await receiveMessage({ type: "pdf-context-attach", panelNonce, sequence: 2 });
+  assert.deepEqual(attached, [snapshot, pageSnapshot]);
+  await assert.rejects(receiveMessage({ type: "pdf-context-attach", panelNonce, sequence: 3 }), /sequence/);
+  assert.deepEqual(attached, [snapshot, pageSnapshot]);
+
   disposePanel();
   assert.equal(disposed, 1);
+  assert.deepEqual(readerServer.disposals, ["LEASE00001"]);
+  assert.equal(activeReaders.at(-1), null);
 });
 
 test("PDF context setup rolls back its broker lease and listeners when editor rendering fails", async () => {
   const providers = await import("../extensions/chatero-zotero/evidence-editors.cjs");
   const fileUri = value => ({ authority: "", fsPath: value, path: value, scheme: "file", value, toString: () => `file://${value}` });
-  for (const failure of ["render", "assignment"]) {
+  for (const failure of ["render", "assignment", "lease"]) {
     let leaseDisposals = 0;
     let listenerDisposals = 0;
+    let materializedDisposals = 0;
+    const activeReaders = [];
+    const readerServer = fakeReaderServer();
     const provider = new providers.PdfEditorProvider({
       attachPdfContext: async () => {},
       contextBroker: {
+        activate() {},
         open() { return { dispose() { leaseDisposals += 1; } }; },
         update() { throw new Error("not reached"); },
       },
       extensionUri: fileUri("/extension"),
+      fromUpstreamReaderAnnotation: () => { throw new Error("not reached"); },
       getModel: () => ({ annotations: async () => Object.freeze([]) }),
       makePanelNonce: () => "AAAAAAAAAAAAAAAAAAAAAAAA",
-      materializePdf: async () => ({ path: "/tmp/private/materialized-paper.pdf", async dispose() {} }),
+      materializePdf: async () => ({ path: "/tmp/private/materialized-paper.pdf", async dispose() { materializedDisposals += 1; } }),
+      onActiveReaderChanged: value => { activeReaders.push(value); },
+      readerLocationFromViewState: () => { throw new Error("not reached"); },
+      readerServer: failure === "lease"
+        ? { lease: async () => { throw new Error("lease failed"); } }
+        : readerServer,
       registry: { release: () => true },
-      renderPdfEditorHTML: () => {
+      renderUpstreamReaderHTML: () => {
         if (failure === "render") throw new Error("render failed");
         return "<html>PDF</html>";
       },
+      toUpstreamReaderAnnotation: value => value,
       vscode: { Uri: { file: fileUri, joinPath: (base, ...parts) => fileUri(`${base.value}/${parts.join("/")}`) } },
     });
     const webview = {
@@ -1343,7 +1732,23 @@ test("PDF context setup rolls back its broker lease and listeners when editor re
       webview,
     };
     await assert.rejects(provider.resolveCustomEditor({ record: attachment, uri: { toString: () => "chatero-zotero-pdf:/7/PDF00001/paper.chatero-zotero-pdf" } }, panel), new RegExp(`${failure} failed`));
-    assert.equal(leaseDisposals, 1);
-    assert.equal(listenerDisposals, 3);
+    await new Promise(resolve => setImmediate(resolve));
+    if (failure === "lease") {
+      // The lease is taken before any listener or broker lease exists, so the
+      // only thing to roll back is the materialized copy.
+      assert.equal(leaseDisposals, 0);
+      assert.equal(listenerDisposals, 0);
+      assert.deepEqual(activeReaders, []);
+    }
+    else {
+      assert.equal(leaseDisposals, 1);
+      assert.equal(listenerDisposals, 3);
+      assert.deepEqual(readerServer.disposals, ["LEASE00001"]);
+      assert.equal(activeReaders.length, 2);
+      assert.equal(activeReaders[0].file.fsPath, "/tmp/private/materialized-paper.pdf");
+      assert.equal(activeReaders[0].record, attachment);
+      assert.equal(activeReaders[1], null);
+    }
+    assert.equal(materializedDisposals, 1);
   }
 });

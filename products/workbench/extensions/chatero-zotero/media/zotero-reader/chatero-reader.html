@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en" dir="ltr" style="--sidebar-width:240px;--split-view-size:50%;--bottom-placeholder-height:50px;--toolbar-placeholder-width:0px">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; connect-src 'self'; font-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; worker-src 'self' blob:; frame-src 'self' blob: data:">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Chatero Reader</title>
+<link rel="stylesheet" href="./reader.css">
+<style>
+html,body{height:100%;margin:0}
+.chatero-reader-error{box-sizing:border-box;padding:24px;font:14px system-ui;color:#b3261e;background:#fff}
+#reader-error{position:fixed;z-index:10000;inset:0 0 auto 0;padding:8px 12px;color:#601410;background:#f9dedc;border-bottom:1px solid #b3261e;font:13px system-ui}
+#reader-error[hidden]{display:none}
+</style>
+</head>
+<body class="sidebar-open">
+<div id="reader-error" role="alert" hidden></div>
+<div id="reader-ui"></div>
+<div id="split-view"><div id="primary-view" class="primary-view"></div><div id="secondary-view" class="secondary-view"></div></div>
+<div id="printContainer"></div>
+<script src="./luaparse.js"></script>
+<script src="./reader.js"></script>
+<script type="module" src="./chatero-reader-host.mjs"></script>
+</body>
+</html>

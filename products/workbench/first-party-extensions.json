@@ -471,6 +471,10 @@
           "destination": "extensions/chatero-zotero/evidence-editors.cjs"
         },
         {
+          "source": "products/workbench/extensions/chatero-zotero/reader-server.cjs",
+          "destination": "extensions/chatero-zotero/reader-server.cjs"
+        },
+        {
           "source": "products/workbench/extensions/chatero-zotero/pdf-context-broker.mjs",
           "destination": "extensions/chatero-zotero/pdf-context-broker.mjs"
         },
@@ -505,22 +509,6 @@
         {
           "source": "products/workbench/extensions/chatero-zotero/media/library.svg",
           "destination": "extensions/chatero-zotero/media/library.svg"
-        },
-        {
-          "source": "products/workbench/extensions/chatero-zotero/media/pdf-viewer/LICENSE",
-          "destination": "extensions/chatero-zotero/media/pdf-viewer/LICENSE"
-        },
-        {
-          "source": "products/workbench/extensions/chatero-zotero/media/pdf-viewer/pdf.mjs",
-          "destination": "extensions/chatero-zotero/media/pdf-viewer/pdf.mjs"
-        },
-        {
-          "source": "products/workbench/extensions/chatero-zotero/media/pdf-viewer/pdf.worker.mjs",
-          "destination": "extensions/chatero-zotero/media/pdf-viewer/pdf.worker.mjs"
-        },
-        {
-          "source": "products/workbench/extensions/chatero-zotero/media/pdf-viewer/pdf-viewer.mjs",
-          "destination": "extensions/chatero-zotero/media/pdf-viewer/pdf-viewer.mjs"
         },
         {
           "source": "products/workbench/extensions/chatero-zotero/package.json",
@@ -575,20 +563,12 @@
           "destination": "extensions/chatero-zotero/media/zotero-reader/chatero-reader-host.mjs"
         },
         {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/chatero-reader.html",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/chatero-reader.html"
+        },
+        {
           "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/luaparse.js",
           "destination": "extensions/chatero-zotero/media/zotero-reader/luaparse.js"
-        },
-        {
-          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/reader.css",
-          "destination": "extensions/chatero-zotero/media/zotero-reader/reader.css"
-        },
-        {
-          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/reader.js",
-          "destination": "extensions/chatero-zotero/media/zotero-reader/reader.js"
-        },
-        {
-          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/reader.js.LICENSE.txt",
-          "destination": "extensions/chatero-zotero/media/zotero-reader/reader.js.LICENSE.txt"
         },
         {
           "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/mathjax-fonts/MathJax_AMS-Regular.woff",
@@ -681,6 +661,846 @@
         {
           "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/mathjax-fonts/MathJax_Zero.woff",
           "destination": "extensions/chatero-zotero/media/zotero-reader/mathjax-fonts/MathJax_Zero.woff"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/LICENSE",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/LICENSE"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/build/pdf.mjs",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/build/pdf.mjs"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/build/pdf.worker.mjs",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/build/pdf.worker.mjs"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/78-EUC-H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/78-EUC-H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/78-EUC-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/78-EUC-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/78-H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/78-H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/78-RKSJ-H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/78-RKSJ-H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/78-RKSJ-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/78-RKSJ-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/78-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/78-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/78ms-RKSJ-H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/78ms-RKSJ-H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/78ms-RKSJ-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/78ms-RKSJ-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/83pv-RKSJ-H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/83pv-RKSJ-H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/90ms-RKSJ-H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/90ms-RKSJ-H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/90ms-RKSJ-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/90ms-RKSJ-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/90msp-RKSJ-H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/90msp-RKSJ-H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/90msp-RKSJ-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/90msp-RKSJ-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/90pv-RKSJ-H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/90pv-RKSJ-H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/90pv-RKSJ-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/90pv-RKSJ-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Add-H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Add-H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Add-RKSJ-H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Add-RKSJ-H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Add-RKSJ-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Add-RKSJ-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Add-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Add-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Adobe-CNS1-0.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Adobe-CNS1-0.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Adobe-CNS1-1.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Adobe-CNS1-1.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Adobe-CNS1-2.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Adobe-CNS1-2.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Adobe-CNS1-3.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Adobe-CNS1-3.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Adobe-CNS1-4.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Adobe-CNS1-4.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Adobe-CNS1-5.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Adobe-CNS1-5.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Adobe-CNS1-6.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Adobe-CNS1-6.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Adobe-CNS1-UCS2.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Adobe-CNS1-UCS2.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Adobe-GB1-0.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Adobe-GB1-0.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Adobe-GB1-1.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Adobe-GB1-1.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Adobe-GB1-2.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Adobe-GB1-2.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Adobe-GB1-3.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Adobe-GB1-3.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Adobe-GB1-4.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Adobe-GB1-4.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Adobe-GB1-5.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Adobe-GB1-5.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Adobe-GB1-UCS2.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Adobe-GB1-UCS2.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Adobe-Japan1-0.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Adobe-Japan1-0.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Adobe-Japan1-1.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Adobe-Japan1-1.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Adobe-Japan1-2.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Adobe-Japan1-2.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Adobe-Japan1-3.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Adobe-Japan1-3.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Adobe-Japan1-4.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Adobe-Japan1-4.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Adobe-Japan1-5.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Adobe-Japan1-5.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Adobe-Japan1-6.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Adobe-Japan1-6.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Adobe-Japan1-UCS2.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Adobe-Japan1-UCS2.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Adobe-Korea1-0.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Adobe-Korea1-0.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Adobe-Korea1-1.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Adobe-Korea1-1.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Adobe-Korea1-2.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Adobe-Korea1-2.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Adobe-Korea1-UCS2.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Adobe-Korea1-UCS2.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/B5-H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/B5-H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/B5-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/B5-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/B5pc-H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/B5pc-H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/B5pc-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/B5pc-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/CNS-EUC-H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/CNS-EUC-H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/CNS-EUC-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/CNS-EUC-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/CNS1-H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/CNS1-H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/CNS1-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/CNS1-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/CNS2-H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/CNS2-H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/CNS2-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/CNS2-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/ETHK-B5-H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/ETHK-B5-H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/ETHK-B5-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/ETHK-B5-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/ETen-B5-H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/ETen-B5-H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/ETen-B5-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/ETen-B5-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/ETenms-B5-H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/ETenms-B5-H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/ETenms-B5-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/ETenms-B5-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/EUC-H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/EUC-H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/EUC-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/EUC-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Ext-H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Ext-H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Ext-RKSJ-H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Ext-RKSJ-H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Ext-RKSJ-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Ext-RKSJ-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Ext-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Ext-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/GB-EUC-H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/GB-EUC-H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/GB-EUC-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/GB-EUC-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/GB-H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/GB-H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/GB-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/GB-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/GBK-EUC-H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/GBK-EUC-H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/GBK-EUC-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/GBK-EUC-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/GBK2K-H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/GBK2K-H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/GBK2K-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/GBK2K-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/GBKp-EUC-H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/GBKp-EUC-H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/GBKp-EUC-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/GBKp-EUC-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/GBT-EUC-H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/GBT-EUC-H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/GBT-EUC-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/GBT-EUC-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/GBT-H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/GBT-H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/GBT-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/GBT-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/GBTpc-EUC-H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/GBTpc-EUC-H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/GBTpc-EUC-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/GBTpc-EUC-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/GBpc-EUC-H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/GBpc-EUC-H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/GBpc-EUC-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/GBpc-EUC-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/HKdla-B5-H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/HKdla-B5-H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/HKdla-B5-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/HKdla-B5-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/HKdlb-B5-H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/HKdlb-B5-H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/HKdlb-B5-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/HKdlb-B5-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/HKgccs-B5-H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/HKgccs-B5-H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/HKgccs-B5-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/HKgccs-B5-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/HKm314-B5-H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/HKm314-B5-H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/HKm314-B5-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/HKm314-B5-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/HKm471-B5-H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/HKm471-B5-H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/HKm471-B5-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/HKm471-B5-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/HKscs-B5-H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/HKscs-B5-H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/HKscs-B5-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/HKscs-B5-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Hankaku.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Hankaku.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Hiragana.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Hiragana.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/KSC-EUC-H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/KSC-EUC-H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/KSC-EUC-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/KSC-EUC-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/KSC-H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/KSC-H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/KSC-Johab-H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/KSC-Johab-H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/KSC-Johab-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/KSC-Johab-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/KSC-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/KSC-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/KSCms-UHC-H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/KSCms-UHC-H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/KSCms-UHC-HW-H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/KSCms-UHC-HW-H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/KSCms-UHC-HW-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/KSCms-UHC-HW-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/KSCms-UHC-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/KSCms-UHC-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/KSCpc-EUC-H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/KSCpc-EUC-H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/KSCpc-EUC-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/KSCpc-EUC-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Katakana.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Katakana.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/LICENSE",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/LICENSE"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/NWP-H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/NWP-H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/NWP-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/NWP-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/RKSJ-H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/RKSJ-H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/RKSJ-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/RKSJ-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Roman.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/Roman.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniCNS-UCS2-H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniCNS-UCS2-H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniCNS-UCS2-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniCNS-UCS2-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniCNS-UTF16-H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniCNS-UTF16-H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniCNS-UTF16-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniCNS-UTF16-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniCNS-UTF32-H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniCNS-UTF32-H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniCNS-UTF32-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniCNS-UTF32-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniCNS-UTF8-H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniCNS-UTF8-H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniCNS-UTF8-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniCNS-UTF8-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniGB-UCS2-H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniGB-UCS2-H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniGB-UCS2-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniGB-UCS2-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniGB-UTF16-H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniGB-UTF16-H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniGB-UTF16-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniGB-UTF16-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniGB-UTF32-H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniGB-UTF32-H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniGB-UTF32-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniGB-UTF32-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniGB-UTF8-H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniGB-UTF8-H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniGB-UTF8-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniGB-UTF8-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniJIS-UCS2-H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniJIS-UCS2-H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniJIS-UCS2-HW-H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniJIS-UCS2-HW-H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniJIS-UCS2-HW-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniJIS-UCS2-HW-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniJIS-UCS2-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniJIS-UCS2-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniJIS-UTF16-H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniJIS-UTF16-H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniJIS-UTF16-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniJIS-UTF16-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniJIS-UTF32-H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniJIS-UTF32-H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniJIS-UTF32-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniJIS-UTF32-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniJIS-UTF8-H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniJIS-UTF8-H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniJIS-UTF8-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniJIS-UTF8-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniJIS2004-UTF16-H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniJIS2004-UTF16-H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniJIS2004-UTF16-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniJIS2004-UTF16-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniJIS2004-UTF32-H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniJIS2004-UTF32-H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniJIS2004-UTF32-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniJIS2004-UTF32-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniJIS2004-UTF8-H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniJIS2004-UTF8-H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniJIS2004-UTF8-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniJIS2004-UTF8-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniJISPro-UCS2-HW-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniJISPro-UCS2-HW-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniJISPro-UCS2-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniJISPro-UCS2-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniJISPro-UTF8-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniJISPro-UTF8-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniJISX0213-UTF32-H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniJISX0213-UTF32-H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniJISX0213-UTF32-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniJISX0213-UTF32-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniJISX02132004-UTF32-H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniJISX02132004-UTF32-H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniJISX02132004-UTF32-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniJISX02132004-UTF32-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniKS-UCS2-H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniKS-UCS2-H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniKS-UCS2-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniKS-UCS2-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniKS-UTF16-H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniKS-UTF16-H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniKS-UTF16-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniKS-UTF16-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniKS-UTF32-H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniKS-UTF32-H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniKS-UTF32-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniKS-UTF32-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniKS-UTF8-H.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniKS-UTF8-H.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniKS-UTF8-V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/UniKS-UTF8-V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/V.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/V.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/WP-Symbol.bcmap",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/cmaps/WP-Symbol.bcmap"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/iccs/CGATS001Compat-v2-micro.icc",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/iccs/CGATS001Compat-v2-micro.icc"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/iccs/LICENSE",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/iccs/LICENSE"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/images/loading-icon.gif",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/images/loading-icon.gif"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/standard_fonts/FoxitDingbats.pfb",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/standard_fonts/FoxitDingbats.pfb"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/standard_fonts/FoxitFixed.pfb",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/standard_fonts/FoxitFixed.pfb"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/standard_fonts/FoxitFixedBold.pfb",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/standard_fonts/FoxitFixedBold.pfb"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/standard_fonts/FoxitFixedBoldItalic.pfb",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/standard_fonts/FoxitFixedBoldItalic.pfb"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/standard_fonts/FoxitFixedItalic.pfb",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/standard_fonts/FoxitFixedItalic.pfb"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/standard_fonts/FoxitSerif.pfb",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/standard_fonts/FoxitSerif.pfb"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/standard_fonts/FoxitSerifBold.pfb",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/standard_fonts/FoxitSerifBold.pfb"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/standard_fonts/FoxitSerifBoldItalic.pfb",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/standard_fonts/FoxitSerifBoldItalic.pfb"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/standard_fonts/FoxitSerifItalic.pfb",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/standard_fonts/FoxitSerifItalic.pfb"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/standard_fonts/FoxitSymbol.pfb",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/standard_fonts/FoxitSymbol.pfb"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/standard_fonts/LICENSE_FOXIT",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/standard_fonts/LICENSE_FOXIT"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/standard_fonts/LICENSE_LIBERATION",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/standard_fonts/LICENSE_LIBERATION"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/standard_fonts/LiberationSans-Bold.ttf",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/standard_fonts/LiberationSans-Bold.ttf"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/standard_fonts/LiberationSans-BoldItalic.ttf",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/standard_fonts/LiberationSans-BoldItalic.ttf"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/standard_fonts/LiberationSans-Italic.ttf",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/standard_fonts/LiberationSans-Italic.ttf"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/standard_fonts/LiberationSans-Regular.ttf",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/standard_fonts/LiberationSans-Regular.ttf"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/viewer.css",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/viewer.css"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/viewer.html",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/viewer.html"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/viewer.mjs",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/viewer.mjs"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/wasm/LICENSE_JBIG2",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/wasm/LICENSE_JBIG2"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/wasm/LICENSE_OPENJPEG",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/wasm/LICENSE_OPENJPEG"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/wasm/LICENSE_PDFJS_JBIG2",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/wasm/LICENSE_PDFJS_JBIG2"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/wasm/LICENSE_PDFJS_OPENJPEG",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/wasm/LICENSE_PDFJS_OPENJPEG"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/wasm/LICENSE_PDFJS_QCMS",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/wasm/LICENSE_PDFJS_QCMS"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/wasm/LICENSE_QCMS",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/wasm/LICENSE_QCMS"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/wasm/jbig2.wasm",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/wasm/jbig2.wasm"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/wasm/jbig2_nowasm_fallback.js",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/wasm/jbig2_nowasm_fallback.js"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/wasm/openjpeg.wasm",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/wasm/openjpeg.wasm"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/wasm/openjpeg_nowasm_fallback.js",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/wasm/openjpeg_nowasm_fallback.js"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/wasm/qcms_bg.wasm",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/wasm/qcms_bg.wasm"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/wasm/quickjs-eval.js",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/wasm/quickjs-eval.js"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/web/wasm/quickjs-eval.wasm",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/pdf/web/wasm/quickjs-eval.wasm"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/reader.css",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/reader.css"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/reader.js",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/reader.js"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-zotero/media/zotero-reader/reader.js.LICENSE.txt",
+          "destination": "extensions/chatero-zotero/media/zotero-reader/reader.js.LICENSE.txt"
         },
         {
           "source": "products/workbench/extensions/chatero-zotero/package.nls.json",

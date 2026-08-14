@@ -1,4 +1,3 @@
-const { dirname } = require("node:path");
 const { randomBytes } = require("node:crypto");
 
 class EvidenceDocument {
@@ -19,51 +18,62 @@ function nonce() {
   return randomBytes(18).toString("base64url");
 }
 
+// Only the view-location fields reach the renderer; the Core state record also
+// carries the library identity, which must never enter webview config.
+function projectReaderViewState(state) {
+  const value = {};
+  for (const field of ["cfi", "pageIndex", "scrollYPercent"]) {
+    if (state[field] !== undefined) value[field] = state[field];
+  }
+  return value;
+}
+
 class PdfEditorProvider {
   constructor({
     vscode,
     registry,
     getModel,
     resolveDocument,
-    renderPdfEditorHTML,
-    renderUpstreamReaderHTML = null,
+    renderUpstreamReaderHTML,
     extensionUri,
     materializePdf = async () => { throw new Error("Zotero PDF materialization is unavailable"); },
     contextBroker = null,
     attachPdfContext = null,
     createReaderWorkflow = null,
-    fromUpstreamReaderAnnotation = null,
+    fromUpstreamReaderAnnotation,
     makePanelNonce = nonce,
+    onActiveReaderChanged = () => {},
     onContextError = () => {},
     onReaderError = () => {},
-    readerLocationFromViewState = null,
-    toUpstreamReaderAnnotation = null,
+    readerLocationFromViewState,
+    readerServer,
+    toUpstreamReaderAnnotation,
   }) {
     this.vscode = vscode;
     this.registry = registry;
     this.getModel = getModel;
     this.resolveDocument = resolveDocument || ((uri, kind) => registry.resolve(uri, kind));
-    this.renderPdfEditorHTML = renderPdfEditorHTML;
     this.renderUpstreamReaderHTML = renderUpstreamReaderHTML;
     this.materializePdf = materializePdf;
-    this.viewerRoot = vscode.Uri.joinPath(extensionUri, "media", "pdf-viewer");
     this.upstreamReaderRoot = vscode.Uri.joinPath(extensionUri, "media", "zotero-reader");
     this.contextBroker = contextBroker;
     this.attachPdfContext = attachPdfContext;
     this.createReaderWorkflow = createReaderWorkflow;
     this.fromUpstreamReaderAnnotation = fromUpstreamReaderAnnotation;
     this.readerLocationFromViewState = readerLocationFromViewState;
+    this.readerServer = readerServer;
     this.toUpstreamReaderAnnotation = toUpstreamReaderAnnotation;
     this.makePanelNonce = makePanelNonce;
+    this.onActiveReaderChanged = onActiveReaderChanged;
     this.onContextError = onContextError;
     this.onReaderError = onReaderError;
     if ((contextBroker === null) !== (attachPdfContext === null)
         || (createReaderWorkflow !== null && typeof createReaderWorkflow !== "function")
-        || ([fromUpstreamReaderAnnotation, renderUpstreamReaderHTML, readerLocationFromViewState, toUpstreamReaderAnnotation]
-          .filter(value => value !== null).length !== 0
-          && ![fromUpstreamReaderAnnotation, renderUpstreamReaderHTML, readerLocationFromViewState, toUpstreamReaderAnnotation]
-            .every(value => typeof value === "function"))
-        || typeof makePanelNonce !== "function" || typeof onContextError !== "function" || typeof onReaderError !== "function") {
+        || ![fromUpstreamReaderAnnotation, renderUpstreamReaderHTML, readerLocationFromViewState, toUpstreamReaderAnnotation]
+          .every(value => typeof value === "function")
+        || typeof readerServer?.lease !== "function"
+        || typeof makePanelNonce !== "function" || typeof onActiveReaderChanged !== "function"
+        || typeof onContextError !== "function" || typeof onReaderError !== "function") {
       throw new TypeError("PDF editor context bridge configuration is invalid");
     }
   }
@@ -78,24 +88,68 @@ class PdfEditorProvider {
     if (!model) throw new Error("Start Zotero Core before opening a PDF");
     const record = document.record;
     const workflow = this.createReaderWorkflow?.(model) ?? null;
-    const loaded = workflow ? await workflow.load(record) : null;
-    const annotations = loaded?.annotations
-      ?? await model.annotations({ attachmentKey: record.attachmentKey, libraryId: record.libraryId });
+    // The reader RPCs and the whole-file copy share no data, so they run concurrently.
+    const loading = workflow
+      ? workflow.load(record)
+      : model.annotations({ attachmentKey: record.attachmentKey, libraryId: record.libraryId });
+    const materializing = this.materializePdf(record);
+    let annotations;
+    let loaded = null;
+    let materialized;
+    try {
+      const [loadResult, handle] = await Promise.all([loading, materializing]);
+      materialized = handle;
+      loaded = workflow ? loadResult : null;
+      annotations = loaded?.annotations
+        ?? (workflow ? await model.annotations({ attachmentKey: record.attachmentKey, libraryId: record.libraryId }) : loadResult);
+    }
+    catch (error) {
+      void materializing.then(value => value?.dispose?.(), () => {}).catch(() => {});
+      throw error;
+    }
     const isPdf = record.contentType === "application/pdf";
-    if (!isPdf && !this.renderUpstreamReaderHTML) throw new Error(`Reader content type ${record.contentType} is unavailable`);
-    const materialized = await this.materializePdf(record);
     const file = this.vscode.Uri.file(materialized.path);
-    const readerRoot = isPdf ? this.viewerRoot : this.upstreamReaderRoot;
-    panel.webview.options = { enableScripts: true, localResourceRoots: [this.vscode.Uri.file(dirname(materialized.path)), readerRoot] };
+    let serverLease;
+    try {
+      serverLease = await this.readerServer.lease({ contentType: record.contentType, path: materialized.path });
+    }
+    catch (error) {
+      void materialized.dispose().catch(() => {});
+      throw error;
+    }
+    // The reader page and the materialized bytes come from the loopback reader
+    // server, so the webview itself needs no resource roots at all.
+    panel.webview.options = { enableScripts: true, localResourceRoots: [] };
     const panelNonce = this.makePanelNonce();
-    const contextLease = isPdf ? this.contextBroker?.open(document.uri, document.record, panelNonce, annotations) ?? null : null;
+    let contextLease = isPdf ? this.contextBroker?.open(document.uri, document.record, panelNonce, annotations) ?? null : null;
+    const readerPublication = Object.freeze({ file, record });
+    // Clearing is guarded on identity: with two reader tabs, a stale panel's
+    // deactivation or disposal must not clobber the newly active publication.
+    const publishActiveReader = active => {
+      if (active) {
+        this.activeReaderPublication = readerPublication;
+        this.onActiveReaderChanged(readerPublication);
+      }
+      else if (this.activeReaderPublication === readerPublication) {
+        this.activeReaderPublication = null;
+        this.onActiveReaderChanged(null);
+      }
+    };
+    const activateContext = active => {
+      if (contextLease) this.contextBroker.activate(document.uri, panelNonce, active);
+      publishActiveReader(active);
+    };
     let lastSequence = 0;
     let lastAttachSequence = 0;
     let lastSnapshot = null;
+    const initialLocationKey = (() => {
+      try { return JSON.stringify(this.readerLocationFromViewState(record.contentType, loaded?.state ?? {})); }
+      catch { return null; }
+    })();
+    let lastLocationKey = initialLocationKey;
     let disposed = false;
     let readerWrite = Promise.resolve();
     const readerKeyMap = new Map();
-    let lastReaderPage = loaded?.state?.pageIndex;
     let messageSubscription = null;
     let viewStateSubscription = null;
     let panelDisposeSubscription = null;
@@ -103,29 +157,57 @@ class PdfEditorProvider {
       if (disposed) return;
       disposed = true;
       let failure = null;
-      for (const disposable of [messageSubscription, viewStateSubscription, panelDisposeSubscription, contextLease]) {
+      for (const disposable of [messageSubscription, viewStateSubscription, panelDisposeSubscription, contextLease, serverLease]) {
         try { disposable?.dispose(); } catch (error) { failure ||= error; }
       }
+      try { publishActiveReader(false); } catch (error) { failure ||= error; }
       void materialized.dispose().catch(error => this.onReaderError(error, "materialized-pdf-cleanup"));
       lastSnapshot = null;
       if (failure) throw failure;
     };
     try {
-      this.contextBroker?.activate?.(document.uri, panelNonce, panel.active === true);
+      activateContext(panel.active === true);
       messageSubscription = (this.contextBroker || workflow) && typeof panel.webview.onDidReceiveMessage === "function"
         ? panel.webview.onDidReceiveMessage(message => {
         const operation = (async () => {
+          if (message?.type === "chatero-reader-ready") {
+            if (Object.keys(message).sort().join(",") !== "type") throw new TypeError("Reader ready message is invalid");
+            // A webview content reload re-evaluates the child page, restarting
+            // its context sequence and re-emitting the open-time state; reset
+            // the extension-side counters to match.
+            if (contextLease) {
+              contextLease.dispose();
+              contextLease = this.contextBroker.open(document.uri, document.record, panelNonce, annotations);
+              lastSequence = 0;
+              lastAttachSequence = 0;
+              lastSnapshot = null;
+            }
+            lastLocationKey = initialLocationKey;
+            return;
+          }
           if (message?.type === "upstream-reader-state") {
-            if (isPdf || !workflow || Object.keys(message).sort().join(",") !== "state,type") throw new TypeError("Upstream Reader state message is invalid");
+            if (!workflow || Object.keys(message).sort().join(",") !== "state,type") throw new TypeError("Upstream Reader state message is invalid");
             const location = this.readerLocationFromViewState(record.contentType, message.state);
+            const locationKey = JSON.stringify(location);
+            if (locationKey === lastLocationKey) return;
+            // Dedupe against the last enqueued location, not the last committed
+            // one, so A -> B -> A commits the return to A.
+            const previousKey = lastLocationKey;
+            lastLocationKey = locationKey;
             readerWrite = readerWrite.catch(() => {}).then(() => workflow.updateLocation(location));
-            await readerWrite;
+            try {
+              await readerWrite;
+            }
+            catch (error) {
+              if (lastLocationKey === locationKey) lastLocationKey = previousKey;
+              throw error;
+            }
             return;
           }
           if (message?.type === "upstream-reader-save") {
             const sequence = message.sequence;
             try {
-              if (isPdf || !workflow || !Number.isSafeInteger(sequence) || sequence < 1 || !Array.isArray(message.annotations)
+              if (!workflow || !Number.isSafeInteger(sequence) || sequence < 1 || !Array.isArray(message.annotations)
                   || message.annotations.length > 100 || Object.keys(message).sort().join(",") !== "annotations,sequence,type") {
                 throw new TypeError("Upstream Reader save message is invalid");
               }
@@ -156,16 +238,19 @@ class PdfEditorProvider {
           if (message?.type === "upstream-reader-delete") {
             const sequence = message.sequence;
             try {
-              if (isPdf || !workflow || !Number.isSafeInteger(sequence) || sequence < 1 || !Array.isArray(message.ids)
+              if (!workflow || !Number.isSafeInteger(sequence) || sequence < 1 || !Array.isArray(message.ids)
                   || message.ids.length > 100 || new Set(message.ids).size !== message.ids.length
                   || Object.keys(message).sort().join(",") !== "ids,sequence,type") throw new TypeError("Upstream Reader delete message is invalid");
-              const changes = message.ids.map(key => {
+              // The reader batches saves: a create-only batch still calls
+              // onDeleteAnnotations([]), and a delete that cancels a not-yet
+              // persisted create names an id Core never saw. Both are no-ops.
+              const changes = [];
+              for (const key of message.ids) {
                 const currentKey = readerKeyMap.get(key) || key;
                 const current = workflow.annotations.find(annotation => annotation.annotationKey === currentKey);
-                if (!current) throw new Error(`Reader annotation ${key} is unavailable`);
-                return { action: "trash", annotationKey: currentKey, expectedVersion: current.version };
-              });
-              await workflow.applyAnnotationChanges(changes);
+                if (current) changes.push({ action: "trash", annotationKey: currentKey, expectedVersion: current.version });
+              }
+              if (changes.length) await workflow.applyAnnotationChanges(changes);
               for (const key of message.ids) readerKeyMap.delete(key);
               await panel.webview.postMessage?.({ sequence, type: "upstream-reader-saved" });
             }
@@ -173,63 +258,6 @@ class PdfEditorProvider {
               await panel.webview.postMessage?.({ message: error.message, sequence, type: "upstream-reader-error" });
               throw error;
             }
-            return;
-          }
-          if (message?.type === "reader-state") {
-            if (!isPdf || !workflow || !Number.isSafeInteger(message.pageIndex) || message.pageIndex < 0
-                || Object.keys(message).sort().join(",") !== "pageIndex,type") {
-              throw new TypeError("Reader state message is invalid");
-            }
-            if (message.pageIndex === lastReaderPage) return;
-            readerWrite = readerWrite.catch(() => {}).then(() => workflow.updateLocation({ pageIndex: message.pageIndex }));
-            await readerWrite;
-            lastReaderPage = message.pageIndex;
-            return;
-          }
-          if (message?.type === "annotation-create") {
-            if (!workflow || typeof message.text !== "string" || typeof message.positionJson !== "string"
-                || typeof message.pageLabel !== "string" || typeof message.sortIndex !== "string"
-                || !["highlight", "image", "note", "underline"].includes(message.annotationType)
-                || typeof message.color !== "string" || !Array.isArray(message.tags) || typeof message.comment !== "string"
-                || Object.keys(message).sort().join(",") !== "annotationType,color,comment,pageLabel,positionJson,sortIndex,tags,text,type") {
-              throw new TypeError("Reader annotation message is invalid");
-            }
-            const annotation = await workflow.createAnnotation({
-              color: message.color, comment: message.comment, pageLabel: message.pageLabel,
-              positionJson: message.positionJson, sortIndex: message.sortIndex,
-              tags: message.tags, text: message.text, type: message.annotationType,
-            });
-            await panel.webview.postMessage?.({ annotation, type: "annotation-created" });
-            return;
-          }
-          if (message?.type === "annotation-update") {
-            if (!workflow || typeof message.annotationKey !== "string" || !Number.isSafeInteger(message.expectedVersion)
-                || typeof message.comment !== "string" || typeof message.color !== "string" || !Array.isArray(message.tags)
-                || Object.keys(message).sort().join(",") !== "annotationKey,color,comment,expectedVersion,tags,type") {
-              throw new TypeError("Reader annotation update message is invalid");
-            }
-            const result = await workflow.updateAnnotations([{
-              annotationKey: message.annotationKey, color: message.color, comment: message.comment,
-              expectedVersion: message.expectedVersion, tags: message.tags,
-            }]);
-            const version = result.annotations.find(value => value.annotationKey === message.annotationKey)?.version;
-            const annotation = workflow.annotations.find(value => value.annotationKey === message.annotationKey);
-            await panel.webview.postMessage?.({ annotation: annotation && { ...annotation, version: version ?? annotation.version }, type: "annotation-updated" });
-            return;
-          }
-          if (message?.type === "annotation-delete") {
-            if (!workflow || typeof message.annotationKey !== "string" || !Number.isSafeInteger(message.expectedVersion)
-                || Object.keys(message).sort().join(",") !== "annotationKey,expectedVersion,type") {
-              throw new TypeError("Reader annotation delete message is invalid");
-            }
-            await workflow.mutateAnnotation({ action: "trash", annotationKey: message.annotationKey, expectedVersion: message.expectedVersion });
-            await panel.webview.postMessage?.({ annotationKey: message.annotationKey, type: "annotation-deleted" });
-            return;
-          }
-          if (message?.type === "annotation-undo") {
-            if (!workflow || Object.keys(message).sort().join(",") !== "type") throw new TypeError("Reader annotation undo message is invalid");
-            const changed = await workflow.undo();
-            await panel.webview.postMessage?.({ annotations: workflow.annotations, changed, type: "annotation-undone" });
             return;
           }
           if (message?.type === "pdf-open-link") {
@@ -241,14 +269,12 @@ class PdfEditorProvider {
             await this.vscode.env.openExternal(target);
             return;
           }
-          if (message?.type === "pdf-export") {
-            if (Object.keys(message).sort().join(",") !== "type") throw new TypeError("PDF export message is invalid");
-            const destination = await this.vscode.window.showSaveDialog({
-              defaultUri: this.vscode.Uri.file(record.filename || `${record.attachmentKey}.pdf`),
-              filters: { PDF: ["pdf"] },
-              saveLabel: "Export PDF",
-            });
-            if (destination) await this.vscode.workspace.fs.copy(file, destination, { overwrite: true });
+          if (message?.type === "reader-unsupported") {
+            if (typeof message.feature !== "string" || message.feature.length > 64
+                || Object.keys(message).sort().join(",") !== "feature,type") {
+              throw new TypeError("Reader capability message is invalid");
+            }
+            void this.vscode.window.showWarningMessage(`Chatero does not support ${message.feature} yet.`);
             return;
           }
           if (message?.type === "pdf-context") {
@@ -261,23 +287,20 @@ class PdfEditorProvider {
             throw new TypeError("PDF editor message type is invalid");
           }
           const keys = Object.keys(message).sort();
+          // Both snapshot kinds attach: a selection when one exists, otherwise
+          // the current page -- matching chatero.zotero.addActiveContextToChat.
           if (keys.length !== 3 || keys[0] !== "panelNonce" || keys[1] !== "sequence" || keys[2] !== "type"
               || message.panelNonce !== panelNonce
               || !Number.isSafeInteger(message.sequence)
               || message.sequence !== lastSequence
               || message.sequence <= lastAttachSequence
-              || !lastSnapshot
-              || lastSnapshot.kind !== "pdf-selection"
-              || lastSnapshot.selectedText.trim().length === 0) {
+              || !lastSnapshot) {
             throw new Error("PDF context attach sequence is invalid");
           }
           lastAttachSequence = message.sequence;
           await this.attachPdfContext(lastSnapshot);
         })();
         void operation.catch(async error => {
-          if (["annotation-create", "annotation-update", "annotation-delete", "annotation-undo"].includes(message?.type)) {
-            try { await panel.webview.postMessage?.({ message: error.message, type: "annotation-error" }); } catch (_) {}
-          }
           if (message?.type === "pdf-context") {
             try { await panel.webview.postMessage?.({ type: "pdf-context-error" }); } catch (_) {}
           }
@@ -289,34 +312,20 @@ class PdfEditorProvider {
         : null;
       viewStateSubscription = typeof panel.onDidChangeViewState === "function"
         ? panel.onDidChangeViewState(event => {
-          this.contextBroker?.activate?.(document.uri, panelNonce, event?.webviewPanel?.active === true);
+          activateContext(event?.webviewPanel?.active === true);
         })
         : null;
       panelDisposeSubscription = panel.onDidDispose?.(cleanup) ?? null;
-      const renderedNonce = nonce();
-      panel.webview.html = isPdf ? this.renderPdfEditorHTML({
-        annotations,
-        attachment: record,
-        cspSource: panel.webview.cspSource,
-        nonce: renderedNonce,
-        initialState: loaded?.state ?? {},
-        panelNonce,
-        pdfJsUri: panel.webview.asWebviewUri(this.vscode.Uri.joinPath(this.viewerRoot, "pdf.mjs")).toString(),
-        pdfUri: panel.webview.asWebviewUri(file).toString(),
-        viewerUri: panel.webview.asWebviewUri(this.vscode.Uri.joinPath(this.viewerRoot, "pdf-viewer.mjs")).toString(),
-        workerUri: panel.webview.asWebviewUri(this.vscode.Uri.joinPath(this.viewerRoot, "pdf.worker.mjs")).toString(),
-      }) : this.renderUpstreamReaderHTML({
+      panel.webview.html = this.renderUpstreamReaderHTML({
         annotations: annotations.map(this.toUpstreamReaderAnnotation),
         attachment: record,
-        cspSource: panel.webview.cspSource,
-        documentUri: panel.webview.asWebviewUri(file).toString(),
-        hostUri: panel.webview.asWebviewUri(this.vscode.Uri.joinPath(this.upstreamReaderRoot, "chatero-reader-host.mjs")).toString(),
-        luaparseUri: panel.webview.asWebviewUri(this.vscode.Uri.joinPath(this.upstreamReaderRoot, "luaparse.js")).toString(),
-        nonce: renderedNonce,
-        readerCssUri: panel.webview.asWebviewUri(this.vscode.Uri.joinPath(this.upstreamReaderRoot, "reader.css")).toString(),
-        readerJsUri: panel.webview.asWebviewUri(this.vscode.Uri.joinPath(this.upstreamReaderRoot, "reader.js")).toString(),
-        readerType: record.contentType === "application/epub+zip" ? "epub" : "snapshot",
-        state: loaded?.state ?? {},
+        documentUri: serverLease.documentUrl,
+        frameOrigin: serverLease.origin,
+        nonce: nonce(),
+        panelNonce,
+        readerPageUri: serverLease.readerPageUrl,
+        readerType: isPdf ? "pdf" : record.contentType === "application/epub+zip" ? "epub" : "snapshot",
+        state: projectReaderViewState(loaded?.state ?? {}),
       });
     }
     catch (error) {

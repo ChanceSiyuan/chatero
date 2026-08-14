@@ -202,6 +202,11 @@
         "command": "chatero.zotero.sendFullPaperToRemote",
         "title": "Send Full Paper to Remote…",
         "category": "Chatero"
+      },
+      {
+        "command": "chatero.zotero.exportActivePdf",
+        "title": "Export Copy of Active Zotero Attachment…",
+        "category": "Chatero"
       }
     ],
     "configuration": {

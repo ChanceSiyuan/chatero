@@ -66,6 +66,10 @@ export function fromUpstreamReaderAnnotation(value, current) {
 
 export function readerLocationFromViewState(contentType, state) {
   if (!state || typeof state !== "object") throw new TypeError("Reader view state is invalid");
+  if (contentType === "application/pdf") {
+    if (!Number.isSafeInteger(state.pageIndex) || state.pageIndex < 0) throw new TypeError("Reader page location is invalid");
+    return Object.freeze({ pageIndex: state.pageIndex });
+  }
   if (contentType === "application/epub+zip") {
     return Object.freeze({ cfi: bounded(state.cfi, "Reader CFI", 16 * 1024, false) });
   }
