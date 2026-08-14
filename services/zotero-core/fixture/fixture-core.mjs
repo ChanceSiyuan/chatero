@@ -99,6 +99,7 @@ async function main() {
     CHATERO_CORE_FIXTURE_PATH: fixturePath,
     CHATERO_CORE_PROFILE_DIRECTORY: profileDirectory,
     CHATERO_CORE_PROFILE_EPOCH: profileEpoch,
+    CHATERO_CORE_SESSION_TTL_MS: rawSessionTtlMs,
     CHATERO_CORE_SOCKET_PATH: socketPath,
     CHATERO_CORE_SEARCH_DELAY_MS: rawSearchDelayMs = "0",
     CHATERO_CORE_UPSTREAM_VERSION: upstreamVersion = "7.0-fixture",
@@ -138,6 +139,10 @@ async function main() {
   if (!Number.isSafeInteger(searchDelayMs) || searchDelayMs < 0 || searchDelayMs > 10000) {
     throw new Error("fixture search delay is invalid");
   }
+  const sessionTtlMs = rawSessionTtlMs === undefined ? undefined : Number(rawSessionTtlMs);
+  if (sessionTtlMs !== undefined && (!Number.isSafeInteger(sessionTtlMs) || sessionTtlMs < 1)) {
+    throw new Error("fixture session TTL is invalid");
+  }
   const eventJournal = createCoreEventJournal({ profileEpoch });
   const transactionRegistry = createCoreTransactionRegistry();
   const attachmentSources = createCoreAttachmentSourceRegistry();
@@ -156,6 +161,7 @@ async function main() {
     profileEpoch,
     capabilities: CAPABILITIES,
     eventSequence: () => eventJournal.latestSequence,
+    ...(sessionTtlMs !== undefined && { sessionTtlMs }),
   });
 
   const active = new Map();

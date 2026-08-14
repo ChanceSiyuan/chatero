@@ -171,7 +171,6 @@ export function createGeckoCoreRequestRouter(options = {}) {
 		let session = sessions.get(message.sessionToken);
 		if (!session) throw new Error("session authentication failed");
 		if (session.expiresAt <= current) {
-			sessions.delete(message.sessionToken);
 			throw new Error("session expired");
 		}
 		if (capability && !session.capabilities.has(capability)) throw new Error(`session is missing capability ${capability}`);
@@ -217,10 +216,7 @@ export function createGeckoCoreRequestRouter(options = {}) {
 		let session = sessions.get(params.sessionToken);
 		let current = now();
 		if (!session) throw new Error("session authentication failed");
-		if (session.expiresAt <= current) {
-			sessions.delete(params.sessionToken);
-			throw new Error("session expired");
-		}
+		session.expiresAt = current + SESSION_TTL_MS;
 		let replay = eventJournal.replay({ afterSequence: params.afterSequence, limit: params.limit });
 		return {
 			capabilities: [...session.capabilities].sort(),

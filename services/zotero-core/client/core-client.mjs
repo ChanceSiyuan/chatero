@@ -60,6 +60,7 @@ export async function connectCore({
   let lastEventSequence = 0;
   let session = null;
   let missedEvents = [];
+  let renewal = null;
 
   const rejectPending = error => {
     for (const request of pending.values()) request.reject(error);
@@ -158,6 +159,47 @@ export async function connectCore({
     return result;
   }
 
+  async function renewSession() {
+    if (renewal) return renewal;
+    renewal = (async () => {
+      const resumed = await send("core.resume", {
+        afterSequence: lastEventSequence,
+        limit: 1000,
+        profileEpoch: session.profileEpoch,
+        protocolVersion: PROTOCOL_VERSION,
+        sessionToken: session.sessionToken,
+      }, { handshake: true, timeoutMs: connectTimeoutMs });
+      if (!Number.isSafeInteger(resumed.expiresAt) || resumed.expiresAt <= now()
+          || !Number.isSafeInteger(resumed.latestSequence) || resumed.latestSequence < lastEventSequence
+          || !Array.isArray(resumed.events)) {
+        throw new Error("Zotero Core session renewal returned invalid state");
+      }
+      session = resumed;
+      lastEventSequence = resumed.latestSequence;
+      for (const event of resumed.events) {
+        for (const listener of eventListeners) listener(event);
+      }
+      return resumed;
+    })();
+    try {
+      return await renewal;
+    }
+    finally {
+      renewal = null;
+    }
+  }
+
+  async function request(method, params, options) {
+    try {
+      return await send(method, params, options);
+    }
+    catch (error) {
+      if (method === "core.resume" || error?.code !== "UNAUTHORIZED" || error?.message !== "session expired") throw error;
+      await renewSession();
+      return send(method, params, options);
+    }
+  }
+
   try {
 		if (resumeSession) {
 			if (!resumeSession || typeof resumeSession !== "object" || !Number.isSafeInteger(resumeSession.afterSequence) || resumeSession.afterSequence < 0) {
@@ -200,7 +242,7 @@ export async function connectCore({
 		missedEvents: Object.freeze(missedEvents.map(value => Object.freeze(value))),
     profileEpoch: session.profileEpoch,
     request(method, params, options) {
-      return send(method, params, options);
+      return request(method, params, options);
     },
     onEvent(listener) {
       if (typeof listener !== "function") throw new Error("event listener must be a function");

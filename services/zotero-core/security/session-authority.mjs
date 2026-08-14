@@ -122,7 +122,6 @@ export class SessionAuthority {
     const session = this.#sessions.get(request.sessionToken);
     if (!session) throw new Error("session authentication failed");
     if (session.expiresAt <= currentTime) {
-      this.#sessions.delete(request.sessionToken);
       throw new Error("session expired");
     }
     if (requiredCapability && !session.capabilities.has(requiredCapability)) {
@@ -143,10 +142,7 @@ export class SessionAuthority {
     const session = this.#sessions.get(sessionToken);
     const currentTime = this.#now();
     if (!session) throw new Error("session authentication failed");
-    if (session.expiresAt <= currentTime) {
-      this.#sessions.delete(sessionToken);
-      throw new Error("session expired");
-    }
+    session.expiresAt = currentTime + this.#sessionTtlMs;
     return Object.freeze({
       capabilities: Object.freeze([...session.capabilities].sort()),
       expiresAt: session.expiresAt,

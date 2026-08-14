@@ -414,6 +414,15 @@ test("reconnects with the short-lived session token without reusing bootstrap", 
 	resumed.close();
 });
 
+test("renews an expired Core session and retries the interrupted request", async () => {
+	const { startCore } = await import("../supervisor/core-supervisor.mjs");
+	const { profileDirectory } = await createProfile();
+	const core = await startCore({ profileDirectory, fixtureItems, fixtureSessionTtlMs: 20 });
+	running.push(core);
+	await new Promise(resolvePromise => setTimeout(resolvePromise, 50));
+	assert.equal((await core.client.request("library.search", { limit: 10, query: "white" })).total, 1);
+});
+
 test("cleans the profile lease and session after an unexpected Core crash", async () => {
   const { startCore } = await import("../supervisor/core-supervisor.mjs");
   const { profileDirectory } = await createProfile();

@@ -593,3 +593,28 @@ test("resumes an authenticated session and returns bounded missed events", async
 		afterSequence: 0, limit: 100, profileEpoch: "other", protocolVersion: "1.0", sessionToken: session.sessionToken,
 	} }), /profile epoch/);
 });
+
+test("renews an expired authenticated session while rejecting ordinary expired requests", async () => {
+	let currentTime = 1000;
+	const { router } = createRouter({ now: () => currentTime });
+	const session = await handshake(router, ["library:search"]);
+	currentTime = session.expiresAt + 1;
+	await assert.rejects(router.handle(request(session, "library.search", { limit: 10, query: "tensor" }, {
+		deadline: currentTime + 100,
+	})), /session expired/);
+	const renewed = (await router.handle({
+		id: "resume-expired",
+		method: "core.resume",
+		params: {
+			afterSequence: 0,
+			limit: 100,
+			profileEpoch: session.profileEpoch,
+			protocolVersion: "1.0",
+			sessionToken: session.sessionToken,
+		},
+	})).result;
+	assert.equal(renewed.expiresAt, currentTime + 300000);
+	assert.deepEqual((await router.handle(request(renewed, "library.search", { limit: 10, query: "tensor" }, {
+		deadline: currentTime + 100,
+	}))).result, { items: [], total: 0 });
+});

@@ -68,6 +68,8 @@ test("extension mounts virtualized multi-select TreeViews with drag/drop and sta
   assert.match(source, /canSelectMany: true/);
   assert.match(source, /dragAndDropController:/);
   assert.match(source, /onDidChangeSelection/);
+  assert.match(source, /const available = new Set\(this\.model\.rows/);
+  assert.match(source, /\.filter\(value => available\.has\(value\)\)/);
   assert.match(source, /workspaceState\.(get|update)/);
   assert.match(source, /withProgress\(/);
 });

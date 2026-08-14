@@ -97,7 +97,11 @@ class LibraryItemProvider {
 
   select(elements) {
     if (!this.model) return;
-    this.model.select(elements.filter(value => value.kind === "item").map(value => `${value.value.libraryId}/${value.value.itemKey}`));
+    const available = new Set(this.model.rows.map(value => `${value.libraryId}/${value.itemKey}`));
+    this.model.select(elements
+      .filter(value => value.kind === "item")
+      .map(value => `${value.value.libraryId}/${value.value.itemKey}`)
+      .filter(value => available.has(value)));
     void vscode.commands.executeCommand("setContext", "chateroZoteroHasSelection", this.model.selectedRows.length > 0);
     void this.persist(this.model.snapshot());
   }
