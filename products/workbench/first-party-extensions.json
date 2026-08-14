@@ -711,6 +711,10 @@
           "destination": "extensions/chatero-zotero/runtime/zotero-core/profile/profile-import.mjs"
         },
         {
+          "source": "services/zotero-core/profile/profile-restore.mjs",
+          "destination": "extensions/chatero-zotero/runtime/zotero-core/profile/profile-restore.mjs"
+        },
+        {
           "source": "services/zotero-core/security/session-authority.mjs",
           "destination": "extensions/chatero-zotero/runtime/zotero-core/security/session-authority.mjs"
         },

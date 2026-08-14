@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { afterEach, test } from "node:test";
+import { fileURLToPath } from "node:url";
 
 const temporaryDirectories = [];
+const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 
 afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, {
@@ -58,6 +60,17 @@ test("materializes declared regular files with deterministic provenance", async 
     checkout: input.checkout,
     expected: result.extensions,
   }), result.extensions);
+});
+
+test("ships the profile restore dependency exported by the Core supervisor", async () => {
+  const manifest = JSON.parse(await readFile(join(repositoryRoot, "products", "workbench", "first-party-extensions.json"), "utf8"));
+  const zotero = manifest.extensions.find(extension => extension.id === "chatero.zotero");
+  const files = new Map(zotero.files.map(file => [file.destination, file.source]));
+
+  assert.equal(
+    files.get("extensions/chatero-zotero/runtime/zotero-core/profile/profile-restore.mjs"),
+    "services/zotero-core/profile/profile-restore.mjs",
+  );
 });
 
 test("verification rejects changed, missing, and extra extension bytes", async () => {
