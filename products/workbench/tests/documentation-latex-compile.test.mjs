@@ -48,12 +48,31 @@ test("LaTeX runtime pins the entry executable by digest and refuses unsafe prefi
   assert.equal((await resolveVerifiedLatexRuntime({ ...base, runtimeRoots: ["relative/path"] })).reason, "runtime-root-invalid");
   assert.equal((await resolveVerifiedLatexRuntime({ ...base, run: async () => { throw new Error("no"); } })).reason, "runtime-unavailable");
 
-  const verified = await resolveVerifiedLatexRuntime({ ...base, runtimeRoots: ["/usr/share/texmf", "/usr/share/texmf"] });
+  // Roots are canonicalised before the home guard runs, so they must exist;
+  // a real directory keeps this assertion platform-independent.
+  const texmf = await temporary();
+  assert.equal((await resolveVerifiedLatexRuntime({ ...base, runtimeRoots: [join(texmf, "absent")] })).reason, "runtime-root-invalid");
+
+  const verified = await resolveVerifiedLatexRuntime({ ...base, runtimeRoots: [texmf, texmf] });
   assert.equal(verified.kind, "verified-runtime");
   assert.equal(verified.latexExecutable, executable);
   assert.equal(verified.sha256, digest);
   assert.match(verified.version, /^Latexmk/u);
-  assert.deepEqual(verified.runtimeRoots, [join(root, "bin"), "/usr/share/texmf"]);
+  assert.deepEqual(verified.runtimeRoots, [join(root, "bin"), texmf]);
+});
+
+test("LaTeX runtime resolves a symlinked runtime root before applying the home guard", async () => {
+  const { resolveVerifiedLatexRuntime } = await import("../extensions/chatero-documentation/latex-runtime.mjs");
+  const { digest, executable } = await fakeLatexmk();
+  const home = await temporary();
+  const disguised = join(await temporary(), "texmf");
+  await symlink(home, disguised, "dir");
+
+  // A lexical check would pass this path and still mount the home directory.
+  assert.equal((await resolveVerifiedLatexRuntime({
+    executable, homeDirectory: home, platform: "linux", run: async () => ({ stdout: "Latexmk 4.83\n" }),
+    runtimeRoots: [disguised], sha256Allowlist: [digest],
+  })).reason, "runtime-prefix-unsafe");
 });
 
 test("LaTeX runtime rejects group- or world-writable executables and symlinked entries", async () => {

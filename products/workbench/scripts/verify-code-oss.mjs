@@ -14,7 +14,12 @@ const PROVENANCE_FILE = ".chatero-provenance.json";
 export const BUILD_GENERATED_TRACKED_PATHS = Object.freeze([
   "src/vs/platform/extensions/common/extensionsApiProposals.ts",
 ]);
-const MAX_PROVENANCE_BYTES = 128 * 1024;
+// Provenance grows linearly with the packaged first-party file count, since it
+// pins every file by path, size and digest, and records one managed path per
+// file. The bound exists to stop a runaway file being read into memory, not to
+// cap the manifest, so it carries several times the current requirement --
+// documentation-provenance.test.mjs measures the real manifest against it.
+export const MAX_PROVENANCE_BYTES = 1024 * 1024;
 const SCRIPT_DIRECTORY = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_WORKBENCH_ROOT = resolve(SCRIPT_DIRECTORY, "..");
 const DEFAULT_REPOSITORY_ROOT = resolve(DEFAULT_WORKBENCH_ROOT, "..", "..");
