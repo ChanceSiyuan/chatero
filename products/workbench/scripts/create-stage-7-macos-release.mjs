@@ -89,6 +89,21 @@ export async function embedCore(appPath) {
   await command("/usr/libexec/PlistBuddy", ["-c", "Delete :CFBundleURLTypes", plist]).catch(() => {});
 }
 
+function embeddedCorePath(appPath) {
+  return join(appPath, "Contents", "Resources", "chatero-core", "Chatero Core.app");
+}
+
+export async function signEmbeddedCore(appPath, { identity = "-", keychain } = {}) {
+  const args = ["--force", "--deep", "--sign", identity];
+  if (keychain) args.push("--keychain", keychain);
+  args.push("--preserve-metadata=entitlements", embeddedCorePath(appPath));
+  await command("/usr/bin/codesign", args);
+}
+
+export async function verifyEmbeddedCoreSignature(appPath) {
+  await command("/usr/bin/codesign", ["--verify", "--deep", "--strict", "--verbose=4", embeddedCorePath(appPath)]);
+}
+
 async function copyBundle(source, destination) {
   if (await stat(destination).then(() => true).catch(() => false)) throw new Error("bundle copy destination already exists");
   await mkdir(dirname(destination), { recursive: true });
@@ -162,6 +177,8 @@ async function main() {
 
     const builtApp = await findBuiltApp();
     await embedCore(builtApp);
+    await signEmbeddedCore(builtApp, { identity, keychain });
+    await verifyEmbeddedCoreSignature(builtApp);
     await embedRemoteAgentRelease(builtApp);
     await verifyAppShape(builtApp);
     await signApp({ appPath: builtApp, keychain, identity });

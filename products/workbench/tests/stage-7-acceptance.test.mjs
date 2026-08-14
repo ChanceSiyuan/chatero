@@ -127,6 +127,8 @@ test("both macOS release paths embed and reverify the signed dual-architecture R
 test("local macOS release stays distinct from notarized Stage 7 and performs a real cold-start probe", async () => {
   const source = await readFile(new URL("../scripts/create-local-macos-release.mjs", import.meta.url), "utf8");
   assert.match(source, /codesign[\s\S]*--sign[\s\S]*"-"/u);
+  assert.match(source, /signEmbeddedCore\(app/u);
+  assert.match(source, /verifyEmbeddedCoreSignature\(app/u);
   assert.match(source, /smokeTest\(app\)/u);
   assert.match(source, /stdio: \["ignore", "pipe", "pipe"\]/u);
   assert.match(source, /diagnosticOutput\(\)/u);
@@ -136,4 +138,18 @@ test("local macOS release stays distinct from notarized Stage 7 and performs a r
   assert.match(source, /signature: "adhoc-local"/u);
   assert.match(source, /notarized: false/u);
   assert.doesNotMatch(source, /notarytool|notarizationAccepted|ticketStapled/u);
+});
+
+test("both macOS release paths explicitly sign and verify the customized embedded Core", async () => {
+  const [production, local] = await Promise.all([
+    readFile(new URL("../scripts/create-stage-7-macos-release.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../scripts/create-local-macos-release.mjs", import.meta.url), "utf8"),
+  ]);
+  assert.match(production, /export async function signEmbeddedCore/u);
+  assert.match(production, /--preserve-metadata=entitlements/u);
+  assert.match(production, /signEmbeddedCore\(builtApp, \{ identity, keychain \}\)/u);
+  assert.match(production, /verifyEmbeddedCoreSignature\(builtApp\)/u);
+  assert.match(local, /signEmbeddedCore\(app\)/u);
+  assert.match(local, /const mountedApp = join\(mount/u);
+  assert.match(local, /verifyEmbeddedCoreSignature\(mountedApp\)/u);
 });
