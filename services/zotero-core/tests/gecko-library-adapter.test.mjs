@@ -1213,3 +1213,66 @@ test("rejects malformed requests before touching Zotero APIs", async () => {
   );
   await assert.rejects(adapter.annotations({ attachmentKey: "PDF00001", libraryId: 1, extra: true }), /unknown field/);
 });
+
+test("item listings cross Zotero's lazy-load barrier before touching item data", async () => {
+  const environment = fixture();
+  const loaded = new Set();
+  const guarded = new Set(["getAttachments", "getCollections", "getCreatorsJSON", "getDisplayTitle", "getField", "getNotes", "getTags"]);
+  const guard = value => {
+    if (!value || typeof value !== "object" || !Number.isInteger(value.libraryID)) return value;
+    const wrapped = { ...value };
+    for (const method of guarded) {
+      if (typeof value[method] !== "function") continue;
+      wrapped[method] = (...args) => {
+        if (!loaded.has(value.libraryID)) {
+          throw new Error(`'collections' not loaded for item (${value.libraryID}/${value.key})`);
+        }
+        return value[method](...args);
+      };
+    }
+    return wrapped;
+  };
+  const libraries = environment.Zotero.Libraries;
+  const baseLibraryGet = libraries.get;
+  const baseLibraryGetAll = libraries.getAll;
+  const wrapLibrary = library => library && {
+    ...library,
+    waitForDataLoad: async type => {
+      assert.equal(type, "item");
+      loaded.add(library.libraryID);
+    },
+  };
+  libraries.get = libraryId => wrapLibrary(baseLibraryGet(libraryId));
+  libraries.getAll = () => baseLibraryGetAll().map(wrapLibrary);
+  const itemsApi = environment.Zotero.Items;
+  for (const method of ["getAll", "getAsync"]) {
+    const base = itemsApi[method];
+    itemsApi[method] = async (...args) => {
+      const result = await base(...args);
+      return Array.isArray(result) ? result.map(guard) : guard(result);
+    };
+  }
+  const baseByKey = itemsApi.getByLibraryAndKeyAsync;
+  itemsApi.getByLibraryAndKeyAsync = async (...args) => guard(await baseByKey(...args));
+  const collectionsApi = environment.Zotero.Collections;
+  const baseCollectionByKey = collectionsApi.getByLibraryAndKey;
+  collectionsApi.getByLibraryAndKey = (...args) => {
+    const value = baseCollectionByKey(...args);
+    return value && { ...value, getChildItems: (...rest) => value.getChildItems(...rest).map(guard) };
+  };
+  const adapter = createZoteroLibraryAdapter(environment);
+
+  const scoped = await adapter.search({ libraryId: 1, collectionKey: "SHARED01", limit: 10, query: "" });
+  assert.deepEqual([...loaded], [1]);
+  assert.deepEqual(scoped.items.map(value => value.itemKey), ["ITEM0001", "ITEM0002"]);
+
+  loaded.clear();
+  const everywhere = await adapter.search({ limit: 10, query: "" });
+  assert.deepEqual([...loaded].sort(), [1, 2]);
+  assert.equal(everywhere.total, 3);
+
+  loaded.clear();
+  const saved = await adapter.savedSearchItems({ libraryId: 1, searchKey: "SEARCH01", limit: 10 });
+  assert.deepEqual([...loaded], [1]);
+  assert.deepEqual(saved.items.map(value => value.itemKey), ["ITEM0001", "ITEM0002"]);
+});

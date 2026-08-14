@@ -634,6 +634,16 @@ function unavailable(message) {
 	throw error;
 }
 
+async function waitForLibraryItems(Zotero, libraryIds) {
+	// Same lazy-load barrier lookupItem crosses: real Zotero leaves item data
+	// unloaded until a library is first opened, and every item accessor throws
+	// "'<type>' not loaded for item" before that. waitForDataLoad("item")
+	// triggers Zotero.Items.loadAll for the library when needed.
+	for (let libraryId of new Set(libraryIds)) {
+		await Zotero.Libraries.get(libraryId)?.waitForDataLoad?.("item");
+	}
+}
+
 async function lookupItem(Zotero, libraryId, key, label) {
 	let library = Zotero.Libraries.get(libraryId);
 	if (!library || library.libraryType === "feed") unavailable(`${label} library ${libraryId} is unavailable`);
@@ -992,6 +1002,7 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 			if (params.cursor !== undefined && (typeof params.cursor !== "string" || !/^\d+$/.test(params.cursor))) throw new Error("library.duplicates cursor is invalid");
 			let library = Zotero.Libraries.get(params.libraryId);
 			if (!library || library.libraryType === "feed") unavailable("library.duplicates library is unavailable");
+			await waitForLibraryItems(Zotero, [params.libraryId]);
 			let search = await new Zotero.Duplicates(params.libraryId).getSearchObject();
 			let tempTable = Object.values(search.getConditions()).find(value => value.condition === "tempTable")?.value;
 			if (typeof tempTable !== "string" || !/^tmpDuplicates_[A-Za-z0-9_]+$/.test(tempTable)) throw new Error("Zotero duplicates temporary table is invalid");
@@ -1014,6 +1025,7 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 			if (!query) throw new Error("library.fulltext-search query must not be empty");
 			if (!Number.isSafeInteger(params.limit) || params.limit < 1 || params.limit > MAX_PAGE_SIZE) throw new Error("library.fulltext-search limit is invalid");
 			if (params.cursor !== undefined && (typeof params.cursor !== "string" || !/^\d+$/.test(params.cursor))) throw new Error("library.fulltext-search cursor is invalid");
+			await waitForLibraryItems(Zotero, [params.libraryId]);
 			let candidates = (await Zotero.Items.getAll(params.libraryId, false, false, false)).filter(item => item?.isAttachment?.() && !itemIsUnavailable(item));
 			let found = await (Zotero.Fulltext || Zotero.FullText).findTextInItems(candidates.map(item => item.id), query);
 			let loaded = await Zotero.Items.getAsync(found.map(value => value.id));
@@ -1128,6 +1140,7 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 			if (!Array.isArray(ids) || ids.some(value => !Number.isSafeInteger(value) || value < 1)) {
 				throw new Error("Zotero saved search returned invalid item ids");
 			}
+			await waitForLibraryItems(Zotero, [params.libraryId]);
 			let items = (await Zotero.Items.getAsync(ids))
 				.filter(item => item?.libraryID === params.libraryId && item.isRegularItem?.() && !itemIsUnavailable(item))
 				.map(item => itemSummary(Zotero, item))
@@ -1403,6 +1416,7 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 			if (!Number.isSafeInteger(params.expectedVersion) || params.expectedVersion < 0) throw new Error("library.attachment-mutate expectedVersion is invalid");
 			let library = Zotero.Libraries.get(params.libraryId);
 			if (!library || library.libraryType === "feed" || !library.filesEditable) unavailable("attachment target library files are not editable");
+			await waitForLibraryItems(Zotero, [params.libraryId]);
 			let attachment = await Zotero.Items.getByLibraryAndKeyAsync(params.libraryId, params.attachmentKey);
 			if (!attachment || attachment.libraryID !== params.libraryId || !attachment.isAttachment?.()) unavailable("Zotero attachment is unavailable");
 			if (params.action !== "restore" && itemIsUnavailable(attachment)) unavailable("Zotero attachment is unavailable");
@@ -1591,6 +1605,7 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 				item.libraryID = params.libraryId;
 			}
 			else {
+				await waitForLibraryItems(Zotero, [params.libraryId]);
 				item = await Zotero.Items.getByLibraryAndKeyAsync(params.libraryId, params.itemKey);
 				if (!item || item.libraryID !== params.libraryId || item.key !== params.itemKey || !item.isRegularItem?.()) unavailable("Zotero item is unavailable");
 				if (params.action !== "restore" && itemIsUnavailable(item)) unavailable("Zotero item is unavailable");
@@ -1710,6 +1725,9 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 			validateSearchParams(params);
 			let sortBy = params.sortBy || "title";
 			let sortDirection = params.sortDirection || "asc";
+			await waitForLibraryItems(Zotero, params.collectionKey !== undefined || params.scope !== undefined
+				? [params.libraryId]
+				: Zotero.Libraries.getAll().map(library => library.libraryID));
 			let items;
 			if (params.collectionKey !== undefined) {
 				let collection = Zotero.Collections.getByLibraryAndKey(params.libraryId, params.collectionKey);
