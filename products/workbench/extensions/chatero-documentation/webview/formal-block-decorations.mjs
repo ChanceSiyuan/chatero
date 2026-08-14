@@ -1,6 +1,6 @@
 import { Decoration, ViewPlugin, WidgetType } from "@codemirror/view";
 
-import { collectFormalBlocks } from "./formal-block-parser.mjs";
+import { collectFormalBlocks, formalSourceText } from "./formal-block-parser.mjs";
 import {
   isProofCollapsed,
   isProofTemporarilyRevealed,
@@ -126,7 +126,7 @@ class FormalCloserWidget extends WidgetType {
 
 function formalDecorations(view) {
   const ranges = [];
-  const source = view.state.doc.toString();
+  const source = formalSourceText(view.state);
   for (const block of collectFormalBlocks(view.state, view.visibleRanges)) {
     if (block.kind === "unsupported") continue;
     const collapsed = block.kind === "proof" && isProofCollapsed(view.state, block);

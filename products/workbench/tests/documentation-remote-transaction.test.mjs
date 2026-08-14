@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, copyFile, lstat, mkdir, mkdtemp, readFile, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
@@ -169,7 +169,21 @@ test("production local composition revalidates materialized provenance before ev
   assert.equal(migration.plan.schemaVersion, 2);
   assert.equal(JSON.stringify(migration).includes(workspace), false);
 
-  await writeFile(join(extensionRoot, "runtime", "protocol.mjs"), "tampered\n");
+  // A tamper that restores size and mtime is still caught: the cheap identity sweep that guards the
+  // cached proof can only skip re-hashing when nothing about the tree changed.
+  const helperPath = join(extensionRoot, "runtime", "protocol.mjs");
+  const original = await readFile(helperPath);
+  const before = await lstat(helperPath);
+  const disguised = Buffer.from(original);
+  disguised[0] ^= 0x01;
+  await writeFile(helperPath, disguised);
+  await utimes(helperPath, before.atime, before.mtime);
+  await assert.rejects(
+    services.transactions.state(services.scope),
+    /differ from first-party provenance/,
+  );
+
+  await writeFile(helperPath, "tampered\n");
   await assert.rejects(
     services.transactions.state(services.scope),
     /differ from first-party provenance/,

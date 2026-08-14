@@ -246,15 +246,6 @@ export async function createLivePreviewEditor({
       sourceMap = createLineEndingMap(displaySource);
       queueUserOperation(changes);
     }
-    if (update.selectionSet) {
-      const selection = update.state.selection.main;
-      void postMessage(parseViewMessage({
-        type: "focus",
-        sessionId: initialized.sessionId,
-        anchor: sourceMap.toSourceOffset(selection.anchor),
-        head: sourceMap.toSourceOffset(selection.head),
-      }));
-    }
   });
 
   function sendHistory(direction) {

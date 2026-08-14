@@ -96,6 +96,65 @@ async function verifyLocalMaterialization(root) {
   return Object.freeze({ kind: "verified", canonicalRoot: root, treeSha256: treeDigest });
 }
 
+function fingerprintEntry(path, value) {
+  return JSON.stringify([
+    path, value.size, value.mtimeMs, value.ctimeMs, value.ino, value.dev, value.nlink, value.mode,
+  ]);
+}
+
+async function collectTreeFingerprint(directory, lines) {
+  const names = await readdir(directory);
+  names.sort(compareUtf8Bytes);
+  lines.push(JSON.stringify(["d", directory, names]));
+  for (const name of names) {
+    const path = join(directory, name);
+    const value = await lstat(path);
+    if (value.isDirectory()) await collectTreeFingerprint(path, lines);
+    else lines.push(fingerprintEntry(path, value));
+  }
+  return lines;
+}
+
+// Metadata-only identity sweep -- no reads, no hashing. It exists solely to prove that nothing in
+// the extension tree or its provenance file has been touched since the last full verification.
+async function treeFingerprint(root) {
+  const provenancePath = join(resolve(root, "..", ".."), ".chatero-provenance.json");
+  const lines = [
+    fingerprintEntry(provenancePath, await lstat(provenancePath)),
+    fingerprintEntry(root, await lstat(root)),
+  ];
+  return (await collectTreeFingerprint(root, lines)).join("\n");
+}
+
+// Full byte-for-byte verification is preserved for the first request and for every request whose
+// cheap sweep is not provably identical. Any thrown sweep, any differing byte of the fingerprint
+// and any concurrent failure falls back to `verifyLocalMaterialization`, so the gate can only ever
+// skip work when the tree is demonstrably unchanged.
+function createLocalMaterializationGate() {
+  let verified = null;
+  let pending = null;
+  return function verify(root) {
+    if (pending) return pending;
+    const run = (async () => {
+      if (verified) {
+        try {
+          if (await treeFingerprint(root) === verified.fingerprint) return verified.proof;
+        }
+        catch {}
+        verified = null;
+      }
+      let fingerprint = null;
+      try { fingerprint = await treeFingerprint(root); }
+      catch { fingerprint = null; }
+      const proof = await verifyLocalMaterialization(root);
+      verified = fingerprint === null ? null : Object.freeze({ fingerprint, proof });
+      return proof;
+    })();
+    pending = run.finally(() => { pending = null; });
+    return pending;
+  };
+}
+
 function exactRemoteIntegrityEnvironment(environment) {
   const installRoot = environment.CHATERO_AGENT_INSTALL_ROOT;
   const treeManifestSha256 = environment.CHATERO_AGENT_TREE_MANIFEST_SHA256;
@@ -205,13 +264,14 @@ async function verifyRemoteInstall(root, signed, spawn) {
 export function createTrustedRuntimeVerifier({ extensionUri, environment = process.env, spawn = spawnChild }) {
   const root = extensionPath(extensionUri);
   const signedRemote = exactRemoteIntegrityEnvironment(environment);
+  const localGate = createLocalMaterializationGate();
   return async ({ extensionRoot, helperPath }) => {
     if (resolve(extensionRoot) !== root || resolve(helperPath) !== join(root, "runtime", "chatero-documentation-authority.mjs")) {
       throw new Error("Documentation helper path differs from the fixed product entrypoint");
     }
     return signedRemote
       ? verifyRemoteInstall(root, signedRemote, spawn)
-      : verifyLocalMaterialization(root);
+      : localGate(root);
   };
 }
 

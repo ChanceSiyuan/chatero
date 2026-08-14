@@ -32,6 +32,10 @@ class ReviewContentProvider {
     return this.values.get(uri.toString()) ?? "";
   }
 
+  forget(uri) {
+    if (typeof uri?.toString === "function") this.values.delete(uri.toString());
+  }
+
   dispose() { this.values.clear(); }
 }
 
@@ -65,6 +69,49 @@ function decisionTitle(leaf) {
   return `Review Agent ${leaf.kind}: ${leaf.path.value}`;
 }
 
+function reviewItems(vscode, leaves, picked) {
+  const separator = vscode.QuickPickItemKind?.Separator;
+  const items = [];
+  let group;
+  for (const leaf of leaves) {
+    const path = displayPath(leaf);
+    if (separator !== undefined && path !== group) {
+      group = path;
+      items.push(Object.freeze({ label: path, kind: separator }));
+    }
+    items.push(Object.freeze({
+      leaf,
+      label: decisionTitle(leaf),
+      description: path,
+      ...(leaf.dependsOn.length > 0
+        ? { detail: `Follows ${leaf.dependsOn.length} earlier decision${leaf.dependsOn.length === 1 ? "" : "s"} in this change set` }
+        : {}),
+      picked,
+    }));
+  }
+  return items;
+}
+
+function chosenLeafIds(choice) {
+  return new Set((choice ?? []).filter(value => value?.leaf).map(value => value.leaf.id));
+}
+
+// One decision per leaf, in snapshot order, with the dependency cascade applied afterwards so the
+// emitted vector is identical to the per-leaf flow for an identical accept/reject selection.
+function resolvedDecisions(leaves, acceptedIds, deferredIds) {
+  const decisions = [];
+  const byId = new Map();
+  for (const leaf of leaves) {
+    const dependencies = leaf.dependsOn.map(id => byId.get(id));
+    let decision = acceptedIds.has(leaf.id) ? "accept" : deferredIds.has(leaf.id) ? "defer" : "reject";
+    if (dependencies.includes("reject")) decision = "reject";
+    else if (decision === "accept" && dependencies.includes("defer")) decision = "defer";
+    byId.set(leaf.id, decision);
+    decisions.push(Object.freeze({ id: leaf.id, decision }));
+  }
+  return decisions;
+}
+
 async function registerDocumentationReview({ vscode, services } = {}) {
   if (!vscode?.workspace || !vscode?.commands || !vscode?.window || !vscode?.Uri
     || typeof services?.transactions?.review !== "function"
@@ -78,6 +125,11 @@ async function registerDocumentationReview({ vscode, services } = {}) {
     "chatero-documentation-review",
     provider,
   );
+  // Review texts stay resident for exactly as long as a diff tab can ask for them, instead of
+  // accumulating every reviewed document until the extension deactivates.
+  const closedReviewDocuments = vscode.workspace.onDidCloseTextDocument?.(document => {
+    if (document?.uri?.scheme === "chatero-documentation-review") provider.forget(document.uri);
+  });
   const command = vscode.commands.registerCommand("chatero.documentation.reviewChangeSet", async value => {
     if (vscode.workspace.isTrusted !== true) {
       await vscode.window.showErrorMessage?.("Documentation review settlement requires a trusted workspace.");
@@ -101,29 +153,37 @@ async function registerDocumentationReview({ vscode, services } = {}) {
         `${displayPath(document)} — Current ↔ Agent proposal`,
       );
     }
-    const decisions = [];
-    const byId = new Map();
-    for (const leaf of snapshot.leaves) {
-      if (leaf.dependsOn.some(id => byId.get(id) === "reject")) {
-        byId.set(leaf.id, "reject");
-        decisions.push(Object.freeze({ id: leaf.id, decision: "reject" }));
-        continue;
-      }
-      const choice = await vscode.window.showQuickPick([
-        { label: "$(check) Accept", value: "accept", description: "Apply this reviewed Agent change" },
-        { label: "$(close) Reject", value: "reject", description: "Keep the current human-authored content" },
-      ], {
-        title: decisionTitle(leaf),
-        placeHolder: "Choose exactly one decision",
+    const acceptedChoice = await vscode.window.showQuickPick(
+      reviewItems(vscode, snapshot.leaves, true),
+      {
+        title: "Review Agent Documentation changes",
+        placeHolder: "Checked changes are accepted; unchecked changes are rejected",
+        canPickMany: true,
         ignoreFocusOut: true,
-      });
-      if (!choice) return Object.freeze({ kind: "cancelled" });
-      byId.set(leaf.id, choice.value);
-      decisions.push(Object.freeze({ id: leaf.id, decision: choice.value }));
+      },
+    );
+    if (!Array.isArray(acceptedChoice)) return Object.freeze({ kind: "cancelled" });
+    const acceptedIds = chosenLeafIds(acceptedChoice);
+    const notAccepted = snapshot.leaves.filter(leaf => !acceptedIds.has(leaf.id));
+    let deferredIds = new Set();
+    if (notAccepted.length > 0) {
+      const deferredChoice = await vscode.window.showQuickPick(
+        reviewItems(vscode, notAccepted, false),
+        {
+          title: "Defer instead of rejecting",
+          placeHolder: "Checked changes are deferred to a later change set; leave all unchecked to reject them",
+          canPickMany: true,
+          ignoreFocusOut: true,
+        },
+      );
+      if (!Array.isArray(deferredChoice)) return Object.freeze({ kind: "cancelled" });
+      deferredIds = chosenLeafIds(deferredChoice);
     }
+    const decisions = resolvedDecisions(snapshot.leaves, acceptedIds, deferredIds);
     const accepted = decisions.filter(value => value.decision === "accept").length;
+    const deferred = decisions.filter(value => value.decision === "defer").length;
     const apply = await vscode.window.showInformationMessage?.(
-      `Apply ${accepted} accepted Documentation change${accepted === 1 ? "" : "s"}? The QMD editors remain undoable and are not auto-saved.`,
+      `Apply ${accepted} accepted Documentation change${accepted === 1 ? "" : "s"}${deferred > 0 ? ` and defer ${deferred}` : ""}? The QMD editors remain undoable and are not auto-saved.`,
       { modal: true },
       "Apply",
     );
@@ -147,7 +207,9 @@ async function registerDocumentationReview({ vscode, services } = {}) {
     }
     return result;
   });
-  return Object.freeze([provider, providerRegistration, command].map(disposable));
+  const registrations = [provider, providerRegistration, command];
+  if (closedReviewDocuments) registrations.push(closedReviewDocuments);
+  return Object.freeze(registrations.map(disposable));
 }
 
 module.exports = { ReviewContentProvider, registerDocumentationReview };

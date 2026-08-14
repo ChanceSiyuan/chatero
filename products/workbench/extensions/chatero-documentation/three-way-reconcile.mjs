@@ -1,15 +1,5 @@
 import { createHash } from "node:crypto";
 
-function codePoints(text) {
-  const result = [];
-  let offset = 0;
-  for (const value of text) {
-    result.push(Object.freeze({ value, start: offset, end: offset + value.length }));
-    offset += value.length;
-  }
-  return result;
-}
-
 function frontierValue(frontier, diagonal) {
   return frontier.has(diagonal) ? frontier.get(diagonal) : Number.NEGATIVE_INFINITY;
 }
@@ -28,7 +18,7 @@ function sequenceOperations(before, after) {
       let x = insertion ? frontierValue(frontier, diagonal + 1) : frontierValue(frontier, diagonal - 1) + 1;
       if (!Number.isFinite(x)) x = 0;
       let y = x - diagonal;
-      while (x < before.length && y < after.length && before[x].value === after[y].value) { x++; y++; }
+      while (x < before.length && y < after.length && before[x] === after[y]) { x++; y++; }
       next.set(diagonal, x);
       if (x >= before.length && y >= after.length) {
         trace.push(next);
@@ -64,12 +54,35 @@ function sequenceOperations(before, after) {
   throw new Error("three-way diff did not converge");
 }
 
+function unitLength(values, from, to) {
+  let units = 0;
+  for (let index = from; index < to; index++) units += values[index].length;
+  return units;
+}
+
 function textEdits(base, target) {
   if (base === target) return [];
-  const operations = sequenceOperations(codePoints(base), codePoints(target));
+  // Code points as plain strings -- the diff only ever compares them and measures their length.
+  const baseValues = Array.from(base);
+  const targetValues = Array.from(target);
+  // The common leading and trailing code points can never fall inside an edit range, so the Myers
+  // search only runs over the region that actually differs.
+  const shortest = Math.min(baseValues.length, targetValues.length);
+  let prefix = 0;
+  while (prefix < shortest && baseValues[prefix] === targetValues[prefix]) prefix++;
+  let suffix = 0;
+  while (suffix < shortest - prefix
+    && baseValues[baseValues.length - 1 - suffix] === targetValues[targetValues.length - 1 - suffix]) {
+    suffix++;
+  }
+  const operations = sequenceOperations(
+    baseValues.slice(prefix, baseValues.length - suffix),
+    targetValues.slice(prefix, targetValues.length - suffix),
+  );
   const edits = [];
-  let baseOffset = 0;
-  let targetOffset = 0;
+  const prefixUnits = unitLength(baseValues, 0, prefix);
+  let baseOffset = prefixUnits;
+  let targetOffset = prefixUnits;
   let active = null;
   const flush = () => {
     if (!active) return;
@@ -83,13 +96,13 @@ function textEdits(base, target) {
   for (const operation of operations) {
     if (operation.kind === "equal") {
       flush();
-      baseOffset += operation.value.value.length;
-      targetOffset += operation.value.value.length;
+      baseOffset += operation.value.length;
+      targetOffset += operation.value.length;
     }
     else {
       active ??= { from: baseOffset, targetFrom: targetOffset };
-      if (operation.kind === "delete") baseOffset += operation.value.value.length;
-      else targetOffset += operation.value.value.length;
+      if (operation.kind === "delete") baseOffset += operation.value.length;
+      else targetOffset += operation.value.length;
     }
   }
   flush();

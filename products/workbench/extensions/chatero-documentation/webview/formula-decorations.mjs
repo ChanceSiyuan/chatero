@@ -163,12 +163,16 @@ class FormulaWidget extends WidgetType {
 
 function formulaDecorations(view, katex) {
   const ranges = [];
+  // Materialize the document text at most once per rebuild, and not at all when no visible
+  // formula needs a widget.
+  let source;
   for (const node of collectFormulaNodes(view.state, view.visibleRanges)) {
     if (formulaRevealRange(node, view.state.selection)) continue;
+    if (source === undefined) source = view.state.doc.toString();
     ranges.push(Decoration.replace({
       block: node.kind === "formula-display",
       inclusive: false,
-      widget: new FormulaWidget(node, view.state.doc.toString(), katex),
+      widget: new FormulaWidget(node, source, katex),
     }).range(node.from, node.to));
   }
   return Decoration.set(ranges, true);

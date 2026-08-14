@@ -243,6 +243,28 @@ function intersectsVisible(value, visibleRanges) {
   return visibleRanges.some(range => value.from <= range.to && value.to >= range.from);
 }
 
+// CodeMirror `Text` is immutable and identity-stable for a given document revision, so the
+// whole-document scan is memoized against it: keystrokes parse once and selection-only or
+// viewport-only updates parse not at all.
+const parsedDocuments = new WeakMap();
+
+function parsedDocument(doc) {
+  const cached = parsedDocuments.get(doc);
+  if (cached) return cached;
+  const source = doc.toString();
+  const parsed = Object.freeze({
+    source,
+    blocks: Object.freeze(scanFencedRanges(source).map(range => parseFormalBlock(source, range.from, range.to))),
+  });
+  parsedDocuments.set(doc, parsed);
+  return parsed;
+}
+
+export function formalSourceText(state) {
+  if (!state?.doc) throw new TypeError("formal source requires an EditorState");
+  return parsedDocument(state.doc).source;
+}
+
 export function collectFormalBlocks(state, visibleRanges) {
   if (!state?.doc || !Array.isArray(visibleRanges)) throw new TypeError("formal collection requires an EditorState and visible ranges");
   for (const range of visibleRanges) {
@@ -251,9 +273,7 @@ export function collectFormalBlocks(state, visibleRanges) {
       throw new RangeError("invalid formal visible range");
     }
   }
-  const source = state.doc.toString();
-  let blocks = scanFencedRanges(source)
-    .map(range => parseFormalBlock(source, range.from, range.to))
+  let blocks = parsedDocument(state.doc).blocks
     .filter(value => intersectsVisible(value, visibleRanges))
     .sort((left, right) => left.from - right.from || right.to - left.to);
   const counts = new Map();
