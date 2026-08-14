@@ -1072,6 +1072,14 @@ test("upstream Reader host exposes unawaited delete failures and locks further e
 test("packaged PDF viewer renders one page at a time and owns the highlight overlay", async () => {
   const source = await readFile(join(extensionRoot, "media", "pdf-viewer", "pdf-viewer.mjs"), "utf8");
   assert.match(source, /getDocument/);
+  assert.match(source, /fetch\(url, \{ cache: "no-store" \}\)/);
+  assert.match(source, /new Uint8Array\(await response\.arrayBuffer\(\)\)/);
+  assert.match(source, /getDocument\(\{ data: pdfBytes \}\)/);
+  assert.match(source, /new Worker\(pdfWorkerUrl, \{ type: "module" \}\)/);
+  assert.match(source, /GlobalWorkerOptions\.workerPort = worker/);
+  assert.match(source, /Promise\.all\(\[/);
+  assert.match(source, /pdfWorker\?\.terminate\(\)/);
+  assert.match(source, /URL\.revokeObjectURL\(pdfWorkerUrl\)/);
   assert.match(source, /getPage/);
   assert.match(source, /annotation-layer/);
   assert.match(source, /pageIndex/);
@@ -1082,6 +1090,8 @@ test("packaged PDF viewer renders one page at a time and owns the highlight over
   for (const behavior of ["create-underline", "create-note", "create-area", "annotation-update", "annotation-delete", "annotation-undo"]) {
     assert.match(source, new RegExp(behavior));
   }
+  assert.ok(source.indexOf("await renderTask.promise") < source.indexOf("const textContent = await page.getTextContent()"));
+  assert.ok(source.indexOf('status.textContent = ""') < source.indexOf("const textContent = await page.getTextContent()"));
 });
 
 test("PDF annotation controls use exact Core versions for create, edit, delete, and undo", async () => {

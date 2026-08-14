@@ -35,6 +35,8 @@ let textLayerRenderTask = null;
 let selectionTimer = null;
 let currentViewport = null;
 let areaSelection = null;
+let pdfWorker = null;
+let pdfWorkerUrl = null;
 
 function utf8Width(character) {
   const codePoint = character.codePointAt(0);
@@ -309,6 +311,25 @@ function scheduleRender(operation) {
   void Promise.resolve().then(operation).catch(reportRenderError);
 }
 
+async function loadPdfBytes(url) {
+  status.textContent = "Reading local PDF…";
+  const response = await fetch(url, { cache: "no-store" });
+  if (!response.ok) throw new Error(`PDF request failed (${response.status})`);
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  if (!bytes.byteLength) throw new Error("PDF request returned an empty document");
+  return bytes;
+}
+
+async function startPdfWorker(url) {
+  const response = await fetch(url, { cache: "force-cache" });
+  if (!response.ok) throw new Error(`PDF worker request failed (${response.status})`);
+  const source = await response.arrayBuffer();
+  if (!source.byteLength) throw new Error("PDF worker request returned an empty module");
+  pdfWorkerUrl = URL.createObjectURL(new Blob([source], { type: "text/javascript" }));
+  pdfWorker = new Worker(pdfWorkerUrl, { type: "module" });
+  return pdfWorker;
+}
+
 async function renderPage() {
   const generation = ++renderGeneration;
   cancelRenderTasks();
@@ -347,10 +368,8 @@ async function renderPage() {
       viewport,
     });
     canvasRenderTask = renderTask;
-    const textContentPromise = page.getTextContent();
-    let textContent;
     try {
-      [, textContent] = await Promise.all([renderTask.promise, textContentPromise]);
+      await renderTask.promise;
     }
     catch (error) {
       if (expectedCancellation(error, generation)) return;
@@ -360,7 +379,10 @@ async function renderPage() {
       if (canvasRenderTask === renderTask) canvasRenderTask = null;
     }
     if (generation !== renderGeneration) return;
+    status.textContent = "";
 
+    const textContent = await page.getTextContent();
+    if (generation !== renderGeneration) return;
     currentPageText = textContentValue(textContent);
     const layerTask = new pdfjs.TextLayer({
       textContentSource: textContent,
@@ -484,12 +506,17 @@ function parseAnnotations() {
 
 try {
   pdfjs = await import(bootstrap.dataset.pdfJsUri);
-  pdfjs.GlobalWorkerOptions.workerSrc = bootstrap.dataset.workerUri;
+  const [pdfBytes, worker] = await Promise.all([
+    loadPdfBytes(bootstrap.dataset.pdfUri),
+    startPdfWorker(bootstrap.dataset.workerUri),
+  ]);
+  pdfjs.GlobalWorkerOptions.workerPort = worker;
   annotations.splice(0, annotations.length, ...parseAnnotations());
   for (const swatch of document.querySelectorAll(".swatch[data-color]")) {
     swatch.style.backgroundColor = safeColor(swatch.dataset.color);
   }
-  documentHandle = await pdfjs.getDocument({ url: bootstrap.dataset.pdfUri }).promise;
+  status.textContent = "Opening PDF…";
+  documentHandle = await pdfjs.getDocument({ data: pdfBytes }).promise;
   pageNumber = boundedPage(pageNumber);
   pageLabels = await documentHandle.getPageLabels();
   pageCount.textContent = `/ ${documentHandle.numPages}`;
@@ -620,6 +647,11 @@ try {
     clearTimeout(resizeTimer);
     renderGeneration += 1;
     cancelRenderTasks();
+    void documentHandle?.destroy?.();
+    pdfWorker?.terminate();
+    if (pdfWorkerUrl) URL.revokeObjectURL(pdfWorkerUrl);
+    pdfWorker = null;
+    pdfWorkerUrl = null;
   });
   window.addEventListener("message", event => {
     if (event.data?.type === "annotation-error") {
