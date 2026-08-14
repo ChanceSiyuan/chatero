@@ -50,6 +50,8 @@ export class LatexPreviewServer {
 
   async #start() {
     if (this.#origin) return this.#origin;
+    // A failed bind must not be cached, or one transient error would disable
+    // the preview for the rest of the session.
     this.#starting ||= new Promise((accept, reject) => {
       const server = createServer((request, response) => {
         void this.#serve(request, response).catch(() => {
@@ -70,7 +72,11 @@ export class LatexPreviewServer {
         accept(this.#origin);
       });
     });
-    return this.#starting;
+    try { return await this.#starting; }
+    catch (error) {
+      this.#starting = null;
+      throw error;
+    }
   }
 
   async #resolveStaticPath(root, relativePath) {
@@ -118,7 +124,9 @@ export class LatexPreviewServer {
     else { reply(404); return; }
     const headers = {
       "Cache-Control": "no-store",
-      "Content-Security-Policy": "default-src 'none'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' blob: data:; worker-src 'self' blob:; frame-ancestors *; object-src 'none'; base-uri 'none'",
+      // frame-src is required: without it frame loading falls back to
+      // default-src 'none' and the host page cannot embed the viewer at all.
+      "Content-Security-Policy": "default-src 'none'; frame-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' blob: data:; worker-src 'self' blob:; frame-ancestors *; object-src 'none'; base-uri 'none'",
       "Content-Type": contentType,
       "Cross-Origin-Resource-Policy": "same-origin",
       "X-Content-Type-Options": "nosniff",
@@ -138,18 +146,23 @@ export class LatexPreviewServer {
     const id = randomBytes(18).toString("base64url");
     if (leaseId) this.#documents.delete(leaseId);
     this.#documents.set(id, { path });
-    const documentUrl = `${origin}/${this.#token}/doc/${id}`;
-    // The viewer resolves ../build/pdf.mjs and its worker relative to web/, so
-    // the served root is the pdfjs bundle itself, not its web directory. The
-    // host page is same-origin with the viewer, which is what lets it read and
-    // restore the scroll position across recompiles.
-    const viewerUrl = `${origin}/${this.#token}/viewer/web/viewer.html?file=${encodeURIComponent(documentUrl)}`;
+    // The URLs handed to the page are relative to the host page, so the single
+    // asExternalUri rewrite of hostUrl carries the viewer and the document with
+    // it. That keeps the host page, the viewer and the PDF on one origin, which
+    // the packaged viewer requires of its file argument and which the host page
+    // needs to read the viewer's position. The viewer resolves ../build/pdf.mjs
+    // and its worker relative to web/, so the served root is the pdfjs bundle
+    // itself, not its web directory.
+    const documentPath = `../../doc/${id}`;
+    const viewerPath = `../viewer/web/viewer.html?file=${encodeURIComponent(documentPath)}`;
     return Object.freeze({
-      documentUrl,
+      documentPath,
+      documentUrl: `${origin}/${this.#token}/doc/${id}`,
+      hostUrl: `${origin}/${this.#token}/host/latex-preview-host.html`,
       leaseId: id,
       origin,
-      viewerUrl,
-      hostUrl: `${origin}/${this.#token}/host/latex-preview-host.html?viewer=${encodeURIComponent(viewerUrl)}`,
+      viewerPath,
+      viewerUrl: `${origin}/${this.#token}/viewer/web/viewer.html?file=${encodeURIComponent(`${origin}/${this.#token}/doc/${id}`)}`,
       dispose: () => { this.#documents.delete(id); },
     });
   }

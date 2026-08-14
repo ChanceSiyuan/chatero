@@ -81,8 +81,16 @@ export async function resolveVerifiedLatexRuntime({
   const requested = Array.isArray(runtimeRoots) ? runtimeRoots.slice(0, MAX_RUNTIME_ROOTS) : [];
   for (const value of requested) {
     if (typeof value !== "string" || resolve(value) !== value) return unavailable("runtime-root-invalid");
-    if (unsafePrefix(value, homeDirectory)) return unavailable("runtime-prefix-unsafe");
-    roots.push(value);
+    // The guard has to run on the path the kernel will mount, not the one that
+    // was typed: a symbolic link to the home directory passes a lexical check
+    // and still exposes it inside the sandbox.
+    let canonicalRoot;
+    try { canonicalRoot = await realpath(value); }
+    catch { return unavailable("runtime-root-invalid"); }
+    if (unsafePrefix(canonicalRoot, homeDirectory) || unsafePrefix(value, homeDirectory)) {
+      return unavailable("runtime-prefix-unsafe");
+    }
+    roots.push(canonicalRoot);
   }
   if (unsafePrefix(executableDirectory, homeDirectory)) return unavailable("runtime-prefix-unsafe");
   return Object.freeze({

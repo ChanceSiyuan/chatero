@@ -57,9 +57,11 @@ export class LatexPreviewManager {
   async #rememberPosition(key, value) {
     if (!this.memento?.update) return;
     const positions = this.#positions();
+    // Re-inserting moves the document to the end, so the bound evicts the
+    // least recently used entry rather than the first one ever stored.
+    delete positions[key];
     positions[key] = value;
     const keys = Object.keys(positions);
-    // Keep the map bounded so a long-lived profile cannot grow without limit.
     for (const stale of keys.slice(0, Math.max(0, keys.length - MAX_REMEMBERED_POSITIONS))) delete positions[stale];
     await this.memento.update(POSITION_STATE_KEY, positions);
   }
@@ -97,8 +99,10 @@ export class LatexPreviewManager {
       const renderer = this.rendererFactory ? this.rendererFactory(runtime) : new SafeLatexRenderer({ runtime });
       const stored = this.#positions()[key];
       session = {
+        aborter: new AbortController(),
         disposed: false,
         document,
+        hostReady: false,
         lease: undefined,
         next: undefined,
         panel,
@@ -109,6 +113,14 @@ export class LatexPreviewManager {
       };
       this.sessions.set(key, session);
       panel.webview.onDidReceiveMessage?.(message => {
+        if (message?.type === "chatero-latex-host-ready") {
+          // The page announces itself on first load and again after a webview
+          // reload; replying with the live lease is what recovers a reloaded
+          // panel and what makes the restore race impossible.
+          session.hostReady = true;
+          this.#publish(session);
+          return;
+        }
         if (message?.type !== "chatero-latex-position" || !validPosition(message.position)) return;
         session.position = message.position;
         if (typeof message.scale === "string") session.scale = message.scale;
@@ -118,6 +130,17 @@ export class LatexPreviewManager {
     }
     else session.panel.reveal?.(this.vscode.ViewColumn?.Beside, true);
     return this.#schedule(session, document, false);
+  }
+
+  #publish(session) {
+    if (session.disposed || !session.hostReady || !session.lease) return;
+    session.panel.webview.postMessage?.({
+      type: "chatero-latex-document",
+      documentPath: session.lease.documentPath,
+      position: session.position,
+      scale: session.scale,
+      viewerPath: session.lease.viewerPath,
+    });
   }
 
   async refreshSaved(document) {
@@ -152,6 +175,7 @@ export class LatexPreviewManager {
   async #present(session, document, quiet) {
     try {
       const result = await session.renderer.render({
+        signal: session.aborter?.signal,
         sourcePath: document.uri.fsPath,
         source: document.getText(),
         version: document.version,
@@ -159,8 +183,10 @@ export class LatexPreviewManager {
       const exact = result.kind === "rendered" ? result : result.lastGood;
       if (!exact) {
         const detail = result.reason ?? result.diagnostic ?? result.kind;
+        // Notifications are never awaited inside the pump: a modal the reader
+        // leaves open would otherwise stall every later compile and dispose.
         if (quiet) this.vscode.window.setStatusBarMessage?.(`LaTeX compile failed: ${detail}`, 5000);
-        else await this.vscode.window.showErrorMessage(`LaTeX Preview failed: ${detail}.`);
+        else void this.vscode.window.showErrorMessage(`LaTeX Preview failed: ${detail}.`);
         return result;
       }
       if (session.disposed) return result;
@@ -170,17 +196,11 @@ export class LatexPreviewManager {
         session.lease = lease;
         await session.renderer.releaseExcept?.(exact.root);
       }
-      const externalUri = await this.vscode.env.asExternalUri(this.vscode.Uri.parse(session.lease.hostUrl));
-      if (session.rendered) {
-        // The host page keeps its viewer mounted and swaps documents, so the
-        // reader never sees an empty pane between compiles.
-        session.panel.webview.postMessage?.({
-          type: "chatero-latex-document",
-          documentUrl: session.lease.documentUrl,
-          viewerUrl: session.lease.viewerUrl,
-        });
-      }
-      else {
+      if (!session.rendered) {
+        // Only the host page URL is rewritten for the tunnel; the viewer and
+        // the PDF are addressed relative to it, so all three stay on one
+        // origin whatever the tunnel does to the host and port.
+        const externalUri = await this.vscode.env.asExternalUri(this.vscode.Uri.parse(session.lease.hostUrl));
         const nonce = randomBytes(18).toString("base64url");
         session.panel.webview.html = createLatexPreviewHtml({
           cspSource: session.panel.webview.cspSource,
@@ -188,24 +208,20 @@ export class LatexPreviewManager {
           nonce,
         });
         session.rendered = true;
-        if (session.position || session.scale) {
-          session.panel.webview.postMessage?.({
-            type: "chatero-latex-restore",
-            position: session.position,
-            scale: session.scale,
-          });
-        }
       }
+      // The host page keeps its viewer mounted and swaps documents, so the
+      // reader never sees an empty pane between compiles.
+      this.#publish(session);
       if (result.kind === "failed-with-last-good") {
         if (quiet) this.vscode.window.setStatusBarMessage?.(`LaTeX compile failed; showing the last good PDF. ${result.diagnostic}`, 8000);
-        else await this.vscode.window.showWarningMessage(`LaTeX compile failed; the last good PDF remains visible. ${result.diagnostic}`);
+        else void this.vscode.window.showWarningMessage(`LaTeX compile failed; the last good PDF remains visible. ${result.diagnostic}`);
       }
       return result;
     }
     catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (quiet) this.vscode.window.setStatusBarMessage?.(`LaTeX compile failed: ${message}`, 5000);
-      else await this.vscode.window.showErrorMessage(`LaTeX Preview failed: ${message}.`);
+      else void this.vscode.window.showErrorMessage(`LaTeX Preview failed: ${message}.`);
       return Object.freeze({ kind: "failed", diagnostic: message });
     }
   }
@@ -215,7 +231,10 @@ export class LatexPreviewManager {
     session.disposed = true;
     session.next = undefined;
     if (this.sessions.get(key) === session) this.sessions.delete(key);
-    if (session.pump) await session.pump;
+    // Closing the panel stops the compile rather than leaving latexmk running
+    // on the remote host until it finishes on its own.
+    session.aborter?.abort();
+    if (session.pump) await session.pump.catch(() => {});
     session.lease?.dispose();
     await session.renderer.dispose();
   }

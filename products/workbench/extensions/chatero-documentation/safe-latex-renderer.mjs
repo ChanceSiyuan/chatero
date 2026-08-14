@@ -11,7 +11,15 @@ const MAX_LOG_EXCERPT_CHARS = 2048;
 const MAX_PROJECT_FILES = 512;
 const MAX_PROJECT_BYTES = 128 * 1024 * 1024;
 const MAX_PDF_BYTES = 192 * 1024 * 1024;
-const ENTRY_BASENAME = /^[A-Za-z0-9._ -]+\.tex$/u;
+// A leading hyphen would be parsed by latexmk as an option rather than the
+// document to build.
+const ENTRY_BASENAME = /^[A-Za-z0-9._ ][A-Za-z0-9._ -]*\.tex$/u;
+// latexmk reads `latexmkrc` from the working directory and evaluates it as
+// Perl, which is arbitrary code execution from a document-supplied file --
+// `-no-shell-escape` never covered that path. `-norc` suppresses it, including
+// the system rc files reachable through the sandbox's read-only /usr.
+const RC_BASENAMES = new Set(["latexmkrc", ".latexmkrc"]);
+const COMPILE_TIMEOUT_MS = 180_000;
 
 export function buildSafeLatexInvocation({ snapshot, runtime } = {}) {
   if (!snapshot || !runtime || resolve(snapshot.disposableRoot) !== snapshot.disposableRoot
@@ -22,6 +30,7 @@ export function buildSafeLatexInvocation({ snapshot, runtime } = {}) {
   return Object.freeze({
     file: runtime.latexExecutable,
     args: Object.freeze([
+      "-norc",
       "-pdf",
       "-interaction=nonstopmode",
       "-halt-on-error",
@@ -34,7 +43,11 @@ export function buildSafeLatexInvocation({ snapshot, runtime } = {}) {
   });
 }
 
-function runProcess(invocation) {
+// A document can loop forever (\def\x{\x}\x) without ever erroring, so
+// -halt-on-error does not bound the run: the compile is killed on a deadline
+// and when the session goes away, and bubblewrap's --die-with-parent reaps
+// anything the engine spawned.
+function runProcess(invocation, { signal, timeoutMs = COMPILE_TIMEOUT_MS } = {}) {
   return new Promise((accept, reject) => {
     const child = spawn(invocation.file, invocation.args, {
       cwd: invocation.cwd,
@@ -43,6 +56,16 @@ function runProcess(invocation) {
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
     });
+    let settled = false;
+    let timedOut = false;
+    const stop = () => {
+      if (settled || child.killed) return;
+      child.kill("SIGKILL");
+    };
+    const onAbort = () => stop();
+    const timer = setTimeout(() => { timedOut = true; stop(); }, timeoutMs);
+    timer.unref?.();
+    signal?.addEventListener?.("abort", onAbort, { once: true });
     const chunks = [];
     let bytes = 0;
     const capture = chunk => {
@@ -53,12 +76,22 @@ function runProcess(invocation) {
     };
     child.stdout.on("data", capture);
     child.stderr.on("data", capture);
-    child.once("error", reject);
-    child.once("close", (code, signal) => accept({
-      code: Number.isInteger(code) ? code : 1,
-      signal,
-      stderr: `${Buffer.concat(chunks).toString("utf8")} ${signal ? `signal=${signal}` : `exit=${code}`}`.trim(),
-    }));
+    const finish = () => {
+      settled = true;
+      clearTimeout(timer);
+      signal?.removeEventListener?.("abort", onAbort);
+    };
+    child.once("error", error => { finish(); reject(error); });
+    child.once("close", (code, closeSignal) => {
+      finish();
+      accept({
+        code: Number.isInteger(code) ? code : 1,
+        signal: closeSignal,
+        stderr: timedOut
+          ? `LaTeX compile exceeded ${Math.round(timeoutMs / 1000)}s and was stopped`
+          : `${Buffer.concat(chunks).toString("utf8")} ${closeSignal ? `signal=${closeSignal}` : `exit=${code}`}`.trim(),
+      });
+    });
   });
 }
 
@@ -69,7 +102,7 @@ function runProcess(invocation) {
 async function copyProjectDirectory(sourceDirectory, destination, budget) {
   await mkdir(destination, { mode: 0o700, recursive: true });
   for (const entry of await readdir(sourceDirectory, { withFileTypes: true })) {
-    if (entry.name.startsWith(".")) continue;
+    if (entry.name.startsWith(".") || RC_BASENAMES.has(entry.name.toLowerCase())) continue;
     const from = join(sourceDirectory, entry.name);
     if (entry.isSymbolicLink()) throw new Error("LaTeX project contains a symbolic link");
     if (entry.isDirectory()) {
@@ -134,7 +167,7 @@ export class SafeLatexRenderer {
     this.disposed = false;
   }
 
-  async render({ sourcePath, source, version } = {}) {
+  async render({ signal, sourcePath, source, version } = {}) {
     if (this.disposed) throw new Error("Safe LaTeX renderer is disposed");
     if (typeof sourcePath !== "string" || resolve(sourcePath) !== sourcePath || extname(sourcePath).toLowerCase() !== ".tex"
       || typeof source !== "string" || !Number.isSafeInteger(version) || version < 0) {
@@ -146,7 +179,12 @@ export class SafeLatexRenderer {
     }
     const canonical = await realpath(sourcePath);
     const sourceMetadata = await lstat(canonical);
-    if (!sourceMetadata.isFile() || sourceMetadata.isSymbolicLink() || await readFile(canonical, "utf8") !== source) {
+    // The editor buffer and the file on disk are compared after normalizing a
+    // byte-order mark and line endings, which the editor may represent
+    // differently from the bytes it wrote.
+    const normalize = value => value.replace(/^﻿/u, "").replace(/\r\n?/gu, "\n");
+    if (!sourceMetadata.isFile() || sourceMetadata.isSymbolicLink()
+        || normalize(await readFile(canonical, "utf8")) !== normalize(source)) {
       return Object.freeze({ kind: "unsaved-input", lastGood: this.lastGood });
     }
     const root = await realpath(await mkdtemp(join(this.temporaryDirectory, "chatero-latex-")));
@@ -183,7 +221,7 @@ export class SafeLatexRenderer {
     }
     const entryStem = entryBasename.slice(0, -".tex".length);
     try {
-      const result = await this.run(sandbox);
+      const result = await this.run(sandbox, { signal });
       if (result.code !== 0 || result.signal) {
         throw Object.assign(new Error("LaTeX compile failed"), {
           stderr: result.stderr,

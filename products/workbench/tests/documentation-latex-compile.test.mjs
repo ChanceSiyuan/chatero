@@ -73,12 +73,16 @@ test("LaTeX invocation disables shell escape and writes only into the snapshot o
   });
   assert.deepEqual(invocation, {
     file: "/opt/texlive/bin/latexmk",
-    args: ["-pdf", "-interaction=nonstopmode", "-halt-on-error", "-no-shell-escape", "-outdir=../output", "note.tex"],
+    args: ["-norc", "-pdf", "-interaction=nonstopmode", "-halt-on-error", "-no-shell-escape", "-outdir=../output", "note.tex"],
     cwd: "/tmp/snapshot/source",
     shell: false,
   });
   assert.ok(invocation.args.includes("-no-shell-escape"));
-  for (const entryBasename of ["../escape.tex", "note.tex; rm -rf /", "note.pdf"]) {
+  // latexmk evaluates a project latexmkrc as Perl, which -no-shell-escape does
+  // not cover; -norc is what closes that path, including the system rc files
+  // reachable through the sandbox's read-only /usr.
+  assert.ok(invocation.args.includes("-norc"));
+  for (const entryBasename of ["../escape.tex", "note.tex; rm -rf /", "note.pdf", "-draft.tex"]) {
     assert.throws(() => buildSafeLatexInvocation({
       snapshot: { disposableRoot: "/tmp/snapshot", entryBasename },
       runtime: { latexExecutable: "/opt/texlive/bin/latexmk" },
@@ -264,4 +268,85 @@ test("renderer reports sandbox unavailability without leaving snapshots behind",
   assert.equal(result.reason, "sandbox-unavailable");
   assert.equal(renderer.roots.size, 0);
   await renderer.dispose();
+});
+
+test("renderer never copies a project latexmkrc into the compile directory", async () => {
+  const { SafeLatexRenderer } = await import("../extensions/chatero-documentation/safe-latex-renderer.mjs");
+  const fixture = await project();
+  await writeFile(join(fixture.root, "latexmkrc"), 'system("touch /tmp/chatero-latexmkrc-pwned");\n');
+  await writeFile(join(fixture.root, ".latexmkrc"), 'system("touch /tmp/chatero-dot-latexmkrc-pwned");\n');
+  const copied = [];
+  const renderer = new SafeLatexRenderer({
+    runtime: fakeRenderer(),
+    sandboxFactory: input => ({ ...input.invocation, env: {}, kind: "sandboxed" }),
+    run: async invocation => {
+      const { readdir } = await import("node:fs/promises");
+      copied.push(...await readdir(invocation.cwd));
+      await writeFile(join(invocation.cwd, "..", "output", "note.pdf"), "%PDF-1.7\nok\n");
+      return { code: 0, stderr: "" };
+    },
+  });
+  assert.equal((await renderer.render({ sourcePath: fixture.sourcePath, source: fixture.source, version: 1 })).kind, "rendered");
+  assert.equal(copied.includes("latexmkrc"), false, "a project latexmkrc must never reach the compile directory");
+  assert.equal(copied.includes(".latexmkrc"), false);
+  assert.ok(copied.includes("note.tex"));
+  await renderer.dispose();
+});
+
+test("renderer stops a compile that never terminates and reports why", async () => {
+  const { SafeLatexRenderer } = await import("../extensions/chatero-documentation/safe-latex-renderer.mjs");
+  const fixture = await project();
+  const renderer = new SafeLatexRenderer({
+    runtime: fakeRenderer(),
+    sandboxFactory: input => ({ ...input.invocation, env: {}, kind: "sandboxed" }),
+    run: async (invocation, options) => {
+      assert.ok(options && "signal" in options, "the renderer must pass an abort signal to the runner");
+      return { code: 137, signal: "SIGKILL", stderr: "LaTeX compile exceeded 180s and was stopped" };
+    },
+  });
+  const result = await renderer.render({ sourcePath: fixture.sourcePath, source: fixture.source, version: 1 });
+  assert.equal(result.kind, "failed");
+  assert.match(result.diagnostic, /exceeded 180s/u);
+  await renderer.dispose();
+});
+
+test("renderer accepts a buffer that differs from disk only by a BOM or line endings", async () => {
+  const { SafeLatexRenderer } = await import("../extensions/chatero-documentation/safe-latex-renderer.mjs");
+  const fixture = await project("\\documentclass{article}\r\n\\begin{document}x\\end{document}\r\n");
+  const renderer = new SafeLatexRenderer({
+    runtime: fakeRenderer(),
+    sandboxFactory: input => ({ ...input.invocation, env: {}, kind: "sandboxed" }),
+    run: async invocation => {
+      await writeFile(join(invocation.cwd, "..", "output", "note.pdf"), "%PDF-1.7\nok\n");
+      return { code: 0, stderr: "" };
+    },
+  });
+  const buffer = `\uFEFF${fixture.source.replaceAll("\r\n", "\n")}`;
+  assert.equal((await renderer.render({ sourcePath: fixture.sourcePath, source: buffer, version: 1 })).kind, "rendered");
+  assert.equal((await renderer.render({ sourcePath: fixture.sourcePath, source: "genuinely different\n", version: 2 })).kind, "unsaved-input");
+  await renderer.dispose();
+});
+
+test("real latexmk ignores a project latexmkrc once -norc is passed", { skip: process.platform !== "linux" }, async t => {
+  const { buildSafeLatexInvocation } = await import("../extensions/chatero-documentation/safe-latex-renderer.mjs");
+  const { access } = await import("node:fs/promises");
+  let latexmk;
+  for (const candidate of ["/usr/bin/latexmk", "/usr/local/bin/latexmk", `${process.env.HOME}/.TinyTeX/bin/x86_64-linux/latexmk`]) {
+    if (await access(candidate).then(() => true, () => false)) { latexmk = candidate; break; }
+  }
+  if (!latexmk) { t.skip("latexmk is not installed"); return; }
+  const root = await temporary();
+  const source = join(root, "source");
+  await mkdir(source);
+  await mkdir(join(root, "output"));
+  const marker = join(root, "RC_EXECUTED");
+  await writeFile(join(source, "note.tex"), "\\documentclass{article}\\begin{document}hi\\end{document}\n");
+  await writeFile(join(source, "latexmkrc"), `system("touch ${marker}");\n`);
+  const invocation = buildSafeLatexInvocation({
+    snapshot: { disposableRoot: root, entryBasename: "note.tex" },
+    runtime: { latexExecutable: latexmk },
+  });
+  await execFile(invocation.file, invocation.args, { cwd: invocation.cwd, timeout: 120_000 }).catch(() => {});
+  const { access: exists } = await import("node:fs/promises");
+  assert.equal(await exists(marker).then(() => true, () => false), false, "-norc must stop latexmk evaluating a project rc file");
 });
