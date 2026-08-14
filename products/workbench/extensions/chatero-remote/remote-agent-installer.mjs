@@ -464,6 +464,18 @@ async function skipBytes(source, offset) {
   return generate();
 }
 
+// Counting pass-through: the first agent install is a multi-minute transfer
+// with no other feedback. Reporting is observational and never fails the pump.
+async function* countUploadedBytes(chunks, offset, total, onProgress) {
+  let transferred = offset;
+  for await (const chunk of chunks) {
+    transferred += chunk.length;
+    try { onProgress(Object.freeze({ transferred, total })); }
+    catch (_) {}
+    yield chunk;
+  }
+}
+
 export class SshRemoteAgentRuntime {
   constructor({
     alias,
@@ -588,8 +600,11 @@ export class SshRemoteAgentRuntime {
     return size;
   }
 
-  async upload({ partRelativePath, source, offset, signal }) {
-    const input = await skipBytes(await source(), offset);
+  async upload({ partRelativePath, source, offset, artifactSize, onProgress, signal }) {
+    const remaining = await skipBytes(await source(), offset);
+    const input = onProgress
+      ? countUploadedBytes(remaining, offset, artifactSize, onProgress)
+      : remaining;
     await this.#exec(UPLOAD_SCRIPT, [partRelativePath, String(offset)], { input, signal });
   }
 
@@ -671,13 +686,21 @@ export class RemoteAgentInstaller {
     this.resumeTransactions = transactionState;
   }
 
-  async ensureInstalled({ alias, controlPath, release, signal }) {
+  async ensureInstalled({ alias, controlPath, release, signal, onProgress }) {
     assertConcreteAlias(alias);
     if (signal?.aborted) throw signal.reason ?? new Error("remote agent installation was cancelled");
     const contracts = !this.verify || !this.select ? await defaultContracts() : null;
-    const verifyRelease = this.verify ?? contracts.verifyRelease;
     const selectArtifact = this.select ?? contracts.selectArtifact;
-    const manifest = await verifyRelease(release);
+    // The trust root is the Ed25519 signature over the manifest, which needs no
+    // artifact IO. Only the artifact that is actually uploaded is read and
+    // hashed, and only when it has to be uploaded. An injected verifyRelease
+    // cannot be split, so it keeps the eager whole-release semantics.
+    const verifyArtifact = this.verify
+      ? null
+      : artifact => contracts.verifyReleaseArtifact(release.readArtifact, artifact);
+    const manifest = this.verify
+      ? await this.verify(release)
+      : contracts.verifyReleaseManifest(release);
     const hostPlatform = parseRemotePlatform(await this.remote.probe({ alias, controlPath, signal }));
     const artifact = selectArtifact(manifest, {
       commit: manifest.codeOssCommit,
@@ -718,6 +741,9 @@ export class RemoteAgentInstaller {
       }
     }
     else {
+      // Size and SHA-256 of the one artifact about to be uploaded, checked
+      // against the already signature-verified manifest before any remote write.
+      if (verifyArtifact) await verifyArtifact(artifact);
       const transactionId = this.resumeTransactions.get(transactionKey) ?? this.randomTransactionId();
       this.resumeTransactions.delete(transactionKey);
       if (typeof transactionId !== "string" || !TRANSACTION_ID.test(transactionId)) {
@@ -741,6 +767,8 @@ export class RemoteAgentInstaller {
               controlPath,
               partRelativePath,
               offset,
+              artifactSize: artifact.size,
+              onProgress,
               source: () => release.readArtifact(artifact.filename),
               signal,
             });

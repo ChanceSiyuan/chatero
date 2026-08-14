@@ -7,6 +7,7 @@ const MAX_REQUEST_BYTES = 1024 * 1024;
 const MAX_ENTRY_BYTES = 64 * 1024;
 const MAX_FRAME_BYTES = 2 * 1024 * 1024;
 const MAX_STREAM_BYTES = 64 * 1024 * 1024;
+const MAX_CANONICAL_CWD_ENTRIES = 64;
 
 function byteLength(value) {
   return Buffer.byteLength(value, "utf8");
@@ -278,6 +279,24 @@ export class RemoteProcessService {
     this.getWorkspaceFolder = getWorkspaceFolder;
     this.isWorkspaceTrusted = isWorkspaceTrusted;
     this.canonicalizeWorkspaceCwd = canonicalizeWorkspaceCwd;
+    // Canonical (root, cwd) answers are scoped to one authenticated session
+    // generation, exactly the window in which a previously returned realpath is
+    // already trusted. Every entry is dropped when the generation changes.
+    this.canonicalCwdCache = new Map();
+  }
+
+  #canonicalCwdBucket(authority, generation) {
+    const existing = this.canonicalCwdCache.get(authority);
+    if (existing && existing.generation === generation) return existing;
+    const bucket = { generation, entries: new Map() };
+    this.canonicalCwdCache.set(authority, bucket);
+    return bucket;
+  }
+
+  #rememberCanonicalCwd(bucket, authority, key, canonical) {
+    if (!canonical || this.canonicalCwdCache.get(authority) !== bucket) return;
+    if (bucket.entries.size >= MAX_CANONICAL_CWD_ENTRIES) bucket.entries.clear();
+    bucket.entries.set(key, canonical);
   }
 
   async run(request, observer = {}, signal) {
@@ -299,7 +318,12 @@ export class RemoteProcessService {
       ...request,
       cwd: request?.cwd === undefined ? uri.path : request.cwd,
     });
-    const canonical = await this.canonicalizeWorkspaceCwd(session, uri.path, requested.cwd, signal);
+    const cwdBucket = this.#canonicalCwdBucket(uri.authority, generation);
+    const cwdKey = `${uri.path}\u0000${requested.cwd}`;
+    const cached = cwdBucket.entries.get(cwdKey);
+    const canonical = cached
+      ?? await this.canonicalizeWorkspaceCwd(session, uri.path, requested.cwd, signal);
+    if (!cached) this.#rememberCanonicalCwd(cwdBucket, uri.authority, cwdKey, canonical);
     const canonicalRoot = typeof canonical === "string" ? uri.path : canonical?.root;
     const canonicalCwd = typeof canonical === "string" ? canonical : canonical?.cwd;
     if (!posix.isAbsolute(canonicalRoot ?? "") || !posix.isAbsolute(canonicalCwd ?? "")

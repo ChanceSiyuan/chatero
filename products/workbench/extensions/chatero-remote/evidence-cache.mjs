@@ -155,6 +155,17 @@ async function readSource(source, offset, length, signal) {
   return Buffer.from(chunk);
 }
 
+// One chunk frame carries up to two authorized reads at the Core maximum, so a
+// frame holds 512 KiB -- the remote helper's per-chunk limit, and ~699 KB of
+// base64 inside the 1 MiB line budget.
+async function readFrameBytes(source, offset, signal) {
+  const first = await readSource(source, offset, Math.min(MAX_SOURCE_READ, source.size - offset), signal);
+  const remaining = Math.min(MAX_SOURCE_READ, source.size - offset - first.length);
+  if (remaining < 1) return first;
+  const second = await readSource(source, offset + first.length, remaining, signal);
+  return Buffer.concat([first, second]);
+}
+
 export async function hashSource(source, { length = source?.size, signal } = {}) {
   assertControlledSource(source);
   if (!Number.isSafeInteger(length) || length < 0 || length > source.size) {
@@ -432,7 +443,15 @@ export class EvidenceCacheService {
     else if (current.expireWhenIdle) {
       this.digestAuthorities.set(key, Object.freeze({ hostFingerprint, state: "expired", version }));
     }
-    else this.digestAuthorities.delete(key);
+    else {
+      // The authority record and its version counter share one lifetime: with
+      // no record, no binding and no reservation left, nothing can still hold a
+      // version for this digest, so the counter must not outlive it. A late
+      // expiry callback compares captured binding-map identity, which a fresh
+      // stage never reuses, so a restarted counter cannot be confused for it.
+      this.digestAuthorities.delete(key);
+      this.authorityVersions.delete(key);
+    }
   }
 
   async #requestDigestRevoke(context, digest, allowDuringDispose = false, reservation = null) {
@@ -658,8 +677,13 @@ export class EvidenceCacheService {
     return errors;
   }
 
-  async stageEvidence(rawRequest, signal) {
+  async stageEvidence(rawRequest, signal, onProgress) {
     const request = assertStageEvidenceRequest(rawRequest);
+    // Progress reporting is an out-of-band observer, never part of the
+    // target-bound request shape.
+    if (onProgress !== undefined && typeof onProgress !== "function") {
+      throw new TypeError("evidence progress observer must be a function");
+    }
     const operation = this.#beginOperation(signal);
     let source;
     let digest;
@@ -725,6 +749,7 @@ export class EvidenceCacheService {
         hostFingerprint: initial.hostFingerprint,
         context: initial,
         onRemoteAttempt: () => { remoteAttempted = true; },
+        onProgress,
         signal: operation.signal,
       });
       compensationContext = staged.context;
@@ -1267,9 +1292,16 @@ export async function runStageProtocol(channel, {
   transferId,
   ttlSeconds,
   targetId,
+  onProgress,
   signal,
 }) {
   assertControlledSource(source);
+  // Purely observational: a reporting failure never fails a transfer.
+  const report = transferred => {
+    if (!onProgress) return;
+    try { onProgress(Object.freeze({ transferred, total: source.size })); }
+    catch (_) {}
+  };
   const reader = createFrameReader(channel);
   let requestSent = false;
   let terminalSent = false;
@@ -1314,20 +1346,29 @@ export async function runStageProtocol(channel, {
     await waitForDrain(handFrame(channel, jsonLine({ type: "continue" })), signal);
     throwIfAborted(signal);
     let offset = resume.offset;
-    while (offset < source.size) {
-      throwIfAborted(signal);
-      const bytes = await readSource(
-        source,
-        offset,
-        Math.min(MAX_SOURCE_READ / 2, source.size - offset),
-        signal,
-      );
-      await waitForDrain(
-        handFrame(channel, jsonLine({ type: "chunk", data: bytes.toString("base64") })),
-        signal,
-      );
-      throwIfAborted(signal);
-      offset += bytes.length;
+    report(offset);
+    // Single-slot prefetch: the next authorized read overlaps the current
+    // frame's drain, so the transfer is link-bound instead of paying a Core
+    // round trip and a drain in series for every frame. Offsets, frame order
+    // and the resume protocol are unchanged.
+    let pending = offset < source.size ? readFrameBytes(source, offset, signal) : null;
+    try {
+      while (pending) {
+        throwIfAborted(signal);
+        const bytes = await pending;
+        pending = null;
+        offset += bytes.length;
+        const handed = handFrame(channel, jsonLine({ type: "chunk", data: bytes.toString("base64") }));
+        if (offset < source.size) pending = readFrameBytes(source, offset, signal);
+        await waitForDrain(handed, signal);
+        report(offset);
+        throwIfAborted(signal);
+      }
+    }
+    finally {
+      // A prefetch outstanding when the transfer fails or is cancelled must not
+      // surface as an unhandled rejection; the service owns closing the source.
+      if (pending) pending.catch(() => {});
     }
     throwIfAborted(signal);
     // Finalize is irreversible once handed to the channel. From this point we

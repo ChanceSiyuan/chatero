@@ -3,7 +3,7 @@ import { chmod, lstat, mkdtemp, readFile, rm, writeFile } from "node:fs/promises
 import { join, posix } from "node:path";
 
 import { decodeAuthority } from "./authority.mjs";
-import { createManagedConnection, forwardingArguments, redactRemoteLog } from "./managed-connection.mjs";
+import { asChunkView, createManagedConnection, forwardingArguments, redactRemoteLog } from "./managed-connection.mjs";
 import { assertConcreteAlias, OPENSSH_EXECUTABLE } from "./openssh-targets.mjs";
 import { assertRemoteInstallPath, RemoteAgentInstaller, SshRemoteAgentRuntime } from "./remote-agent-installer.mjs";
 
@@ -239,7 +239,7 @@ function makeRawChannel(process, generation, isCurrent, log) {
     for (const listener of [...closeListeners]) listener(result);
   };
   process.stdout.on("data", bytes => {
-    if (isCurrent()) for (const listener of [...dataListeners]) listener(Uint8Array.from(bytes));
+    if (isCurrent()) for (const listener of [...dataListeners]) listener(asChunkView(bytes));
   });
   process.stderr.on("data", bytes => {
     if (!isCurrent()) return;
@@ -351,7 +351,7 @@ export class SshSession {
     return connecting;
   }
 
-  async #connect({ target, release, signal }) {
+  async #connect({ target, release, signal, onProgress }) {
     const alias = assertConcreteAlias(target?.alias);
     const identity = targetIdentity(target);
     if (this.ready || this.master) await this.dispose();
@@ -393,6 +393,7 @@ export class SshSession {
         target,
         release,
         signal,
+        onProgress,
       });
       this.ready = Object.freeze({
         alias,

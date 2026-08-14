@@ -128,6 +128,10 @@ test("the extension registers the native managed authority and publishes the bou
   assert.match(source, /Show Remote Log/);
   assert.match(source, /createStatusBarItem/);
   assert.match(source, /chooseRemoteWorkspace/);
+  // Long connects and staging transfers must be cancellable from their progress
+  // notification, not only observable as a spinning status-bar item.
+  assert.match(source, /vscode\.window\.withProgress\(\{/);
+  assert.match(source, /cancellable: true/);
   assert.match(source, /new remoteProcess\.RemoteProcessService/);
   assert.match(source, /new evidenceModule\.EvidenceCacheService/);
   assert.match(source, /new evidenceControllerModule\.RemoteEvidenceController/);

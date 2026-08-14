@@ -311,12 +311,9 @@ async function readAndHashArtifact(source, artifact) {
   }
 }
 
-export async function verifyRelease({
-  manifestText,
-  signature,
-  publicKey,
-  readArtifact,
-}) {
+// Trust root: Ed25519 signature over the canonical manifest bytes. No artifact
+// IO, so a caller that only needs the manifest never reads a tarball.
+export function verifyReleaseManifest({ manifestText, signature, publicKey }) {
   const parsed = parseJSON(manifestText);
   let signatureValid = false;
   try {
@@ -333,13 +330,30 @@ export async function verifyRelease({
   if (!signatureValid) {
     throw new Error("release manifest signature verification failed");
   }
+  return validateManifest(parsed);
+}
 
-  const manifest = validateManifest(parsed);
+// Size and SHA-256 check for one artifact of an already signature-verified
+// manifest.
+export async function verifyReleaseArtifact(readArtifact, artifact) {
+  if (typeof readArtifact !== "function") {
+    throw new TypeError("readArtifact must be a function");
+  }
+  await readAndHashArtifact(await readArtifact(artifact.filename), artifact);
+}
+
+export async function verifyRelease({
+  manifestText,
+  signature,
+  publicKey,
+  readArtifact,
+}) {
+  const manifest = verifyReleaseManifest({ manifestText, signature, publicKey });
   if (typeof readArtifact !== "function") {
     throw new TypeError("readArtifact must be a function");
   }
   for (const artifact of manifest.artifacts) {
-    await readAndHashArtifact(await readArtifact(artifact.filename), artifact);
+    await verifyReleaseArtifact(readArtifact, artifact);
   }
   return manifest;
 }

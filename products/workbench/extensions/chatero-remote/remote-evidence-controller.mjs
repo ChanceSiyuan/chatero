@@ -29,8 +29,8 @@ export class RemoteEvidenceController {
     this.#remove = removeTextContext;
   }
 
-  async stageEvidence(request, signal) {
-    const result = await this.#service.stageEvidence(request, signal);
+  async stageEvidence(request, signal, onProgress) {
+    const result = await this.#service.stageEvidence(request, signal, onProgress);
     let attachmentId;
     try {
       attachmentId = await this.#attach(makeRemoteCacheAttachment(result));

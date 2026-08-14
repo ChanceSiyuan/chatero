@@ -6,6 +6,7 @@ const path = require("node:path");
 const vscode = require("vscode");
 
 const MAX_COMMAND_OUTPUT = 1024 * 1024;
+const OPENSSH_COMMAND_TIMEOUT_MS = 20_000;
 const RECENT_TARGETS_KEY = "chatero.remote.recentTargets.v1";
 const SHOW_REMOTE_LOG = "Show Remote Log";
 
@@ -64,30 +65,81 @@ async function activate(context) {
       : undefined;
     status.show();
   };
-  const run = (command, args) => new Promise((resolve, reject) => {
-    const child = spawn(command, args, { shell: false, stdio: ["ignore", "pipe", "pipe"] });
-    const stdout = [];
-    const stderr = [];
-    let bytes = 0;
-    const collect = destination => chunk => {
-      bytes += chunk.length;
-      if (bytes > MAX_COMMAND_OUTPUT) child.kill("SIGTERM");
-      else destination.push(Buffer.from(chunk));
-    };
-    child.stdout.on("data", collect(stdout));
-    child.stderr.on("data", collect(stderr));
-    child.once("error", reject);
-    child.once("close", (code, signal) => {
-      if (bytes > MAX_COMMAND_OUTPUT) {
-        reject(new Error("OpenSSH command output exceeded 1 MiB"));
-        return;
-      }
-      resolve({
-        code,
-        signal,
-        stdout: Buffer.concat(stdout).toString("utf8"),
-        stderr: Buffer.concat(stderr).toString("utf8"),
+  const run = (command, args, { signal, timeoutMs = OPENSSH_COMMAND_TIMEOUT_MS } = {}) =>
+    new Promise((resolve, reject) => {
+      const child = spawn(command, args, { shell: false, stdio: ["ignore", "pipe", "pipe"], signal });
+      const stdout = [];
+      const stderr = [];
+      let bytes = 0;
+      let timedOut = false;
+      // A stalled ProxyCommand or `Match exec` directive can otherwise keep
+      // `ssh -G` alive forever, leaving the connect with no cancel path.
+      const timer = Number.isFinite(timeoutMs) && timeoutMs > 0
+        ? setTimeout(() => {
+          timedOut = true;
+          child.kill("SIGTERM");
+        }, timeoutMs)
+        : null;
+      const collect = destination => chunk => {
+        bytes += chunk.length;
+        if (bytes > MAX_COMMAND_OUTPUT) child.kill("SIGTERM");
+        else destination.push(Buffer.from(chunk));
+      };
+      child.stdout.on("data", collect(stdout));
+      child.stderr.on("data", collect(stderr));
+      child.once("error", error => {
+        if (timer) clearTimeout(timer);
+        reject(error);
       });
+      child.once("close", (code, closeSignal) => {
+        if (timer) clearTimeout(timer);
+        if (timedOut) {
+          const error = new Error("OpenSSH command timed out");
+          error.code = "SSH_TRANSPORT";
+          reject(error);
+          return;
+        }
+        if (bytes > MAX_COMMAND_OUTPUT) {
+          reject(new Error("OpenSSH command output exceeded 1 MiB"));
+          return;
+        }
+        resolve({
+          code,
+          signal: closeSignal,
+          stdout: Buffer.concat(stdout).toString("utf8"),
+          stderr: Buffer.concat(stderr).toString("utf8"),
+        });
+      });
+    });
+
+  // Long remote transfers report bytes; the notification carries the only
+  // Cancel affordance, and cancelling aborts the operation through the same
+  // AbortSignal the transfer already honours, so remote temporary state is
+  // cleaned up (or retained as a resumable transaction) by its owner.
+  const reportBytes = progress => {
+    let reported = 0;
+    return ({ transferred, total }) => {
+      if (!Number.isFinite(transferred) || !Number.isFinite(total) || total < 1) return;
+      const percent = Math.max(0, Math.min(100, Math.floor((transferred / total) * 100)));
+      if (percent <= reported) return;
+      const increment = percent - reported;
+      reported = percent;
+      progress.report({ increment, message: `${percent}%` });
+    };
+  };
+  const withRemoteProgress = (title, outerSignal, body) => vscode.window.withProgress({
+    location: vscode.ProgressLocation.Notification,
+    title,
+    cancellable: true,
+  }, (progress, token) => {
+    const controller = new AbortController();
+    const forwardAbort = () => controller.abort();
+    if (outerSignal?.aborted) controller.abort();
+    else outerSignal?.addEventListener("abort", forwardAbort, { once: true });
+    const subscription = token.onCancellationRequested(() => controller.abort());
+    return Promise.resolve(body(reportBytes(progress), controller.signal)).finally(() => {
+      outerSignal?.removeEventListener("abort", forwardAbort);
+      subscription.dispose();
     });
   });
 
@@ -232,6 +284,7 @@ async function activate(context) {
 
   const ensureAuthoritySession = async (remoteAuthority, {
     signal,
+    onProgress,
     statusState = "connecting",
     workspacePath,
   } = {}) => {
@@ -242,7 +295,10 @@ async function activate(context) {
       lastAlias = alias;
       setStatus(statusState, { alias, path: workspacePath });
       append(`Resolving SSH target ${alias}`);
-      const target = await targets.resolveSshTarget(alias, run);
+      const target = await targets.resolveSshTarget(
+        alias,
+        (command, args) => run(command, args, { signal }),
+      );
       append(`Resolved ${alias} as ${target.user}@${target.hostname}:${target.port}`);
       const release = await loadRelease();
       let sshSession = sessions.get(remoteAuthority);
@@ -250,17 +306,23 @@ async function activate(context) {
         sshSession = new sessionModule.SshSession({ spawn, log: append });
         sessions.set(remoteAuthority, sshSession);
       }
-      const ready = await sshSession.ensureReady({ target, release, signal });
+      const ready = await sshSession.ensureReady({ target, release, signal, onProgress });
+      setStatus("connected", { alias, path: workspacePath });
       if (evidenceService) {
+        // Housekeeping only: the sweep re-hashes every surviving cached PDF on
+        // the remote, so it must not sit on the connect path, and a sweep
+        // failure must not fail an otherwise healthy connection. The service
+        // deduplicates by target/host/generation, so it still runs once.
         const publicSession = sshSession.getPublicSession();
-        await evidenceService.cleanupSession({
+        void (async () => evidenceService.cleanupSession({
           targetId,
           hostFingerprint: publicSession.hostFingerprint,
           generation: publicSession.generation,
           session: sshSession,
-        }, signal);
+        }, signal))().catch(error => {
+          append(`Remote evidence cleanup failed: ${error?.stack ?? error}`);
+        });
       }
-      setStatus("connected", { alias, path: workspacePath });
       return { alias, ready, session: sshSession, target };
     }
     catch (error) {
@@ -276,11 +338,23 @@ async function activate(context) {
     }
   };
 
+  const connectWithProgress = (remoteAuthority, options = {}) => {
+    const alias = (() => {
+      try { return targetForAuthority(remoteAuthority).alias; }
+      catch (_) { return null; }
+    })();
+    return withRemoteProgress(
+      alias ? `Connecting to ${alias}` : "Connecting to the SSH host",
+      options.signal,
+      (onProgress, signal) => ensureAuthoritySession(remoteAuthority, { ...options, onProgress, signal }),
+    );
+  };
+
   const resolver = {
     async resolve(remoteAuthority) {
       let alias;
       try {
-        const resolved = await ensureAuthoritySession(remoteAuthority, {
+        const resolved = await connectWithProgress(remoteAuthority, {
           statusState: sessions.has(remoteAuthority) ? "reconnecting" : "connecting",
         });
         alias = resolved.alias;
@@ -351,7 +425,7 @@ async function activate(context) {
     const remoteAuthority = authority.encodeAuthority(targetId);
     const existing = sessions.get(remoteAuthority);
     if (existing) await existing.dispose();
-    await ensureAuthoritySession(remoteAuthority, { statusState: "reconnecting" });
+    await connectWithProgress(remoteAuthority, { statusState: "reconnecting" });
     return evidenceContext(targetId);
   };
   const getZoteroApi = async () => {
@@ -419,7 +493,7 @@ async function activate(context) {
           }
         },
       }),
-      ensureAuthoritySession,
+      ensureAuthoritySession: connectWithProgress,
       confirmCreate: async ({ alias, path: remotePath }) => {
         const create = "Create Empty Folder";
         const selected = await vscode.window.showWarningMessage(
@@ -453,7 +527,7 @@ async function activate(context) {
     });
     const existing = sessions.get(remoteAuthority);
     if (existing) await existing.dispose();
-    const resolved = await ensureAuthoritySession(remoteAuthority, {
+    const resolved = await connectWithProgress(remoteAuthority, {
       statusState: "reconnecting",
       workspacePath: remoteUri.path,
     });
@@ -547,7 +621,12 @@ async function activate(context) {
       return processService.run(request, observer, signal);
     },
     stageEvidence(request, signal) {
-      return evidenceController.stageEvidence(request, signal);
+      return withRemoteProgress(
+        "Preparing the paper on the remote host",
+        signal,
+        (onProgress, staging) =>
+          evidenceController.stageEvidence(request, staging, onProgress),
+      );
     },
     revokeEvidence(request, signal) {
       return evidenceController.revokeEvidence(request, signal);

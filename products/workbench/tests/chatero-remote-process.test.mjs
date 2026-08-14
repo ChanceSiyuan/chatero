@@ -318,6 +318,31 @@ test("fixed helper process and stdin failures are classified as resumable SSH tr
   }
 });
 
+test("canonical cwd is resolved once per session generation and re-resolved after a reconnect", async () => {
+  const seen = [];
+  const fixture = serviceFixture({ canonical: value => {
+    seen.push(value);
+    return value;
+  } });
+  const runOnce = async () => {
+    const running = fixture.service.run({ command: "true", args: [], cwd: "/srv/work/sub", env: {} }, {});
+    await new Promise(resolve => setImmediate(resolve));
+    const channel = fixture.channels.at(-1);
+    channel.emitFrame({ type: "exit", code: 0, signal: null });
+    channel.finish();
+    await running;
+  };
+  await runOnce();
+  await runOnce();
+  assert.equal(seen.length, 1);
+  fixture.setGeneration(4);
+  await runOnce();
+  assert.deepEqual(seen, [
+    { root: "/srv/work", cwd: "/srv/work/sub" },
+    { root: "/srv/work", cwd: "/srv/work/sub" },
+  ]);
+});
+
 test("stale connection generations reject and ignore late bytes", async () => {
   const fixture = serviceFixture();
   const output = [];

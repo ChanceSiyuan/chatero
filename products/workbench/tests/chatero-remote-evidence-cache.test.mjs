@@ -1214,6 +1214,59 @@ test("terminal helper requests never consult drain after the frame is accepted",
   assert.equal(finalized.writes.some(value => value.toString().includes('"type":"abort"')), false);
 });
 
+test("stage frames carry 512 KiB and report transferred bytes without trusting the observer", async () => {
+  const bytes = Buffer.alloc(1024 * 1024 + 7, 0x41);
+  const digest = createHash("sha256").update(bytes).digest("hex");
+  const source = controlledSource(bytes);
+  const reads = [];
+  const counted = Object.freeze({
+    size: source.value.size,
+    read(offset, length) {
+      reads.push(length);
+      return source.value.read(offset, length);
+    },
+    close() { return source.value.close(); },
+  });
+  const channel = new FakeEvidenceChannel((frame, value) => {
+    if (frame.operation === "stage") {
+      value.emit({ type: "resume", offset: 0, prefixDigest: createHash("sha256").digest("hex") });
+    }
+    if (frame.type === "finalize") {
+      value.emit({
+        type: "complete",
+        createdAt: "2099-01-01T00:00:00.000Z",
+        digest,
+        size: bytes.length,
+        expiresAt: "2099-01-02T00:00:00.000Z",
+        remotePath: `/home/alice/.cache/chatero/evidence/${digest}.${"a".repeat(64)}.pdf`,
+      });
+      value.emitClose();
+    }
+  });
+  const progress = [];
+  const result = await runStageProtocol(channel, {
+    digest,
+    source: counted,
+    transferId: "4".repeat(32),
+    ttlSeconds: 86400,
+    targetId: TARGET_ID,
+    onProgress: value => {
+      progress.push(value.transferred);
+      if (progress.length === 1) throw new Error("an observer failure must not fail the transfer");
+    },
+  });
+
+  assert.equal(result.size, bytes.length);
+  const chunks = channel.writes
+    .map(value => JSON.parse(value.toString("utf8")))
+    .filter(frame => frame.type === "chunk")
+    .map(frame => Buffer.from(frame.data, "base64").length);
+  assert.deepEqual(chunks, [512 * 1024, 512 * 1024, 7]);
+  // Every frame is built from authorized reads at the 256 KiB Core maximum.
+  assert.deepEqual(reads, [262144, 262144, 262144, 262144, 7]);
+  assert.deepEqual(progress, [0, 524288, 1048576, 1048583]);
+});
+
 test("an accepted backpressured finalize waits for complete instead of drain", async () => {
   const bytes = Buffer.from("paper");
   const digest = createHash("sha256").update(bytes).digest("hex");

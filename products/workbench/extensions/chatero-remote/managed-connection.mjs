@@ -20,6 +20,14 @@ function createEvent() {
   };
 }
 
+// Node stream chunks are already `Uint8Array` instances backed by memory the
+// stream never reuses, so a view is equivalent to the copy it replaces.
+export function asChunkView(bytes) {
+  return bytes instanceof Uint8Array
+    ? new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+    : Uint8Array.from(bytes);
+}
+
 export function redactRemoteLog(value) {
   return String(value)
     .replace(/-----BEGIN [^-]+-----[\s\S]*?-----END [^-]+-----/gu, "[redacted key material]")
@@ -74,7 +82,9 @@ export function createManagedConnection(process, {
   };
 
   process.stdout.on("data", bytes => {
-    if (!closed && isCurrent()) dataEvent.fire(Uint8Array.from(bytes));
+    // Hand out an O(1) view over the chunk instead of an element-wise copy:
+    // this is every byte of workbench<->remote traffic.
+    if (!closed && isCurrent()) dataEvent.fire(asChunkView(bytes));
   });
   process.stderr.on("data", bytes => {
     if (isCurrent()) log(redactRemoteLog(Buffer.from(bytes).toString("utf8")));
@@ -107,7 +117,7 @@ export function createManagedConnection(process, {
     send(data) {
       if (closed || !isCurrent()) return;
       if (!(data instanceof Uint8Array)) throw new TypeError("managed connection sends Uint8Array data");
-      if (!process.stdin.write(Buffer.from(data)) && !waitingForDrain) {
+      if (!process.stdin.write(data) && !waitingForDrain) {
         waitingForDrain = {};
         waitingForDrain.promise = new Promise(resolve => { waitingForDrain.resolve = resolve; });
       }
