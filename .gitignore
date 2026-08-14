@@ -1,6 +1,9 @@
 .DS_Store
 node_modules
 build/
+# The vendored fork pdf.js build ships inside the reader bundle and must not
+# be swallowed by the build/ pattern above.
+!products/workbench/extensions/chatero-zotero/media/zotero-reader/pdf/build/
 .signatures.json
 tmp
 app/win/codesign
