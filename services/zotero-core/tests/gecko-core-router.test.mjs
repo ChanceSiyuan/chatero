@@ -551,16 +551,24 @@ test("cancels an in-flight search without changing the session", async () => {
 
 test("publishes Core-global events and serves capability-gated bounded replay", async () => {
   const { router } = createRouter();
-  const session = await handshake(router, ["events:read", "library:search"]);
+  const session = await handshake(router, ["events:read", "library:search", "library:write"]);
 
   assert.equal(session.eventSequence, 0);
-  const searched = await router.handle(request(session, "library.search", { limit: 50, query: "tensor" }));
-  assert.equal(searched.event.sequence, 1);
-  assert.equal(searched.event.profileEpoch, session.profileEpoch);
+  assert.equal((await router.handle(request(session, "library.search", { limit: 50, query: "tensor" }))).event, undefined);
+  const updated = await router.handle(request(session, "library.item-update", {
+    expectedRevision: 0,
+    expectedVersion: 4,
+    fields: [{ field: "title", value: "Updated" }],
+    idempotencyKey: "events-item-update-0001",
+    itemKey: "ITEM0001",
+    libraryId: 1,
+  }));
+  assert.equal(updated.event.sequence, 1);
+  assert.equal(updated.event.profileEpoch, session.profileEpoch);
   assert.deepEqual((await router.handle(request(session, "core.events", {
     afterSequence: 0,
     limit: 50,
-  }))).result.events, [searched.event]);
+  }))).result.events, [updated.event]);
 
   const { router: forbidden } = createRouter();
   const withoutEvents = await handshake(forbidden, ["library:read"]);
@@ -572,8 +580,15 @@ test("publishes Core-global events and serves capability-gated bounded replay", 
 
 test("resumes an authenticated session and returns bounded missed events", async () => {
 	const { router } = createRouter();
-	const session = await handshake(router, ["library:search"]);
-	await router.handle(request(session, "library.search", { limit: 50, query: "tensor" }));
+	const session = await handshake(router, ["library:search", "library:write"]);
+	await router.handle(request(session, "library.item-update", {
+		expectedRevision: 0,
+		expectedVersion: 4,
+		fields: [{ field: "title", value: "Updated" }],
+		idempotencyKey: "resume-item-update-0001",
+		itemKey: "ITEM0001",
+		libraryId: 1,
+	}));
 	const resumed = (await router.handle({
 		id: "resume-1",
 		method: "core.resume",
@@ -586,9 +601,9 @@ test("resumes an authenticated session and returns bounded missed events", async
 		},
 	})).result;
 	assert.equal(resumed.events.length, 1);
-	assert.equal(resumed.events[0].topic, "library.search.completed");
+	assert.equal(resumed.events[0].topic, "library.item.changed");
 	assert.equal(resumed.latestSequence, 1);
-	assert.deepEqual(resumed.capabilities, ["library:search"]);
+	assert.deepEqual(resumed.capabilities, ["library:search", "library:write"]);
 	await assert.rejects(router.handle({ id: "resume-bad", method: "core.resume", params: {
 		afterSequence: 0, limit: 100, profileEpoch: "other", protocolVersion: "1.0", sessionToken: session.sessionToken,
 	} }), /profile epoch/);
@@ -601,7 +616,9 @@ test("renews an expired authenticated session while rejecting ordinary expired r
 	currentTime = session.expiresAt + 1;
 	await assert.rejects(router.handle(request(session, "library.search", { limit: 10, query: "tensor" }, {
 		deadline: currentTime + 100,
-	})), /session expired/);
+	})), error => error.message === "session expired" && error.code === "SESSION_EXPIRED"
+		&& mapGeckoCoreError(error).code === "UNAUTHORIZED"
+		&& mapGeckoCoreError(error).details.kind === "SESSION_EXPIRED");
 	const renewed = (await router.handle({
 		id: "resume-expired",
 		method: "core.resume",

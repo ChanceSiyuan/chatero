@@ -8,12 +8,19 @@ function assertPlainObject(value) {
   }
 }
 
+function isDigit(code) {
+  return code >= 0x30 && code <= 0x39;
+}
+
 function parseJSONWithoutDuplicateKeys(text) {
   let offset = 0;
-  const whitespace = /\s/;
 
   function skipWhitespace() {
-    while (offset < text.length && whitespace.test(text[offset])) offset += 1;
+    while (offset < text.length) {
+      const code = text.charCodeAt(offset);
+      if (code !== 0x20 && code !== 0x09 && code !== 0x0a && code !== 0x0d) break;
+      offset += 1;
+    }
   }
 
   function expect(character) {
@@ -44,11 +51,45 @@ function parseJSONWithoutDuplicateKeys(text) {
     throw new Error("truncated JSON string");
   }
 
+  // Scans -?(0|[1-9]\d*)(\.\d+)?([eE][+-]?\d+)? without copying the rest of the frame.
   function parseNumber() {
     skipWhitespace();
-    const match = text.slice(offset).match(/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/);
-    if (!match) throw new Error(`invalid JSON number at byte ${offset}`);
-    offset += match[0].length;
+    const start = offset;
+    if (text.charCodeAt(offset) === 0x2d) offset += 1;
+    const leading = text.charCodeAt(offset);
+    if (leading === 0x30) {
+      offset += 1;
+    }
+    else if (leading >= 0x31 && leading <= 0x39) {
+      while (isDigit(text.charCodeAt(offset))) offset += 1;
+    }
+    else {
+      offset = start;
+      throw new Error(`invalid JSON number at byte ${offset}`);
+    }
+    if (text.charCodeAt(offset) === 0x2e) {
+      const mark = offset;
+      offset += 1;
+      if (isDigit(text.charCodeAt(offset))) {
+        while (isDigit(text.charCodeAt(offset))) offset += 1;
+      }
+      else {
+        offset = mark;
+      }
+    }
+    const exponent = text.charCodeAt(offset);
+    if (exponent === 0x65 || exponent === 0x45) {
+      const mark = offset;
+      offset += 1;
+      const sign = text.charCodeAt(offset);
+      if (sign === 0x2b || sign === 0x2d) offset += 1;
+      if (isDigit(text.charCodeAt(offset))) {
+        while (isDigit(text.charCodeAt(offset))) offset += 1;
+      }
+      else {
+        offset = mark;
+      }
+    }
   }
 
   function parseArray() {
@@ -98,7 +139,7 @@ function parseJSONWithoutDuplicateKeys(text) {
     if (character === "{") return parseObject();
     if (character === "[") return parseArray();
     if (character === '"') return parseString();
-    if (character === "-" || /\d/.test(character || "")) return parseNumber();
+    if (character === "-" || isDigit(text.charCodeAt(offset))) return parseNumber();
     for (const literal of ["true", "false", "null"]) {
       if (text.startsWith(literal, offset)) {
         offset += literal.length;
@@ -127,7 +168,10 @@ export function encodeFrame(value, { maxFrameBytes = MAX_FRAME_BYTES } = {}) {
 }
 
 export class FrameDecoder {
-  #buffer = Buffer.alloc(0);
+  // Chunks are held until a whole header or body is available, so a large frame arriving
+  // over many socket reads is copied once instead of once per read.
+  #chunks = [];
+  #pending = 0;
   #expectedLength = null;
   #maxFrameBytes;
   #textDecoder = new TextDecoder("utf-8", { fatal: true });
@@ -139,23 +183,46 @@ export class FrameDecoder {
     this.#maxFrameBytes = maxFrameBytes;
   }
 
+  #consume(length) {
+    const first = this.#chunks[0];
+    if (first.length >= length) {
+      this.#pending -= length;
+      if (first.length === length) this.#chunks.shift();
+      else this.#chunks[0] = first.subarray(length);
+      return first.subarray(0, length);
+    }
+    const taken = Buffer.allocUnsafe(length);
+    let filled = 0;
+    while (filled < length) {
+      const part = this.#chunks[0];
+      const size = Math.min(part.length, length - filled);
+      part.copy(taken, filled, 0, size);
+      filled += size;
+      if (size === part.length) this.#chunks.shift();
+      else this.#chunks[0] = part.subarray(size);
+    }
+    this.#pending -= length;
+    return taken;
+  }
+
   push(chunk) {
     if (!(chunk instanceof Uint8Array)) throw new Error("frame chunk must be bytes");
-    this.#buffer = Buffer.concat([this.#buffer, Buffer.from(chunk)]);
+    if (chunk.length) {
+      this.#chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength));
+      this.#pending += chunk.length;
+    }
     const messages = [];
     while (true) {
       if (this.#expectedLength === null) {
-        if (this.#buffer.length < 4) break;
-        this.#expectedLength = this.#buffer.readUInt32BE(0);
-        this.#buffer = this.#buffer.subarray(4);
+        if (this.#pending < 4) break;
+        this.#expectedLength = this.#consume(4).readUInt32BE(0);
         if (this.#expectedLength === 0) throw new Error("Zotero Core frame length cannot be zero");
         if (this.#expectedLength > this.#maxFrameBytes) {
           throw new Error(`Zotero Core frame length ${this.#expectedLength} exceeds limit ${this.#maxFrameBytes}`);
         }
       }
-      if (this.#buffer.length < this.#expectedLength) break;
-      const body = this.#buffer.subarray(0, this.#expectedLength);
-      this.#buffer = this.#buffer.subarray(this.#expectedLength);
+      if (this.#pending < this.#expectedLength) break;
+      const body = this.#consume(this.#expectedLength);
       this.#expectedLength = null;
       let text;
       try {
@@ -173,7 +240,7 @@ export class FrameDecoder {
 
   end() {
     if (this.#expectedLength !== null) throw new Error("truncated frame body");
-    if (this.#buffer.length !== 0) throw new Error("truncated frame header");
+    if (this.#pending !== 0) throw new Error("truncated frame header");
   }
 }
 

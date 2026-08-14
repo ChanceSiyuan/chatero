@@ -14,6 +14,10 @@ const CORE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const DEFAULT_FIXTURE_CORE = join(CORE_ROOT, "fixture", "fixture-core.mjs");
 const SESSION_PREFIX = "chatero-zotero-core-";
 const MARKER_FILE = ".chatero-session.json";
+const FIXTURE_READY_TIMEOUT_MS = 5000;
+const GECKO_READY_TIMEOUT_MS = 60_000;
+const READY_POLL_MIN_MS = 20;
+const READY_POLL_MAX_MS = 200;
 
 export function buildCoreLaunchPlan({ geckoExecutable, profileDirectory, fixtureCorePath = DEFAULT_FIXTURE_CORE } = {}) {
   const canonicalProfile = resolve(profileDirectory);
@@ -109,7 +113,7 @@ export async function startCore({
   fixtureSearchDelayMs = 0,
   geckoExecutable,
   requestedCapabilities = CAPABILITIES,
-  readyTimeoutMs = 5000,
+  readyTimeoutMs,
   upstreamVersion = "7.0-fixture",
 } = {}) {
   const profileEpoch = randomUUID();
@@ -153,6 +157,10 @@ export async function startCore({
   })}\n`, { mode: 0o600 });
 
   const launch = buildCoreLaunchPlan({ fixtureCorePath, geckoExecutable, profileDirectory });
+  // A real Gecko Core opens the SQLite profile, migrates its schema, installs bundled
+  // translators/styles and replays durable receipts before it can listen, so it needs far
+  // more headroom than the in-process fixture. An explicit caller value still wins.
+  const resolvedReadyTimeoutMs = readyTimeoutMs ?? (launch.mode === "gecko" ? GECKO_READY_TIMEOUT_MS : FIXTURE_READY_TIMEOUT_MS);
   const bootstrapHandle = await open(bootstrapPath, "r");
   let child;
   try {
@@ -191,7 +199,8 @@ export async function startCore({
   });
 
   let client;
-  const deadline = Date.now() + readyTimeoutMs;
+  const deadline = Date.now() + resolvedReadyTimeoutMs;
+  let pollDelay = READY_POLL_MIN_MS;
   try {
     while (!client && Date.now() < deadline) {
       if (spawnError) throw spawnError;
@@ -209,13 +218,15 @@ export async function startCore({
       }
       catch (error) {
         if (!["ENOENT", "ECONNREFUSED"].includes(error?.code)) throw error;
-        await wait(20);
+        // Back off so a slow real-profile start does not create hundreds of sockets.
+        await wait(Math.min(pollDelay, Math.max(1, deadline - Date.now())));
+        pollDelay = Math.min(pollDelay * 2, READY_POLL_MAX_MS);
       }
     }
     if (!client) {
       const startupError = await readFile(startupErrorPath, "utf8").catch(error => error?.code === "ENOENT" ? "" : Promise.reject(error));
       let diagnostics = (startupError + stdout + stderr).trim();
-      throw new Error(`Zotero Core did not become ready within ${readyTimeoutMs}ms${diagnostics ? `: ${diagnostics}` : ""}`);
+      throw new Error(`Zotero Core did not become ready within ${resolvedReadyTimeoutMs}ms${diagnostics ? `: ${diagnostics}` : ""}`);
     }
   }
   catch (error) {

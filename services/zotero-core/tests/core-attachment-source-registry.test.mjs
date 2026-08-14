@@ -88,7 +88,46 @@ test("attachment source requests reject unknown fields and oversized reads", asy
     attachmentKey: "PDF00001", extra: true, length: 1, libraryId: 1, offset: 0, profileEpoch: "epoch-1", sessionToken: "session-token-0001", sourceId: opened.sourceId,
   }), /unknown field/);
   await assert.rejects(registry.read({
-    attachmentKey: "PDF00001", length: 262145, libraryId: 1, offset: 0, profileEpoch: "epoch-1", sessionToken: "session-token-0001", sourceId: opened.sourceId,
+    attachmentKey: "PDF00001", length: 524289, libraryId: 1, offset: 0, profileEpoch: "epoch-1", sessionToken: "session-token-0001", sourceId: opened.sourceId,
   }), /length/);
   await registry.dispose();
+});
+
+test("reads slide the source lease without exceeding its absolute lifetime", async () => {
+  let current = 1000;
+  const closed = { count: 0 };
+  const timers = [];
+  const registry = createCoreAttachmentSourceRegistry({
+    now: () => current,
+    randomBytes: () => new Uint8Array(32).fill(3),
+    setTimeout: (callback, delay) => { timers.push({ armedAt: current, callback, delay }); return timers.length; },
+    clearTimeout: () => {},
+  });
+  const opened = registry.open({
+    attachmentKey: "PDF00001", libraryId: 1, profileEpoch: "epoch-1", sessionToken: "session-token-0001",
+    source: source(Uint8Array.from([1, 2, 3, 4]), closed),
+  });
+  const ceiling = 1000 + 10 * 60_000;
+  const read = () => registry.read({
+    attachmentKey: "PDF00001", length: 1, libraryId: 1, offset: 0, profileEpoch: "epoch-1", sessionToken: "session-token-0001", sourceId: opened.sourceId,
+  });
+
+  // A read just before the original deadline slides it a full lifetime forward.
+  current = 60_000;
+  await read();
+  assert.equal(timers.at(-1).delay, 60_000);
+
+  // Continued reads keep the source usable far past that first deadline.
+  while (current + 50_000 < ceiling) {
+    current += 50_000;
+    await read();
+  }
+  assert.equal(closed.count, 0);
+
+  // The absolute ceiling still bounds every armed deadline, and expiry closes once.
+  assert.ok(timers.every(timer => timer.armedAt + timer.delay <= ceiling));
+  current = ceiling;
+  await assert.rejects(read(), error => error.code === "UNAVAILABLE");
+  await Promise.resolve();
+  assert.equal(closed.count, 1);
 });

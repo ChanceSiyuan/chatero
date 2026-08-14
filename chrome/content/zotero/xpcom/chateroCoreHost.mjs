@@ -24,6 +24,7 @@ import { createGeckoCoreRequestRouter, mapGeckoCoreError } from "./chateroCoreRe
 import { createCoreTransactionRegistry, createZoteroCoreTransactionStore } from "./chateroCoreTransactionRegistry.mjs";
 
 const MAX_BOOTSTRAP_BYTES = 1024;
+const WRITE_WINDOW_BYTES = 0x10000;
 
 export function createGeckoCoreConnection({ onFatal = () => {}, profileEpoch, router, subscribeEvents = router?.subscribeEvents, write } = {}) {
 	if (typeof profileEpoch !== "string" || !profileEpoch) throw new Error("Core connection profileEpoch is required");
@@ -130,14 +131,22 @@ async function writeAll(output, bytes) {
 	let binary = bytesToBinaryString(bytes);
 	let offset = 0;
 	while (offset < binary.length) {
-		try {
-			let written = output.write(binary.slice(offset), binary.length - offset);
+		// Copy a bounded window instead of the whole remaining tail, so a partial write or a
+		// WOULD_BLOCK retry on a large frame does not re-copy hundreds of kilobytes each time.
+		let window = binary.slice(offset, offset + WRITE_WINDOW_BYTES);
+		while (window.length) {
+			let written;
+			try {
+				written = output.write(window, window.length);
+			}
+			catch (error) {
+				if (error?.result !== Cr.NS_BASE_STREAM_WOULD_BLOCK) throw error;
+				await waitUntilWritable(output);
+				continue;
+			}
 			if (!written) throw new Error("Core socket accepted a zero-byte write");
 			offset += written;
-		}
-		catch (error) {
-			if (error?.result !== Cr.NS_BASE_STREAM_WOULD_BLOCK) throw error;
-			await waitUntilWritable(output);
+			window = written === window.length ? "" : window.slice(written);
 		}
 	}
 }

@@ -44,7 +44,11 @@ export function openGeckoAttachmentSource(path) {
 			async read(offset, length) {
 				if (closed) throw unavailable("Zotero attachment source is closed");
 				seekable.seek(Ci.nsISeekableStream.NS_SEEK_SET, offset);
-				return Uint8Array.from(binary.readByteArray(length));
+				// readArrayBuffer fills the destination directly -- readByteArray would
+				// materialize a JS number array of the whole chunk first.
+				let buffer = new ArrayBuffer(length);
+				let read = binary.readArrayBuffer(length, buffer);
+				return read === length ? new Uint8Array(buffer) : new Uint8Array(buffer, 0, read);
 			},
 			async close() {
 				if (closed) return;

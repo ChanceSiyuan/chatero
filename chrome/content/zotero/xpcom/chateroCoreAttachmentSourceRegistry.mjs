@@ -14,9 +14,13 @@
 */
 
 const SOURCE_LIFETIME_MS = 60_000;
-const MAX_READ_BYTES = 256 * 1024;
+// Absolute ceiling: a source that keeps being read still dies, so an abandoned or
+// runaway handle can never be held open indefinitely.
+const MAX_SOURCE_LIFETIME_MS = 10 * 60_000;
+const MAX_READ_BYTES = 512 * 1024;
 const SOURCE_ID_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 const KEY_PATTERN = /^[A-Z0-9]{8}$/;
+const BASE64URL_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
 function unavailable() {
 	let error = new Error("The authorized attachment source is unavailable");
@@ -38,12 +42,34 @@ function validateBinding(value) {
 	}
 }
 
+// Direct, unpadded base64url -- identical output to btoa(binary).replace(...) without the
+// intermediate binary string and the three whole-payload regex replacements.
 function encode(bytes) {
-	let binary = "";
-	for (let offset = 0; offset < bytes.length; offset += 0x8000) {
-		binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+	let chunks = [];
+	let piece = "";
+	let index = 0;
+	let triples = bytes.length - 2;
+	while (index < triples) {
+		let value = (bytes[index] << 16) | (bytes[index + 1] << 8) | bytes[index + 2];
+		piece += BASE64URL_ALPHABET[(value >> 18) & 63] + BASE64URL_ALPHABET[(value >> 12) & 63]
+			+ BASE64URL_ALPHABET[(value >> 6) & 63] + BASE64URL_ALPHABET[value & 63];
+		index += 3;
+		if (piece.length >= 0x8000) {
+			chunks.push(piece);
+			piece = "";
+		}
 	}
-	return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+	if (bytes.length - index === 1) {
+		let value = bytes[index];
+		piece += BASE64URL_ALPHABET[value >> 2] + BASE64URL_ALPHABET[(value << 4) & 63];
+	}
+	else if (bytes.length - index === 2) {
+		let value = (bytes[index] << 8) | bytes[index + 1];
+		piece += BASE64URL_ALPHABET[value >> 10] + BASE64URL_ALPHABET[(value >> 4) & 63]
+			+ BASE64URL_ALPHABET[(value << 2) & 63];
+	}
+	chunks.push(piece);
+	return chunks.join("");
 }
 
 function defaultRandomBytes(length) {
@@ -99,10 +125,11 @@ export function createCoreAttachmentSourceRegistry({
 				sourceId = null;
 			}
 			if (!sourceId) throw new Error("could not allocate an attachment source id");
-			let expiresAt = now() + SOURCE_LIFETIME_MS;
+			let opened = now();
+			let expiresAt = opened + SOURCE_LIFETIME_MS;
 			let timer = setTimeout(() => consume(sourceId, true), SOURCE_LIFETIME_MS);
 			timer?.unref?.();
-			entries.set(sourceId, { ...value, expiresAt, timer });
+			entries.set(sourceId, { ...value, expiresAt, hardExpiresAt: opened + MAX_SOURCE_LIFETIME_MS, timer });
 			return Object.freeze({ expiresAt, size: value.source.size, sourceId });
 		},
 		async read(value) {
@@ -127,6 +154,16 @@ export function createCoreAttachmentSourceRegistry({
 					|| value.offset + bytes.byteLength > entry.source.size) {
 				consume(value.sourceId, true);
 				throw unavailable();
+			}
+			// Slide the lease on use so a long sequential transfer cannot expire mid-file,
+			// while the absolute ceiling still bounds the source's total lifetime.
+			let current = now();
+			let renewed = Math.min(current + SOURCE_LIFETIME_MS, entry.hardExpiresAt);
+			if (entries.get(value.sourceId) === entry && renewed > entry.expiresAt) {
+				entry.expiresAt = renewed;
+				clearTimeout(entry.timer);
+				entry.timer = setTimeout(() => consume(value.sourceId, true), renewed - current);
+				entry.timer?.unref?.();
 			}
 			return Object.freeze({ bytesBase64url: encode(bytes), eof: value.offset + bytes.byteLength === entry.source.size });
 		},

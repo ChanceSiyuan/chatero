@@ -130,6 +130,9 @@ export function mapGeckoCoreError(error) {
 		};
 	}
 	if (/missing capability/.test(message)) return { code: "FORBIDDEN", message, retriable: false };
+	if (error?.code === "SESSION_EXPIRED") {
+		return { code: "UNAUTHORIZED", details: { kind: "SESSION_EXPIRED" }, message, retriable: false };
+	}
 	if (/deadline|profile epoch|session|authentication|bootstrap|protocol version/.test(message)) {
 		return { code: "UNAUTHORIZED", message, retriable: false };
 	}
@@ -171,7 +174,10 @@ export function createGeckoCoreRequestRouter(options = {}) {
 		let session = sessions.get(message.sessionToken);
 		if (!session) throw new Error("session authentication failed");
 		if (session.expiresAt <= current) {
-			throw new Error("session expired");
+			// Typed so the client can key its renew-and-retry off a code rather than this text.
+			let error = new Error("session expired");
+			error.code = "SESSION_EXPIRED";
+			throw error;
 		}
 		if (capability && !session.capabilities.has(capability)) throw new Error(`session is missing capability ${capability}`);
 	}
@@ -567,11 +573,9 @@ export function createGeckoCoreRequestRouter(options = {}) {
 				let controller = new AbortController();
 				active.set(message.cancellationId, controller);
 				try {
-					let result = await adapter.search(message.params, { signal: controller.signal });
-					return {
-						event: eventJournal.publish("library.search.completed", { count: result.total, query: message.params.query }),
-						result,
-					};
+					// library.search is read-only, so it publishes no journal event -- an event here
+					// would make every event consumer re-run the search that produced it.
+					return { result: await adapter.search(message.params, { signal: controller.signal }) };
 				}
 				finally {
 					if (active.get(message.cancellationId) === controller) active.delete(message.cancellationId);

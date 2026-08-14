@@ -377,7 +377,7 @@ test("cancels in-flight work and keeps the authenticated session usable", async 
 test("delivers monotonic Core events independently of request responses", async () => {
   const { startCore } = await import("../supervisor/core-supervisor.mjs");
   const { profileDirectory } = await createProfile();
-  const core = await startCore({ profileDirectory, fixtureItems });
+  const core = await startCore({ profileDirectory, fixtureItemFacts, fixtureItems });
   running.push(core);
   const event = new Promise(resolvePromise => {
     const dispose = core.client.onEvent(value => {
@@ -386,18 +386,40 @@ test("delivers monotonic Core events independently of request responses", async 
     });
   });
 
-  await core.client.request("library.search", { query: "white", limit: 10 });
+  await core.client.request("library.item-update", {
+    expectedRevision: 0,
+    expectedVersion: 8,
+    fields: [{ field: "title", value: "Updated" }],
+    idempotencyKey: "fixture-item-update-event-0001",
+    itemKey: "FISHER01",
+    libraryId: 1,
+  });
 
   const received = await event;
   assert.ok(Number.isSafeInteger(received.occurredAt));
   assert.deepEqual(received, {
     event: true,
     occurredAt: received.occurredAt,
-    payload: { count: 1, query: "white" },
+    payload: { identities: [{ itemKey: "FISHER01", libraryId: 1 }], revision: 1 },
     profileEpoch: core.profileEpoch,
     sequence: 1,
-    topic: "library.search.completed",
+    topic: "library.item.changed",
   });
+});
+
+test("does not publish an event for the read-only library.search method", async () => {
+  const { startCore } = await import("../supervisor/core-supervisor.mjs");
+  const { profileDirectory } = await createProfile();
+  const core = await startCore({ profileDirectory, fixtureItems });
+  running.push(core);
+  const received = [];
+  core.client.onEvent(value => received.push(value));
+
+  await core.client.request("library.search", { query: "white", limit: 10 });
+  await new Promise(resolvePromise => setTimeout(resolvePromise, 25));
+
+  assert.deepEqual(received, []);
+  assert.deepEqual((await core.client.request("core.events", { afterSequence: 0, limit: 50 })).events, []);
 });
 
 test("reconnects with the short-lived session token without reusing bootstrap", async () => {

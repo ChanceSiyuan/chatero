@@ -49,6 +49,9 @@ function rpcError(error) {
     };
   }
   if (/missing capability/.test(message)) return { code: "FORBIDDEN", message, retriable: false };
+  if (error?.code === "SESSION_EXPIRED") {
+    return { code: "UNAUTHORIZED", details: { kind: "SESSION_EXPIRED" }, message, retriable: false };
+  }
   if (/deadline|profile epoch|session|authentication|protocol version/.test(message)) {
     return { code: "UNAUTHORIZED", message, retriable: false };
   }
@@ -908,10 +911,9 @@ async function main() {
         ...(nextOffset < matches.length && { nextCursor: String(nextOffset) }),
         total: matches.length,
       };
-      return {
-        event: eventJournal.publish("library.search.completed", { count: result.total, query: message.params.query }),
-        result,
-      };
+      // library.search is read-only, so it publishes no journal event -- an event here
+      // would make every event consumer re-run the search that produced it.
+      return { result };
     }
     throw new Error(`unknown method ${message.method}`);
   };

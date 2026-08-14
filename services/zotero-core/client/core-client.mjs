@@ -61,6 +61,13 @@ export async function connectCore({
   let session = null;
   let missedEvents = [];
   let renewal = null;
+  let keepalive = null;
+
+  const stopKeepalive = () => {
+    if (!keepalive) return;
+    clearTimeout(keepalive);
+    keepalive = null;
+  };
 
   const rejectPending = error => {
     for (const request of pending.values()) request.reject(error);
@@ -99,6 +106,7 @@ export async function connectCore({
   socket.on("error", error => rejectPending(error));
   socket.on("close", () => {
     closed = true;
+    stopKeepalive();
     rejectPending(new Error("Zotero Core connection closed"));
   });
 
@@ -189,12 +197,30 @@ export async function connectCore({
     }
   }
 
+  // Renew halfway through the session lifetime so an idle period does not cost the next
+  // request a failed round trip plus a resume plus a retry. The reactive path above stays
+  // as the fallback when a renewal is missed or fails.
+  function scheduleKeepalive() {
+    stopKeepalive();
+    if (closed) return;
+    const lifetime = Number.isSafeInteger(session?.expiresAt) ? session.expiresAt - now() : 0;
+    if (lifetime <= 0) return;
+    keepalive = setTimeout(() => {
+      keepalive = null;
+      if (closed) return;
+      void renewSession().then(scheduleKeepalive, () => {});
+    }, Math.max(1000, Math.floor(lifetime / 2)));
+    keepalive?.unref?.();
+  }
+
   async function request(method, params, options) {
     try {
       return await send(method, params, options);
     }
     catch (error) {
-      if (method === "core.resume" || error?.code !== "UNAUTHORIZED" || error?.message !== "session expired") throw error;
+      // Prefer the typed contract; the message match stays as a fallback for one release.
+      const expired = error?.details?.kind === "SESSION_EXPIRED" || error?.message === "session expired";
+      if (method === "core.resume" || error?.code !== "UNAUTHORIZED" || !expired) throw error;
       await renewSession();
       return send(method, params, options);
     }
@@ -236,6 +262,7 @@ export async function connectCore({
     socket.destroy();
     throw error;
   }
+  scheduleKeepalive();
 
   return Object.freeze({
     capabilities: Object.freeze([...session.capabilities]),
@@ -265,6 +292,7 @@ export async function connectCore({
     close() {
       if (closed) return;
       closed = true;
+      stopKeepalive();
       socket.end();
       rejectPending(new Error("Zotero Core client closed"));
     },

@@ -122,7 +122,10 @@ export class SessionAuthority {
     const session = this.#sessions.get(request.sessionToken);
     if (!session) throw new Error("session authentication failed");
     if (session.expiresAt <= currentTime) {
-      throw new Error("session expired");
+      // Typed so the client can key its renew-and-retry off a code rather than this text.
+      const error = new Error("session expired");
+      error.code = "SESSION_EXPIRED";
+      throw error;
     }
     if (requiredCapability && !session.capabilities.has(requiredCapability)) {
       throw new Error(`session is missing capability ${requiredCapability}`);
