@@ -1,17 +1,10 @@
-import { accessSync, constants, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
-const DEFAULT_BUBBLEWRAP = "/usr/bin/bwrap";
+import { discoverExecutable, isExecutableFile } from "./sandbox-executable.mjs";
 
-function executableExists(path) {
-  try {
-    const metadata = statSync(path);
-    if (!metadata.isFile()) return false;
-    accessSync(path, constants.X_OK);
-    return true;
-  }
-  catch { return false; }
-}
+// Resolved once here so a host without a writable /usr still works: bwrap
+// installed under the user's own prefix is found without configuration.
+const DEFAULT_BUBBLEWRAP = discoverExecutable({ name: "bwrap" });
 
 // Same posture as the Quarto Linux sandbox: the filesystem allowlist is the
 // security boundary -- the user home and workspace are never mounted, writes
@@ -28,10 +21,11 @@ const LINUX_OPTIONAL_READ_ONLY = Object.freeze([
 ]);
 
 export function buildSafeLatexSandbox({
-  bubblewrapExecutable = DEFAULT_BUBBLEWRAP,
+  binDirectory,
+  bubblewrapExecutable = DEFAULT_BUBBLEWRAP.kind === "found" ? DEFAULT_BUBBLEWRAP.path : "",
   invocation,
   platform = process.platform,
-  probeSandboxExecutable = executableExists,
+  probeSandboxExecutable = isExecutableFile,
   runtimeRoots,
   snapshotRoot,
   temporaryRoot,
@@ -73,7 +67,9 @@ export function buildSafeLatexSandbox({
       HOME: temporaryRoot,
       LANG: "C.UTF-8",
       LC_ALL: "C.UTF-8",
-      PATH: `${dirname(invocation.file)}:/usr/bin:/bin`,
+      // The TeX engines live beside latexmk in the distribution's bin
+      // directory, which is not where a symlinked latexmk resolves to.
+      PATH: `${binDirectory || dirname(invocation.file)}:/usr/bin:/bin`,
       TEXMFCONFIG: join(temporaryRoot, "texmf-config"),
       TEXMFHOME: join(temporaryRoot, "texmf-home"),
       TEXMFVAR: join(temporaryRoot, "texmf-var"),

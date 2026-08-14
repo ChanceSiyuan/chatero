@@ -1165,6 +1165,10 @@
           "destination": "extensions/chatero-documentation/safe-quarto-sandbox.mjs"
         },
         {
+          "source": "products/workbench/extensions/chatero-documentation/sandbox-executable.mjs",
+          "destination": "extensions/chatero-documentation/sandbox-executable.mjs"
+        },
+        {
           "source": "products/workbench/extensions/chatero-documentation/settlement-executor.mjs",
           "destination": "extensions/chatero-documentation/settlement-executor.mjs"
         },

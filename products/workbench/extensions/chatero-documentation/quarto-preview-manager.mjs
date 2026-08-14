@@ -209,6 +209,7 @@ export async function registerQuartoPreview({ vscode, context, manager, platform
           executionMode: () => (vscode.env?.remoteName === "chatero-remote"
             && remoteConfiguration()?.get("allowExecution") === true ? "sandboxed" : "forbid"),
           runtimeResolver: () => resolveVerifiedQuartoRuntime({
+            bubblewrapExecutable: remoteConfiguration()?.get("bubblewrapPath"),
             executable: remoteConfiguration()?.get("executablePath"),
             platform,
             sha256Allowlist: remoteConfiguration()?.get("sha256Allowlist"),

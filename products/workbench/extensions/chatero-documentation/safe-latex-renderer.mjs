@@ -209,6 +209,8 @@ export class SafeLatexRenderer {
       runtime: this.runtime,
     });
     const sandbox = this.sandboxFactory({
+      ...(this.runtime.binDirectory && { binDirectory: this.runtime.binDirectory }),
+      ...(this.runtime.bubblewrapExecutable && { bubblewrapExecutable: this.runtime.bubblewrapExecutable }),
       invocation,
       runtimeRoots: this.runtime.runtimeRoots,
       snapshotRoot: root,

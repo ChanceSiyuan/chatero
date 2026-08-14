@@ -3,8 +3,10 @@ import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { lstat, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, resolve, sep } from "node:path";
+import { basename, dirname, resolve, sep } from "node:path";
 import { promisify } from "node:util";
+
+import { discoverExecutable, texBinDirectories } from "./sandbox-executable.mjs";
 
 const execute = promisify(execFile);
 const SHA256_HEX = /^[0-9a-f]{64}$/u;
@@ -39,6 +41,8 @@ function unsafePrefix(root, home) {
 // this pin, is the security boundary. LaTeX compilation is remote-only: there
 // is no macOS branch by design.
 export async function resolveVerifiedLatexRuntime({
+  bubblewrapExecutable,
+  discover = discoverExecutable,
   executable,
   hashFile = sha256File,
   homeDirectory = homedir(),
@@ -48,7 +52,23 @@ export async function resolveVerifiedLatexRuntime({
   sha256Allowlist = [],
 } = {}) {
   if (platform !== "linux") return unavailable("runtime-unavailable");
-  if (typeof executable !== "string" || resolve(executable) !== executable) return unavailable("runtime-unavailable");
+  // Neither tool has to live under /usr: a host where the operator cannot
+  // write system directories is the normal case, so both are discovered from
+  // the user-local install locations unless a path is configured.
+  const sandbox = discover({ configured: bubblewrapExecutable, name: "bwrap", homeDirectory });
+  if (sandbox.kind !== "found") {
+    return unavailable(sandbox.kind === "configured-unusable" ? "sandbox-path-unusable" : "sandbox-unavailable");
+  }
+  const found = discover({
+    configured: executable,
+    extraDirectories: texBinDirectories(homeDirectory),
+    homeDirectory,
+    name: "latexmk",
+  });
+  if (found.kind !== "found") {
+    return unavailable(found.kind === "configured-unusable" ? "runtime-path-unusable" : "runtime-unavailable");
+  }
+  executable = found.path;
   let canonical;
   try {
     canonical = await realpath(executable);
@@ -59,11 +79,27 @@ export async function resolveVerifiedLatexRuntime({
   const allowlist = (Array.isArray(sha256Allowlist) ? sha256Allowlist : [])
     .filter(value => typeof value === "string" && SHA256_HEX.test(value.toLowerCase()))
     .map(value => value.toLowerCase());
-  if (allowlist.length === 0) return unavailable("runtime-unpinned");
   let sha256;
   try { sha256 = await hashFile(canonical); }
   catch { return unavailable("runtime-unavailable"); }
-  if (typeof sha256 !== "string" || !allowlist.includes(sha256.toLowerCase())) return unavailable("runtime-digest-mismatch");
+  if (typeof sha256 !== "string") return unavailable("runtime-unavailable");
+  sha256 = sha256.toLowerCase();
+  // Report what was found and its digest, so pinning is a copy of two values
+  // out of the message rather than a hunt for the binary.
+  if (allowlist.length === 0) {
+    return Object.freeze({
+      kind: "preview-unavailable",
+      reason: "runtime-unpinned",
+      discovered: Object.freeze({ path: canonical, sha256 }),
+    });
+  }
+  if (!allowlist.includes(sha256)) {
+    return Object.freeze({
+      kind: "preview-unavailable",
+      reason: "runtime-digest-mismatch",
+      discovered: Object.freeze({ path: canonical, sha256 }),
+    });
+  }
   let version;
   try {
     const result = await run(canonical, ["--version"], {
@@ -92,13 +128,40 @@ export async function resolveVerifiedLatexRuntime({
     }
     roots.push(canonicalRoot);
   }
-  if (unsafePrefix(executableDirectory, homeDirectory)) return unavailable("runtime-prefix-unsafe");
+  // Directories are derived from where latexmk was found, not from where the
+  // link resolves to: in a TeX Live layout the entry is a symbolic link in the
+  // per-architecture bin directory pointing at a script deep inside
+  // texmf-dist, and it is the bin directory that holds pdflatex, xelatex and
+  // kpsewhich. Deriving from the resolved script would put neither the engines
+  // on PATH nor their directory in the sandbox.
+  const binDirectory = dirname(found.path);
+  // A TeX distribution keeps its macros and formats beside that bin directory
+  // (<dist>/bin/<arch>), and kpathsea resolves them relative to it. Mounting
+  // only the bin directory would leave the engine unable to find texmf-dist,
+  // so the distribution root comes along whenever it is safe -- for a system
+  // install this is /usr, which is mounted read-only anyway.
+  // TeX Live installs as <dist>/bin/<arch>, a package manager as <prefix>/bin;
+  // anything else is not a recognisable distribution, and a root guessed by
+  // counting directory levels could be far too broad. When the root is not
+  // recognisable or would expose the home directory it is simply left out --
+  // the engine may then need an explicit runtimeRoots entry, which is a
+  // fixable configuration problem rather than a mounted home directory.
+  const binParent = dirname(binDirectory);
+  const distributionRoot = basename(binDirectory) === "bin"
+    ? binParent
+    : basename(binParent) === "bin" ? dirname(binParent) : undefined;
+  for (const candidate of [binDirectory, executableDirectory]) {
+    if (unsafePrefix(candidate, homeDirectory)) return unavailable("runtime-prefix-unsafe");
+  }
+  if (distributionRoot && !unsafePrefix(distributionRoot, homeDirectory)) roots.unshift(distributionRoot);
   return Object.freeze({
     kind: "verified-runtime",
+    binDirectory,
+    bubblewrapExecutable: sandbox.path,
     latexExecutable: canonical,
     executableDirectory,
-    runtimeRoots: Object.freeze([...new Set([executableDirectory, ...roots])]),
-    sha256: sha256.toLowerCase(),
+    runtimeRoots: Object.freeze([...new Set([binDirectory, executableDirectory, ...roots])]),
+    sha256,
     version,
   });
 }

@@ -151,6 +151,7 @@ export class SafeQuartoRenderer {
       execution,
     });
     const sandbox = this.sandboxFactory({
+      ...(this.runtime.bubblewrapExecutable && { bubblewrapExecutable: this.runtime.bubblewrapExecutable }),
       execution,
       invocation,
       outputRoot,

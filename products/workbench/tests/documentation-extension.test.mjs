@@ -238,6 +238,7 @@ test("first-party materialization declares the complete Documentation authority"
     "extensions/chatero-documentation/safe-latex-sandbox.mjs",
     "extensions/chatero-documentation/safe-quarto-renderer.mjs",
     "extensions/chatero-documentation/safe-quarto-sandbox.mjs",
+    "extensions/chatero-documentation/sandbox-executable.mjs",
     "extensions/chatero-documentation/settlement-executor.mjs",
     "extensions/chatero-documentation/settlement-operations.mjs",
     "extensions/chatero-documentation/settlement-planner.mjs",

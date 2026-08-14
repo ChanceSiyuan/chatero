@@ -328,8 +328,33 @@ test("LaTeX preview reports an unavailable runtime instead of opening a panel", 
   });
   assert.equal((await manager.open()).reason, "runtime-unpinned");
   assert.match(fixture.errors.at(-1), /runtime-unpinned/u);
+  assert.doesNotMatch(fixture.errors.at(-1), /undefined/u);
   assert.equal(fixture.panels.length, 0);
   await manager.dispose();
+});
+
+test("an unavailable runtime names the one thing to do next", async () => {
+  const { unavailableMessage } = await import("../extensions/chatero-documentation/latex-preview-manager.mjs");
+  const pinned = unavailableMessage({
+    reason: "runtime-unpinned",
+    discovered: { path: "/home/dev/.TinyTeX/bin/x86_64-linux/latexmk", sha256: "a".repeat(64) },
+  });
+  // The digest is quoted so pinning is a copy, not a hunt for the binary.
+  assert.match(pinned, /\.TinyTeX\/bin\/x86_64-linux\/latexmk/u);
+  assert.match(pinned, new RegExp("a".repeat(64), "u"));
+  assert.match(pinned, /sha256Allowlist/u);
+
+  const sandbox = unavailableMessage({ reason: "sandbox-unavailable" });
+  assert.match(sandbox, /bubblewrap/u);
+  assert.match(sandbox, /no root privileges/u);
+  assert.match(sandbox, /bubblewrapPath/u);
+
+  assert.match(unavailableMessage({ reason: "runtime-unavailable" }), /TinyTeX|TeX Live/u);
+  assert.match(unavailableMessage({ reason: "sandbox-path-unusable" }), /bubblewrapPath/u);
+  assert.match(unavailableMessage({ reason: "runtime-path-unusable" }), /executablePath/u);
+  for (const reason of ["runtime-unpinned", "runtime-digest-mismatch", "sandbox-unavailable", "runtime-unavailable"]) {
+    assert.doesNotMatch(unavailableMessage({ reason }), /undefined/u, reason);
+  }
 });
 
 test("the preview host ports Overleaf's position model with attribution", async () => {

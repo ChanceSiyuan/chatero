@@ -1,20 +1,13 @@
-import { accessSync, constants, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
-const DEFAULT_BUBBLEWRAP = "/usr/bin/bwrap";
+import { discoverExecutable, isExecutableFile } from "./sandbox-executable.mjs";
+
+// Resolved once here so a host without a writable /usr still works: bwrap
+// installed under the user's own prefix is found without configuration.
+const DEFAULT_BUBBLEWRAP = discoverExecutable({ name: "bwrap" });
 
 function quoted(value) {
   return `\"${String(value).replaceAll("\\", "\\\\").replaceAll('"', '\\"')}\"`;
-}
-
-function executableExists(path) {
-  try {
-    const metadata = statSync(path);
-    if (!metadata.isFile()) return false;
-    accessSync(path, constants.X_OK);
-    return true;
-  }
-  catch { return false; }
 }
 
 function sandboxEnvironment(runtimeRoot, temporaryRoot) {
@@ -75,12 +68,12 @@ function buildBubblewrapSandbox({ bubblewrapExecutable, execution, invocation, r
 }
 
 export function buildSafeQuartoSandbox({
-  bubblewrapExecutable = DEFAULT_BUBBLEWRAP,
+  bubblewrapExecutable = DEFAULT_BUBBLEWRAP.kind === "found" ? DEFAULT_BUBBLEWRAP.path : "",
   execution = false,
   invocation,
   outputRoot,
   platform = process.platform,
-  probeSandboxExecutable = executableExists,
+  probeSandboxExecutable = isExecutableFile,
   runtimeRoot,
   snapshotRoot,
   temporaryRoot,

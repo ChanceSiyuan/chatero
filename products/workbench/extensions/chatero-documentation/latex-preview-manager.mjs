@@ -30,6 +30,35 @@ function activeTex(vscode) {
   return null;
 }
 
+// Every unavailable reason names the one thing to do next, and the digest of
+// whatever was found is quoted so pinning is a copy rather than a hunt.
+export function unavailableMessage(runtime) {
+  const discovered = runtime?.discovered;
+  const found = discovered?.path && discovered?.sha256
+    ? ` Found ${discovered.path}; add its digest ${discovered.sha256}`
+    : " Add the digest of your latexmk";
+  switch (runtime?.reason) {
+    case "runtime-unpinned":
+      return `LaTeX Preview needs the compiler pinned (runtime-unpinned).${found} to chatero.documentation.remoteLatex.sha256Allowlist.`;
+    case "runtime-digest-mismatch":
+      return `LaTeX Preview refused the compiler it found (runtime-digest-mismatch).${found} to chatero.documentation.remoteLatex.sha256Allowlist if it is the one you expect.`;
+    case "runtime-unavailable":
+      return "LaTeX Preview could not find latexmk. Install TeX Live (a per-user install such as TinyTeX is fine) or set chatero.documentation.remoteLatex.executablePath.";
+    case "runtime-path-unusable":
+      return "LaTeX Preview could not run the configured chatero.documentation.remoteLatex.executablePath. Point it at an executable latexmk, or clear it to search PATH.";
+    case "sandbox-unavailable":
+      return "LaTeX Preview could not find bubblewrap (bwrap), which confines the compile. Install it -- a per-user install on PATH or in ~/.local/bin needs no root privileges -- or set chatero.documentation.remoteLatex.bubblewrapPath.";
+    case "sandbox-path-unusable":
+      return "LaTeX Preview could not run the configured chatero.documentation.remoteLatex.bubblewrapPath. Point it at an executable bwrap, or clear it to search PATH.";
+    case "runtime-prefix-unsafe":
+      return "LaTeX Preview refused this TeX installation because its directory contains your home directory, which the sandbox would then expose to document code. Install TeX in its own directory.";
+    case "runtime-root-invalid":
+      return "A directory in chatero.documentation.remoteLatex.runtimeRoots does not exist or is not an absolute path.";
+    default:
+      return `LaTeX Preview is unavailable: ${runtime?.reason}.`;
+  }
+}
+
 function validPosition(value) {
   return Boolean(value) && Number.isSafeInteger(value.page) && value.page >= 0
     && Number.isFinite(value.offset?.left) && Number.isFinite(value.offset?.top);
@@ -85,7 +114,7 @@ export class LatexPreviewManager {
     if (!session) {
       const runtime = await this.runtimeResolver();
       if (runtime.kind !== "verified-runtime") {
-        await this.vscode.window.showErrorMessage(`LaTeX Preview is unavailable: ${runtime.reason}.`);
+        await this.vscode.window.showErrorMessage(unavailableMessage(runtime));
         return runtime;
       }
       const panel = this.vscode.window.createWebviewPanel(VIEW_TYPE, `LaTeX Preview: ${document.uri.path.split("/").at(-1)}`, {
@@ -253,6 +282,7 @@ export async function registerLatexPreview({ vscode, context, manager, platform 
     vscode,
     memento: context?.workspaceState,
     runtimeResolver: () => resolveVerifiedLatexRuntime({
+      bubblewrapExecutable: configuration()?.get("bubblewrapPath"),
       executable: configuration()?.get("executablePath"),
       platform,
       runtimeRoots: configuration()?.get("runtimeRoots"),

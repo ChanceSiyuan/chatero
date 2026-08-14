@@ -6,6 +6,8 @@ import { homedir } from "node:os";
 import { dirname, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 
+import { discoverExecutable } from "./sandbox-executable.mjs";
+
 const execute = promisify(execFile);
 const SUPPORTED_VERSIONS = new Set(["1.8.26", "1.8.27"]);
 const QUARTO_TEAM_ID = "FYF2F5GFX4";
@@ -35,6 +37,8 @@ function sha256File(path) {
 }
 
 export async function resolveVerifiedQuartoRuntime({
+  bubblewrapExecutable,
+  discover = discoverExecutable,
   executable,
   hashFile = sha256File,
   homeDirectory = homedir(),
@@ -91,11 +95,22 @@ export async function resolveVerifiedQuartoRuntime({
   if (!SUPPORTED_VERSIONS.has(version)) return unavailable("runtime-version-mismatch");
   const runtimeRoot = resolve(dirname(canonical), "..");
   if (unsafeRuntimeRoot(runtimeRoot, homeDirectory)) return unavailable("runtime-prefix-unsafe");
+  // The Linux render is confined by bubblewrap, which need not live under
+  // /usr: a per-user install is found without configuration.
+  let sandboxPath;
+  if (platform === "linux") {
+    const sandbox = discover({ configured: bubblewrapExecutable, homeDirectory, name: "bwrap" });
+    if (sandbox.kind !== "found") {
+      return unavailable(sandbox.kind === "configured-unusable" ? "sandbox-path-unusable" : "sandbox-unavailable");
+    }
+    sandboxPath = sandbox.path;
+  }
   return Object.freeze({
     kind: "verified-runtime",
     quartoExecutable: canonical,
     runtimeRoot,
     version,
+    ...(sandboxPath && { bubblewrapExecutable: sandboxPath }),
     ...(platform === "darwin" ? { teamIdentifier: QUARTO_TEAM_ID } : { sha256 }),
   });
 }

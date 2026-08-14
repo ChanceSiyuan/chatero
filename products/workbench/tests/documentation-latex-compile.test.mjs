@@ -32,7 +32,12 @@ test("LaTeX runtime pins the entry executable by digest and refuses unsafe prefi
   const { resolveVerifiedLatexRuntime } = await import("../extensions/chatero-documentation/latex-runtime.mjs");
   const { digest, executable, root } = await fakeLatexmk();
   const run = async () => ({ stdout: "Latexmk, John Collins, version: 4.83\n" });
-  const base = { executable, platform: "linux", run, sha256Allowlist: [digest] };
+  // Discovery is stubbed so the assertions hold on a host without bwrap or a
+  // TeX installation -- the search itself is covered by its own tests.
+  const discover = ({ configured, name }) => name === "bwrap"
+    ? { kind: "found", path: "/fake/bwrap" }
+    : { kind: "found", path: configured };
+  const base = { discover, executable, platform: "linux", run, sha256Allowlist: [digest] };
 
   assert.equal((await resolveVerifiedLatexRuntime({ ...base, platform: "darwin" })).reason, "runtime-unavailable");
   assert.equal((await resolveVerifiedLatexRuntime({ ...base, sha256Allowlist: [] })).reason, "runtime-unpinned");
@@ -58,7 +63,10 @@ test("LaTeX runtime pins the entry executable by digest and refuses unsafe prefi
   assert.equal(verified.latexExecutable, executable);
   assert.equal(verified.sha256, digest);
   assert.match(verified.version, /^Latexmk/u);
-  assert.deepEqual(verified.runtimeRoots, [join(root, "bin"), texmf]);
+  assert.equal(verified.binDirectory, join(root, "bin"));
+  assert.equal(verified.bubblewrapExecutable, "/fake/bwrap");
+  // The bin directory holds the engines, the distribution root holds texmf.
+  assert.deepEqual(verified.runtimeRoots, [join(root, "bin"), root, texmf]);
 });
 
 test("LaTeX runtime resolves a symlinked runtime root before applying the home guard", async () => {
@@ -70,6 +78,7 @@ test("LaTeX runtime resolves a symlinked runtime root before applying the home g
 
   // A lexical check would pass this path and still mount the home directory.
   assert.equal((await resolveVerifiedLatexRuntime({
+    discover: ({ configured, name }) => ({ kind: "found", path: name === "bwrap" ? "/fake/bwrap" : configured }),
     executable, homeDirectory: home, platform: "linux", run: async () => ({ stdout: "Latexmk 4.83\n" }),
     runtimeRoots: [disguised], sha256Allowlist: [digest],
   })).reason, "runtime-prefix-unsafe");
@@ -80,6 +89,7 @@ test("LaTeX runtime rejects group- or world-writable executables and symlinked e
   const { digest, executable } = await fakeLatexmk();
   await chmod(executable, 0o777);
   assert.equal((await resolveVerifiedLatexRuntime({
+    discover: ({ configured, name }) => ({ kind: "found", path: name === "bwrap" ? "/fake/bwrap" : configured }),
     executable, platform: "linux", sha256Allowlist: [digest], run: async () => ({ stdout: "x\n" }),
   })).reason, "runtime-unavailable");
 });

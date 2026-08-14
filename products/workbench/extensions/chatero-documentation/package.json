@@ -62,9 +62,15 @@
         },
         "chatero.documentation.remoteLatex.executablePath": {
           "type": "string",
-          "default": "/usr/bin/latexmk",
+          "default": "",
           "scope": "machine",
-          "description": "Absolute path to latexmk on this Linux machine, used to compile LaTeX previews. LaTeX compilation runs only on a Chatero remote host."
+          "description": "Absolute path to latexmk. Leave empty to search PATH and the usual per-user TeX installs (~/.TinyTeX, ~/texlive), so a TeX Live installed without root privileges is found automatically. LaTeX compilation runs only on a Chatero remote host."
+        },
+        "chatero.documentation.remoteLatex.bubblewrapPath": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "Absolute path to the bubblewrap (bwrap) executable that confines LaTeX compiles. Leave empty to search PATH and the usual per-user prefixes (~/.local/bin), so no root privileges are needed to install it."
         },
         "chatero.documentation.remoteLatex.sha256Allowlist": {
           "type": "array",
@@ -84,6 +90,12 @@
           "default": [],
           "scope": "machine",
           "description": "Extra absolute directories to mount read-only into the LaTeX sandbox, for TeX trees outside /usr (for example /opt/texlive). A directory that is, or contains, your home directory is refused."
+        },
+        "chatero.documentation.remoteQuarto.bubblewrapPath": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "Absolute path to the bubblewrap (bwrap) executable that confines Quarto renders on Linux. Leave empty to search PATH and the usual per-user prefixes (~/.local/bin), so no root privileges are needed to install it."
         },
         "chatero.documentation.remoteQuarto.allowExecution": {
           "type": "boolean",
