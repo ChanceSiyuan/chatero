@@ -150,6 +150,33 @@ test("Library model lazily loads validated PDF, Note, and annotation records", a
   ]);
 });
 
+test("Library model accepts a standalone attachment search row for direct Reader access", async () => {
+  const { LibraryTreeModel } = await import("../extensions/chatero-zotero/library-tree-model.mjs");
+  const model = new LibraryTreeModel({
+    request: async () => ({
+      items: [{
+        annotationCount: 0,
+        attachmentCount: 0,
+        collectionKeys: [],
+        contentType: "application/pdf",
+        creators: [],
+        filename: "paper.pdf",
+        itemKey: "PDF00001",
+        itemType: "attachment",
+        libraryId: 7,
+        standaloneAttachment: true,
+        title: "Standalone PDF",
+        version: 2,
+      }],
+      total: 1,
+    }),
+  });
+
+  const result = await model.sourceItems({ source: { kind: "library", libraryId: 7 }, limit: 50 });
+  assert.equal(result.items[0].standaloneAttachment, true);
+  assert.equal(Object.hasOwn(result.items[0], "path"), false);
+});
+
 test("Library model fetches and validates read-only item metadata", async () => {
   const { LibraryTreeModel } = await import("../extensions/chatero-zotero/library-tree-model.mjs");
   const calls = [];

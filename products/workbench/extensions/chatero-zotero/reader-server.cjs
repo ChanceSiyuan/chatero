@@ -36,6 +36,7 @@ const CONTENT_TYPES = Object.freeze({
 // an unguessable per-lease id.
 class ReaderServer {
   #mediaRoot;
+  #realMediaRoot = null;
   #server = null;
   #origin = null;
   #starting = null;
@@ -82,6 +83,12 @@ class ReaderServer {
     let contentType = null;
     const extraHeaders = {};
     if (kind === "reader") {
+      const mediaRoot = await (this.#realMediaRoot ||= realpath(this.#mediaRoot).catch(() => null));
+      if (!mediaRoot) {
+        response.writeHead(404);
+        response.end();
+        return;
+      }
       const relative = normalize(rest.map(decodeURIComponent).join("/"));
       if (relative.startsWith("..") || relative.includes(`..${sep}`)) {
         response.writeHead(404);
@@ -90,7 +97,7 @@ class ReaderServer {
       }
       path = join(this.#mediaRoot, relative);
       const real = await realpath(path).catch(() => null);
-      if (!real || (real !== this.#mediaRoot && !real.startsWith(this.#mediaRoot + sep))) {
+      if (!real || (real !== mediaRoot && !real.startsWith(mediaRoot + sep))) {
         response.writeHead(404);
         response.end();
         return;

@@ -319,6 +319,38 @@ function itemSummary(Zotero, item) {
 	return summary;
 }
 
+function standaloneAttachmentSummary(Zotero, attachment) {
+	if (!attachment?.isAttachment?.() || !attachment.isFileAttachment?.()
+			|| attachment.parentItemID) {
+		return null;
+	}
+	let collectionKeys = attachment.getCollections(false)
+		.map(id => Zotero.Collections.get(id))
+		.filter(collection => collection && collection.libraryID === attachment.libraryID)
+		.map(collection => collection.key)
+		.sort(compareText);
+	let filename = attachment.attachmentFilename || "";
+	return {
+		annotationCount: attachment.getAnnotations(false).length,
+		attachmentCount: 0,
+		collectionKeys,
+		contentType: attachment.attachmentContentType || "application/octet-stream",
+		creators: [],
+		filename,
+		itemKey: attachment.key,
+		itemType: "attachment",
+		libraryId: attachment.libraryID,
+		standaloneAttachment: true,
+		title: attachment.getDisplayTitle?.() || filename || "Untitled attachment",
+		version: Number.isSafeInteger(attachment.clientVersion) ? attachment.clientVersion : 0,
+	};
+}
+
+function searchItemSummary(Zotero, item) {
+	if (item?.isRegularItem?.()) return itemSummary(Zotero, item);
+	return standaloneAttachmentSummary(Zotero, item);
+}
+
 function optionalField(item, field) {
 	let value = item.getField(field);
 	if (typeof value !== "string" || !value.trim()) return undefined;
@@ -671,10 +703,12 @@ async function parentKey(Zotero, item, label) {
 	return parent.key;
 }
 
-async function attachmentSummary(Zotero, attachment, expectedParent) {
+async function attachmentSummary(Zotero, attachment, expectedParent = null) {
 	if (!attachment?.isAttachment?.() || !attachment.isFileAttachment?.()
-			|| itemIsUnavailable(attachment) || itemIsUnavailable(expectedParent)
-			|| attachment.libraryID !== expectedParent.libraryID || attachment.parentItemID !== expectedParent.id) {
+			|| itemIsUnavailable(attachment)
+			|| expectedParent && (itemIsUnavailable(expectedParent)
+				|| attachment.libraryID !== expectedParent.libraryID || attachment.parentItemID !== expectedParent.id)
+			|| !expectedParent && attachment.parentItemID) {
 		return null;
 	}
 	let path = await attachment.getFilePathAsync();
@@ -687,7 +721,7 @@ async function attachmentSummary(Zotero, attachment, expectedParent) {
 		contentType: attachment.attachmentContentType || "application/octet-stream",
 		filename,
 		libraryId: attachment.libraryID,
-		parentItemKey: expectedParent.key,
+		...(expectedParent && { parentItemKey: expectedParent.key }),
 		title,
 	};
 }
@@ -1146,8 +1180,9 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 			}
 			await waitForLibraryItems(Zotero, [params.libraryId]);
 			let items = (await Zotero.Items.getAsync(ids))
-				.filter(item => item?.libraryID === params.libraryId && item.isRegularItem?.() && !itemIsUnavailable(item))
-				.map(item => itemSummary(Zotero, item))
+				.filter(item => item?.libraryID === params.libraryId && !itemIsUnavailable(item))
+				.map(item => searchItemSummary(Zotero, item))
+				.filter(Boolean)
 				.sort((left, right) => compareText(left.title, right.title) || compareText(left.itemKey, right.itemKey));
 			let offset = Number(params.cursor || 0);
 			if (offset > items.length) throw new Error("library.saved-search-items cursor is outside the result set");
@@ -1347,10 +1382,13 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 			if (!attachment.isAttachment?.() || !attachment.isFileAttachment?.()) {
 				throw new Error("library.attachment target must be a file attachment");
 			}
-			let parent = await Zotero.Items.getAsync(attachment.parentItemID);
-			if (itemIsUnavailable(parent)) unavailable("Zotero attachment parent item is unavailable");
-			if (!parent || parent.libraryID !== attachment.libraryID || !parent.isRegularItem?.()) {
-				throw new Error("Zotero attachment has no valid parent item");
+			let parent = null;
+			if (attachment.parentItemID) {
+				parent = await Zotero.Items.getAsync(attachment.parentItemID);
+				if (itemIsUnavailable(parent)) unavailable("Zotero attachment parent item is unavailable");
+				if (!parent || parent.libraryID !== attachment.libraryID || !parent.isRegularItem?.()) {
+					throw new Error("Zotero attachment has no valid parent item");
+				}
 			}
 			let summary = await attachmentSummary(Zotero, attachment, parent);
 			if (!summary) throw new Error("library.attachment target must be an available file attachment");
@@ -1739,7 +1777,9 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 				if (params.scope !== "feed" && library.libraryType === "feed") throw new Error("library.search non-feed scope cannot target a feed library");
 				items = await Zotero.Items.getAll(params.libraryId, true, params.scope === "trash", false);
 				if (params.scope === "trash") items = items.filter(item => itemIsUnavailable(item));
-				else if (params.scope === "unfiled") items = items.filter(item => item.isRegularItem?.() && item.getCollections(false).length === 0);
+				else if (params.scope === "unfiled") items = items.filter(item =>
+					(item.isRegularItem?.() || item.isAttachment?.() && item.isFileAttachment?.() && !item.parentItemID)
+					&& item.getCollections(false).length === 0);
 			}
 			else {
 				let byLibrary = await Promise.all(Zotero.Libraries.getAll().map(library =>
@@ -1749,8 +1789,8 @@ export function createZoteroLibraryAdapter({ Zotero, isOffline = () => Boolean(g
 
 			let query = params.query.trim().toLocaleLowerCase("en-US");
 			let matches = items
-				.filter(item => item?.isRegularItem?.())
-				.map(item => itemSummary(Zotero, item))
+				.map(item => searchItemSummary(Zotero, item))
+				.filter(Boolean)
 				.filter(item => !query || [item.title, ...item.creators]
 					.some(value => String(value).toLocaleLowerCase("en-US").includes(query)))
 				.sort((left, right) => {

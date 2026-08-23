@@ -106,14 +106,17 @@ export async function inspectStageFourReader({ root, requireProductMatch = false
   // The reader page and the materialized attachment are served by a per-extension
   // loopback server instead of webview resource URIs, so its boundaries are part
   // of the Reader audit: GET only, 127.0.0.1 only, unguessable token, and paths
-  // resolved through realpath inside the packaged reader root.
+  // resolved through realpath inside the canonical packaged reader root. The
+  // root itself must also be canonicalized because macOS exposes /var through
+  // the /private/var symlink.
   for (const boundary of [
     'request.method !== "GET"',
     'server.listen(0, "127.0.0.1"',
     "token !== this.#token",
     'randomBytes(18).toString("base64url")',
+    "this.#realMediaRoot ||= realpath(this.#mediaRoot)",
     "await realpath(path)",
-    "real.startsWith(this.#mediaRoot + sep)",
+    "real.startsWith(mediaRoot + sep)",
     '"X-Content-Type-Options": "nosniff"',
   ]) {
     if (!readerServer.includes(boundary)) throw new Error(`Stage 4 reader server omits ${boundary}`);

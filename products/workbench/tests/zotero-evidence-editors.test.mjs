@@ -1019,11 +1019,12 @@ test("Note provider serializes versioned saves and acknowledges only accepted me
 });
 
 test("extension declares native PDF and Note custom editor tabs", async () => {
-  const [manifest, source, providersSource, packaging] = await Promise.all([
+  const [manifest, source, providersSource, packaging, viewerPage] = await Promise.all([
     readFile(join(extensionRoot, "package.json"), "utf8").then(JSON.parse),
     readFile(join(extensionRoot, "extension.cjs"), "utf8"),
     readFile(join(extensionRoot, "evidence-editors.cjs"), "utf8"),
     readFile(join(root, "products", "workbench", "first-party-extensions.json"), "utf8").then(JSON.parse),
+    readFile(join(extensionRoot, "media", "zotero-reader", "pdf", "web", "viewer.html")),
   ]);
   assert.deepEqual(manifest.contributes.customEditors.map(value => value.viewType).sort(), [
     "chatero.zotero.note",
@@ -1047,6 +1048,11 @@ test("extension declares native PDF and Note custom editor tabs", async () => {
   assert.ok(destinations.includes("extensions/chatero-zotero/media/zotero-reader/pdf/web/viewer.html"));
   assert.ok(destinations.includes("extensions/chatero-zotero/media/zotero-reader/pdf/web/viewer.mjs"));
   assert.ok(destinations.includes("extensions/chatero-zotero/media/zotero-reader/pdf/web/viewer.css"));
+  assert.notDeepEqual(
+    [...viewerPage.subarray(0, 3)],
+    [0xef, 0xbb, 0xbf],
+    "the first-party PDF viewer must not contain a UTF-8 BOM because the Code-OSS packaging stream strips it",
+  );
   assert.ok(destinations.includes("extensions/chatero-zotero/media/zotero-reader/chatero-reader.html"));
   assert.ok(destinations.includes("extensions/chatero-zotero/media/zotero-reader/chatero-reader-host.mjs"));
   assert.ok(destinations.includes("extensions/chatero-zotero/media/zotero-reader/reader.js"));

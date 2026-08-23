@@ -175,6 +175,7 @@ function fixture({
   attachmentDeleted = false,
   attachmentInTrash = false,
   attachmentLastPageIndex = 0,
+  includeStandaloneAttachment = false,
   noteDeleted = false,
   noteInTrash = false,
 } = {}) {
@@ -265,12 +266,26 @@ function fixture({
   });
   const groupAlpha = item({ id: 21, key: "ITEM0001", libraryID: 2, title: "Group Alpha", creators: ["Group Author"], collectionIDs: [201], attachments: [groupAttachment.id] });
   const note = item({ id: 22, key: "NOTE0001", libraryID: 2, title: "Not a paper", type: "note", collectionIDs: [201] });
+  const standaloneAttachment = item({
+    id: 94,
+    key: "STAND001",
+    libraryID: 1,
+    title: "Standalone evidence",
+    type: "attachment",
+    annotations: [],
+    path: "/Users/example/Zotero/storage/STAND001/evidence.epub",
+    contentType: "application/epub+zip",
+    filename: "evidence.epub",
+    synced: false,
+    version: 9,
+  });
 
   const nested = collection({ id: 102, key: "NESTED01", libraryID: 1, name: "Renormalization", parentKey: "SHARED01", childItems: [alpha] });
   const personal = collection({ id: 101, key: "SHARED01", libraryID: 1, name: "Physics", childCollections: [nested], childItems: [beta, alpha] });
   const group = collection({ id: 201, key: "SHARED01", libraryID: 2, name: "Team Physics", childItems: [note, groupAlpha] });
   const collections = [personal, nested, group];
-  const items = [attachment, groupAttachment, highlight, childNote, alpha, beta, groupAlpha, note];
+  const items = [attachment, groupAttachment, highlight, childNote, alpha, beta, groupAlpha, note,
+    ...(includeStandaloneAttachment ? [standaloneAttachment] : [])];
   const searches = [
     savedSearch({ key: "SEARCH01", libraryID: 1, name: "Unread methods", itemIDs: [12, 11, 90], version: 4 }),
     savedSearch({ key: "SEARCH01", libraryID: 2, name: "Group unread", itemIDs: [21], synced: false, version: 2 }),
@@ -310,7 +325,8 @@ function fixture({
 			getAsync: async id => Array.isArray(id)
 				? id.map(value => items.find(itemValue => itemValue.id === value)).filter(Boolean)
 				: items.find(value => value.id === id) || false,
-			getAll: async (libraryId, onlyTopLevel = false) => items.filter(value => value.libraryID === libraryId && (onlyTopLevel ? value.isRegularItem() : true)),
+			getAll: async (libraryId, onlyTopLevel = false) => items.filter(value => value.libraryID === libraryId
+				&& (onlyTopLevel ? value.isRegularItem() || value.isAttachment() && !value.parentItemID : true)),
       getByLibraryAndKey: (libraryId, key) => items.find(value => value.libraryID === libraryId && value.key === key) || false,
 			getByLibraryAndKeyAsync: async (libraryId, key) => items.find(value => value.libraryID === libraryId && value.key === key) || false,
     },
@@ -995,6 +1011,38 @@ test("search isolates duplicate collection keys and emits protocol-exact item su
     }],
     total: 1,
   });
+});
+
+test("library search exposes standalone file attachments without leaking paths", async () => {
+  const adapter = createZoteroLibraryAdapter(fixture({ includeStandaloneAttachment: true }));
+
+  assert.deepEqual(await adapter.search({ libraryId: 1, limit: 50, query: "standalone", scope: "library" }), {
+    items: [{
+      annotationCount: 0,
+      attachmentCount: 0,
+      collectionKeys: [],
+      contentType: "application/epub+zip",
+      creators: [],
+      filename: "evidence.epub",
+      itemKey: "STAND001",
+      itemType: "attachment",
+      libraryId: 1,
+      standaloneAttachment: true,
+      title: "Standalone evidence",
+      version: 9,
+    }],
+    total: 1,
+  });
+  const attachment = await adapter.attachment({ attachmentKey: "STAND001", libraryId: 1 });
+  assert.deepEqual(attachment, {
+    annotationCount: 0,
+    attachmentKey: "STAND001",
+    contentType: "application/epub+zip",
+    filename: "evidence.epub",
+    libraryId: 1,
+    title: "Standalone evidence",
+  });
+  assert.equal(JSON.stringify(attachment).includes("/Users/example"), false);
 });
 
 test("search across libraries is deterministic and cursor pagination is stable", async () => {

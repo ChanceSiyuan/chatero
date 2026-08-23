@@ -331,7 +331,7 @@ export interface LibraryAttachmentSummary {
   readonly contentType: string;
   readonly filename: string;
   readonly libraryId: number;
-  readonly parentItemKey: string;
+  readonly parentItemKey?: string;
   readonly title: string;
 }
 
@@ -518,12 +518,16 @@ export interface LibraryItemRelation {
 }
 
 export interface LibraryItemSummary {
+  readonly annotationCount?: number;
   readonly attachmentCount: number;
   readonly collectionKeys?: ReadonlyArray<string>;
+  readonly contentType?: string;
   readonly creators: ReadonlyArray<string>;
+  readonly filename?: string;
   readonly itemKey: string;
   readonly itemType: string;
   readonly libraryId: number;
+  readonly standaloneAttachment?: boolean;
   readonly title: string;
   readonly version: number;
   readonly year?: number;

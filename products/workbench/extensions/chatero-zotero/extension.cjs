@@ -156,7 +156,20 @@ class LibraryItemProvider {
 
   async getChildren(element) {
     if (!this.model) return [];
-    if (!element) return this.model.rows.map(value => ({ kind: "item", value }));
+    if (!element) return this.model.rows.map(value => {
+      if (!value.standaloneAttachment) return { kind: "item", value };
+      return {
+        kind: "attachment",
+        value: this.evidenceAuthority.register(Object.freeze({
+          annotationCount: value.annotationCount,
+          attachmentKey: value.itemKey,
+          contentType: value.contentType,
+          filename: value.filename,
+          libraryId: value.libraryId,
+          title: value.title,
+        }), "attachment"),
+      };
+    });
     if (element.kind !== "item") return [];
     const result = await this.model.core.children({ itemKey: element.value.itemKey, libraryId: element.value.libraryId });
     return [

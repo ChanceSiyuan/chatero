@@ -636,12 +636,16 @@
     "LibraryItemSummary": {
       "kind": "object",
       "fields": {
+        "annotationCount?": "number",
         "attachmentCount": "number",
         "collectionKeys?": "string[]",
+        "contentType?": "string",
         "creators": "string[]",
+        "filename?": "string",
         "itemKey": "string",
         "itemType": "string",
         "libraryId": "number",
+        "standaloneAttachment?": "boolean",
         "title": "string",
         "version": "number",
         "year?": "number"
@@ -926,7 +930,7 @@
         "contentType": "string",
         "filename": "string",
         "libraryId": "number",
-        "parentItemKey": "string",
+        "parentItemKey?": "string",
         "title": "string"
       }
     },

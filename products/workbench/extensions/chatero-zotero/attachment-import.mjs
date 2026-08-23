@@ -56,6 +56,7 @@ export async function importFileAttachment({ core, libraryId, collectionKey, fil
     const committed = await core.transact("attachment.upload-commit", {
       ...(collectionKey !== undefined && { collectionKeys: [collectionKey] }),
       libraryId,
+      title: filename,
       uploadId: opened.uploadId,
     }, { scope: `library:${libraryId}/attachment:catalog` });
     if (typeof committed?.attachmentKey !== "string" || !committed.attachmentKey) {

@@ -33,8 +33,16 @@ function validateItem(value) {
     || !Number.isSafeInteger(value.libraryId) || value.libraryId < 1
     || !Array.isArray(value.creators) || value.creators.some(creator => typeof creator !== "string")
     || typeof value.itemType !== "string" || value.itemType.length === 0
-    || (value.version !== undefined && (!Number.isSafeInteger(value.version) || value.version < 0))) {
+    || (value.version !== undefined && (!Number.isSafeInteger(value.version) || value.version < 0))
+    || (value.standaloneAttachment !== undefined && typeof value.standaloneAttachment !== "boolean")) {
     throw new Error("Zotero Core returned an invalid item");
+  }
+  if (value.standaloneAttachment === true && (value.itemType !== "attachment"
+      || typeof value.contentType !== "string" || value.contentType.length === 0
+      || typeof value.filename !== "string"
+      || !Number.isSafeInteger(value.annotationCount) || value.annotationCount < 0
+      || value.attachmentCount !== 0 || value.creators.length !== 0)) {
+    throw new Error("Zotero Core returned an invalid standalone attachment");
   }
   return Object.freeze({ ...value });
 }
@@ -113,7 +121,7 @@ function validateAttachment(value) {
     || typeof value.contentType !== "string" || value.contentType.length === 0
     || !Number.isSafeInteger(value.annotationCount) || value.annotationCount < 0
     || !Number.isSafeInteger(value.libraryId) || value.libraryId < 1
-    || typeof value.parentItemKey !== "string" || value.parentItemKey.length === 0) {
+    || (value.parentItemKey !== undefined && (typeof value.parentItemKey !== "string" || value.parentItemKey.length === 0))) {
     throw new Error("Zotero Core returned an invalid attachment");
   }
   return Object.freeze({ ...value });

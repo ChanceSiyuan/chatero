@@ -65,7 +65,7 @@ test("streams bounded sequential chunks and commits through the transaction jour
   for (const call of writes) assert.equal(call.params.bytesBase64url.includes("="), false);
   const commit = core.calls.at(-1);
   assert.equal(commit.method, "attachment.upload-commit");
-  assert.deepEqual(commit.params, { collectionKeys: ["COLL0001"], libraryId: 3, uploadId: "upload-1" });
+  assert.deepEqual(commit.params, { collectionKeys: ["COLL0001"], libraryId: 3, title: "demo.epub", uploadId: "upload-1" });
   assert.deepEqual(commit.options, { scope: "library:3/attachment:catalog" });
   assert.equal(core.calls.some(call => call.method === "attachment.upload-abort"), false);
 });
@@ -75,7 +75,7 @@ test("omits collectionKeys for library-level imports", async () => {
   const core = fakeCore();
   await importFileAttachment({ core, libraryId: 1, filename: "paper.pdf", bytes: new Uint8Array([1, 2, 3]) });
   const commit = core.calls.at(-1);
-  assert.deepEqual(commit.params, { libraryId: 1, uploadId: "upload-1" });
+  assert.deepEqual(commit.params, { libraryId: 1, title: "paper.pdf", uploadId: "upload-1" });
 });
 
 test("aborts the upload when the Core stops advancing or the commit fails", async () => {
