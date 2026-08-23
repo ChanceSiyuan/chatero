@@ -85,6 +85,10 @@
           "destination": "extensions/chatero-documentation/latex-runtime.mjs"
         },
         {
+          "source": "products/workbench/extensions/chatero-documentation/language-configuration.json",
+          "destination": "extensions/chatero-documentation/language-configuration.json"
+        },
+        {
           "source": "products/workbench/extensions/chatero-documentation/licenses/CodeMirror-MIT.txt",
           "destination": "extensions/chatero-documentation/licenses/CodeMirror-MIT.txt"
         },
@@ -1167,6 +1171,10 @@
         {
           "source": "products/workbench/extensions/chatero-documentation/sandbox-executable.mjs",
           "destination": "extensions/chatero-documentation/sandbox-executable.mjs"
+        },
+        {
+          "source": "products/workbench/extensions/chatero-documentation/syntaxes/quarto.tmLanguage.json",
+          "destination": "extensions/chatero-documentation/syntaxes/quarto.tmLanguage.json"
         },
         {
           "source": "products/workbench/extensions/chatero-documentation/settlement-executor.mjs",

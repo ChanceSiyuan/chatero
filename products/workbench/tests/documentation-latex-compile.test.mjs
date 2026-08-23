@@ -39,7 +39,7 @@ test("LaTeX runtime pins the entry executable by digest and refuses unsafe prefi
     : { kind: "found", path: configured };
   const base = { discover, executable, platform: "linux", run, sha256Allowlist: [digest] };
 
-  assert.equal((await resolveVerifiedLatexRuntime({ ...base, platform: "darwin" })).reason, "runtime-unavailable");
+  assert.equal((await resolveVerifiedLatexRuntime({ ...base, platform: "darwin" })).reason, "remote-only");
   assert.equal((await resolveVerifiedLatexRuntime({ ...base, sha256Allowlist: [] })).reason, "runtime-unpinned");
   assert.equal((await resolveVerifiedLatexRuntime({ ...base, sha256Allowlist: ["nope"] })).reason, "runtime-unpinned");
   assert.equal((await resolveVerifiedLatexRuntime({ ...base, sha256Allowlist: ["f".repeat(64)] })).reason, "runtime-digest-mismatch");
@@ -123,6 +123,7 @@ test("Linux LaTeX sandbox unshares the network and mounts no home or workspace p
   const { buildSafeLatexSandbox } = await import("../extensions/chatero-documentation/safe-latex-sandbox.mjs");
   const invocation = { file: "/opt/texlive/bin/latexmk", args: ["-pdf", "note.tex"], cwd: "/tmp/snap/source", shell: false };
   const sandbox = buildSafeLatexSandbox({
+    bubblewrapExecutable: "/usr/bin/bwrap",
     invocation,
     platform: "linux",
     probeSandboxExecutable: path => path === "/usr/bin/bwrap",

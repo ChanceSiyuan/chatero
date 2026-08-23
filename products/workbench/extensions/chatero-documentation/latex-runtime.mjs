@@ -51,7 +51,7 @@ export async function resolveVerifiedLatexRuntime({
   runtimeRoots = [],
   sha256Allowlist = [],
 } = {}) {
-  if (platform !== "linux") return unavailable("runtime-unavailable");
+  if (platform !== "linux") return unavailable("remote-only");
   // Neither tool has to live under /usr: a host where the operator cannot
   // write system directories is the normal case, so both are discovered from
   // the user-local install locations unless a path is configured.

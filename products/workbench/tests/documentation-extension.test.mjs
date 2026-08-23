@@ -137,6 +137,17 @@ test("Documentation is the default workspace surface with optional Live Preview"
     selector: [{ filenamePattern: "**/documentation/**/*.qmd" }],
     priority: "option",
   }]);
+  assert.deepEqual(manifest.contributes.languages, [{
+    id: "quarto",
+    aliases: ["Quarto", "qmd"],
+    extensions: [".qmd"],
+    configuration: "./language-configuration.json",
+  }]);
+  assert.deepEqual(manifest.contributes.grammars, [{
+    language: "quarto",
+    scopeName: "text.html.markdown.quarto",
+    path: "./syntaxes/quarto.tmLanguage.json",
+  }]);
   assert.equal(commandIds.some(command => /executeMigration/i.test(command)), false);
 });
 
@@ -171,6 +182,7 @@ test("first-party materialization declares the complete Documentation authority"
     "extensions/chatero-documentation/documentation-tree.cjs",
     "extensions/chatero-documentation/documentation-workspace.mjs",
     "extensions/chatero-documentation/extension.cjs",
+    "extensions/chatero-documentation/language-configuration.json",
     "extensions/chatero-documentation/latex-preview-html.mjs",
     "extensions/chatero-documentation/latex-preview-manager.mjs",
     "extensions/chatero-documentation/latex-preview-server.mjs",
@@ -245,6 +257,7 @@ test("first-party materialization declares the complete Documentation authority"
     "extensions/chatero-documentation/settlement-protocol.mjs",
     "extensions/chatero-documentation/settlement-recovery.mjs",
     "extensions/chatero-documentation/stable-hunks.mjs",
+    "extensions/chatero-documentation/syntaxes/quarto.tmLanguage.json",
     "extensions/chatero-documentation/text-change-set.mjs",
     "extensions/chatero-documentation/three-way-reconcile.mjs",
     "extensions/chatero-documentation/webview/formal-block-decorations.mjs",

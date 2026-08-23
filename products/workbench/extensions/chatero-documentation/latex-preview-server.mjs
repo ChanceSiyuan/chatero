@@ -80,10 +80,12 @@ export class LatexPreviewServer {
   }
 
   async #resolveStaticPath(root, relativePath) {
-    const target = resolve(root, relativePath);
-    if (!target.startsWith(`${root}${sep}`)) return null;
+    const canonicalRoot = await realpath(root).catch(() => null);
+    if (!canonicalRoot) return null;
+    const target = resolve(canonicalRoot, relativePath);
+    if (!target.startsWith(`${canonicalRoot}${sep}`)) return null;
     const canonical = await realpath(target).catch(() => null);
-    if (!canonical || !canonical.startsWith(`${root}${sep}`)) return null;
+    if (!canonical || !canonical.startsWith(`${canonicalRoot}${sep}`)) return null;
     const metadata = await stat(canonical).catch(() => null);
     return metadata?.isFile() ? canonical : null;
   }

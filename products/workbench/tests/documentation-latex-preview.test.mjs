@@ -350,9 +350,10 @@ test("an unavailable runtime names the one thing to do next", async () => {
   assert.match(sandbox, /bubblewrapPath/u);
 
   assert.match(unavailableMessage({ reason: "runtime-unavailable" }), /TinyTeX|TeX Live/u);
+  assert.match(unavailableMessage({ reason: "remote-only" }), /remote Linux workspace/u);
   assert.match(unavailableMessage({ reason: "sandbox-path-unusable" }), /bubblewrapPath/u);
   assert.match(unavailableMessage({ reason: "runtime-path-unusable" }), /executablePath/u);
-  for (const reason of ["runtime-unpinned", "runtime-digest-mismatch", "sandbox-unavailable", "runtime-unavailable"]) {
+  for (const reason of ["remote-only", "runtime-unpinned", "runtime-digest-mismatch", "sandbox-unavailable", "runtime-unavailable"]) {
     assert.doesNotMatch(unavailableMessage({ reason }), /undefined/u, reason);
   }
 });

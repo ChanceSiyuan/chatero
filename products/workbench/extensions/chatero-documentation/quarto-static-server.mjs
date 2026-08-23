@@ -51,9 +51,16 @@ export async function createQuartoStaticServer({ entryPath, root, token } = {}) 
       response.writeHead(200, {
         "Cache-Control": "no-store",
         "Content-Length": String(bytes.byteLength),
-        "Content-Security-Policy": "default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; frame-ancestors 'none'; form-action 'none'; base-uri 'none'",
+        // The tokenized loopback document is intentionally embedded by the
+        // Chatero webview. `frame-ancestors 'none'` makes Chromium replace the
+        // otherwise valid render with chrome-error://chromewebdata/.
+        "Content-Security-Policy": "default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; frame-ancestors *; form-action 'none'; base-uri 'none'",
         "Content-Type": mime,
-        "Cross-Origin-Resource-Policy": "same-origin",
+        // The tokenized document is intentionally framed by the
+        // vscode-webview:// preview host. `same-origin` makes Chromium replace
+        // that otherwise-authorized cross-origin iframe with
+        // chrome-error://chromewebdata/ even though frame-ancestors permits it.
+        "Cross-Origin-Resource-Policy": "cross-origin",
         "X-Content-Type-Options": "nosniff",
       });
       response.end(request.method === "HEAD" ? undefined : bytes);

@@ -29,6 +29,26 @@
     "virtualWorkspaces": false
   },
   "contributes": {
+    "languages": [
+      {
+        "id": "quarto",
+        "aliases": [
+          "Quarto",
+          "qmd"
+        ],
+        "extensions": [
+          ".qmd"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "quarto",
+        "scopeName": "text.html.markdown.quarto",
+        "path": "./syntaxes/quarto.tmLanguage.json"
+      }
+    ],
     "configuration": {
       "title": "Chatero Documentation",
       "properties": {

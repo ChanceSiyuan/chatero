@@ -82,6 +82,7 @@ test("Linux sandbox confines Quarto with bubblewrap and opens network only for s
   const { buildSafeQuartoSandbox } = await import("../extensions/chatero-documentation/safe-quarto-sandbox.mjs");
   const invocation = { file: "/opt/quarto/bin/quarto", args: ["render", "./source/index.qmd", "--output-dir", "./output"], cwd: "/tmp/chatero-quarto-x", shell: false };
   const base = {
+    bubblewrapExecutable: "/usr/bin/bwrap",
     platform: "linux",
     probeSandboxExecutable: path => path === "/usr/bin/bwrap",
     invocation,
@@ -242,7 +243,10 @@ test("tokenized static preview serves only immutable contained GET/HEAD files", 
   const ok = await fetch(server.url);
   assert.equal(ok.status, 200);
   assert.equal(await ok.text(), "<!doctype html><title>Paper</title>");
-  assert.match(ok.headers.get("content-security-policy"), /script-src 'self' 'unsafe-inline'.*connect-src 'none'.*form-action 'none'/u);
+  const policy = ok.headers.get("content-security-policy");
+  assert.match(policy, /script-src 'self' 'unsafe-inline'.*connect-src 'none'.*frame-ancestors \*.*form-action 'none'/u);
+  assert.doesNotMatch(policy, /frame-ancestors 'none'/u);
+  assert.equal(ok.headers.get("cross-origin-resource-policy"), "cross-origin");
   assert.equal((await fetch(new URL("../secret", server.url))).status, 404);
   assert.equal((await fetch(server.url, { method: "POST" })).status, 405);
   await server.dispose();
@@ -348,7 +352,11 @@ test("Linux runtime resolver requires a pinned sha256 allowlist and verifies dig
   })).reason, "runtime-version-mismatch");
   assert.equal((await resolveVerifiedQuartoRuntime({ platform: "freebsd", executable, run, sha256Allowlist: [digest] })).reason, "runtime-unavailable");
 
-  const verified = await resolveVerifiedQuartoRuntime({ platform: "linux", executable, run, sha256Allowlist: [digest.toUpperCase()] });
+  const discover = ({ configured }) => ({ kind: "found", path: configured || "/usr/bin/bwrap" });
+  const verified = await resolveVerifiedQuartoRuntime({
+    bubblewrapExecutable: "/usr/bin/bwrap", discover, platform: "linux", executable, run,
+    sha256Allowlist: [digest.toUpperCase()],
+  });
   assert.equal(verified.kind, "verified-runtime");
   assert.equal(verified.version, "1.8.26");
   assert.equal(verified.sha256, digest);
@@ -368,7 +376,11 @@ test("runtime resolver refuses prefixes that would mount the user home into the 
   await chmod(executable, 0o755);
   const digest = createHash("sha256").update(script).digest("hex");
   const run = async () => ({ stdout: "1.8.26\n" });
-  const base = { platform: "linux", executable, run, sha256Allowlist: [digest] };
+  const discover = ({ configured }) => ({ kind: "found", path: configured || "/usr/bin/bwrap" });
+  const base = {
+    bubblewrapExecutable: "/usr/bin/bwrap", discover, platform: "linux", executable, run,
+    sha256Allowlist: [digest],
+  };
 
   for (const homeDirectory of [root, join(root, "bin"), join(root, "deep", "nested", "home")]) {
     const rejected = await resolveVerifiedQuartoRuntime({ ...base, homeDirectory });

@@ -38,6 +38,8 @@ export function unavailableMessage(runtime) {
     ? ` Found ${discovered.path}; add its digest ${discovered.sha256}`
     : " Add the digest of your latexmk";
   switch (runtime?.reason) {
+    case "remote-only":
+      return "LaTeX Preview runs on a Chatero remote Linux workspace. Connect with Chatero Remote and open the .tex file there.";
     case "runtime-unpinned":
       return `LaTeX Preview needs the compiler pinned (runtime-unpinned).${found} to chatero.documentation.remoteLatex.sha256Allowlist.`;
     case "runtime-digest-mismatch":
