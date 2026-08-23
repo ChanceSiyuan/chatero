@@ -1,0 +1,39 @@
+diff --git a/src/vs/platform/agentHost/node/codex/chateroCodexPermissions.ts b/src/vs/platform/agentHost/node/codex/chateroCodexPermissions.ts
+index 97123a32800..c88b6d0be74 100644
+--- a/src/vs/platform/agentHost/node/codex/chateroCodexPermissions.ts
++++ b/src/vs/platform/agentHost/node/codex/chateroCodexPermissions.ts
+@@ -363,7 +363,7 @@ function revalidateProtectedObjectInventory(inventory: readonly IChateroProtecte
+ 		if ((current.isSymbolicLink() !== (expected.kind === 'symlink'))
+ 			|| current.dev !== expected.dev
+ 			|| current.ino !== expected.ino
+-			|| current.nlink !== expected.nlink
++			|| (expected.kind !== 'directory' && current.nlink !== expected.nlink)
+ 			|| realpathSync(expected.path) !== expected.realPath) {
+ 			throw new Error(`protected Codex object identity changed: ${expected.path}`);
+ 		}
+diff --git a/src/vs/platform/agentHost/test/node/codex/chateroCodexPermissions.test.ts b/src/vs/platform/agentHost/test/node/codex/chateroCodexPermissions.test.ts
+index 44f86e1eac8..374e1e332da 100644
+--- a/src/vs/platform/agentHost/test/node/codex/chateroCodexPermissions.test.ts
++++ b/src/vs/platform/agentHost/test/node/codex/chateroCodexPermissions.test.ts
+@@ -165,6 +165,21 @@ suite('ChateroCodexPermissions', () => {
+ 		assert.doesNotThrow(() => createChateroCodexPermissionContext({ codexHome, trustedRuntimeRoots: [runtime] }));
+ 	});
+ 
++	test('allows runtime directories to change CODEX_HOME directory link counts', async () => {
++		const { root, codexHome, context } = fixture();
++		const responses = successfulResponses(context);
++		fs.mkdirSync(path.join(codexHome, 'ipc'));
++		await assert.doesNotReject(chateroCodexPreflight({
++			cwd: root,
++			context,
++			reader: {
++				readConfig: async () => responses.config,
++				readRequirements: async () => responses.requirements,
++				listPermissionProfiles: async () => responses.profiles,
++			},
++		}));
++	});
++
+ 	test('still rejects an escaping link directly inside CODEX_HOME', () => {
+ 		if (process.platform === 'win32') {
+ 			return;

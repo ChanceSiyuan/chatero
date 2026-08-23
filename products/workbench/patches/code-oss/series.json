@@ -104,6 +104,10 @@
     {
       "file": "0026-accept-user-codex-sandbox-defaults.patch",
       "sha256": "278f1f5bb109affd105f1d57f81cff3a9e10bc72459761b8f567e658baabb92f"
+    },
+    {
+      "file": "0027-stabilize-live-codex-home-directories.patch",
+      "sha256": "9773ca3bff53e40d8e9c8862668c1b2ca628fc5c5d050c9239989ee44b01cfb2"
     }
   ]
 }
