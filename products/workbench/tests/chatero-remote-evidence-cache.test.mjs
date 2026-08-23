@@ -958,9 +958,11 @@ linuxTest("createRuntime kills an unready server and removes transaction secrets
   assert.deepEqual(await readdir(join(runtimeBase, "chatero")), []);
 
   const readyPidFile = join(home, "ready-server.pid");
+  const readySidFile = join(home, "ready-server.sid");
   await writeFile(server, [
     "#!/bin/sh",
     "printf '%s\\n' \"$$\" >\"$CHATERO_TEST_PID_FILE\"",
+    "/bin/ps -o sid= -p \"$$\" | /usr/bin/tr -d ' ' >\"$CHATERO_TEST_SID_FILE\"",
     "printf '%s\\n' 'Extension host agent listening on 43123'",
     "trap 'exit 0' HUP INT TERM",
     "while :; do sleep 1; done",
@@ -973,7 +975,11 @@ linuxTest("createRuntime kills an unready server and removes transaction secrets
     [fixture.installRelativePath, fixture.tuple, ...integrityArguments(runtimeIntegrity)],
     {
       home,
-      env: { XDG_RUNTIME_DIR: longRuntime, CHATERO_TEST_PID_FILE: readyPidFile },
+      env: {
+        XDG_RUNTIME_DIR: longRuntime,
+        CHATERO_TEST_PID_FILE: readyPidFile,
+        CHATERO_TEST_SID_FILE: readySidFile,
+      },
       input: Buffer.from("temporary-token\n"),
     },
   );
@@ -983,6 +989,8 @@ linuxTest("createRuntime kills an unready server and removes transaction secrets
   assert.ok(Buffer.byteLength(socket) <= 100);
   assert.equal(installPath, join(home, fixture.installRelativePath));
   const readyPid = Number((await readFile(readyPidFile, "utf8")).trim());
+  const readySid = Number((await readFile(readySidFile, "utf8")).trim());
+  assert.equal(readySid, readyPid, "the handed-off server owns an independent session");
   t.after(() => { try { process.kill(readyPid, "SIGKILL"); } catch (_) {} });
   process.kill(readyPid, "SIGTERM");
 
