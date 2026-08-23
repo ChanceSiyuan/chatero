@@ -1,0 +1,14 @@
+diff --git a/build/lib/extensions.ts b/build/lib/extensions.ts
+--- a/build/lib/extensions.ts
++++ b/build/lib/extensions.ts
+@@ -36,6 +36,10 @@ function minifyExtensionResources(input: Stream): Stream {
+ 		.pipe(jsonFilter)
+ 		.pipe(buffer())
+ 		.pipe(es.mapSync((f: File) => {
++			const relativePath = f.relative.split(path.sep).join('/');
++			if (/^extensions\/chatero-(?:documentation|remote|zotero)\//u.test(relativePath)) {
++				return f;
++			}
+ 			const errors: jsoncParser.ParseError[] = [];
+ 			const value = jsoncParser.parse(f.contents!.toString('utf8'), errors, { allowTrailingComma: true });
+ 			if (errors.length === 0) {

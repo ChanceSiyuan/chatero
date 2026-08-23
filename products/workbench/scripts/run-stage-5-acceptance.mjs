@@ -117,6 +117,18 @@ export async function inspectStageFiveProduct({ root = ROOT } = {}) {
       || product.extensionsGallery?.itemUrl !== "https://open-vsx.org/vscode/item") {
     throw new Error("materialized product is not bound exclusively to Open VSX");
   }
+  const builtInExtensions = new Map((product.builtInExtensions || []).map(value => [value.name, value]));
+  for (const name of ["ms-vscode.js-debug", "ms-vscode.js-debug-companion", "ms-vscode.vscode-js-profile-table"]) {
+    const extension = builtInExtensions.get(name);
+    if (!extension || !/^https:\/\/github\.com\//u.test(extension.repo)
+        || !/^[a-f0-9]{64}$/u.test(extension.sha256)
+        || extension.metadata?.publisherDisplayName !== "Chatero Built-in") {
+      throw new Error(`pinned Chatero JavaScript debugger component ${name} is unavailable`);
+    }
+  }
+  if (product.chateroBuiltInExtensionsFromGitHub !== true) {
+    throw new Error("Chatero built-in debugger components are not restricted to pinned GitHub releases");
+  }
   const forbidden = /marketplace\.visualstudio\.com|gallerycdn\.vsassets\.io|ms-python\.vscode-pylance|ms-vscode-remote\.remote-ssh/iu;
   if (forbidden.test(productText)) throw new Error("materialized product references a restricted Microsoft component");
   const firstParty = JSON.parse(await readFile(join(root, "products", "workbench", "first-party-extensions.json"), "utf8"));

@@ -210,6 +210,10 @@ test("the canonical series pins Chatero startup compatibility after native Codex
   const workspaceRootsEntry = byName("0015-preserve-codex-workspace-roots.patch");
   const claudeDisabledEntry = byName("0016-disable-claude-provider-registration.patch");
   const lifecycleEntry = byName("0017-lock-nested-lifecycle-installs.patch");
+  const codexWorkbenchEntry = byName("0020-default-to-codex-and-guard-null-chat-product.patch");
+  const pinnedBuiltInsEntry = byName("0021-fetch-pinned-builtins-from-github.patch");
+  const firstPartyBytesEntry = byName("0022-preserve-first-party-extension-bytes.patch");
+  const inlineBrandingEntry = byName("0023-remove-copilot-inline-status-branding.patch");
 
   assert.equal(entry.file, "0004-chatero-documentation-agent-authority.patch");
   assert.ok(byName("0003-chatero-native-codex.patch"));
@@ -226,6 +230,10 @@ test("the canonical series pins Chatero startup compatibility after native Codex
   assert.equal(workspaceRootsEntry.file, "0015-preserve-codex-workspace-roots.patch");
   assert.equal(claudeDisabledEntry.file, "0016-disable-claude-provider-registration.patch");
   assert.equal(lifecycleEntry.file, "0017-lock-nested-lifecycle-installs.patch");
+  assert.equal(codexWorkbenchEntry.file, "0020-default-to-codex-and-guard-null-chat-product.patch");
+  assert.equal(pinnedBuiltInsEntry.file, "0021-fetch-pinned-builtins-from-github.patch");
+  assert.equal(firstPartyBytesEntry.file, "0022-preserve-first-party-extension-bytes.patch");
+  assert.equal(inlineBrandingEntry.file, "0023-remove-copilot-inline-status-branding.patch");
   const bytes = await readFile(join(canonicalPatchDirectory, entry.file));
   const compatibilityBytes = await readFile(join(canonicalPatchDirectory, compatibilityEntry.file));
   const startupBytes = await readFile(join(canonicalPatchDirectory, startupEntry.file));
@@ -240,6 +248,10 @@ test("the canonical series pins Chatero startup compatibility after native Codex
   const workspaceRootsBytes = await readFile(join(canonicalPatchDirectory, workspaceRootsEntry.file));
   const claudeDisabledBytes = await readFile(join(canonicalPatchDirectory, claudeDisabledEntry.file));
   const lifecycleBytes = await readFile(join(canonicalPatchDirectory, lifecycleEntry.file));
+  const codexWorkbenchBytes = await readFile(join(canonicalPatchDirectory, codexWorkbenchEntry.file));
+  const pinnedBuiltInsBytes = await readFile(join(canonicalPatchDirectory, pinnedBuiltInsEntry.file));
+  const firstPartyBytes = await readFile(join(canonicalPatchDirectory, firstPartyBytesEntry.file));
+  const inlineBrandingBytes = await readFile(join(canonicalPatchDirectory, inlineBrandingEntry.file));
   assert.equal(entry.sha256, sha256(bytes));
   assert.equal(compatibilityEntry.sha256, sha256(compatibilityBytes));
   assert.equal(startupEntry.sha256, sha256(startupBytes));
@@ -254,6 +266,10 @@ test("the canonical series pins Chatero startup compatibility after native Codex
   assert.equal(workspaceRootsEntry.sha256, sha256(workspaceRootsBytes));
   assert.equal(claudeDisabledEntry.sha256, sha256(claudeDisabledBytes));
   assert.equal(lifecycleEntry.sha256, sha256(lifecycleBytes));
+  assert.equal(codexWorkbenchEntry.sha256, sha256(codexWorkbenchBytes));
+  assert.equal(pinnedBuiltInsEntry.sha256, sha256(pinnedBuiltInsBytes));
+  assert.equal(firstPartyBytesEntry.sha256, sha256(firstPartyBytes));
+  assert.equal(inlineBrandingEntry.sha256, sha256(inlineBrandingBytes));
   assert.match(bytes.toString("utf8"), /acquireDocumentationWorkingCopyBarrier/);
   assert.match(compatibilityBytes.toString("utf8"), /chatero_workspace/);
   assert.match(startupBytes.toString("utf8"), /if \(product\.defaultChatAgent\)/);
@@ -285,4 +301,12 @@ test("the canonical series pins Chatero startup compatibility after native Codex
   assert.doesNotMatch(claudeDisabledBytes.toString("utf8"), /^\+.*registerProvider\([^\n]*ClaudeAgent/m);
   assert.match(claudeDisabledBytes.toString("utf8"), /Chatero ships only the Codex provider/);
   assert.match(lifecycleBytes.toString("utf8"), /CHATERO_NPM_COMMAND/);
+  assert.match(codexWorkbenchBytes.toString("utf8"), /chateroDefaultAgentHostProvider === 'codex'/);
+  assert.match(codexWorkbenchBytes.toString("utf8"), /this\.productService\.defaultChatAgent && areSameExtensions/);
+  assert.match(codexWorkbenchBytes.toString("utf8"), /if \(product\.defaultChatAgent\) \{/);
+  assert.match(codexWorkbenchBytes.toString("utf8"), /Models, sign in to Codex/);
+  assert.match(firstPartyBytes.toString("utf8"), /chatero-\(\?:documentation\|remote\|zotero\)/);
+  assert.match(firstPartyBytes.toString("utf8"), /^\+\s*return f;/m);
+  assert.match(inlineBrandingBytes.toString("utf8"), /^\+\s*noSuggestion: .*label: localize/m);
+  assert.doesNotMatch(inlineBrandingBytes.toString("utf8"), /^\+.*\$\(copilot\)/m);
 });

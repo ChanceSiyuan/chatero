@@ -58,7 +58,9 @@ test("brands Code-OSS as Chatero and selects only Open VSX", async () => {
 
   assert.equal(product.nameShort, "Chatero");
   assert.equal(product.nameLong, "Chatero Research Workbench");
-  assert.equal(product.chateroWorkbenchUserDataName, "Chatero Research Workbench");
+  assert.equal(product.chateroWorkbenchUserDataName, "Chatero");
+  assert.equal(product.chateroWorkbenchSharedDataInUserData, true);
+  assert.equal(product.chateroDefaultAgentHostProvider, "codex");
   assert.equal(product.applicationName, "chatero");
   assert.equal(product.dataFolderName, ".chatero");
   assert.equal(product.darwinBundleIdentifier, "io.github.chancesiyuan.chatero");
@@ -68,7 +70,13 @@ test("brands Code-OSS as Chatero and selects only Open VSX", async () => {
     resourceUrlTemplate: "https://open-vsx.org/vscode/asset/{publisher}/{name}/{version}/Microsoft.VisualStudio.Code.WebResources/extension",
     serviceUrl: "https://open-vsx.org/vscode/gallery",
   });
-  assert.deepEqual(product.builtInExtensions, []);
+  assert.deepEqual(product.builtInExtensions.map(value => [value.name, value.version, value.sha256]), [
+    ["ms-vscode.js-debug-companion", "1.1.3", "7380a890787452f14b2db7835dfa94de538caf358ebc263f9d46dd68ac52de93"],
+    ["ms-vscode.js-debug", "1.117.0", "854eeb8a785b1f41ba2bd02d7ccd4fdbe10021b61473293973c7e96d036c7fb8"],
+    ["ms-vscode.vscode-js-profile-table", "1.0.11", "a962a1e6a3baf74c9354b7f47fa96e6d6f0423a63bff55d7f976b6134a748ae9"],
+  ]);
+  assert.ok(product.builtInExtensions.every(value => value.metadata.publisherDisplayName === "Chatero Built-in"));
+  assert.equal(product.chateroBuiltInExtensionsFromGitHub, true);
   assert.deepEqual(product.builtInExtensionsEnabledWithAutoUpdates, []);
   assert.deepEqual(product.excludedSystemExtensionNames, ["copilot-chat"]);
   assert.equal(product.defaultChatAgent, null);

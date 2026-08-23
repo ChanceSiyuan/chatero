@@ -10,6 +10,7 @@ import { promisify } from "node:util";
 
 import { CUTOVER_FIELDS, sha256File, validateReleaseReceipt } from "./stage-7-release-contract.mjs";
 import { embedRemoteAgentRelease, verifyEmbeddedRemoteAgentRelease } from "./embed-remote-agent-release.mjs";
+import { embedWorkbenchProvenance, verifyEmbeddedWorkbenchProvenance } from "./embed-workbench-provenance.mjs";
 
 const execFile = promisify(execFileCallback);
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
@@ -67,6 +68,7 @@ export async function verifyAppShape(appPath) {
       throw new Error(`packaged Workbench omits ${extension}`);
     }
   }
+  await verifyEmbeddedWorkbenchProvenance(appPath);
   const bundledCore = join(appPath, "Contents", "Resources", "chatero-core", "Chatero Core.app");
   const coreExecutable = join(bundledCore, "Contents", "MacOS", "zotero");
   const corePlist = join(bundledCore, "Contents", "Info.plist");
@@ -176,6 +178,7 @@ async function main() {
     if (!identities.includes(identity)) throw new Error("configured Developer ID identity is absent from imported certificate");
 
     const builtApp = await findBuiltApp();
+    await embedWorkbenchProvenance(builtApp);
     await embedCore(builtApp);
     await signEmbeddedCore(builtApp, { identity, keychain });
     await verifyEmbeddedCoreSignature(builtApp);

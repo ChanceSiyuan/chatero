@@ -16,6 +16,7 @@ import {
 } from "./create-stage-7-macos-release.mjs";
 import { sha256File } from "./stage-7-release-contract.mjs";
 import { embedRemoteAgentRelease, verifyEmbeddedRemoteAgentRelease } from "./embed-remote-agent-release.mjs";
+import { embedWorkbenchProvenance } from "./embed-workbench-provenance.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const DEFAULT_DIST = join(ROOT, "products", "workbench", "dist");
@@ -97,6 +98,7 @@ async function main() {
     const builtApp = await findBuiltApp();
     const app = join(scratch, "Chatero.app");
     await copyBundle(builtApp, app);
+    await embedWorkbenchProvenance(app);
     await embedCore(app);
     await signEmbeddedCore(app);
     await verifyEmbeddedCoreSignature(app);

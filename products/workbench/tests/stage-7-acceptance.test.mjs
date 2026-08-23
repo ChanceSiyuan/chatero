@@ -124,6 +124,19 @@ test("both macOS release paths embed and reverify the signed dual-architecture R
   assert.match(embedding, /remote-agent/u);
 });
 
+test("both macOS release paths embed and reverify Code-OSS provenance inside the app", async () => {
+  const [production, local, embedding] = await Promise.all([
+    readFile(new URL("../scripts/create-stage-7-macos-release.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../scripts/create-local-macos-release.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../scripts/embed-workbench-provenance.mjs", import.meta.url), "utf8"),
+  ]);
+  for (const source of [production, local]) assert.match(source, /embedWorkbenchProvenance\(/u);
+  assert.match(production, /verifyEmbeddedWorkbenchProvenance\(appPath\)/u);
+  assert.match(embedding, /\.chatero-provenance\.json/u);
+  assert.match(embedding, /sourceBytes\.equals\(installedBytes\)/u);
+  assert.match(embedding, /nlink !== 1/u);
+});
+
 test("local macOS release stays distinct from notarized Stage 7 and performs a real cold-start probe", async () => {
   const source = await readFile(new URL("../scripts/create-local-macos-release.mjs", import.meta.url), "utf8");
   assert.match(source, /codesign[\s\S]*--sign[\s\S]*"-"/u);

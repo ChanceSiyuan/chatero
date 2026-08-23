@@ -1,0 +1,167 @@
+diff --git a/src/vs/base/common/product.ts b/src/vs/base/common/product.ts
+--- a/src/vs/base/common/product.ts
++++ b/src/vs/base/common/product.ts
+@@ -105,6 +105,7 @@ export interface IProductConfiguration {
+ 	readonly nameLong: string;
+ 	readonly chateroWorkbenchUserDataName?: string;
+ 	readonly chateroWorkbenchSharedDataInUserData?: boolean;
++	readonly chateroDefaultAgentHostProvider?: 'codex';
+ 
+ 	readonly win32AppUserModelId?: string;
+ 	readonly win32MutexName?: string;
+diff --git a/src/vs/platform/extensionManagement/common/abstractExtensionManagementService.ts b/src/vs/platform/extensionManagement/common/abstractExtensionManagementService.ts
+--- a/src/vs/platform/extensionManagement/common/abstractExtensionManagementService.ts
++++ b/src/vs/platform/extensionManagement/common/abstractExtensionManagementService.ts
+@@ -984,7 +984,7 @@ export abstract class AbstractExtensionManagementService extends CommontExtensio
+ 		if (checked.indexOf(extension) !== -1) {
+ 			return [];
+ 		}
+-		if (areSameExtensions(extension.identifier, { id: this.productService.defaultChatAgent.extensionId })) {
++		if (this.productService.defaultChatAgent && areSameExtensions(extension.identifier, { id: this.productService.defaultChatAgent.extensionId })) {
+ 			return [];
+ 		}
+ 		checked.push(extension);
+diff --git a/src/vs/platform/extensionManagement/common/extensionGalleryService.ts b/src/vs/platform/extensionManagement/common/extensionGalleryService.ts
+--- a/src/vs/platform/extensionManagement/common/extensionGalleryService.ts
++++ b/src/vs/platform/extensionManagement/common/extensionGalleryService.ts
+@@ -1157,7 +1157,7 @@ export abstract class AbstractExtensionGalleryService implements IExtensionGalle
+ 			for (let index = 0; index < extensions.length; index++) {
+ 				const extension = extensions[index];
+ 				setTelemetry(extension, ((query.pageNumber - 1) * query.pageSize) + index, options.source);
+-				if (areSameExtensions(extension.identifier, { id: this.productService.defaultChatAgent.extensionId, })) {
++				if (this.productService.defaultChatAgent && areSameExtensions(extension.identifier, { id: this.productService.defaultChatAgent.extensionId, })) {
+ 					defaultChatAgentExtension = extension;
+ 				} else {
+ 					result.push(extension);
+@@ -1989,15 +1989,17 @@ export abstract class AbstractExtensionGalleryService implements IExtensionGalle
+ 			}
+ 		}
+ 
+-		deprecated[this.productService.defaultChatAgent.extensionId.toLowerCase()] = {
+-			disallowInstall: true,
+-			extension: {
+-				id: this.productService.defaultChatAgent.chatExtensionId,
+-				displayName: 'GitHub Copilot Chat',
+-				autoMigrate: { storage: false, donotDisable: true },
+-				preRelease: this.productService.quality !== 'stable'
+-			}
+-		};
++		if (this.productService.defaultChatAgent) {
++			deprecated[this.productService.defaultChatAgent.extensionId.toLowerCase()] = {
++				disallowInstall: true,
++				extension: {
++					id: this.productService.defaultChatAgent.chatExtensionId,
++					displayName: 'GitHub Copilot Chat',
++					autoMigrate: { storage: false, donotDisable: true },
++					preRelease: this.productService.quality !== 'stable'
++				}
++			};
++		}
+ 
+ 		return { malicious, deprecated, search, autoUpdate };
+ 	}
+diff --git a/src/vs/workbench/contrib/chat/browser/chat.shared.contribution.ts b/src/vs/workbench/contrib/chat/browser/chat.shared.contribution.ts
+--- a/src/vs/workbench/contrib/chat/browser/chat.shared.contribution.ts
++++ b/src/vs/workbench/contrib/chat/browser/chat.shared.contribution.ts
+@@ -2854,7 +2854,9 @@ registerWorkbenchContribution2(ChatQuotaNotificationContribution.ID, ChatQuotaNo
+ registerWorkbenchContribution2(ChatPromoNotificationContribution.ID, ChatPromoNotificationContribution, WorkbenchPhase.AfterRestored);
+ registerWorkbenchContribution2(HasByokModelsContribution.ID, HasByokModelsContribution, WorkbenchPhase.BlockRestore);
+ registerWorkbenchContribution2(ChatTeardownContribution.ID, ChatTeardownContribution, WorkbenchPhase.AfterRestored);
+-registerWorkbenchContribution2(ChatStatusBarEntry.ID, ChatStatusBarEntry, WorkbenchPhase.BlockRestore);
++if (product.defaultChatAgent) {
++	registerWorkbenchContribution2(ChatStatusBarEntry.ID, ChatStatusBarEntry, WorkbenchPhase.BlockRestore);
++}
+ registerWorkbenchContribution2(BuiltinToolsContribution.ID, BuiltinToolsContribution, WorkbenchPhase.Eventually);
+ registerWorkbenchContribution2(ClientToolSetsContribution.ID, ClientToolSetsContribution, WorkbenchPhase.Eventually);
+ registerWorkbenchContribution2(UsagesToolContribution.ID, UsagesToolContribution, WorkbenchPhase.BlockRestore);
+diff --git a/src/vs/workbench/contrib/chat/browser/widget/chatWidget.ts b/src/vs/workbench/contrib/chat/browser/widget/chatWidget.ts
+--- a/src/vs/workbench/contrib/chat/browser/widget/chatWidget.ts
++++ b/src/vs/workbench/contrib/chat/browser/widget/chatWidget.ts
+@@ -1202,7 +1202,7 @@ export class ChatWidget extends Disposable {
+ 			if (!numItems) {
+ 				const defaultAgent = this.chatAgentService.getDefaultAgent(this.location, this.input.currentModeKind);
+ 				let additionalMessage: string | IMarkdownString | undefined;
+-				if (this.chatEntitlementService.anonymous && !this.chatEntitlementService.sentiment.completed) {
++				if (product.defaultChatAgent && this.chatEntitlementService.anonymous && !this.chatEntitlementService.sentiment.completed) {
+ 					const providers = product.defaultChatAgent.provider;
+ 					additionalMessage = new MarkdownString(localize({ key: 'settings', comment: ['{Locked="]({2})"}', '{Locked="]({3})"}'] }, "By continuing with {0} Copilot, you agree to {1}'s [Terms]({2}) and [Privacy Statement]({3}).", providers.default.name, providers.default.name, product.defaultChatAgent.termsStatementUrl, product.defaultChatAgent.privacyStatementUrl), { isTrusted: true });
+ 				} else {
+diff --git a/src/vs/workbench/contrib/chat/browser/widget/input/modelPicker/modelPickerWidget.ts b/src/vs/workbench/contrib/chat/browser/widget/input/modelPicker/modelPickerWidget.ts
+--- a/src/vs/workbench/contrib/chat/browser/widget/input/modelPicker/modelPickerWidget.ts
++++ b/src/vs/workbench/contrib/chat/browser/widget/input/modelPicker/modelPickerWidget.ts
+@@ -622,7 +622,9 @@ export class ModelPickerWidget extends Disposable {
+ 		const ariaLabel = restrictedMode
+ 			? localize('chat.modelPicker.ariaLabelRestricted', "Models, unavailable while in Restricted mode")
+ 			: setupRequired
+-				? localize('chat.modelPicker.ariaLabelSetupRequired', "Models, sign in to use Copilot")
++				? this._productService.defaultChatAgent
++					? localize('chat.modelPicker.ariaLabelSetupRequired', "Models, sign in to use Copilot")
++					: localize('chat.modelPicker.ariaLabelCodexSetupRequired', "Models, sign in to Codex")
+ 				: localize('chat.modelPicker.ariaLabel', "Models, {0}", modelLabel);
+ 		this._domNode.ariaLabel = ariaLabel;
+ 		this._nameButton.ariaLabel = ariaLabel;
+diff --git a/src/vs/workbench/contrib/chat/common/chatService/chatServiceImpl.ts b/src/vs/workbench/contrib/chat/common/chatService/chatServiceImpl.ts
+--- a/src/vs/workbench/contrib/chat/common/chatService/chatServiceImpl.ts
++++ b/src/vs/workbench/contrib/chat/common/chatService/chatServiceImpl.ts
+@@ -27,6 +27,7 @@ import { IConfigurationService } from '../../../../../platform/configuration/com
+ import { IInstantiationService } from '../../../../../platform/instantiation/common/instantiation.js';
+ import { ILogService } from '../../../../../platform/log/common/log.js';
+ import { Progress } from '../../../../../platform/progress/common/progress.js';
++import product from '../../../../../platform/product/common/product.js';
+ import { IStorageService, StorageScope, StorageTarget } from '../../../../../platform/storage/common/storage.js';
+ import { ITelemetryService } from '../../../../../platform/telemetry/common/telemetry.js';
+ import { IWorkspaceContextService } from '../../../../../platform/workspace/common/workspace.js';
+@@ -560,7 +561,9 @@ export class ChatService extends Disposable implements IChatService {
+ 		// Activate the default extension provided agent but do not wait
+ 		// for it to be ready so that the session can be used immediately
+ 		// without having to wait for the agent to be ready.
+-		this.activateDefaultAgent(model.initialLocation).catch(e => this.logService.error(e));
++		if (product.defaultChatAgent) {
++			this.activateDefaultAgent(model.initialLocation).catch(e => this.logService.error(e));
++		}
+ 	}
+ 
+ 	async activateDefaultAgent(location: ChatAgentLocation): Promise<void> {
+diff --git a/src/vs/workbench/contrib/chat/common/constants.ts b/src/vs/workbench/contrib/chat/common/constants.ts
+--- a/src/vs/workbench/contrib/chat/common/constants.ts
++++ b/src/vs/workbench/contrib/chat/common/constants.ts
+@@ -18,6 +18,7 @@ import { generateUuid } from '../../../../base/common/uuid.js';
+ import { LocalChatSessionUri } from './model/chatUri.js';
+ import { clearUserSelectedSessionType, getRememberedSessionType, hasPreferredCopilotHarness, storeUserSelectedSessionType } from './chatSessionTypePreference.js';
+ import { IAgentHostEnablementService } from '../../../../platform/agentHost/common/agentHostEnablementService.js';
++import product from '../../../../platform/product/common/product.js';
+ 
+ export { ChatAIDisabledSettingId } from '../../../../platform/chat/common/chatSettings.js';
+ 
+@@ -302,6 +303,9 @@ export function getComputedDefaultSessionType(
+ 	if (isVirtualWorkspace(workspace)) {
+ 		return localChatSessionType;
+ 	}
++	if (agentHostEnabled && product.chateroDefaultAgentHostProvider === 'codex') {
++		return SessionType.AgentHostCodex;
++	}
+ 
+ 	if (agentHostEnabled && configurationService.getValue<boolean>(ChatConfiguration.DefaultToCopilotHarness)) {
+ 		return SessionType.AgentHostCopilot;
+@@ -469,7 +473,8 @@ export function recordUserSelectedSessionType(
+ }
+ 
+ export function isEditorLocalAgentEnabled(configurationService: IConfigurationService, workspace: IWorkspace): boolean {
+-	return isVirtualWorkspace(workspace) || (configurationService.getValue<boolean>(ChatConfiguration.EditorLocalAgentEnabled) ?? true);
++	return isVirtualWorkspace(workspace) || (product.chateroDefaultAgentHostProvider !== 'codex'
++		&& (configurationService.getValue<boolean>(ChatConfiguration.EditorLocalAgentEnabled) ?? true));
+ }
+ 
+ export function isVisibleEditorChatSessionType(
+diff --git a/src/vs/workbench/contrib/extensions/browser/extensionsWorkbenchService.ts b/src/vs/workbench/contrib/extensions/browser/extensionsWorkbenchService.ts
+--- a/src/vs/workbench/contrib/extensions/browser/extensionsWorkbenchService.ts
++++ b/src/vs/workbench/contrib/extensions/browser/extensionsWorkbenchService.ts
+@@ -2864,7 +2864,7 @@ export class ExtensionsWorkbenchService extends Disposable implements IExtension
+ 		}
+ 
+ 		const extensionsToUninstall: UninstallExtensionInfo[] = [{ extension: extension.local }];
+-		if (!areSameExtensions(extension.identifier, { id: this.productService.defaultChatAgent.extensionId })) {
++		if (!this.productService.defaultChatAgent || !areSameExtensions(extension.identifier, { id: this.productService.defaultChatAgent.extensionId })) {
+ 			for (const packExtension of this.getAllPackedExtensions(extension, this.local)) {
+ 				if (packExtension.local && !extensionsToUninstall.some(e => areSameExtensions(e.extension.identifier, packExtension.identifier))) {
+ 					extensionsToUninstall.push({ extension: packExtension.local });
