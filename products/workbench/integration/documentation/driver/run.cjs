@@ -2,7 +2,10 @@ const path = require("node:path");
 const { createRequire } = require("node:module");
 
 async function run() {
-  const repositoryRoot = process.env.CHATERO_REPOSITORY_ROOT;
+  const configuredRepositoryRoot = process.env.CHATERO_REPOSITORY_ROOT;
+  const repositoryRoot = configuredRepositoryRoot === undefined
+    ? path.resolve(__dirname, "../../../../..")
+    : configuredRepositoryRoot;
   if (!repositoryRoot || !path.isAbsolute(repositoryRoot)) {
     throw new Error("CHATERO_REPOSITORY_ROOT must identify the pinned source checkout");
   }

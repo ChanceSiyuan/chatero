@@ -1,15 +1,18 @@
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
-import { join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { TEXT_DOCUMENT_SCENARIOS } from "./fixtures.mjs";
 
 const require = createRequire(import.meta.url);
 const vscode = require("vscode");
-const target = process.env.CHATERO_DOCUMENTATION_TEST_TARGET;
-const repositoryRoot = process.env.CHATERO_REPOSITORY_ROOT;
-const workspacePath = process.env.CHATERO_DOCUMENTATION_WORKSPACE_PATH;
+const target = process.env.CHATERO_DOCUMENTATION_TEST_TARGET
+  ?? (vscode.env.remoteName === "chatero-remote" ? "ssh-fixture" : "local");
+const repositoryRoot = process.env.CHATERO_REPOSITORY_ROOT
+  ?? resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
+const workspacePath = process.env.CHATERO_DOCUMENTATION_WORKSPACE_PATH
+  ?? vscode.workspace.workspaceFolders?.[0]?.uri.path;
 const EXTENSION_DISCOVERY_TIMEOUT_MS = 30_000;
 
 async function waitForExtension(extensionId) {

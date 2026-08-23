@@ -100,6 +100,15 @@ test("uses the macOS code script directly and forwards only a bounded grep", asy
 });
 
 test("remote integration waits boundedly for workspace extension discovery", async () => {
+  const driverManifest = JSON.parse(await readFile(join(
+    repositoryRoot,
+    "products",
+    "workbench",
+    "integration",
+    "documentation",
+    "driver",
+    "package.json",
+  ), "utf8"));
   const source = await readFile(join(
     repositoryRoot,
     "products",
@@ -108,6 +117,18 @@ test("remote integration waits boundedly for workspace extension discovery", asy
     "documentation",
     "text-document-editor.test.mjs",
   ), "utf8");
+  const runner = await readFile(join(
+    repositoryRoot,
+    "products",
+    "workbench",
+    "integration",
+    "documentation",
+    "driver",
+    "run.cjs",
+  ), "utf8");
+  assert.deepEqual(driverManifest.extensionKind, ["workspace"]);
+  assert.match(source, /vscode\.env\.remoteName === "chatero-remote"/);
+  assert.match(runner, /path\.resolve\(__dirname, "\.\.\/\.\.\/\.\.\/\.\.\/\.\."\)/);
   assert.match(source, /EXTENSION_DISCOVERY_TIMEOUT_MS = 30_000/);
   assert.match(source, /vscode\.extensions\.onDidChange/);
   assert.match(source, /const afterSubscription = vscode\.extensions\.getExtension\(extensionId\)/);
