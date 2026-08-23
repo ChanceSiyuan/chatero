@@ -78,7 +78,14 @@ export async function spawnDocumentationIntegrationProcess({
     throw new TypeError("Documentation integration process deadlines must be positive integers");
   }
   return new Promise((accept, reject) => {
-    const child = spawn(file, args, { cwd, env, shell: false, stdio: ["inherit", "pipe", "pipe"] });
+    const ownsProcessGroup = process.platform !== "win32";
+    const child = spawn(file, args, {
+      cwd,
+      env,
+      detached: ownsProcessGroup,
+      shell: false,
+      stdio: ["inherit", "pipe", "pipe"],
+    });
     let stdout = "";
     let stderr = "";
     let timedOut = false;
@@ -96,7 +103,17 @@ export async function spawnDocumentationIntegrationProcess({
       if (Buffer.byteLength(stderr) < MAX_STARTUP_OUTPUT_BYTES) stderr += chunk.toString("utf8");
     });
     const forwardSignal = signal => {
-      if (!child.killed) child.kill(signal);
+      if (!Number.isInteger(child.pid)) return;
+      if (ownsProcessGroup) {
+        try {
+          process.kill(-child.pid, signal);
+          return;
+        }
+        catch (error) {
+          if (error?.code === "ESRCH") return;
+        }
+      }
+      child.kill(signal);
     };
     const onInterrupt = () => forwardSignal("SIGINT");
     const onTerminate = () => forwardSignal("SIGTERM");
@@ -104,8 +121,8 @@ export async function spawnDocumentationIntegrationProcess({
     process.on("SIGTERM", onTerminate);
     const deadline = setTimeout(() => {
       timedOut = true;
-      child.kill("SIGTERM");
-      killTimer = setTimeout(() => child.kill("SIGKILL"), killGraceMs);
+      forwardSignal("SIGTERM");
+      killTimer = setTimeout(() => forwardSignal("SIGKILL"), killGraceMs);
       killTimer.unref?.();
     }, timeoutMs);
     deadline.unref?.();
@@ -194,8 +211,10 @@ export async function runDocumentationIntegration({
   if (!verification?.ok) throw new Error("pinned Code-OSS verification did not pass");
   await safeRegularFile(join(canonicalCheckout, "out", "main.js"), "compiled pinned Code-OSS entry");
   await safeRegularFile(join(canonicalCheckout, "scripts", "code.sh"), "pinned Code-OSS launch script");
+  let canonicalRemoteAgentReleaseDir;
   if (target === "ssh-fixture") {
     await verifySignedRemoteAgentFixture({ root, releaseDirectory: remoteAgentReleaseDir });
+    canonicalRemoteAgentReleaseDir = await realpath(resolve(remoteAgentReleaseDir));
   }
   if (platform !== "linux" && platform !== "darwin") throw new Error("Documentation integration supports Linux and macOS only");
 
@@ -203,7 +222,7 @@ export async function runDocumentationIntegration({
     root,
     checkout: canonicalCheckout,
     target,
-    remoteAgentReleaseDir,
+    remoteAgentReleaseDir: canonicalRemoteAgentReleaseDir,
     sshAlias,
     sshSourceHome: target === "ssh-fixture" ? process.env.HOME : undefined,
   });

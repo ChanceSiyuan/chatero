@@ -226,6 +226,28 @@ test("integration child has a hard deadline and cannot wait forever in authority
   }), /timed out/i);
 });
 
+test("integration deadline terminates the complete spawned process group", async () => {
+  if (process.platform === "win32") return;
+  const started = Date.now();
+  await assert.rejects(spawnDocumentationIntegrationProcess({
+    file: process.execPath,
+    args: [
+      "-e",
+      [
+        "const { spawn } = require('node:child_process');",
+        "spawn(process.execPath, ['-e', 'process.on(\\\"SIGTERM\\\", () => {}); setInterval(() => {}, 1000)'], { stdio: 'inherit' });",
+        "process.on('SIGTERM', () => {});",
+        "setInterval(() => {}, 1000);",
+      ].join(" "),
+    ],
+    cwd: repositoryRoot,
+    env: process.env,
+    timeoutMs: 50,
+    killGraceMs: 50,
+  }), /timed out/i);
+  assert.ok(Date.now() - started < 2_000);
+});
+
 test("SSH integration home receives only public OpenSSH routing material", async () => {
   const { prepareDocumentationSshHome } = await import("../integration/documentation/fixtures.mjs");
   const sourceHome = await mkdtemp(join(tmpdir(), "chatero-documentation-ssh-source-"));
