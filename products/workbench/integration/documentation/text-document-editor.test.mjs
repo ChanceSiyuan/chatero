@@ -13,34 +13,36 @@ const repositoryRoot = process.env.CHATERO_REPOSITORY_ROOT
   ?? resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
 const workspacePath = process.env.CHATERO_DOCUMENTATION_WORKSPACE_PATH
   ?? vscode.workspace.workspaceFolders?.[0]?.uri.path;
-const EXTENSION_DISCOVERY_TIMEOUT_MS = 30_000;
-
-async function waitForExtension(extensionId) {
-  const existing = vscode.extensions.getExtension(extensionId);
-  if (existing) return existing;
-  return new Promise(resolve => {
-    let subscription;
-    let deadline;
-    const finish = extension => {
-      clearTimeout(deadline);
-      subscription?.dispose();
-      resolve(extension);
-    };
-    subscription = vscode.extensions.onDidChange(() => {
-      const extension = vscode.extensions.getExtension(extensionId);
-      if (extension) finish(extension);
-    });
-    deadline = setTimeout(() => finish(undefined), EXTENSION_DISCOVERY_TIMEOUT_MS);
-    const afterSubscription = vscode.extensions.getExtension(extensionId);
-    if (afterSubscription) finish(afterSubscription);
-  });
-}
+const REMOTE_ACTIVATION_TIMEOUT_MS = 30_000;
 
 async function documentationExtension() {
-  const extension = await waitForExtension("chatero.chatero-documentation");
+  assert.equal(target, "local", "remote workspace extensions are not visible from the UI Extension Host");
+  const extension = vscode.extensions.getExtension("chatero.chatero-documentation");
   assert.ok(extension, "materialized Documentation extension is missing");
   await extension.activate();
   return extension;
+}
+
+async function activateDocumentation() {
+  if (target === "local") return documentationExtension();
+  const deadline = Date.now() + REMOTE_ACTIVATION_TIMEOUT_MS;
+  let lastError;
+  do {
+    try {
+      await vscode.commands.executeCommand("chatero.documentation.refresh");
+      return;
+    }
+    catch (error) {
+      lastError = error;
+      await new Promise(resolve => setTimeout(resolve, 250));
+    }
+  } while (Date.now() < deadline);
+  assert.fail(`remote Documentation command did not activate: ${lastError?.message ?? lastError ?? "unknown error"}`);
+}
+
+async function documentationExtensionRoot() {
+  if (target === "local") return (await documentationExtension()).extensionPath;
+  return join(repositoryRoot, "products", "workbench", "extensions", "chatero-documentation");
 }
 
 function fixtureUri() {
@@ -66,8 +68,7 @@ async function resetFixture() {
 }
 
 async function importProductModule(name) {
-  const extension = await documentationExtension();
-  return import(pathToFileURL(join(extension.extensionPath, name)).href);
+  return import(pathToFileURL(join(await documentationExtensionRoot(), name)).href);
 }
 
 suite(`Documentation TextDocument editor (${target})`, () => {
@@ -80,8 +81,10 @@ suite(`Documentation TextDocument editor (${target})`, () => {
     else {
       assert.equal(folder.uri.scheme, "vscode-remote");
       assert.match(folder.uri.authority, /^chatero-remote\+/);
+      assert.equal(vscode.env.remoteName, "chatero-remote");
     }
-    await documentationExtension();
+    assert.equal(folder.uri.path, workspacePath);
+    await activateDocumentation();
   });
 
   for (const scenario of TEXT_DOCUMENT_SCENARIOS) {
@@ -131,7 +134,7 @@ suite(`Documentation TextDocument editor (${target})`, () => {
       }
       if (scenario === "nonce-bound-codemirror-styles") {
         const source = await vscode.workspace.fs.readFile(vscode.Uri.file(join(
-          (await documentationExtension()).extensionPath,
+          await documentationExtensionRoot(),
           "live-preview-html.mjs",
         )));
         const text = new TextDecoder().decode(source);
@@ -149,7 +152,7 @@ suite(`Documentation TextDocument editor (${target})`, () => {
       }
       if (scenario === "upstream-agent-extension-absent") {
         assert.equal(vscode.extensions.getExtension("GitHub.copilot-chat"), undefined);
-        assert.equal(vscode.extensions.getExtension("chatero.chatero-documentation")?.isActive, true);
+        await activateDocumentation();
         return;
       }
 

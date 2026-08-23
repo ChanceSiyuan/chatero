@@ -99,7 +99,7 @@ test("uses the macOS code script directly and forwards only a bounded grep", asy
   }), /grep/);
 });
 
-test("remote integration waits boundedly for workspace extension discovery", async () => {
+test("remote integration activates the workspace extension across the host boundary", async () => {
   const driverManifest = JSON.parse(await readFile(join(
     repositoryRoot,
     "products",
@@ -117,23 +117,13 @@ test("remote integration waits boundedly for workspace extension discovery", asy
     "documentation",
     "text-document-editor.test.mjs",
   ), "utf8");
-  const runner = await readFile(join(
-    repositoryRoot,
-    "products",
-    "workbench",
-    "integration",
-    "documentation",
-    "driver",
-    "run.cjs",
-  ), "utf8");
-  assert.deepEqual(driverManifest.extensionKind, ["workspace"]);
+  assert.deepEqual(driverManifest.extensionKind, ["ui"]);
   assert.match(source, /vscode\.env\.remoteName === "chatero-remote"/);
-  assert.match(runner, /path\.resolve\(__dirname, "\.\.\/\.\.\/\.\.\/\.\.\/\.\."\)/);
-  assert.match(source, /EXTENSION_DISCOVERY_TIMEOUT_MS = 30_000/);
-  assert.match(source, /vscode\.extensions\.onDidChange/);
-  assert.match(source, /const afterSubscription = vscode\.extensions\.getExtension\(extensionId\)/);
-  assert.match(source, /clearTimeout\(deadline\)/);
-  assert.match(source, /assert\.ok\(extension, "materialized Documentation extension is missing"\)/);
+  assert.match(source, /REMOTE_ACTIVATION_TIMEOUT_MS = 30_000/);
+  assert.match(source, /executeCommand\("chatero\.documentation\.refresh"\)/);
+  assert.match(source, /remote workspace extensions are not visible from the UI Extension Host/);
+  assert.match(source, /join\(repositoryRoot, "products", "workbench", "extensions", "chatero-documentation"\)/);
+  assert.doesNotMatch(source, /vscode\.extensions\.onDidChange/);
 });
 
 test("rejects extension proposal failures reported during startup", async () => {
