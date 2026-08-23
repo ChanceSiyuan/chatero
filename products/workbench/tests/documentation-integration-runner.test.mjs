@@ -108,7 +108,7 @@ test("remote integration waits boundedly for workspace extension discovery", asy
     "documentation",
     "text-document-editor.test.mjs",
   ), "utf8");
-  assert.match(source, /EXTENSION_DISCOVERY_TIMEOUT_MS = 15_000/);
+  assert.match(source, /EXTENSION_DISCOVERY_TIMEOUT_MS = 30_000/);
   assert.match(source, /vscode\.extensions\.onDidChange/);
   assert.match(source, /const afterSubscription = vscode\.extensions\.getExtension\(extensionId\)/);
   assert.match(source, /clearTimeout\(deadline\)/);

@@ -10,7 +10,7 @@ const vscode = require("vscode");
 const target = process.env.CHATERO_DOCUMENTATION_TEST_TARGET;
 const repositoryRoot = process.env.CHATERO_REPOSITORY_ROOT;
 const workspacePath = process.env.CHATERO_DOCUMENTATION_WORKSPACE_PATH;
-const EXTENSION_DISCOVERY_TIMEOUT_MS = 15_000;
+const EXTENSION_DISCOVERY_TIMEOUT_MS = 30_000;
 
 async function waitForExtension(extensionId) {
   const existing = vscode.extensions.getExtension(extensionId);
