@@ -537,10 +537,15 @@ test("registerQuartoPreview wires the save listener and Linux settings-driven ru
   const { createHash } = await import("node:crypto");
   const root = resolve(await temporary());
   const executable = join(root, "quarto");
+  const bubblewrap = join(root, "bwrap");
   const script = "#!/bin/sh\necho 1.8.26\n";
-  await writeFile(executable, script);
-  await chmod(executable, 0o755);
+  await Promise.all([
+    writeFile(executable, script),
+    writeFile(bubblewrap, "#!/bin/sh\nexit 0\n"),
+  ]);
+  await Promise.all([chmod(executable, 0o755), chmod(bubblewrap, 0o755)]);
   const settings = {
+    bubblewrapPath: bubblewrap,
     executablePath: executable,
     sha256Allowlist: [createHash("sha256").update(script).digest("hex")],
     allowExecution: true,
@@ -577,6 +582,7 @@ test("registerQuartoPreview wires the save listener and Linux settings-driven ru
 
   const runtime = await previewManager.runtimeResolver();
   assert.equal(runtime.kind, "verified-runtime", JSON.stringify(runtime));
+  assert.equal(runtime.bubblewrapExecutable, bubblewrap);
   assert.equal(runtime.sha256, settings.sha256Allowlist[0]);
   settings.sha256Allowlist = [];
   assert.equal((await previewManager.runtimeResolver()).reason, "runtime-unpinned");
