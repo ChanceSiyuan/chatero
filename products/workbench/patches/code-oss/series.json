@@ -96,6 +96,10 @@
     {
       "file": "0024-chatero-remote-agent-ready.patch",
       "sha256": "16d99390402c7324de2a28f33e484a27cae9104419b557b8d10a814b7eccb39f"
+    },
+    {
+      "file": "0025-chatero-agent-host-ready.patch",
+      "sha256": "079461be70a8a708fe0dd83567cae9f214ae09ad7d2afd3d50f82fcb619ffe92"
     }
   ]
 }

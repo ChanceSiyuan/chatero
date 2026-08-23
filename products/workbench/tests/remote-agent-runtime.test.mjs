@@ -62,6 +62,33 @@ test("the pinned server registers the native Agent Host remote proxy", {
   assert.match(channelIds, /RemoteProxy\s*=\s*'agentHostProxy'/);
 });
 
+test("local and remote Agent Hosts report ready only after their protocol endpoints exist", {
+  skip: !existsSync(join(generatedCheckout, "src", "server-main.ts")),
+}, async () => {
+  const [serverMain, agentHostMain, electronStarter] = await Promise.all([
+    readFile(join(generatedCheckout, "src", "server-main.ts"), "utf8"),
+    readFile(join(generatedCheckout, "src", "vs", "platform", "agentHost", "node", "agentHostMain.ts"), "utf8"),
+    readFile(join(generatedCheckout, "src", "vs", "platform", "agentHost", "electron-main", "electronAgentHostStarter.ts"), "utf8"),
+  ]);
+
+  assert.ok(
+    serverMain.indexOf("await waitForChateroAgentHostSocket(agentHostSocket)")
+      < serverMain.indexOf("console.log('Chatero remote agent ready')"),
+    "remote ready must follow the owner-created Agent Host socket",
+  );
+  assert.ok(
+    agentHostMain.indexOf("server.registerChannel(AgentHostIpcChannels.Management")
+      < agentHostMain.indexOf("console.log('Chatero agent host ready')"),
+    "local ready must follow Agent Host channel registration",
+  );
+  assert.ok(
+    electronStarter.indexOf("await ready")
+      < electronStarter.indexOf("this.utilityProcessStarted.complete()"),
+    "renderer connections must remain blocked until the Agent Host ready marker",
+  );
+  assert.match(electronStarter, /READY_TIMEOUT_MS = 30_000/);
+});
+
 test("Node Agent Host inherits the parent Codex environment before shell and SDK overrides", async () => {
   const { patch } = await runtimeContract();
 

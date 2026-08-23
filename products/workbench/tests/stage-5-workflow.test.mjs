@@ -14,6 +14,10 @@ test("Stage 5 CI builds, signs, runs real SSH, and gates both native Linux archi
     { runner: "ubuntu-24.04", arch: "x64", tuple: "linux-x86_64" },
     { runner: "ubuntu-24.04-arm", arch: "arm64", tuple: "linux-aarch64" },
   ]);
+  const agentBuildStep = workflow.jobs["build-agent"].steps.find(
+    step => step.run?.includes("build-linux-agent.mjs"),
+  );
+  assert.deepEqual(agentBuildStep.env, { GITHUB_TOKEN: "${{ github.token }}" });
   assert.match(source, /CHATERO_REMOTE_AGENT_SIGNING_KEY_BASE64/u);
   assert.match(source, /cmp - products\/workbench\/remote-agent\/release-public-key\.pem/u);
   assert.match(source, /run-stage-5-real-ssh\.mjs/u);

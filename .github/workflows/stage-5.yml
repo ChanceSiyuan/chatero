@@ -46,6 +46,8 @@ jobs:
           --arch ${{ matrix.arch }}
           --checkout vendor/code-oss
           --out products/workbench/remote-agent/dist/chatero-agent-${{ matrix.tuple }}.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
       - uses: actions/upload-artifact@v4
         with:
           name: unsigned-${{ matrix.tuple }}-${{ github.sha }}
