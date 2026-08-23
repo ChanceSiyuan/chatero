@@ -321,5 +321,6 @@ test("the canonical series pins Chatero startup compatibility after native Codex
   assert.match(agentHostReadyBytes.toString("utf8"), /await waitForChateroAgentHostSocket\(agentHostSocket\);/);
   assert.match(agentHostReadyBytes.toString("utf8"), /console\.log\('Chatero agent host ready'\)/);
   assert.match(agentHostReadyBytes.toString("utf8"), /await ready;\n\+\s*await this\.utilityProcessStarted\.complete\(\);/);
+  assert.match(agentHostReadyBytes.toString("utf8"), /try \{\n\+\s*if \(!started\)[\s\S]*?this\.utilityProcessStarted\.error\(error\)/);
   assert.match(agentHostReadyBytes.toString("utf8"), /READY_TIMEOUT_MS = 30_000/);
 });

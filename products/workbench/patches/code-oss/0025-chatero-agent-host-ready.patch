@@ -77,10 +77,10 @@ index f38aac1cee4..574b7004141 100644
  		});
 -
 -		this.utilityProcessStarted.complete();
-+		if (!started) {
-+			throw new Error('Agent host utility process did not start');
-+		}
 +		try {
++			if (!started) {
++				throw new Error('Agent host utility process did not start');
++			}
 +			await ready;
 +			await this.utilityProcessStarted.complete();
 +		} catch (error) {
