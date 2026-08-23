@@ -10,9 +10,31 @@ const vscode = require("vscode");
 const target = process.env.CHATERO_DOCUMENTATION_TEST_TARGET;
 const repositoryRoot = process.env.CHATERO_REPOSITORY_ROOT;
 const workspacePath = process.env.CHATERO_DOCUMENTATION_WORKSPACE_PATH;
+const EXTENSION_DISCOVERY_TIMEOUT_MS = 15_000;
+
+async function waitForExtension(extensionId) {
+  const existing = vscode.extensions.getExtension(extensionId);
+  if (existing) return existing;
+  return new Promise(resolve => {
+    let subscription;
+    let deadline;
+    const finish = extension => {
+      clearTimeout(deadline);
+      subscription?.dispose();
+      resolve(extension);
+    };
+    subscription = vscode.extensions.onDidChange(() => {
+      const extension = vscode.extensions.getExtension(extensionId);
+      if (extension) finish(extension);
+    });
+    deadline = setTimeout(() => finish(undefined), EXTENSION_DISCOVERY_TIMEOUT_MS);
+    const afterSubscription = vscode.extensions.getExtension(extensionId);
+    if (afterSubscription) finish(afterSubscription);
+  });
+}
 
 async function documentationExtension() {
-  const extension = vscode.extensions.getExtension("chatero.chatero-documentation");
+  const extension = await waitForExtension("chatero.chatero-documentation");
   assert.ok(extension, "materialized Documentation extension is missing");
   await extension.activate();
   return extension;

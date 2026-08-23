@@ -1,0 +1,11 @@
+diff --git a/src/server-main.ts b/src/server-main.ts
+--- a/src/server-main.ts
++++ b/src/server-main.ts
+@@ -139,6 +139,7 @@ async function spawnCli() {
+ 		(globalThis as { vscodeServerListenTime?: number }).vscodeServerListenTime = performance.now();
+ 
+ 		await getRemoteExtensionHostAgentServer();
++		console.log('Chatero remote agent ready');
+ 	});
+ 
+ 	process.on('exit', () => {

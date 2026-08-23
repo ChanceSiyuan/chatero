@@ -99,6 +99,22 @@ test("uses the macOS code script directly and forwards only a bounded grep", asy
   }), /grep/);
 });
 
+test("remote integration waits boundedly for workspace extension discovery", async () => {
+  const source = await readFile(join(
+    repositoryRoot,
+    "products",
+    "workbench",
+    "integration",
+    "documentation",
+    "text-document-editor.test.mjs",
+  ), "utf8");
+  assert.match(source, /EXTENSION_DISCOVERY_TIMEOUT_MS = 15_000/);
+  assert.match(source, /vscode\.extensions\.onDidChange/);
+  assert.match(source, /const afterSubscription = vscode\.extensions\.getExtension\(extensionId\)/);
+  assert.match(source, /clearTimeout\(deadline\)/);
+  assert.match(source, /assert\.ok\(extension, "materialized Documentation extension is missing"\)/);
+});
+
 test("rejects extension proposal failures reported during startup", async () => {
   const checkout = await createCheckoutFixture();
   await assert.rejects(runDocumentationIntegration({

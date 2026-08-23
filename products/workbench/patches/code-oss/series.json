@@ -92,6 +92,10 @@
     {
       "file": "0023-remove-copilot-inline-status-branding.patch",
       "sha256": "8329c0a5e4698609712264f3a260c8e9a050cf0868f301ecad26397455e1d49e"
+    },
+    {
+      "file": "0024-chatero-remote-agent-ready.patch",
+      "sha256": "16d99390402c7324de2a28f33e484a27cae9104419b557b8d10a814b7eccb39f"
     }
   ]
 }
