@@ -1,6 +1,6 @@
 import { copyFile, lstat, mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { encodeAuthority } from "../../extensions/chatero-remote/authority.mjs";
@@ -52,12 +52,16 @@ export async function createTemporaryDocumentationWorkspace({ root, checkout, ta
     ? encodeAuthority(`profile:${assertConcreteAlias(sshAlias)}`)
     : null;
   const fixtureRoot = await mkdtemp(join(await fixtureTempBase(), "chatero-doc-"));
-  const workspacePath = join(fixtureRoot, "workspace");
+  const localWorkspacePath = join(fixtureRoot, "workspace");
+  const fixtureToken = basename(fixtureRoot).slice("chatero-doc-".length);
+  if (!/^[A-Za-z0-9]+$/u.test(fixtureToken)) throw new Error("Documentation fixture token is unsafe");
+  const remoteFixtureRoot = target === "ssh-fixture" ? `/tmp/chatero-remote-doc-${fixtureToken}` : null;
+  const workspacePath = remoteFixtureRoot ? join(remoteFixtureRoot, "workspace") : localWorkspacePath;
   const userDataDir = join(fixtureRoot, "user-data");
   const extensionsDir = join(fixtureRoot, "extensions");
   const homeDir = join(fixtureRoot, "home");
   await Promise.all([
-    mkdir(join(workspacePath, "documentation"), { recursive: true }),
+    mkdir(join(localWorkspacePath, "documentation"), { recursive: true }),
     mkdir(userDataDir, { recursive: true }),
     mkdir(extensionsDir, { recursive: true }),
     mkdir(homeDir, { recursive: true }),
@@ -65,7 +69,7 @@ export async function createTemporaryDocumentationWorkspace({ root, checkout, ta
   if (target === "ssh-fixture" && sshSourceHome) {
     await prepareDocumentationSshHome({ sourceHome: sshSourceHome, fixtureHome: homeDir });
   }
-  await writeFile(join(workspacePath, "documentation", "index.qmd"), [
+  await writeFile(join(localWorkspacePath, "documentation", "index.qmd"), [
     "---",
     "title: Documentation integration fixture",
     "---",
@@ -75,7 +79,7 @@ export async function createTemporaryDocumentationWorkspace({ root, checkout, ta
     "Human and Agent edits share this QMD TextDocument.",
     "",
   ].join("\n"), { flag: "wx", mode: 0o600 });
-  await writeFile(join(workspacePath, ".gitignore"), ".chatero/\n", { flag: "wx", mode: 0o600 });
+  await writeFile(join(localWorkspacePath, ".gitignore"), ".chatero/\n", { flag: "wx", mode: 0o600 });
 
   const driverExtensionPath = join(root, "products", "workbench", "integration", "documentation", "driver");
   const testRunnerPath = join(driverExtensionPath, "run.cjs");
@@ -89,7 +93,9 @@ export async function createTemporaryDocumentationWorkspace({ root, checkout, ta
     extensionsDir,
     fixtureRoot,
     homeDir,
+    localWorkspacePath,
     remoteAgentReleaseDir,
+    remoteFixtureRoot,
     testRunnerPath,
     userDataDir,
     workspacePath,

@@ -7,8 +7,10 @@ import { afterEach, test } from "node:test";
 
 import {
   parseDocumentationIntegrationArguments,
+  removeDocumentationRemoteWorkspace,
   runDocumentationIntegration,
   spawnDocumentationIntegrationProcess,
+  stageDocumentationRemoteWorkspace,
 } from "../scripts/run-documentation-integration.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
@@ -240,6 +242,57 @@ test("SSH fixture binds the remote workspace to an explicit real OpenSSH alias",
   assert.equal(workspace.protocol, "vscode-remote:");
   assert.equal(workspace.hostname, "chatero-remote+cHJvZmlsZTpzdGFnZTUtdGFyZ2V0");
   assert.equal(Buffer.from(workspace.hostname.slice("chatero-remote+".length), "base64url").toString("utf8"), "profile:stage5-target");
+  assert.match(fixture.remoteFixtureRoot, /^\/tmp\/chatero-remote-doc-[A-Za-z0-9]+$/u);
+  assert.equal(fixture.workspacePath, join(fixture.remoteFixtureRoot, "workspace"));
+  assert.notEqual(fixture.workspacePath, fixture.localWorkspacePath);
+  assert.match(
+    await readFile(join(fixture.localWorkspacePath, "documentation", "index.qmd"), "utf8"),
+    /# Documentation integration fixture/u,
+  );
+});
+
+test("SSH fixture stages and removes only its isolated remote workspace through OpenSSH", async () => {
+  const fixtureRoot = await mkdtemp(join(tmpdir(), "chatero-documentation-remote-stage-"));
+  temporaryDirectories.push(fixtureRoot);
+  const fixture = {
+    homeDir: join(fixtureRoot, "home"),
+    localWorkspacePath: join(fixtureRoot, "workspace"),
+    remoteFixtureRoot: "/tmp/chatero-remote-doc-Ab12Cd",
+    workspacePath: "/tmp/chatero-remote-doc-Ab12Cd/workspace",
+  };
+  await mkdir(join(fixture.homeDir, ".ssh"), { recursive: true });
+  await mkdir(fixture.localWorkspacePath, { recursive: true });
+  await writeFile(join(fixture.homeDir, ".ssh", "config"), "Host stage5-target\n");
+  await writeFile(join(fixture.homeDir, ".ssh", "known_hosts"), "fixture ssh-ed25519 AAAA\n");
+  const calls = [];
+  const execute = async call => calls.push(call);
+  await stageDocumentationRemoteWorkspace({ alias: "stage5-target", fixture, execute });
+  await removeDocumentationRemoteWorkspace({ alias: "stage5-target", fixture, execute });
+  assert.deepEqual(calls.map(call => call.file), ["ssh", "ssh", "scp", "ssh", "ssh"]);
+  assert.ok(calls.every(call => call.args.includes("BatchMode=yes")));
+  assert.ok(calls.every(call => call.env.HOME === fixture.homeDir));
+  assert.deepEqual(calls[0].args.slice(-6), [
+    "stage5-target", "mkdir", "-m", "700", "--", fixture.remoteFixtureRoot,
+  ]);
+  assert.deepEqual(calls[1].args.slice(-6), [
+    "stage5-target", "mkdir", "-m", "700", "--", fixture.workspacePath,
+  ]);
+  assert.deepEqual(calls[2].args.slice(-2), [
+    `${fixture.localWorkspacePath}/.`,
+    `stage5-target:${fixture.workspacePath}/`,
+  ]);
+  assert.deepEqual(calls[3].args.slice(-4), [
+    "stage5-target", "test", "-f", `${fixture.workspacePath}/documentation/index.qmd`,
+  ]);
+  assert.deepEqual(calls[4].args.slice(-5), [
+    "stage5-target", "rm", "-rf", "--", fixture.remoteFixtureRoot,
+  ]);
+  assert.doesNotMatch(JSON.stringify(calls), /StrictHostKeyChecking=no|sh\s+-c/u);
+  await assert.rejects(removeDocumentationRemoteWorkspace({
+    alias: "stage5-target",
+    fixture: { ...fixture, remoteFixtureRoot: "/home/chance" },
+    execute,
+  }), /unsafe remote Documentation fixture/u);
 });
 
 test("integration child has a hard deadline and cannot wait forever in authority resolution", async () => {

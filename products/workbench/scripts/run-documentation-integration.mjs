@@ -7,6 +7,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { createTemporaryDocumentationWorkspace } from "../integration/documentation/fixtures.mjs";
+import { assertConcreteAlias } from "../extensions/chatero-remote/openssh-targets.mjs";
 import { verifyRelease } from "../remote-agent/release-contract.mjs";
 import { verifyCodeOss } from "./verify-code-oss.mjs";
 
@@ -18,6 +19,8 @@ const MAX_STARTUP_OUTPUT_BYTES = 4 * 1024 * 1024;
 const MAX_AGENT_HOST_LOG_BYTES = 4 * 1024 * 1024;
 const DEFAULT_PROCESS_TIMEOUT_MS = 15 * 60 * 1000;
 const DEFAULT_KILL_GRACE_MS = 5_000;
+const REMOTE_FIXTURE_TIMEOUT_MS = 2 * 60 * 1000;
+const SAFE_REMOTE_FIXTURE_ROOT = /^\/tmp\/chatero-remote-doc-[A-Za-z0-9]+$/u;
 
 async function safeRegularFile(path, label) {
   const metadata = await lstat(path).catch(error => {
@@ -142,6 +145,81 @@ export async function spawnDocumentationIntegrationProcess({
   });
 }
 
+function documentationOpenSshFixture({ alias, fixture }) {
+  const safeAlias = assertConcreteAlias(alias);
+  if (!fixture || typeof fixture !== "object"
+      || typeof fixture.homeDir !== "string"
+      || typeof fixture.localWorkspacePath !== "string"
+      || typeof fixture.remoteFixtureRoot !== "string"
+      || !SAFE_REMOTE_FIXTURE_ROOT.test(fixture.remoteFixtureRoot)
+      || fixture.workspacePath !== `${fixture.remoteFixtureRoot}/workspace`) {
+    throw new Error("unsafe remote Documentation fixture");
+  }
+  const config = join(fixture.homeDir, ".ssh", "config");
+  const knownHosts = join(fixture.homeDir, ".ssh", "known_hosts");
+  const options = Object.freeze([
+    "-F", config,
+    "-o", `UserKnownHostsFile=${knownHosts}`,
+    "-o", "BatchMode=yes",
+    "-o", "ConnectTimeout=10",
+  ]);
+  const env = Object.freeze({ ...process.env, HOME: fixture.homeDir });
+  return Object.freeze({ alias: safeAlias, env, options });
+}
+
+async function executeDocumentationOpenSsh(call) {
+  return spawnDocumentationIntegrationProcess({
+    ...call,
+    timeoutMs: REMOTE_FIXTURE_TIMEOUT_MS,
+    killGraceMs: DEFAULT_KILL_GRACE_MS,
+  });
+}
+
+export async function stageDocumentationRemoteWorkspace({
+  alias,
+  fixture,
+  execute = executeDocumentationOpenSsh,
+}) {
+  if (typeof execute !== "function") throw new TypeError("OpenSSH fixture executor must be a function");
+  const ssh = documentationOpenSshFixture({ alias, fixture });
+  const common = { cwd: fixture.fixtureRoot ?? fixture.localWorkspacePath, env: ssh.env };
+  await execute({
+    ...common,
+    file: "ssh",
+    args: [...ssh.options, ssh.alias, "mkdir", "-m", "700", "--", fixture.remoteFixtureRoot],
+  });
+  await execute({
+    ...common,
+    file: "ssh",
+    args: [...ssh.options, ssh.alias, "mkdir", "-m", "700", "--", fixture.workspacePath],
+  });
+  await execute({
+    ...common,
+    file: "scp",
+    args: [...ssh.options, "-r", `${fixture.localWorkspacePath}/.`, `${ssh.alias}:${fixture.workspacePath}/`],
+  });
+  await execute({
+    ...common,
+    file: "ssh",
+    args: [...ssh.options, ssh.alias, "test", "-f", `${fixture.workspacePath}/documentation/index.qmd`],
+  });
+}
+
+export async function removeDocumentationRemoteWorkspace({
+  alias,
+  fixture,
+  execute = executeDocumentationOpenSsh,
+}) {
+  if (typeof execute !== "function") throw new TypeError("OpenSSH fixture executor must be a function");
+  const ssh = documentationOpenSshFixture({ alias, fixture });
+  return execute({
+    cwd: fixture.fixtureRoot ?? fixture.localWorkspacePath,
+    env: ssh.env,
+    file: "ssh",
+    args: [...ssh.options, ssh.alias, "rm", "-rf", "--", fixture.remoteFixtureRoot],
+  });
+}
+
 async function readAgentHostLogs(root) {
   const chunks = [];
   let totalBytes = 0;
@@ -227,6 +305,9 @@ export async function runDocumentationIntegration({
     sshSourceHome: target === "ssh-fixture" ? process.env.HOME : undefined,
   });
   try {
+    if (target === "ssh-fixture") {
+      await stageDocumentationRemoteWorkspace({ alias: sshAlias, fixture });
+    }
     const codeArguments = [
       `--user-data-dir=${fixture.userDataDir}`,
       `--extensions-dir=${fixture.extensionsDir}`,
@@ -252,6 +333,9 @@ export async function runDocumentationIntegration({
     return Object.freeze({ target, workspace: "<temporary-documentation-workspace>" });
   }
   finally {
+    if (target === "ssh-fixture") {
+      await removeDocumentationRemoteWorkspace({ alias: sshAlias, fixture });
+    }
     await rm(fixture.fixtureRoot, { recursive: true, force: true });
   }
 }
