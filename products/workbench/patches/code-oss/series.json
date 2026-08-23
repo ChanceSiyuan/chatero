@@ -100,6 +100,10 @@
     {
       "file": "0025-chatero-agent-host-ready.patch",
       "sha256": "dd542a90e9653d325cdf729e8a534755d09960481724d7cbf2174de8c9d6ae68"
+    },
+    {
+      "file": "0026-accept-user-codex-sandbox-defaults.patch",
+      "sha256": "278f1f5bb109affd105f1d57f81cff3a9e10bc72459761b8f567e658baabb92f"
     }
   ]
 }
