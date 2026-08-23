@@ -1,0 +1,151 @@
+diff --git a/src/vs/platform/agentHost/node/agentHostBootstrap.ts b/src/vs/platform/agentHost/node/agentHostBootstrap.ts
+index cc89758725a..971e17700cf 100644
+--- a/src/vs/platform/agentHost/node/agentHostBootstrap.ts
++++ b/src/vs/platform/agentHost/node/agentHostBootstrap.ts
+@@ -4,11 +4,13 @@
+  *--------------------------------------------------------------------------------------------*/
+ 
+ import { DisposableStore } from '../../../base/common/lifecycle.js';
++import { Schemas } from '../../../base/common/network.js';
+ import { joinPath } from '../../../base/common/resources.js';
+ import { IConfigurationService } from '../../configuration/common/configuration.js';
+ import { ConfigurationService } from '../../configuration/common/configurationService.js';
+ import { INativeEnvironmentService } from '../../environment/common/environment.js';
+ import { IFileService } from '../../files/common/files.js';
++import { DiskFileSystemProvider } from '../../files/node/diskFileSystemProvider.js';
+ import { ServiceCollection } from '../../instantiation/common/serviceCollection.js';
+ import { ILogService } from '../../log/common/log.js';
+ import { IPolicyService, NullPolicyService } from '../../policy/common/policy.js';
+@@ -21,6 +23,23 @@ export interface IAgentHostNetworkServices {
+ 	readonly requestService: IRequestService;
+ }
+ 
++export function registerAgentHostFileProviders(
++	fileService: IFileService,
++	logService: ILogService,
++	disposables: DisposableStore,
++): void {
++	// NativeEnvironmentService represents User resources with the
++	// vscode-userdata scheme even in standalone Agent Host processes. Those
++	// processes do not create the profile services required by
++	// FileUserDataProvider, but the URI path is already the exact on-disk user
++	// data path. Give each scheme its own disk provider so settings reads and
++	// watches work without double-forwarding one provider's change events.
++	const diskFileSystemProvider = disposables.add(new DiskFileSystemProvider(logService));
++	disposables.add(fileService.registerProvider(Schemas.file, diskFileSystemProvider));
++	const userDataFileSystemProvider = disposables.add(new DiskFileSystemProvider(logService));
++	disposables.add(fileService.registerProvider(Schemas.vscodeUserData, userDataFileSystemProvider));
++}
++
+ /**
+  * Register `IPolicyService`, `IConfigurationService`, `IAgentHostProxyResolver`,
+  * and `IRequestService` into the agent host's DI container — the services that
+diff --git a/src/vs/platform/agentHost/node/agentHostMain.ts b/src/vs/platform/agentHost/node/agentHostMain.ts
+index 0c4e6e14cac..0cca7224753 100644
+--- a/src/vs/platform/agentHost/node/agentHostMain.ts
++++ b/src/vs/platform/agentHost/node/agentHostMain.ts
+@@ -57,12 +57,10 @@ import { IProductService } from '../../product/common/productService.js';
+ import { localize } from '../../../nls.js';
+ import { FileService } from '../../files/common/fileService.js';
+ import { IFileService } from '../../files/common/files.js';
+-import { DiskFileSystemProvider } from '../../files/node/diskFileSystemProvider.js';
+-import { Schemas } from '../../../base/common/network.js';
+ import { IInstantiationService } from '../../instantiation/common/instantiation.js';
+ import { InstantiationService } from '../../instantiation/common/instantiationService.js';
+ import { ServiceCollection } from '../../instantiation/common/serviceCollection.js';
+-import { registerAgentHostNetworkServices } from './agentHostBootstrap.js';
++import { registerAgentHostFileProviders, registerAgentHostNetworkServices } from './agentHostBootstrap.js';
+ import { BANG_COMMAND_PREFIX } from './agentHostBangCommand.js';
+ import { SessionDataService } from './sessionDataService.js';
+ import { ISessionDataService } from '../common/sessionDataService.js';
+@@ -135,7 +133,7 @@ async function startAgentHost(): Promise<void> {
+ 
+ 	// File service
+ 	const fileService = disposables.add(new FileService(logService));
+-	disposables.add(fileService.registerProvider(Schemas.file, disposables.add(new DiskFileSystemProvider(logService))));
++	registerAgentHostFileProviders(fileService, logService, disposables);
+ 	// In-memory filesystem backing transient file-edit previews shown during
+ 	// tool-call confirmations.
+ 	disposables.add(registerPendingEditContentProvider(fileService));
+diff --git a/src/vs/platform/agentHost/node/agentHostServerMain.ts b/src/vs/platform/agentHost/node/agentHostServerMain.ts
+index a6a680bd65c..55a8d934194 100644
+--- a/src/vs/platform/agentHost/node/agentHostServerMain.ts
++++ b/src/vs/platform/agentHost/node/agentHostServerMain.ts
+@@ -33,7 +33,7 @@ import product from '../../product/common/product.js';
+ import { IProductService } from '../../product/common/productService.js';
+ import { InstantiationService } from '../../instantiation/common/instantiationService.js';
+ import { ServiceCollection } from '../../instantiation/common/serviceCollection.js';
+-import { registerAgentHostNetworkServices } from './agentHostBootstrap.js';
++import { registerAgentHostFileProviders, registerAgentHostNetworkServices } from './agentHostBootstrap.js';
+ import { BANG_COMMAND_PREFIX } from './agentHostBangCommand.js';
+ import { INetworkDiagnosticsService, NetworkDiagnosticsService } from './networkDiagnosticsService.js';
+ import { IByokLmBridgeRegistry, NullByokLmBridgeRegistry } from './byokLmBridgeRegistry.js';
+@@ -59,8 +59,6 @@ import { WebSocketProtocolServer } from './webSocketTransport.js';
+ import { ProtocolServerHandler } from './protocolServerHandler.js';
+ import { FileService } from '../../files/common/fileService.js';
+ import { IFileService } from '../../files/common/files.js';
+-import { DiskFileSystemProvider } from '../../files/node/diskFileSystemProvider.js';
+-import { Schemas } from '../../../base/common/network.js';
+ import { ISessionDataService } from '../common/sessionDataService.js';
+ import { IDiffComputeService } from '../common/diffComputeService.js';
+ import { IAgentEditAttributionService } from '../common/fileEditAttribution.js';
+@@ -218,7 +216,7 @@ async function main(): Promise<void> {
+ 
+ 	// File service
+ 	const fileService = disposables.add(new FileService(logService));
+-	disposables.add(fileService.registerProvider(Schemas.file, disposables.add(new DiskFileSystemProvider(logService))));
++	registerAgentHostFileProviders(fileService, logService, disposables);
+ 	// In-memory filesystem backing transient file-edit previews shown during
+ 	// tool-call confirmations.
+ 	disposables.add(registerPendingEditContentProvider(fileService));
+diff --git a/src/vs/platform/agentHost/test/node/agentHostBootstrap.test.ts b/src/vs/platform/agentHost/test/node/agentHostBootstrap.test.ts
+new file mode 100644
+index 00000000000..198d41dd92a
+--- /dev/null
++++ b/src/vs/platform/agentHost/test/node/agentHostBootstrap.test.ts
+@@ -0,0 +1,45 @@
++/*---------------------------------------------------------------------------------------------
++ *  Copyright (c) Microsoft Corporation. All rights reserved.
++ *  Licensed under the MIT License. See License.txt in the project root for license information.
++ *--------------------------------------------------------------------------------------------*/
++
++import assert from 'assert';
++import * as fs from 'fs';
++import * as os from 'os';
++import * as path from 'path';
++import { DisposableStore } from '../../../../base/common/lifecycle.js';
++import { Schemas } from '../../../../base/common/network.js';
++import { URI } from '../../../../base/common/uri.js';
++import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../base/test/common/utils.js';
++import { FileService } from '../../../files/common/fileService.js';
++import { NullLogService } from '../../../log/common/log.js';
++import { registerAgentHostFileProviders } from '../../node/agentHostBootstrap.js';
++
++suite('AgentHostBootstrap', () => {
++	const disposables = new DisposableStore();
++	const roots: string[] = [];
++
++	teardown(() => {
++		disposables.clear();
++		for (const root of roots.splice(0)) {
++			fs.rmSync(root, { recursive: true, force: true });
++		}
++	});
++	ensureNoDisposablesAreLeakedInTestSuite();
++
++	test('maps vscode-userdata resources to their on-disk paths', async () => {
++		const root = fs.mkdtempSync(path.join(os.tmpdir(), 'chatero-agent-host-bootstrap-'));
++		roots.push(root);
++		const settingsPath = path.join(root, 'User', 'settings.json');
++		fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
++		fs.writeFileSync(settingsPath, '{"http.proxy":"http://127.0.0.1:9876"}');
++
++		const logService = new NullLogService();
++		const fileService = disposables.add(new FileService(logService));
++		registerAgentHostFileProviders(fileService, logService, disposables);
++
++		const settingsResource = URI.file(settingsPath).with({ scheme: Schemas.vscodeUserData });
++		assert.strictEqual((await fileService.readFile(settingsResource)).value.toString(), '{"http.proxy":"http://127.0.0.1:9876"}');
++		assert.doesNotThrow(() => disposables.add(fileService.watch(URI.file(path.dirname(settingsPath)).with({ scheme: Schemas.vscodeUserData }))));
++	});
++});

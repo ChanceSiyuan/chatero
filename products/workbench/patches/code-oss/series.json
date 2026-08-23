@@ -108,6 +108,10 @@
     {
       "file": "0027-stabilize-live-codex-home-directories.patch",
       "sha256": "9773ca3bff53e40d8e9c8862668c1b2ca628fc5c5d050c9239989ee44b01cfb2"
+    },
+    {
+      "file": "0028-register-agent-host-userdata-provider.patch",
+      "sha256": "7386ecc19ffe6622c877069e64c6613367a8fe1221938f4b6b71ff24010d4f57"
     }
   ]
 }
