@@ -128,9 +128,16 @@ export class LatexPreviewServer {
       "Cache-Control": "no-store",
       // frame-src is required: without it frame loading falls back to
       // default-src 'none' and the host page cannot embed the viewer at all.
-      "Content-Security-Policy": "default-src 'none'; frame-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' blob: data:; worker-src 'self' blob:; frame-ancestors *; object-src 'none'; base-uri 'none'",
+      // The host page is framed by the product webview; pdf.js is then framed
+      // by that same-origin host. Every ancestor must satisfy frame-ancestors,
+      // so permit precisely that product-owned chain instead of the ineffective
+      // network-only wildcard. The token still guards every served resource.
+      "Content-Security-Policy": "default-src 'none'; frame-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' blob: data:; worker-src 'self' blob:; frame-ancestors 'self' vscode-webview: vscode-file:; object-src 'none'; base-uri 'none'",
       "Content-Type": contentType,
-      "Cross-Origin-Resource-Policy": "same-origin",
+      // The loopback host is intentionally framed by vscode-webview://. Keep
+      // Chromium from replacing the CSP-authorized response with
+      // chrome-error://chromewebdata/ before pdf.js can mount.
+      "Cross-Origin-Resource-Policy": "cross-origin",
       "X-Content-Type-Options": "nosniff",
       ...(disposition && { "Content-Disposition": disposition }),
     };

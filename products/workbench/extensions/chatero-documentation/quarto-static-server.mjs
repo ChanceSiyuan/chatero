@@ -58,7 +58,10 @@ export async function createQuartoStaticServer({ entryPath, root, token } = {}) 
         // the otherwise valid render with chrome-error://chromewebdata/.
         // Admit that complete product-owned ancestor chain explicitly while
         // keeping ordinary web pages unable to frame it.
-        "Content-Security-Policy": "default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; frame-ancestors vscode-webview: vscode-file:; form-action 'none'; base-uri 'none'",
+        // Quarto's fixed `embed-resources: true` output represents its own
+        // Bootstrap stylesheets as data:text/css links. Admit that passive
+        // style transport without extending script or connect permissions.
+        "Content-Security-Policy": "default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' data:; img-src 'self' data:; font-src 'self' data:; connect-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; frame-ancestors vscode-webview: vscode-file:; form-action 'none'; base-uri 'none'",
         "Content-Type": mime,
         // The tokenized document is intentionally framed by the
         // vscode-webview:// preview host. `same-origin` makes Chromium replace

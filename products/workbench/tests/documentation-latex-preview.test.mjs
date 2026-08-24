@@ -57,7 +57,10 @@ test("preview server serves the viewer, the host page and only leased PDFs", asy
     assert.equal(page.status, 200);
     // Without frame-src the host page cannot embed the viewer at all, because
     // frame loading falls back to default-src 'none'.
-    assert.match(page.headers.get("content-security-policy"), /frame-src 'self'/u);
+    const policy = page.headers.get("content-security-policy");
+    assert.match(policy, /frame-src 'self'.*frame-ancestors 'self' vscode-webview: vscode-file:/u);
+    assert.doesNotMatch(policy, /frame-ancestors (?:'none'|\*)/u);
+    assert.equal(page.headers.get("cross-origin-resource-policy"), "cross-origin");
     // The engine the viewer loads from ../build must resolve inside the root.
     assert.equal((await fetch(`${lease.origin}${new URL(lease.viewerUrl).pathname.replace("/web/viewer.html", "/build/pdf.mjs")}`)).status, 200);
 

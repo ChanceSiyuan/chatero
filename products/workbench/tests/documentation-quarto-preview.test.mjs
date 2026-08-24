@@ -244,7 +244,8 @@ test("tokenized static preview serves only immutable contained GET/HEAD files", 
   assert.equal(ok.status, 200);
   assert.equal(await ok.text(), "<!doctype html><title>Paper</title>");
   const policy = ok.headers.get("content-security-policy");
-  assert.match(policy, /script-src 'self' 'unsafe-inline'.*connect-src 'none'.*frame-ancestors vscode-webview: vscode-file:.*form-action 'none'/u);
+  assert.match(policy, /script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' data:;.*connect-src 'none'.*frame-ancestors vscode-webview: vscode-file:.*form-action 'none'/u);
+  assert.doesNotMatch(policy, /script-src[^;]*data:|connect-src[^;]*data:/u);
   assert.doesNotMatch(policy, /frame-ancestors (?:'none'|\*)/u);
   assert.equal(ok.headers.get("cross-origin-resource-policy"), "cross-origin");
   assert.equal((await fetch(new URL("../secret", server.url))).status, 404);
