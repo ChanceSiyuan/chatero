@@ -157,7 +157,7 @@ test("Documentation tools expose explicit prompt reference names", async () => {
   assert.equal(tools.get("chatero_documentation_stage")?.toolReferenceName, "stageDocumentation");
 });
 
-test("pinned Codex 0.142 protocol exposes named permissions on every lifecycle", {
+test("pinned Codex 0.149.1 protocol exposes named permissions on every lifecycle", {
   skip: !existsSync(join(checkout, "src", "vs", "platform", "agentHost", "node", "codex", "protocol", "generated", "v2")),
 }, async () => {
   const protocolRoot = join(
@@ -174,7 +174,7 @@ test("pinned Codex 0.142 protocol exposes named permissions on every lifecycle",
   );
   for (const name of ["ThreadStartParams", "TurnStartParams", "ThreadForkParams", "ThreadResumeParams"]) {
     const source = await readFile(join(protocolRoot, `${name}.ts`), "utf8");
-    assert.match(source, /Generated from @openai\/codex 0\.142\.0/);
+    assert.match(source, /Generated from @openai\/codex 0\.149\.1/);
     assert.match(source, /permissions\?: string \| null/);
   }
 });

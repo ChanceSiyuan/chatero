@@ -254,8 +254,8 @@
     "keybindings": [
       {
         "command": "chatero.zotero.addActiveContextToChat",
-        "key": "ctrl+shift+l",
-        "mac": "cmd+shift+l",
+        "key": "ctrl+l",
+        "mac": "cmd+l",
         "when": "activeCustomEditorId == chatero.zotero.pdf"
       },
       {

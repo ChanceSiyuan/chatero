@@ -220,7 +220,7 @@ async function runScenario({ alias, releaseDirectory, receiptPath, expectedTuple
     const authority = encodeAuthority(`profile:${alias}`);
     const codex = session.getCodexLoginTerminalOptions({ scheme: "vscode-remote", authority, path: workspace });
     const codexVersion = await runRemote(session, { command: codex.shellPath, args: ["--version"], cwd: workspace });
-    if (!/\b0\.142\.0\b/u.test(codexVersion.stdout)) throw new Error("embedded Codex SDK version is invalid");
+    if (!/\b0\.149\.1\b/u.test(codexVersion.stdout)) throw new Error("embedded Codex SDK version is invalid");
     checks.set("codex-sdk", true);
 
     const pdf = Buffer.from("%PDF-1.7\nStage 5 exact complete paper\n", "utf8");

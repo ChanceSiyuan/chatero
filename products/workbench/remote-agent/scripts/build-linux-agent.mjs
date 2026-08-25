@@ -24,7 +24,7 @@ import { assertDocumentationPayload } from "../documentation-payload.mjs";
 
 const CODE_OSS_COMMIT = "df53daabb18cd157bdb08c7f01c34df936cf12f4";
 const REQUIRED_NODE_VERSION = "24.18.0";
-const CODEX_SDK_VERSION = "0.142.0";
+const CODEX_SDK_VERSION = "0.149.1";
 const ARCHITECTURES = Object.freeze({
   x64: {
     tupleArch: "x86_64",

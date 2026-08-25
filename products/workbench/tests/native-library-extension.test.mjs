@@ -54,8 +54,8 @@ test("declares native Library source and item-table views with Stage 3 commands"
   assert.deepEqual(cursorContextBindings, [
     {
       command: "chatero.zotero.addActiveContextToChat",
-      key: "ctrl+shift+l",
-      mac: "cmd+shift+l",
+      key: "ctrl+l",
+      mac: "cmd+l",
       when: "activeCustomEditorId == chatero.zotero.pdf",
     },
   ]);

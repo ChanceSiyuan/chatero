@@ -375,7 +375,7 @@ test("manifest and source wire only the explicit native attach provider and real
   assert.match(hostSource, /closest\("\[data-page-number\]"\)\?\.dataset\.pageNumber/);
   assert.match(hostSource, /page\.getTextContent\(\)/);
   assert.match(hostSource, /addEventListener\("selectionchange"/);
-  assert.ok(manifest.contributes.keybindings.some(value => value.command === "chatero.zotero.addActiveContextToChat" && value.mac === "cmd+shift+l"));
+  assert.ok(manifest.contributes.keybindings.some(value => value.command === "chatero.zotero.addActiveContextToChat" && value.mac === "cmd+l"));
   assert.match(htmlSource, /acquireVsCodeApi\(\)/);
   assert.doesNotMatch(hostSource, /acquireVsCodeApi/);
   assert.match(hostSource, /const message = \{[\s\S]+type: "pdf-context",[\s\S]+panelNonce,[\s\S]+sequence: contextSequence \+ 1,[\s\S]+pageIndex,[\s\S]+pageLabel:[\s\S]+pageText:[\s\S]+selectedText:/);
@@ -385,7 +385,7 @@ test("manifest and source wire only the explicit native attach provider and real
   assert.ok(attachStart > 0 && attachStart < attachEnd);
   assert.ok(hostSource.indexOf('send({ panelNonce, sequence: attachSequence, type: "pdf-context-attach" });') > attachStart);
   assert.ok(hostSource.indexOf('send({ panelNonce, sequence: attachSequence, type: "pdf-context-attach" });') < attachEnd);
-  assert.match(hostSource, /function isAttachKey\(event\) \{\n\s+return \(event\.metaKey \|\| event\.ctrlKey\) && event\.shiftKey && !event\.altKey/);
+  assert.match(hostSource, /function isAttachKey\(event\) \{\n\s+return \(event\.metaKey \|\| event\.ctrlKey\) && !event\.shiftKey && !event\.altKey/);
   // stopImmediatePropagation keeps the chord from also reaching the key relay,
   // which would attach twice through the workbench keybinding.
   assert.match(hostSource, /if \(!isAttachKey\(event\)\) return;\n\s+event\.preventDefault\(\);\n\s+event\.stopImmediatePropagation\(\);\n\s+void attachContext\(\);/);

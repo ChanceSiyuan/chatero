@@ -195,7 +195,7 @@ function createPdfContext() {
   }
 
   function isAttachKey(event) {
-    return (event.metaKey || event.ctrlKey) && event.shiftKey && !event.altKey
+    return (event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey
       && (event.code === "KeyL" || event.key === "l" || event.key === "L");
   }
 

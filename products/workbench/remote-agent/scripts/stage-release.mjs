@@ -35,7 +35,7 @@ const CODE_OSS_COMMIT = "df53daabb18cd157bdb08c7f01c34df936cf12f4";
 const BRIDGE_PATH = new URL("../runtime/chatero-process-bridge.mjs", import.meta.url);
 const EVIDENCE_HELPER_PATH = new URL("../runtime/chatero-evidence-cache.mjs", import.meta.url);
 const INTEGRITY_VERIFIER_PATH = new URL("../runtime/chatero-install-integrity.mjs", import.meta.url);
-const CODEX_SDK_VERSION = "0.142.0";
+const CODEX_SDK_VERSION = "0.149.1";
 const ARCHIVE_ARCHITECTURES = Object.freeze({
   "linux-x86_64": {
     machine: 62,

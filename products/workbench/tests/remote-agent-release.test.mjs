@@ -181,13 +181,13 @@ async function createRemoteAgentFixture(source, root, tuple, {
     ? {
       machine: 62,
       packageName: "codex-linux-x64",
-      packageVersion: "0.142.0-linux-x64",
+      packageVersion: "0.149.1-linux-x64",
       triple: "x86_64-unknown-linux-musl",
     }
     : {
       machine: 183,
       packageName: "codex-linux-arm64",
-      packageVersion: "0.142.0-linux-arm64",
+      packageVersion: "0.149.1-linux-arm64",
       triple: "aarch64-unknown-linux-musl",
     };
   const bin = join(source, root, "bin");
@@ -205,7 +205,7 @@ async function createRemoteAgentFixture(source, root, tuple, {
   await writeFile(join(source, root, "node"), "#!/bin/sh\n", { mode: 0o755 });
   await writeFile(join(bin, "chatero-server"), `${tuple}\n`, { mode: 0o755 });
   await writeFile(join(source, root, "product.json"), JSON.stringify({ agentSdks }), "utf8");
-  await writeFile(join(openAi, "codex", "package.json"), JSON.stringify({ version: "0.142.0" }));
+  await writeFile(join(openAi, "codex", "package.json"), JSON.stringify({ version: "0.149.1" }));
   await writeFile(join(openAi, "codex", "bin", "codex.js"), "#!/usr/bin/env node\n", { mode: 0o755 });
   await writeFile(join(nodeModules, ".package-lock.json"), "{}\n", "utf8");
   await symlink("../@openai/codex/bin/codex.js", join(nodeModules, ".bin", "codex"));
@@ -646,7 +646,7 @@ test("release staging rejects an Agent SDK download fallback in product.json", a
     const source = join(directory, `${arch}-source`);
     await createRemoteAgentFixture(source, root, tuple, {
       agentSdks: arch === "x64" ? {
-        codex: { version: "0.142.0", urlTemplate: "https://main.vscode-cdn.net/sdk.tgz" },
+        codex: { version: "0.149.1", urlTemplate: "https://main.vscode-cdn.net/sdk.tgz" },
       } : {},
     });
     archives[arch] = join(inputs, `${arch}.tar.gz`);
@@ -963,12 +963,12 @@ test("Linux agent builder embeds the exact architecture-matched Codex SDK", asyn
     checkout: "/srv/code-oss",
     root: "/tmp/chatero-agent-linux-x86_64",
   }), {
-    version: "0.142.0",
+    version: "0.149.1",
     target: "linux-x64",
     nativePackage: "@openai/codex-linux-x64",
     nativeTriple: "x86_64-unknown-linux-musl",
     packageScript: "/srv/code-oss/build/agent-sdk/package.ts",
-    tarball: "/srv/code-oss/.build/agent-sdk/chatero/codex-0.142.0-linux-x64.tgz",
+    tarball: "/srv/code-oss/.build/agent-sdk/chatero/codex-0.149.1-linux-x64.tgz",
     destination: "/tmp/chatero-agent-linux-x86_64/agent-sdk/codex",
   });
   assert.deepEqual(makeCodexSdkPlan({
@@ -976,12 +976,12 @@ test("Linux agent builder embeds the exact architecture-matched Codex SDK", asyn
     checkout: "/srv/code-oss",
     root: "/tmp/chatero-agent-linux-aarch64",
   }), {
-    version: "0.142.0",
+    version: "0.149.1",
     target: "linux-arm64",
     nativePackage: "@openai/codex-linux-arm64",
     nativeTriple: "aarch64-unknown-linux-musl",
     packageScript: "/srv/code-oss/build/agent-sdk/package.ts",
-    tarball: "/srv/code-oss/.build/agent-sdk/chatero/codex-0.142.0-linux-arm64.tgz",
+    tarball: "/srv/code-oss/.build/agent-sdk/chatero/codex-0.149.1-linux-arm64.tgz",
     destination: "/tmp/chatero-agent-linux-aarch64/agent-sdk/codex",
   });
 });
