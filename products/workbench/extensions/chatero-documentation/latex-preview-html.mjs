@@ -18,20 +18,47 @@ export function createLatexPreviewHtml({ cspSource, hostUri, nonce } = {}) {
 <style nonce="${nonce}">html,body,iframe{width:100%;height:100%;margin:0;border:0;background:var(--vscode-editor-background)}.label{position:fixed;z-index:1;right:12px;top:8px;padding:3px 8px;border-radius:4px;background:var(--vscode-badge-background);color:var(--vscode-badge-foreground);font:12px var(--vscode-font-family);pointer-events:none}</style>
 <title>LaTeX Preview</title></head><body>
 <div class="label" role="status">LaTeX Preview</div>
-<iframe id="host" title="LaTeX PDF preview" referrerpolicy="no-referrer" sandbox="allow-scripts allow-same-origin" src="${escapeAttribute(hostUri)}"></iframe>
+<iframe id="host" title="LaTeX PDF preview" referrerpolicy="no-referrer" sandbox="allow-scripts allow-same-origin"></iframe>
 <script nonce="${nonce}">
 const vscode = acquireVsCodeApi();
 const host = document.getElementById("host");
 const origin = ${JSON.stringify(origin)};
 window.addEventListener("message", event => {
-  if (event.source === host.contentWindow && event.origin === origin) {
-    vscode.postMessage(event.data);
+  const message = event.data;
+  const fromHost = event.origin === origin && message && typeof message === "object"
+    && ["chatero-latex-host-ready", "chatero-latex-position", "chatero-latex-ready", "chatero-latex-error"].includes(message.type);
+  if (fromHost) {
+    vscode.postMessage(message);
     return;
   }
-  if (event.source === window.parent && event.data && typeof event.data === "object") {
-    host.contentWindow?.postMessage(event.data, origin);
+  // VS Code delivers extension-host webview.postMessage() events without a
+  // stable WindowProxy source. In Electron it is not window.parent, so a
+  // source equality check silently drops the first document and leaves the
+  // nested viewer at about:blank. This product-owned shell has only the host
+  // frame above; accept only the two exact inbound message shapes and validate
+  // the token-relative viewer path before forwarding them.
+  // Some Electron builds report the nested host as the WindowProxy source for
+  // an extension-host delivery too. The authenticated loopback-origin branch
+  // above already consumed genuine host-to-extension traffic, so the exact
+  // inbound types below are safe to accept regardless of that unstable source.
+  if (!message || typeof message !== "object") return;
+  if (message.type === "chatero-latex-restore") {
+    host.contentWindow?.postMessage(message, origin);
+    return;
+  }
+  const viewerPrefix = "../viewer/web/viewer.html?file=../../doc/";
+  const decodedViewerPath = typeof message.viewerPath === "string" ? decodeURIComponent(message.viewerPath) : "";
+  if (message.type === "chatero-latex-document"
+      && decodedViewerPath.startsWith(viewerPrefix)
+      && /^[A-Za-z0-9_-]{24}$/u.test(decodedViewerPath.slice(viewerPrefix.length))) {
+    host.contentWindow?.postMessage(message, origin);
   }
 });
+// Navigate only after the relay is listening. A loopback host can finish
+// loading while the HTML parser is still reaching this script; giving the
+// iframe its src in markup therefore loses its one-shot ready message and the
+// extension never publishes the first PDF lease.
+host.src = ${JSON.stringify(hostUri)};
 </script>
 </body></html>`;
 }

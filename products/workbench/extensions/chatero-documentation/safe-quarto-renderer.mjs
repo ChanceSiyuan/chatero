@@ -142,7 +142,12 @@ export class SafeQuartoRenderer {
     const entryBasename = "index.qmd";
     await Promise.all([
       writeFile(join(sourceRoot, entryBasename), source, { flag: "wx", mode: 0o600 }),
-      writeFile(join(root, "_quarto.yml"), `project:\n  type: default\nexecute:\n  enabled: ${execution}\nformat:\n  html:\n    embed-resources: true\n`, { flag: "wx", mode: 0o600 }),
+      // Native MathML keeps equations exact without requiring the preview
+      // webview to execute Quarto's CDN-hosted MathJax bootstrap. The preview
+      // deliberately has no network and no script authority, so leaving
+      // Quarto's default MathJax output in place would expose raw \(...\)
+      // delimiters even though the render itself succeeded.
+      writeFile(join(root, "_quarto.yml"), `project:\n  type: default\nexecute:\n  enabled: ${execution}\nformat:\n  html:\n    embed-resources: true\n    html-math-method: mathml\n`, { flag: "wx", mode: 0o600 }),
     ]);
     const invocation = buildSafeQuartoInvocation({
       snapshot: { disposableRoot: root, entryBasename },

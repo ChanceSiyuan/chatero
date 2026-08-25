@@ -446,6 +446,7 @@ test("sandboxed execution mode waives the passive policy and enables execution i
   assert.equal(sandboxInputs[0].execution, true);
   assert.equal(sandboxInputs[0].invocation.args.includes("--no-execute"), false);
   assert.match(projectFiles[0], /execute:\n {2}enabled: true/u);
+  assert.match(projectFiles[0], /html-math-method: mathml/u);
   await renderer.dispose();
 
   assert.throws(() => new SafeQuartoRenderer({

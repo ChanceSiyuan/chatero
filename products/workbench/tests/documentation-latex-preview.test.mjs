@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, test } from "node:test";
+import { runInNewContext } from "node:vm";
 
 const temporaryDirectories = [];
 afterEach(async () => Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { force: true, recursive: true }))));
@@ -109,11 +110,59 @@ test("preview panel HTML frames only the loopback origin under a nonce policy", 
   assert.match(html, /script-src 'nonce-a{24}'/u);
   assert.doesNotMatch(html, /unsafe-inline/u);
   assert.match(html, /sandbox="allow-scripts allow-same-origin"/u);
+  assert.doesNotMatch(html, /event\.source === window\.parent/u);
+  assert.doesNotMatch(html, /event\.source === host\.contentWindow/u);
+  assert.match(html, /event\.origin === origin/u);
+  assert.match(html, /chatero-latex-host-ready/u);
+  assert.doesNotMatch(html, /typeof message !== "object" \|\| event\.source/u);
+  assert.match(html, /message\.type === "chatero-latex-document"/u);
+  assert.match(html, /\.\.\/viewer\/web\/viewer\.html\?file=\.\.\/\.\.\/doc\//u);
+  assert.doesNotMatch(html, /<iframe[^>]+\ssrc=/u);
+  assert.ok(html.indexOf('window.addEventListener("message"') < html.indexOf('host.src = "http://127.0.0.1:4321/'));
   for (const bad of [
     { cspSource: "", hostUri: "http://127.0.0.1/x", nonce: "a".repeat(24) },
     { cspSource: "x", hostUri: "file:///etc/passwd", nonce: "a".repeat(24) },
     { cspSource: "x", hostUri: "http://127.0.0.1/x", nonce: "short" },
   ]) assert.throws(() => createLatexPreviewHtml(bad), TypeError);
+});
+
+test("preview panel relay listens before navigation and accepts source-unstable webview messages", async () => {
+  const { createLatexPreviewHtml } = await import("../extensions/chatero-documentation/latex-preview-html.mjs");
+  const hostUri = "http://127.0.0.1:4321/server-token/host/latex-preview-host.html";
+  const html = createLatexPreviewHtml({ cspSource: "x", hostUri, nonce: "a".repeat(24) });
+  const script = html.match(/<script nonce="a{24}">([\s\S]*?)<\/script>/u)?.[1];
+  assert.ok(script);
+
+  const actions = [];
+  const listeners = [];
+  const hostMessages = [];
+  const vscodeMessages = [];
+  const host = {
+    contentWindow: { postMessage(message, origin) { hostMessages.push({ message, origin }); } },
+    set src(value) { actions.push(`navigate:${value}`); },
+  };
+  runInNewContext(script, {
+    URL,
+    acquireVsCodeApi: () => ({ postMessage(message) { vscodeMessages.push(message); } }),
+    decodeURIComponent,
+    document: { getElementById: () => host },
+    window: { addEventListener(type, listener) { actions.push(`listen:${type}`); listeners.push(listener); } },
+  });
+  assert.deepEqual(actions, ["listen:message", `navigate:${hostUri}`]);
+
+  const relay = listeners[0];
+  relay({
+    data: { type: "chatero-latex-document", viewerPath: "../viewer/web/viewer.html?file=..%2F..%2Fdoc%2Fabcdefghijklmnopqrstuvwx" },
+    origin: "vscode-webview://unstable-source",
+    source: {},
+  });
+  assert.equal(hostMessages.length, 1);
+  assert.equal(hostMessages[0].origin, "http://127.0.0.1:4321");
+
+  relay({ data: { type: "chatero-latex-document", viewerPath: "https://attacker.invalid/document" }, origin: "vscode-webview://unstable-source", source: {} });
+  assert.equal(hostMessages.length, 1, "an invalid viewer path must not reach the loopback host");
+  relay({ data: { type: "chatero-latex-host-ready" }, origin: "http://127.0.0.1:4321", source: {} });
+  assert.deepEqual(vscodeMessages, [{ type: "chatero-latex-host-ready" }]);
 });
 
 function managerFixture({ documentUri, results } = {}) {
@@ -176,6 +225,7 @@ function managerFixture({ documentUri, results } = {}) {
         origin: "http://127.0.0.1:9",
         path,
         replaced: leaseId,
+        viewerPath: `../viewer/web/viewer.html?file=${encodeURIComponent(`../../doc/${leases.length}`)}`,
         viewerUrl: `http://127.0.0.1:9/t/viewer/web/viewer.html?file=${leases.length}`,
         dispose() { lease.disposed = true; },
       };
