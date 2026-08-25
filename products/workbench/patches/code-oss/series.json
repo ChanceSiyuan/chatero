@@ -120,6 +120,10 @@
     {
       "file": "0030-relock-late-agent-host-chat.patch",
       "sha256": "2fe11d60808b7de6266272568731e3f0dffcbbb36c767092d440ac0a718ab968"
+    },
+    {
+      "file": "0031-allow-live-codex-global-state-replacement.patch",
+      "sha256": "d0c817eacb521bb2832b4312b185fb080e1b899a8511a7185e0a552bf2852665"
     }
   ]
 }

@@ -1,0 +1,170 @@
+diff --git a/src/vs/platform/agentHost/node/codex/chateroCodexPermissions.ts b/src/vs/platform/agentHost/node/codex/chateroCodexPermissions.ts
+index c88b6d0be74..7b79714c4e2 100644
+--- a/src/vs/platform/agentHost/node/codex/chateroCodexPermissions.ts
++++ b/src/vs/platform/agentHost/node/codex/chateroCodexPermissions.ts
+@@ -38,6 +38,7 @@ export interface IChateroProtectedObjectIdentity {
+ 	readonly mode: number;
+ 	readonly nlink: number;
+ 	readonly kind: 'directory' | 'file' | 'symlink';
++	readonly allowAtomicReplacement: boolean;
+ }
+ 
+ export interface IChateroCodexPermissionContext {
+@@ -100,8 +101,11 @@ export function createChateroCodexPermissionContext(input: Readonly<{
+ 	// change while Codex is running. Protect the directory itself and each of its
+ 	// direct entries, while the permission profile denies the whole tree. Runtime
+ 	// package roots are immutable product inputs and remain recursively pinned.
++	const atomicCodexStatePaths = new Set([
++		join(codexHome, '.codex-global-state.json'),
++	]);
+ 	const protectedObjects = [
+-		...captureProtectedObjectInventory([codexHome], false),
++		...captureProtectedObjectInventory([codexHome], false, atomicCodexStatePaths),
+ 		...captureProtectedObjectInventory(trustedRuntimeRoots),
+ 	];
+ 	return Object.freeze({
+@@ -300,15 +304,15 @@ function validateProfileSummaries(response: PermissionProfileListResponse): void
+ 	}
+ }
+ 
+-function captureProtectedObjectInventory(roots: readonly string[], recursive = true): IChateroProtectedObjectIdentity[] {
++function captureProtectedObjectInventory(roots: readonly string[], recursive = true, atomicReplacementPaths: ReadonlySet<string> = new Set()): IChateroProtectedObjectIdentity[] {
+ 	const result: IChateroProtectedObjectIdentity[] = [];
+ 	for (const root of distinctPaths(roots)) {
+-		walkProtectedTree(root, root, result, recursive);
++		walkProtectedTree(root, root, result, recursive, atomicReplacementPaths);
+ 	}
+ 	return result.sort((left, right) => Buffer.compare(Buffer.from(left.path), Buffer.from(right.path)));
+ }
+ 
+-function walkProtectedTree(path: string, root: string, result: IChateroProtectedObjectIdentity[], recursive: boolean): void {
++function walkProtectedTree(path: string, root: string, result: IChateroProtectedObjectIdentity[], recursive: boolean, atomicReplacementPaths: ReadonlySet<string>): void {
+ 	const lstat = fs.lstatSync(path);
+ 	// Codex Desktop creates transient Unix-domain sockets under CODEX_HOME/ipc.
+ 	// They contain no durable configuration or credentials, cannot be hard-linked,
+@@ -318,6 +322,10 @@ function walkProtectedTree(path: string, root: string, result: IChateroProtected
+ 	if (lstat.isSocket()) {
+ 		return;
+ 	}
++	const allowAtomicReplacement = atomicReplacementPaths.has(path);
++	if (allowAtomicReplacement && (!lstat.isFile() || lstat.isSymbolicLink() || lstat.nlink !== 1 || realpathSync(path) !== path)) {
++		throw new Error(`protected Codex atomic state must be a real single-link file: ${path}`);
++	}
+ 	if (lstat.isSymbolicLink()) {
+ 		const realPath = realpathSync(path);
+ 		if (!isContainedRelative(relative(root, realPath))) {
+@@ -331,6 +339,7 @@ function walkProtectedTree(path: string, root: string, result: IChateroProtected
+ 			mode: lstat.mode,
+ 			nlink: lstat.nlink,
+ 			kind: 'symlink',
++			allowAtomicReplacement: false,
+ 		}));
+ 		return;
+ 	}
+@@ -348,18 +357,30 @@ function walkProtectedTree(path: string, root: string, result: IChateroProtected
+ 		mode: lstat.mode,
+ 		nlink: lstat.nlink,
+ 		kind: lstat.isDirectory() ? 'directory' : 'file',
++		allowAtomicReplacement,
+ 	}));
+ 	if (!lstat.isDirectory() || (!recursive && path !== root)) {
+ 		return;
+ 	}
+ 	for (const child of fs.readdirSync(path).sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right)))) {
+-		walkProtectedTree(join(path, child), root, result, recursive);
++		walkProtectedTree(join(path, child), root, result, recursive, atomicReplacementPaths);
+ 	}
+ }
+ 
+ function revalidateProtectedObjectInventory(inventory: readonly IChateroProtectedObjectIdentity[]): void {
+ 	for (const expected of inventory) {
+ 		const current = fs.lstatSync(expected.path);
++		if (expected.allowAtomicReplacement) {
++			if (!current.isFile()
++				|| current.isSymbolicLink()
++				|| current.nlink !== 1
++				|| realpathSync(expected.path) !== expected.path
++				|| (current.mode & 0o022) !== 0
++				|| (typeof process.getuid === 'function' && current.uid !== process.getuid())) {
++				throw new Error(`protected Codex atomic state became unsafe: ${expected.path}`);
++			}
++			continue;
++		}
+ 		if ((current.isSymbolicLink() !== (expected.kind === 'symlink'))
+ 			|| current.dev !== expected.dev
+ 			|| current.ino !== expected.ino
+diff --git a/src/vs/platform/agentHost/test/node/codex/chateroCodexPermissions.test.ts b/src/vs/platform/agentHost/test/node/codex/chateroCodexPermissions.test.ts
+index 5c2080ba8ec..68d16c1cfd7 100644
+--- a/src/vs/platform/agentHost/test/node/codex/chateroCodexPermissions.test.ts
++++ b/src/vs/platform/agentHost/test/node/codex/chateroCodexPermissions.test.ts
+@@ -42,6 +42,7 @@ suite('ChateroCodexPermissions', () => {
+ 		fs.mkdirSync(codexHome, { mode: 0o700 });
+ 		fs.mkdirSync(runtime, { mode: 0o755 });
+ 		fs.writeFileSync(path.join(codexHome, 'config.toml'), '', { mode: 0o600 });
++		fs.writeFileSync(path.join(codexHome, '.codex-global-state.json'), '{}\n', { mode: 0o644 });
+ 		fs.writeFileSync(path.join(runtime, 'codex'), 'binary', { mode: 0o755 });
+ 		const context = createChateroCodexPermissionContext({ codexHome, trustedRuntimeRoots: [runtime] });
+ 		return { root, codexHome, runtime, context };
+@@ -180,6 +181,62 @@ suite('ChateroCodexPermissions', () => {
+ 		}));
+ 	});
+ 
++	test('allows safe atomic replacement of live Codex global state', async () => {
++		const { root, codexHome, context } = fixture();
++		const responses = successfulResponses(context);
++		const replacement = path.join(codexHome, '.codex-global-state.next');
++		fs.writeFileSync(replacement, '{"updated":true}\n', { mode: 0o644 });
++		fs.renameSync(replacement, path.join(codexHome, '.codex-global-state.json'));
++		await assert.doesNotReject(chateroCodexPreflight({
++			cwd: root,
++			context,
++			reader: {
++				readConfig: async () => responses.config,
++				readRequirements: async () => responses.requirements,
++				listPermissionProfiles: async () => responses.profiles,
++			},
++		}));
++	});
++
++	test('still rejects atomic replacement of protected Codex configuration', async () => {
++		const { root, codexHome, context } = fixture();
++		const responses = successfulResponses(context);
++		const replacement = path.join(codexHome, 'config.next');
++		fs.writeFileSync(replacement, 'model = "unexpected"\n', { mode: 0o600 });
++		fs.renameSync(replacement, path.join(codexHome, 'config.toml'));
++		await assert.rejects(chateroCodexPreflight({
++			cwd: root,
++			context,
++			reader: {
++				readConfig: async () => responses.config,
++				readRequirements: async () => responses.requirements,
++				listPermissionProfiles: async () => responses.profiles,
++			},
++		}), /protected Codex object identity changed/);
++	});
++
++	test('rejects replacing live Codex global state with a symbolic link', async () => {
++		if (process.platform === 'win32') {
++			return;
++		}
++		const { root, codexHome, context } = fixture();
++		const responses = successfulResponses(context);
++		const state = path.join(codexHome, '.codex-global-state.json');
++		const outside = path.join(root, 'outside-state');
++		fs.writeFileSync(outside, '{}\n', { mode: 0o600 });
++		fs.rmSync(state);
++		fs.symlinkSync(outside, state);
++		await assert.rejects(chateroCodexPreflight({
++			cwd: root,
++			context,
++			reader: {
++				readConfig: async () => responses.config,
++				readRequirements: async () => responses.requirements,
++				listPermissionProfiles: async () => responses.profiles,
++			},
++		}), /protected Codex atomic state became unsafe/);
++	});
++
+ 	test('still rejects an escaping link directly inside CODEX_HOME', () => {
+ 		if (process.platform === 'win32') {
+ 			return;

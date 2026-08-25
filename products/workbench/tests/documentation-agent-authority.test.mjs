@@ -50,6 +50,12 @@ const liveCodexHomePatchPath = join(
   "code-oss",
   "0010-shallow-pin-live-codex-home.patch",
 );
+const liveCodexStatePatchPath = join(
+  workbenchRoot,
+  "patches",
+  "code-oss",
+  "0031-allow-live-codex-global-state-replacement.patch",
+);
 const checkout = join(repositoryRoot, "vendor", "code-oss");
 
 function sha256(bytes) {
@@ -92,6 +98,32 @@ test("Documentation authority and its Chatero compatibility patches remain diges
     file: "0010-shallow-pin-live-codex-home.patch",
     sha256: sha256(liveCodexHomePatch),
   }]);
+});
+
+test("live Codex global state may rotate without weakening protected configuration identity", async () => {
+  const [patch, seriesText] = await Promise.all([
+    readFile(liveCodexStatePatchPath, "utf8"),
+    readFile(join(workbenchRoot, "patches", "code-oss", "series.json"), "utf8"),
+  ]);
+  const entries = JSON.parse(seriesText).patches;
+  const predecessorIndex = entries.findIndex(entry => entry.file === "0030-relock-late-agent-host-chat.patch");
+  assert.notEqual(predecessorIndex, -1);
+  assert.deepEqual(entries[predecessorIndex + 1], {
+    file: "0031-allow-live-codex-global-state-replacement.patch",
+    sha256: sha256(Buffer.from(patch)),
+  });
+  for (const contract of [
+    ".codex-global-state.json",
+    "allowAtomicReplacement",
+    "current.nlink !== 1",
+    "(current.mode & 0o022) !== 0",
+    "current.uid !== process.getuid()",
+    "allows safe atomic replacement of live Codex global state",
+    "still rejects atomic replacement of protected Codex configuration",
+    "rejects replacing live Codex global state with a symbolic link",
+  ]) {
+    assert.ok(patch.includes(contract), contract);
+  }
 });
 
 test("all Native Codex lifecycle requests select one fail-closed product profile", async () => {
