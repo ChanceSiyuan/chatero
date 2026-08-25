@@ -62,6 +62,12 @@ const liveCodexStateBackupPatchPath = join(
   "code-oss",
   "0032-allow-live-codex-global-state-backup-replacement.patch",
 );
+const emptyLocalChatMigrationPatchPath = join(
+  workbenchRoot,
+  "patches",
+  "code-oss",
+  "0033-migrate-empty-local-chat-to-codex.patch",
+);
 const checkout = join(repositoryRoot, "vendor", "code-oss");
 
 function sha256(bytes) {
@@ -140,6 +146,30 @@ test("live Codex global state and its backup may rotate without weakening protec
     "allows safe atomic replacement of live Codex global state backup",
   ]) {
     assert.ok(backupPatch.includes(contract), contract);
+  }
+});
+
+test("an empty restored local chat migrates to the Codex product default before first Send", async () => {
+  const [patch, seriesText] = await Promise.all([
+    readFile(emptyLocalChatMigrationPatchPath, "utf8"),
+    readFile(join(workbenchRoot, "patches", "code-oss", "series.json"), "utf8"),
+  ]);
+  const entries = JSON.parse(seriesText).patches;
+  const predecessorIndex = entries.findIndex(entry => entry.file === "0032-allow-live-codex-global-state-backup-replacement.patch");
+  assert.notEqual(predecessorIndex, -1);
+  assert.deepEqual(entries[predecessorIndex + 1], {
+    file: "0033-migrate-empty-local-chat-to-codex.patch",
+    sha256: sha256(Buffer.from(patch)),
+  });
+  for (const contract of [
+    "_migrateEmptyLocalSessionToDefault",
+    "currentModel.hasRequests",
+    "getDefaultNewChatSessionType",
+    "defaultType === localChatSessionType",
+    "showModel(CancellationToken.None, undefined, true, true)",
+    "ignoreTransferredSession",
+  ]) {
+    assert.ok(patch.includes(contract), contract);
   }
 });
 

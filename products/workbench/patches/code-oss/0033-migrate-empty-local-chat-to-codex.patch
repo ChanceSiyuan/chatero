@@ -1,0 +1,48 @@
+diff --git a/src/vs/workbench/contrib/chat/browser/widgetHosts/viewPane/chatViewPane.ts b/src/vs/workbench/contrib/chat/browser/widgetHosts/viewPane/chatViewPane.ts
+--- a/src/vs/workbench/contrib/chat/browser/widgetHosts/viewPane/chatViewPane.ts
++++ b/src/vs/workbench/contrib/chat/browser/widgetHosts/viewPane/chatViewPane.ts
+@@ -306,6 +306,10 @@ export class ChatViewPane extends ViewPane implements IViewWelcomeDelegate {
+ 	}
+ 
+ 	private onDidChangeAgents(): void {
++		if (this._migrateEmptyLocalSessionToDefault()) {
++			return;
++		}
++
+ 		// A restored contributed session can be shown before its dynamic Agent Host
+ 		// agent finishes registering. In that startup ordering, showModel() cannot
+ 		// lock the widget yet and the first send is rejected because agentIdSilent
+@@ -471,6 +475,33 @@ export class ChatViewPane extends ViewPane implements IViewWelcomeDelegate {
+ 		}
+ 	}
+ 
++	private _migrateEmptyLocalSessionToDefault(): boolean {
++		const currentModel = this.modelRef.value?.object;
++		if (!currentModel
++			|| currentModel.hasRequests
++			|| getChatSessionType(currentModel.sessionResource) !== localChatSessionType
++			|| this.restoringSession) {
++			return false;
++		}
++
++		const workspace = this.workspaceContextService.getWorkspace();
++		const defaultType = getDefaultNewChatSessionType(this.configurationService, this.chatSessionsService, this.storageService, workspace, this.agentHostEnablementService.enabled.get());
++		if (defaultType === localChatSessionType) {
++			return false;
++		}
++
++		// Startup can restore an empty local draft before the dynamic Agent Host
++		// contribution exists. Once the product default is available, replace only
++		// that request-free fallback. showModel preserves text typed during the
++		// transition and ignoreTransferredSession prevents reacquiring the stale
++		// local resource that caused the first Send click to be rejected.
++		this.restoringSession = this.showModel(CancellationToken.None, undefined, true, true)
++			.then(() => undefined)
++			.catch(error => this.logService.error('ChatViewPane#_migrateEmptyLocalSessionToDefault failed', error));
++		this.restoringSession.finally(() => this.restoringSession = undefined);
++		return true;
++	}
++
+ 	/**
+ 	 * The single chat input voice mode is currently bound to. Mirrors the routing
+ 	 * used by `_chat.voice.acceptInput`: an explicit target session (set by the

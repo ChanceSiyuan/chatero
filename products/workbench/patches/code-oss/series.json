@@ -128,6 +128,10 @@
     {
       "file": "0032-allow-live-codex-global-state-backup-replacement.patch",
       "sha256": "046a823cd2f94803e07863fbf56e69c6c1e2ed7c59cadf456f3d9c3f3566b952"
+    },
+    {
+      "file": "0033-migrate-empty-local-chat-to-codex.patch",
+      "sha256": "f05cbc007fb48b2b542be0a6d486b60b1b2e7e07d80c0d082eeba623ec778856"
     }
   ]
 }
