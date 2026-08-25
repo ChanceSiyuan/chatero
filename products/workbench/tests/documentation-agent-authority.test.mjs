@@ -68,6 +68,12 @@ const emptyLocalChatMigrationPatchPath = join(
   "code-oss",
   "0033-migrate-empty-local-chat-to-codex.patch",
 );
+const liveCodexConfigPatchPath = join(
+  workbenchRoot,
+  "patches",
+  "code-oss",
+  "0034-allow-live-codex-config-replacement.patch",
+);
 const checkout = join(repositoryRoot, "vendor", "code-oss");
 
 function sha256(bytes) {
@@ -168,6 +174,28 @@ test("an empty restored local chat migrates to the Codex product default before 
     "defaultType === localChatSessionType",
     "showModel(CancellationToken.None, undefined, true, true)",
     "ignoreTransferredSession",
+  ]) {
+    assert.ok(patch.includes(contract), contract);
+  }
+});
+
+test("live Codex configuration may rotate only as a safe user-owned regular file", async () => {
+  const [patch, seriesText] = await Promise.all([
+    readFile(liveCodexConfigPatchPath, "utf8"),
+    readFile(join(workbenchRoot, "patches", "code-oss", "series.json"), "utf8"),
+  ]);
+  const entries = JSON.parse(seriesText).patches;
+  const predecessorIndex = entries.findIndex(entry => entry.file === "0033-migrate-empty-local-chat-to-codex.patch");
+  assert.notEqual(predecessorIndex, -1);
+  assert.deepEqual(entries[predecessorIndex + 1], {
+    file: "0034-allow-live-codex-config-replacement.patch",
+    sha256: sha256(Buffer.from(patch)),
+  });
+  for (const contract of [
+    "join(codexHome, 'config.toml')",
+    "allows safe atomic replacement of live Codex configuration",
+    "rejects replacing live Codex configuration with a symbolic link",
+    "protected Codex atomic state became unsafe",
   ]) {
     assert.ok(patch.includes(contract), contract);
   }

@@ -132,6 +132,10 @@
     {
       "file": "0033-migrate-empty-local-chat-to-codex.patch",
       "sha256": "f05cbc007fb48b2b542be0a6d486b60b1b2e7e07d80c0d082eeba623ec778856"
+    },
+    {
+      "file": "0034-allow-live-codex-config-replacement.patch",
+      "sha256": "b93f2b9c17f42d6b6318ac6568e4acd14206a5634b5ae5a8167c2e4338626141"
     }
   ]
 }
