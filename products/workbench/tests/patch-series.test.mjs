@@ -217,6 +217,7 @@ test("the canonical series pins Chatero startup compatibility after native Codex
   const remoteReadyEntry = byName("0024-chatero-remote-agent-ready.patch");
   const agentHostReadyEntry = byName("0025-chatero-agent-host-ready.patch");
   const chatReliabilityEntry = byName("0029-fix-locked-codex-chat-and-refresh-models.patch");
+  const agentHostRelockEntry = byName("0030-relock-late-agent-host-chat.patch");
 
   assert.equal(entry.file, "0004-chatero-documentation-agent-authority.patch");
   assert.ok(byName("0003-chatero-native-codex.patch"));
@@ -240,6 +241,7 @@ test("the canonical series pins Chatero startup compatibility after native Codex
   assert.equal(remoteReadyEntry.file, "0024-chatero-remote-agent-ready.patch");
   assert.equal(agentHostReadyEntry.file, "0025-chatero-agent-host-ready.patch");
   assert.equal(chatReliabilityEntry.file, "0029-fix-locked-codex-chat-and-refresh-models.patch");
+  assert.equal(agentHostRelockEntry.file, "0030-relock-late-agent-host-chat.patch");
   const bytes = await readFile(join(canonicalPatchDirectory, entry.file));
   const compatibilityBytes = await readFile(join(canonicalPatchDirectory, compatibilityEntry.file));
   const startupBytes = await readFile(join(canonicalPatchDirectory, startupEntry.file));
@@ -261,6 +263,7 @@ test("the canonical series pins Chatero startup compatibility after native Codex
   const remoteReadyBytes = await readFile(join(canonicalPatchDirectory, remoteReadyEntry.file));
   const agentHostReadyBytes = await readFile(join(canonicalPatchDirectory, agentHostReadyEntry.file));
   const chatReliabilityBytes = await readFile(join(canonicalPatchDirectory, chatReliabilityEntry.file));
+  const agentHostRelockBytes = await readFile(join(canonicalPatchDirectory, agentHostRelockEntry.file));
   assert.equal(entry.sha256, sha256(bytes));
   assert.equal(compatibilityEntry.sha256, sha256(compatibilityBytes));
   assert.equal(startupEntry.sha256, sha256(startupBytes));
@@ -282,6 +285,7 @@ test("the canonical series pins Chatero startup compatibility after native Codex
   assert.equal(remoteReadyEntry.sha256, sha256(remoteReadyBytes));
   assert.equal(agentHostReadyEntry.sha256, sha256(agentHostReadyBytes));
   assert.equal(chatReliabilityEntry.sha256, sha256(chatReliabilityBytes));
+  assert.equal(agentHostRelockEntry.sha256, sha256(agentHostRelockBytes));
   assert.match(bytes.toString("utf8"), /acquireDocumentationWorkingCopyBarrier/);
   assert.match(compatibilityBytes.toString("utf8"), /chatero_workspace/);
   assert.match(startupBytes.toString("utf8"), /if \(product\.defaultChatAgent\)/);
@@ -329,4 +333,6 @@ test("the canonical series pins Chatero startup compatibility after native Codex
   assert.match(agentHostReadyBytes.toString("utf8"), /READY_TIMEOUT_MS = 30_000/);
   assert.match(chatReliabilityBytes.toString("utf8"), /const defaultAgent = silentAgent \?\? this\.chatAgentService\.getDefaultAgent/);
   assert.match(chatReliabilityBytes.toString("utf8"), /@openai\/codex["']:\s*["']0\.149\.1/);
+  assert.match(agentHostRelockBytes.toString("utf8"), /onDidChangeAgents\(\)[\s\S]*?updateWidgetLockState/);
+  assert.match(agentHostRelockBytes.toString("utf8"), /getAgent\(sessionType\)/);
 });

@@ -1,0 +1,71 @@
+diff --git a/src/vs/workbench/contrib/chat/browser/widgetHosts/viewPane/chatViewPane.ts b/src/vs/workbench/contrib/chat/browser/widgetHosts/viewPane/chatViewPane.ts
+index 4561a5f8a6b..17be2b01d94 100644
+--- a/src/vs/workbench/contrib/chat/browser/widgetHosts/viewPane/chatViewPane.ts
++++ b/src/vs/workbench/contrib/chat/browser/widgetHosts/viewPane/chatViewPane.ts
+@@ -306,6 +306,16 @@ export class ChatViewPane extends ViewPane implements IViewWelcomeDelegate {
+ 	}
+ 
+ 	private onDidChangeAgents(): void {
++		// A restored contributed session can be shown before its dynamic Agent Host
++		// agent finishes registering. In that startup ordering, showModel() cannot
++		// lock the widget yet and the first send is rejected because agentIdSilent
++		// resolves to no agent. Re-evaluate the current session on every agent
++		// change so late Agent Host registration relocks the restored contributed session.
++		const currentSessionResource = this.modelRef.value?.object.sessionResource;
++		if (currentSessionResource) {
++			void this.updateWidgetLockState(getChatSessionType(currentSessionResource));
++		}
++
+ 		if (this.chatAgentService.getDefaultAgent(ChatAgentLocation.Chat)) {
+ 			if (!this._widget?.viewModel && !this.restoringSession) {
+ 				this.restoringSession =
+@@ -1339,7 +1349,12 @@ export class ChatViewPane extends ViewPane implements IViewWelcomeDelegate {
+ 
+ 	private async updateWidgetLockState(sessionType: string): Promise<void> {
+ 		if (sessionType === localChatSessionType) {
+-			this._widget.unlockFromCodingAgent();
++			if (this._isCurrentSessionType(sessionType)) {
++				this._widget.unlockFromCodingAgent();
++			}
++			return;
++		}
++		if (this._lockWidgetToAvailableAgent(sessionType)) {
+ 			return;
+ 		}
+ 
+@@ -1350,17 +1365,29 @@ export class ChatViewPane extends ViewPane implements IViewWelcomeDelegate {
+ 			this.logService.warn(`Failed to resolve chat session type '${sessionType}' for locking`, error);
+ 		}
+ 
+-		if (!canResolve) {
+-			this._widget.unlockFromCodingAgent();
++		if (!this._isCurrentSessionType(sessionType)) {
+ 			return;
+ 		}
++		if (!canResolve || !this._lockWidgetToAvailableAgent(sessionType)) {
++			this._widget.unlockFromCodingAgent();
++		}
++	}
+ 
++	private _lockWidgetToAvailableAgent(sessionType: string): boolean {
++		if (!this._isCurrentSessionType(sessionType) || !this.chatAgentService.getAgent(sessionType)) {
++			return false;
++		}
+ 		const contribution = this.chatSessionsService.getChatSessionContribution(sessionType);
+-		if (contribution) {
+-			this._widget.lockToCodingAgent(contribution.name, contribution.displayName, sessionType, contribution.agentHostProviderId);
+-		} else {
+-			this._widget.unlockFromCodingAgent();
++		if (!contribution) {
++			return false;
+ 		}
++		this._widget.lockToCodingAgent(contribution.name, contribution.displayName, sessionType, contribution.agentHostProviderId);
++		return true;
++	}
++
++	private _isCurrentSessionType(sessionType: string): boolean {
++		const resource = this.modelRef.value?.object.sessionResource;
++		return !!resource && getChatSessionType(resource) === sessionType;
+ 	}
+ 
+ 	private async clear(): Promise<void> {

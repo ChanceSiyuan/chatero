@@ -116,6 +116,10 @@
     {
       "file": "0029-fix-locked-codex-chat-and-refresh-models.patch",
       "sha256": "91879b86680df5763b3de6db6a628e64f563fe7ba1489606595f6d0aa39e4ab6"
+    },
+    {
+      "file": "0030-relock-late-agent-host-chat.patch",
+      "sha256": "2fe11d60808b7de6266272568731e3f0dffcbbb36c767092d440ac0a718ab968"
     }
   ]
 }

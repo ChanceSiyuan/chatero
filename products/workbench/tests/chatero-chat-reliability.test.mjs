@@ -13,6 +13,12 @@ const patchPath = join(
   "code-oss",
   "0029-fix-locked-codex-chat-and-refresh-models.patch",
 );
+const startupRacePatchPath = join(
+  workbenchRoot,
+  "patches",
+  "code-oss",
+  "0030-relock-late-agent-host-chat.patch",
+);
 const generatedCheckout = process.env.CHATERO_CODE_OSS_DIR
   ? resolve(process.env.CHATERO_CODE_OSS_DIR)
   : join(root, "vendor", "code-oss");
@@ -74,4 +80,34 @@ test("the generated checkout contains the locked-agent send fix", {
   assert.match(source, /const silentAgent = options\?\.agentIdSilent[\s\S]*?const defaultAgent = silentAgent \?\? this\.chatAgentService\.getDefaultAgent/);
   assert.equal(JSON.parse(packagedCodexManifest).dependencies["@openai/codex"], "0.149.1");
   assert.equal(protocolVersion.trim(), "0.149.1");
+});
+
+test("late Agent Host registration relocks the restored Codex chat", async () => {
+  const patch = await readFile(startupRacePatchPath, "utf8");
+
+  assert.match(patch, /onDidChangeAgents\(\)[\s\S]*?updateWidgetLockState/);
+  assert.match(patch, /getAgent\(sessionType\)/);
+  assert.match(patch, /lockToCodingAgent/);
+  assert.match(patch, /late Agent Host registration relocks the restored contributed session/);
+});
+
+test("the generated checkout contains the late Agent Host relock fix", {
+  skip: !existsSync(join(generatedCheckout, "src", "vs", "workbench", "contrib", "chat", "browser", "widgetHosts", "viewPane", "chatViewPane.ts")),
+}, async () => {
+  const source = await readFile(join(
+    generatedCheckout,
+    "src",
+    "vs",
+    "workbench",
+    "contrib",
+    "chat",
+    "browser",
+    "widgetHosts",
+    "viewPane",
+    "chatViewPane.ts",
+  ), "utf8");
+
+  assert.match(source, /onDidChangeAgents\(\)[\s\S]*?updateWidgetLockState/);
+  assert.match(source, /getAgent\(sessionType\)/);
+  assert.match(source, /lockToCodingAgent/);
 });
