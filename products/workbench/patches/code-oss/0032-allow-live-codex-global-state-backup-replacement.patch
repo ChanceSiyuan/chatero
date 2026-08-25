@@ -1,0 +1,45 @@
+diff --git a/src/vs/platform/agentHost/node/codex/chateroCodexPermissions.ts b/src/vs/platform/agentHost/node/codex/chateroCodexPermissions.ts
+--- a/src/vs/platform/agentHost/node/codex/chateroCodexPermissions.ts
++++ b/src/vs/platform/agentHost/node/codex/chateroCodexPermissions.ts
+@@ -103,5 +103,6 @@ export function createChateroCodexPermissionContext(input: Readonly<{
+ 	const atomicCodexStatePaths = new Set([
+ 		join(codexHome, '.codex-global-state.json'),
++		join(codexHome, '.codex-global-state.json.bak'),
+ 	]);
+ 	const protectedObjects = [
+ 		...captureProtectedObjectInventory([codexHome], false, atomicCodexStatePaths),
+diff --git a/src/vs/platform/agentHost/test/node/codex/chateroCodexPermissions.test.ts b/src/vs/platform/agentHost/test/node/codex/chateroCodexPermissions.test.ts
+--- a/src/vs/platform/agentHost/test/node/codex/chateroCodexPermissions.test.ts
++++ b/src/vs/platform/agentHost/test/node/codex/chateroCodexPermissions.test.ts
+@@ -43,6 +43,7 @@ suite('ChateroCodexPermissions', () => {
+ 		fs.mkdirSync(runtime, { mode: 0o755 });
+ 		fs.writeFileSync(path.join(codexHome, 'config.toml'), '', { mode: 0o600 });
+ 		fs.writeFileSync(path.join(codexHome, '.codex-global-state.json'), '{}\n', { mode: 0o644 });
++		fs.writeFileSync(path.join(codexHome, '.codex-global-state.json.bak'), '{}\n', { mode: 0o644 });
+ 		fs.writeFileSync(path.join(runtime, 'codex'), 'binary', { mode: 0o755 });
+ 		const context = createChateroCodexPermissionContext({ codexHome, trustedRuntimeRoots: [runtime] });
+ 		return { root, codexHome, runtime, context };
+@@ -203,6 +204,23 @@ suite('ChateroCodexPermissions', () => {
+ 		}));
+ 	});
+ 
++	test('allows safe atomic replacement of live Codex global state backup', async () => {
++		const { root, codexHome, context } = fixture();
++		const responses = successfulResponses(context);
++		const replacement = path.join(codexHome, '.codex-global-state.backup-next');
++		fs.writeFileSync(replacement, '{"updated":true}\n', { mode: 0o644 });
++		fs.renameSync(replacement, path.join(codexHome, '.codex-global-state.json.bak'));
++		await assert.doesNotReject(chateroCodexPreflight({
++			cwd: root,
++			context,
++			reader: {
++				readConfig: async () => responses.config,
++				readRequirements: async () => responses.requirements,
++				listPermissionProfiles: async () => responses.profiles,
++			},
++		}));
++	});
++
+ 	test('still rejects atomic replacement of protected Codex configuration', async () => {
+ 		const { root, codexHome, context } = fixture();
+ 		const responses = successfulResponses(context);

@@ -56,6 +56,12 @@ const liveCodexStatePatchPath = join(
   "code-oss",
   "0031-allow-live-codex-global-state-replacement.patch",
 );
+const liveCodexStateBackupPatchPath = join(
+  workbenchRoot,
+  "patches",
+  "code-oss",
+  "0032-allow-live-codex-global-state-backup-replacement.patch",
+);
 const checkout = join(repositoryRoot, "vendor", "code-oss");
 
 function sha256(bytes) {
@@ -100,9 +106,10 @@ test("Documentation authority and its Chatero compatibility patches remain diges
   }]);
 });
 
-test("live Codex global state may rotate without weakening protected configuration identity", async () => {
-  const [patch, seriesText] = await Promise.all([
+test("live Codex global state and its backup may rotate without weakening protected configuration identity", async () => {
+  const [patch, backupPatch, seriesText] = await Promise.all([
     readFile(liveCodexStatePatchPath, "utf8"),
+    readFile(liveCodexStateBackupPatchPath, "utf8"),
     readFile(join(workbenchRoot, "patches", "code-oss", "series.json"), "utf8"),
   ]);
   const entries = JSON.parse(seriesText).patches;
@@ -111,6 +118,10 @@ test("live Codex global state may rotate without weakening protected configurati
   assert.deepEqual(entries[predecessorIndex + 1], {
     file: "0031-allow-live-codex-global-state-replacement.patch",
     sha256: sha256(Buffer.from(patch)),
+  });
+  assert.deepEqual(entries[predecessorIndex + 2], {
+    file: "0032-allow-live-codex-global-state-backup-replacement.patch",
+    sha256: sha256(Buffer.from(backupPatch)),
   });
   for (const contract of [
     ".codex-global-state.json",
@@ -123,6 +134,12 @@ test("live Codex global state may rotate without weakening protected configurati
     "rejects replacing live Codex global state with a symbolic link",
   ]) {
     assert.ok(patch.includes(contract), contract);
+  }
+  for (const contract of [
+    ".codex-global-state.json.bak",
+    "allows safe atomic replacement of live Codex global state backup",
+  ]) {
+    assert.ok(backupPatch.includes(contract), contract);
   }
 });
 

@@ -124,6 +124,10 @@
     {
       "file": "0031-allow-live-codex-global-state-replacement.patch",
       "sha256": "d0c817eacb521bb2832b4312b185fb080e1b899a8511a7185e0a552bf2852665"
+    },
+    {
+      "file": "0032-allow-live-codex-global-state-backup-replacement.patch",
+      "sha256": "046a823cd2f94803e07863fbf56e69c6c1e2ed7c59cadf456f3d9c3f3566b952"
     }
   ]
 }
