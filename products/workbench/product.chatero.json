@@ -13,6 +13,10 @@
   "darwinBundleIdentifier": "io.github.chancesiyuan.chatero",
   "darwinProfileUUID": "167B6817-69BE-48DB-B70E-B07F1457BDFB",
   "darwinProfilePayloadUUID": "458EAAEC-8E08-4E5E-B03C-B34D19685C9E",
+  "crashReporter": {
+    "companyName": "Chatero",
+    "productName": "Chatero"
+  },
   "linuxIconName": "chatero",
   "win32MutexName": "chatero",
   "win32DirName": "Chatero",

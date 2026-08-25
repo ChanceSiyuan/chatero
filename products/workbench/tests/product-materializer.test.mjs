@@ -65,6 +65,10 @@ test("brands Code-OSS as Chatero and selects only Open VSX", async () => {
   assert.equal(product.dataFolderName, ".chatero");
   assert.equal(product.darwinBundleIdentifier, "io.github.chancesiyuan.chatero");
   assert.equal(product.urlProtocol, "chatero");
+  assert.deepEqual(product.crashReporter, {
+    companyName: "Chatero",
+    productName: "Chatero",
+  });
   assert.deepEqual(product.extensionsGallery, {
     itemUrl: "https://open-vsx.org/vscode/item",
     resourceUrlTemplate: "https://open-vsx.org/vscode/asset/{publisher}/{name}/{version}/Microsoft.VisualStudio.Code.WebResources/extension",
