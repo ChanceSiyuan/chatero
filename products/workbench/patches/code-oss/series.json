@@ -136,6 +136,10 @@
     {
       "file": "0034-allow-live-codex-config-replacement.patch",
       "sha256": "b93f2b9c17f42d6b6318ac6568e4acd14206a5634b5ae5a8167c2e4338626141"
+    },
+    {
+      "file": "0035-allow-transient-codex-sqlite-sidecars.patch",
+      "sha256": "7c19d65e90baee4134b2285f74627bca0efbfcad28eccbf376fe91727e650708"
     }
   ]
 }

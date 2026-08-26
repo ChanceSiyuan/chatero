@@ -1,0 +1,193 @@
+diff --git a/src/vs/platform/agentHost/node/codex/chateroCodexPermissions.ts b/src/vs/platform/agentHost/node/codex/chateroCodexPermissions.ts
+--- a/src/vs/platform/agentHost/node/codex/chateroCodexPermissions.ts
++++ b/src/vs/platform/agentHost/node/codex/chateroCodexPermissions.ts
+@@ -107,7 +107,7 @@ export function createChateroCodexPermissionContext(input: Readonly<{
+ 		join(codexHome, '.codex-global-state.json.bak'),
+ 	]);
+ 	const protectedObjects = [
+-		...captureProtectedObjectInventory([codexHome], false, atomicCodexStatePaths),
++		...captureProtectedObjectInventory([codexHome], false, atomicCodexStatePaths, codexHome),
+ 		...captureProtectedObjectInventory(trustedRuntimeRoots),
+ 	];
+ 	return Object.freeze({
+@@ -306,15 +306,30 @@ function validateProfileSummaries(response: PermissionProfileListResponse): void
+ 	}
+ }
+ 
+-function captureProtectedObjectInventory(roots: readonly string[], recursive = true, atomicReplacementPaths: ReadonlySet<string> = new Set()): IChateroProtectedObjectIdentity[] {
++function captureProtectedObjectInventory(
++	roots: readonly string[],
++	recursive = true,
++	atomicReplacementPaths: ReadonlySet<string> = new Set(),
++	transientSqliteSidecarRoot?: string,
++): IChateroProtectedObjectIdentity[] {
+ 	const result: IChateroProtectedObjectIdentity[] = [];
+ 	for (const root of distinctPaths(roots)) {
+-		walkProtectedTree(root, root, result, recursive, atomicReplacementPaths);
++		walkProtectedTree(root, root, result, recursive, atomicReplacementPaths, transientSqliteSidecarRoot);
+ 	}
+ 	return result.sort((left, right) => Buffer.compare(Buffer.from(left.path), Buffer.from(right.path)));
+ }
+ 
+-function walkProtectedTree(path: string, root: string, result: IChateroProtectedObjectIdentity[], recursive: boolean, atomicReplacementPaths: ReadonlySet<string>): void {
++function walkProtectedTree(
++	path: string,
++	root: string,
++	result: IChateroProtectedObjectIdentity[],
++	recursive: boolean,
++	atomicReplacementPaths: ReadonlySet<string>,
++	transientSqliteSidecarRoot?: string,
++): void {
++	if (isSafeTransientSqliteSidecar(path, transientSqliteSidecarRoot)) {
++		return;
++	}
+ 	const lstat = fs.lstatSync(path);
+ 	// Codex Desktop creates transient Unix-domain sockets under CODEX_HOME/ipc.
+ 	// They contain no durable configuration or credentials, cannot be hard-linked,
+@@ -365,8 +380,73 @@ function walkProtectedTree(path: string, root: string, result: IChateroProtected
+ 		return;
+ 	}
+ 	for (const child of fs.readdirSync(path).sort((left, right) => Buffer.compare(Buffer.from(left), Buffer.from(right)))) {
+-		walkProtectedTree(join(path, child), root, result, recursive, atomicReplacementPaths);
++		walkProtectedTree(join(path, child), root, result, recursive, atomicReplacementPaths, transientSqliteSidecarRoot);
++	}
++}
++
++function isSafeTransientSqliteSidecar(path: string, sidecarRoot: string | undefined): boolean {
++	if (!sidecarRoot) {
++		return false;
+ 	}
++	const relativePath = relative(sidecarRoot, path);
++	if (!relativePath || relativePath.includes(sep)) {
++		return false;
++	}
++	const match = /^(.+\.sqlite)-(?:shm|wal|journal)$/.exec(relativePath);
++	if (!match) {
++		return false;
++	}
++
++	let sidecar: fs.Stats;
++	try {
++		sidecar = fs.lstatSync(path);
++	} catch (error) {
++		// SQLite can unlink a sidecar between readdir and lstat. At this point
++		// there is no filesystem object to pin; every future object at this path
++		// remains denied by the CODEX_HOME permission profile.
++		if (isFileNotFound(error)) {
++			return true;
++		}
++		throw error;
++	}
++	assertSafeTransientSqliteFile(path, sidecar, 'sidecar');
++
++	const databasePath = join(sidecarRoot, match[1]);
++	let database: fs.Stats;
++	try {
++		database = fs.lstatSync(databasePath);
++	} catch (error) {
++		if (isFileNotFound(error)) {
++			throw new Error(`transient Codex SQLite sidecar has no database: ${path}`);
++		}
++		throw error;
++	}
++	assertSafeTransientSqliteFile(databasePath, database, 'database');
++	return true;
++}
++
++function assertSafeTransientSqliteFile(path: string, lstat: fs.Stats, label: 'database' | 'sidecar'): void {
++	let realPath: string;
++	try {
++		realPath = realpathSync(path);
++	} catch (error) {
++		if (label === 'sidecar' && isFileNotFound(error)) {
++			return;
++		}
++		throw error;
++	}
++	if (!lstat.isFile()
++		|| lstat.isSymbolicLink()
++		|| lstat.nlink !== 1
++		|| realPath !== path
++		|| (lstat.mode & 0o022) !== 0
++		|| (typeof process.getuid === 'function' && lstat.uid !== process.getuid())) {
++		throw new Error(`transient Codex SQLite ${label} must be a safe user-owned single-link file: ${path}`);
++	}
++}
++
++function isFileNotFound(error: unknown): boolean {
++	return error instanceof Error && 'code' in error && error.code === 'ENOENT';
+ }
+ 
+ function revalidateProtectedObjectInventory(inventory: readonly IChateroProtectedObjectIdentity[]): void {
+diff --git a/src/vs/platform/agentHost/test/node/codex/chateroCodexPermissions.test.ts b/src/vs/platform/agentHost/test/node/codex/chateroCodexPermissions.test.ts
+--- a/src/vs/platform/agentHost/test/node/codex/chateroCodexPermissions.test.ts
++++ b/src/vs/platform/agentHost/test/node/codex/chateroCodexPermissions.test.ts
+@@ -34,7 +34,7 @@ suite('ChateroCodexPermissions', () => {
+ 		}
+ 	});
+ 
+-	function fixture() {
++	function fixture(populateCodexHome?: (paths: Readonly<{ root: string; codexHome: string; runtime: string }>) => void) {
+ 		const root = fs.mkdtempSync(path.join(os.tmpdir(), 'chatero-codex-permissions-'));
+ 		temporaryDirectories.push(root);
+ 		const codexHome = path.join(root, 'codex-home');
+@@ -45,6 +45,7 @@ suite('ChateroCodexPermissions', () => {
+ 		fs.writeFileSync(path.join(codexHome, '.codex-global-state.json'), '{}\n', { mode: 0o644 });
+ 		fs.writeFileSync(path.join(codexHome, '.codex-global-state.json.bak'), '{}\n', { mode: 0o644 });
+ 		fs.writeFileSync(path.join(runtime, 'codex'), 'binary', { mode: 0o755 });
++		populateCodexHome?.({ root, codexHome, runtime });
+ 		const context = createChateroCodexPermissionContext({ codexHome, trustedRuntimeRoots: [runtime] });
+ 		return { root, codexHome, runtime, context };
+ 	}
+@@ -182,6 +183,51 @@ suite('ChateroCodexPermissions', () => {
+ 		}));
+ 	});
+ 
++	test('allows safe transient SQLite sidecars inside CODEX_HOME to rotate', async () => {
++		const { root, codexHome, context } = fixture(({ codexHome }) => {
++			fs.writeFileSync(path.join(codexHome, 'goals_1.sqlite'), 'database', { mode: 0o600 });
++			for (const suffix of ['shm', 'wal', 'journal']) {
++				fs.writeFileSync(path.join(codexHome, `goals_1.sqlite-${suffix}`), suffix, { mode: 0o600 });
++			}
++		});
++		const responses = successfulResponses(context);
++		assert.ok(context.protectedObjects.some(object => object.path === path.join(codexHome, 'goals_1.sqlite')));
++		assert.ok(context.protectedObjects.every(object => !/goals_1\.sqlite-(?:shm|wal|journal)$/.test(object.path)));
++		for (const suffix of ['shm', 'wal', 'journal']) {
++			fs.rmSync(path.join(codexHome, `goals_1.sqlite-${suffix}`));
++		}
++		await assert.doesNotReject(chateroCodexPreflight({
++			cwd: root,
++			context,
++			reader: {
++				readConfig: async () => responses.config,
++				readRequirements: async () => responses.requirements,
++				listPermissionProfiles: async () => responses.profiles,
++			},
++		}));
++	});
++
++	test('rejects unsafe or orphaned transient SQLite sidecars', () => {
++		if (process.platform === 'win32') {
++			return;
++		}
++		assert.throws(() => fixture(({ codexHome }) => {
++			fs.writeFileSync(path.join(codexHome, 'orphan.sqlite-shm'), 'sidecar', { mode: 0o600 });
++		}), /has no database/);
++		assert.throws(() => fixture(({ root, codexHome }) => {
++			fs.writeFileSync(path.join(codexHome, 'goals_1.sqlite'), 'database', { mode: 0o600 });
++			const outside = path.join(root, 'outside-sidecar');
++			fs.writeFileSync(outside, 'sidecar', { mode: 0o600 });
++			fs.symlinkSync(outside, path.join(codexHome, 'goals_1.sqlite-shm'));
++		}), /sidecar must be a safe user-owned single-link file/);
++		assert.throws(() => fixture(({ root, codexHome }) => {
++			fs.writeFileSync(path.join(codexHome, 'goals_1.sqlite'), 'database', { mode: 0o600 });
++			const sidecar = path.join(codexHome, 'goals_1.sqlite-shm');
++			fs.writeFileSync(sidecar, 'sidecar', { mode: 0o600 });
++			fs.linkSync(sidecar, path.join(root, 'sidecar-alias'));
++		}), /sidecar must be a safe user-owned single-link file/);
++	});
++
+ 	test('allows safe atomic replacement of live Codex global state', async () => {
+ 		const { root, codexHome, context } = fixture();
+ 		const responses = successfulResponses(context);
